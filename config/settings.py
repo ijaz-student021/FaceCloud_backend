@@ -165,6 +165,10 @@ MAX_ZIP_UNCOMPRESSED_SIZE = int(
     os.environ.get("MAX_ZIP_UNCOMPRESSED_SIZE", str(5 * 1024 * 1024 * 1024))
 )
 FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get("FILE_UPLOAD_MAX_MEMORY_SIZE", str(10 * 1024 * 1024)))
+PREPROCESS_MAX_WIDTH = int(os.environ.get("PREPROCESS_MAX_WIDTH", "1920"))
+PREPROCESS_MAX_HEIGHT = int(os.environ.get("PREPROCESS_MAX_HEIGHT", "1920"))
+PREPROCESS_JPEG_QUALITY = int(os.environ.get("PREPROCESS_JPEG_QUALITY", "92"))
+PREPROCESS_TRANSPARENT_BACKGROUND = os.environ.get("PREPROCESS_TRANSPARENT_BACKGROUND", "#FFFFFF")
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -187,6 +191,7 @@ REST_FRAMEWORK = {
         "password_change": "10/hour",
         "image_upload": "100/hour",
         "zip_upload": "20/hour",
+        "image_preprocess": "100/hour",
     },
 }
 

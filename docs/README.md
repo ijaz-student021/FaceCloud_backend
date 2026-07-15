@@ -2,6 +2,8 @@
 
 This directory contains implementation documentation for every FaceCloud feature. Each feature is documented in a separate Markdown file so the files can later be reviewed, combined, and converted into the final Word report.
 
+The complete approved scope and implementation roadmap are maintained in [FEATURES.md](FEATURES.md).
+
 ## Documentation workflow
 
 For every feature:
@@ -19,7 +21,7 @@ For every feature:
 |---:|---|---|---|
 | 01 | Authentication, accounts, and authorization | Complete | [01-authentication-and-authorization.md](features/01-authentication-and-authorization.md) |
 | 02 | Image upload and secure storage | Complete | [02-image-upload-and-secure-storage.md](features/02-image-upload-and-secure-storage.md) |
-| 03 | Image preprocessing and standardization | Planned | To be created during implementation |
+| 03 | Image preprocessing, format conversion, and standardization | Complete | [03-image-preprocessing-and-standardization.md](features/03-image-preprocessing-and-standardization.md) |
 | 04 | OpenCV and Zero-DCE enhancement | Planned | To be created during implementation |
 | 05 | Image quality assessment | Planned | To be created during implementation |
 | 06 | Face detection and validation | Planned | To be created during implementation |
