@@ -24,7 +24,8 @@ Upload -> content validation -> format gateway -> EXIF orientation correction
 
 ## Conversion and standardization
 
-- `auto`: PNG when real transparency exists; JPEG otherwise.
+- `auto`: preserve existing PNG/JPEG; for other inputs use PNG when transparency
+  exists and JPEG otherwise.
 - `png`: lossless PNG output with transparency when present.
 - `jpeg`: optimized RGB JPEG using the configured quality; transparency is
   composited over the configured background.
@@ -52,14 +53,19 @@ sizes, transparency, duration, failure reason, file, and timestamps.
 
 Statuses are `pending`, `processing`, `completed`, and `failed`.
 
+`UploadBatch` separately tracks preprocessing as `pending`, `queued`,
+`processing`, `completed`, `partial`, or `failed`, with processed/failed counters,
+Celery task ID, safe error message, and start/finish timestamps.
+
 ## API
 
 All endpoints require JWT authentication and restrict records to their owner.
 
-ZIP uploads automatically preprocess every accepted extracted image using
-`output_format=auto`. Transparent inputs become PNG; other images become JPEG.
-Invalid archive entries remain rejected with their individual reason. A failed
-conversion does not delete the accepted original and can be retried later.
+Single uploads preprocess immediately. Multiple and ZIP uploads queue accepted
+images for a Celery worker using `output_format=auto`; ZIP members are safely
+extracted first. Existing PNG/JPEG formats are preserved. Other transparent
+inputs become PNG and other inputs become JPEG. Failed conversion never deletes
+the accepted original and can be retried later.
 
 ### Start preprocessing
 
@@ -100,7 +106,29 @@ PREPROCESS_MAX_WIDTH=1920
 PREPROCESS_MAX_HEIGHT=1920
 PREPROCESS_JPEG_QUALITY=92
 PREPROCESS_TRANSPARENT_BACKGROUND="#FFFFFF"
+CELERY_BROKER_URL=redis://127.0.0.1:6379/0
+CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/1
+CELERY_TASK_ALWAYS_EAGER=False
+CELERY_TASK_TIME_LIMIT=3600
+CELERY_TASK_SOFT_TIME_LIMIT=3300
 ```
+
+## Background worker operation
+
+Redis and a Celery worker are required when `CELERY_TASK_ALWAYS_EAGER=False`.
+When the variable is omitted, local debug mode uses eager execution while
+production mode requires the real queue.
+
+```powershell
+# Terminal 1
+python manage.py runserver
+
+# Terminal 2 (Windows development)
+celery -A config worker --loglevel=info --pool=solo
+```
+
+Production workers should use the deployment platform's supported worker pool.
+Eager mode is reserved for local debugging and automated tests.
 
 ## Security and reliability
 
@@ -111,6 +139,9 @@ PREPROCESS_TRANSPARENT_BACKGROUND="#FFFFFF"
 - Cross-user preprocessing, status, and download requests return 404.
 - Identical operations reuse the completed result; `force` creates a replacement.
 - The previous successful file is removed only after replacement succeeds.
+- PostgreSQL row locking serializes concurrent processing of the same image.
+- Unexpected failures remove newly created storage objects.
+- Batch responses prefetch processing results to avoid per-image query growth.
 
 ## Tests
 
@@ -125,6 +156,6 @@ batch display names, original preservation, and file cleanup.
 
 ## Current limitation
 
-ZIP preprocessing currently runs synchronously after extraction. Very large ZIP
-batches will move to the planned Celery and progress-tracking feature so the HTTP
-request does not remain open for the complete processing duration.
+Single-image preprocessing remains synchronous for immediate feedback. Multiple
+and ZIP preprocessing runs through Celery. Live percentage updates and estimated
+completion time remain part of the separate progress-tracker feature.

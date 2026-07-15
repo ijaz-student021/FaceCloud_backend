@@ -22,6 +22,7 @@ Status definitions:
 | Secure local image storage and ownership | Complete |
 | PostgreSQL 18 migration | Complete |
 | Image preprocessing and format standardization | Complete |
+| Celery preprocessing queue | Complete |
 | AI enhancement | Planned |
 | Quality assessment and face validation | Planned |
 | Identity grouping and moderation | Planned |
@@ -79,7 +80,9 @@ Records security-relevant account activity for accountability and diagnosis.
 
 Accepts one authenticated facial-image upload and creates a secure metadata record.
 
-- JPG, JPEG, and PNG support
+- Dedicated single-image frontend card specification
+- Exactly one image enforced by the API
+- JPG/JPEG, PNG, WebP, BMP, TIFF, and static GIF support
 - Up to 400 MB per image by default
 - Actual content verification with Pillow
 - Corrupt and fake-image rejection
@@ -92,6 +95,8 @@ Accepts one authenticated facial-image upload and creates a secure metadata reco
 Accepts several image files in one request and validates each independently.
 
 - Up to 150 images per batch by default
+- At least two images enforced by the API
+- Phone photo-picker and desktop multi-file picker specification
 - Per-file acceptance or rejection
 - Partial success when some files are invalid
 - Per-file rejection explanations
@@ -103,6 +108,7 @@ Accepts several image files in one request and validates each independently.
 Safely accepts large image collections packaged as ZIP archives.
 
 - Up to 2 GB uploaded ZIP size
+- Dedicated ZIP-only frontend card and exactly-one-archive API validation
 - Up to 5 GB total uncompressed content
 - Up to 150 archive members
 - Path-traversal protection
@@ -145,6 +151,10 @@ All uploaded images pass through a dedicated format-conversion gateway before
 enhancement. PNG and JPEG images can continue in their existing format. Other
 approved image formats are decoded and converted to a canonical PNG or JPEG
 processing copy. The original upload is never overwritten.
+
+Single-image, multiple-image, and ZIP uploads all trigger this pipeline
+automatically with `auto` format selection. Users may later request PNG or JPEG
+explicitly through the preprocessing API.
 
 ```text
 [Uploaded image]
@@ -317,16 +327,16 @@ Allows users and moderators to correct automatic grouping decisions.
 
 ## 8. Background processing and progress
 
-### Feature 20: Background batch processing — Planned
+### Feature 20: Background batch processing — Partial
 
-Moves expensive work outside request-response execution.
+Moves expensive work outside request-response execution. Preprocessing jobs are
+complete; enhancement and recognition jobs will reuse this foundation.
 
-- Celery workers
-- Redis task queue
+- Celery preprocessing worker and Redis configuration — Complete
 - Per-image and per-batch jobs
 - Controlled concurrency
 - Retry and timeout policies
-- Partial-failure isolation
+- Preprocessing failure isolation and batch counters — Complete
 - Cancellation where safe
 - CPU/GPU resource limits
 
@@ -627,7 +637,7 @@ Maintains stable integration contracts and implementation documentation.
 
 Protects completed behavior from regression as the platform grows.
 
-- 29 authentication and upload tests passing against PostgreSQL
+- 50 authentication, upload, preprocessing, and queue tests passing against PostgreSQL
 - Django system and migration-drift checks
 - Security, ownership, ZIP, and cleanup tests
 - Manual registration, token, profile, and real upload verification

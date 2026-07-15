@@ -29,6 +29,14 @@ class UploadBatch(models.Model):
         ("rejected", "Rejected"),
         ("failed", "Failed"),
     ]
+    PROCESSING_STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("queued", "Queued"),
+        ("processing", "Processing"),
+        ("completed", "Completed"),
+        ("partial", "Partially completed"),
+        ("failed", "Failed"),
+    ]
 
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="upload_batches")
     upload_type = models.CharField(max_length=10, choices=TYPE_CHOICES)
@@ -39,6 +47,17 @@ class UploadBatch(models.Model):
     accepted_files = models.PositiveIntegerField(default=0)
     rejected_files = models.PositiveIntegerField(default=0)
     total_size = models.PositiveBigIntegerField(default=0)
+    processing_status = models.CharField(
+        max_length=12,
+        choices=PROCESSING_STATUS_CHOICES,
+        default="pending",
+    )
+    processed_files = models.PositiveIntegerField(default=0)
+    processing_failed_files = models.PositiveIntegerField(default=0)
+    processing_task_id = models.CharField(max_length=255, blank=True, db_index=True)
+    processing_error = models.TextField(blank=True)
+    processing_started_at = models.DateTimeField(null=True, blank=True)
+    processing_finished_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

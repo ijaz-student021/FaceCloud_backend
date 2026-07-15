@@ -11,7 +11,7 @@ The feature deliberately handles ingestion and storage only. Resizing, enhanceme
 - Single-image upload
 - Multiple-image upload
 - ZIP archive upload
-- JPG, JPEG, and PNG support
+- JPG/JPEG, PNG, WebP, BMP, TIFF, and static GIF support
 - Maximum 400 MB per image
 - Maximum 2 GB uploaded ZIP
 - Maximum 5 GB uncompressed ZIP content
@@ -79,9 +79,9 @@ The schema is introduced by `uploads.0001_initial`.
 
 | Method | Endpoint | Access | Purpose |
 |---|---|---|---|
-| POST | `/api/images/upload/single/` | Authenticated owner | Upload one image using `file` or `image` |
-| POST | `/api/images/upload/multiple/` | Authenticated owner | Upload repeated `files` fields |
-| POST | `/api/images/upload/zip/` | Authenticated owner | Upload `file` or `archive` ZIP |
+| POST | `/api/images/upload/single/` | Authenticated owner | Upload exactly one image |
+| POST | `/api/images/upload/multiple/` | Authenticated owner | Upload at least two repeated `files` fields |
+| POST | `/api/images/upload/zip/` | Authenticated owner | Upload exactly one ZIP archive |
 | GET | `/api/images/` | Authenticated owner | List the user's images |
 | GET | `/api/images/{id}/` | Authenticated owner | View image metadata |
 | GET | `/api/images/{id}/download/` | Authenticated owner | Download the stored original |
@@ -131,7 +131,7 @@ The schema is introduced by `uploads.0001_initial`.
 
 ## 8. Image validation
 
-- Allows only `.jpg`, `.jpeg`, and `.png` names.
+- Allows `.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp`, `.tif`, `.tiff`, and static `.gif` names.
 - Rejects empty files.
 - Enforces configured byte limits.
 - Uses Pillow to verify actual image content.
@@ -195,13 +195,15 @@ Hosting platforms, reverse proxies, and load balancers must also allow the confi
 
 ## 13. Automated tests
 
-The upload suite contains 15 test methods covering valid images, invalid content, byte and pixel limits, mixed multiple uploads, file-count limits, ZIP handling, path traversal, nested and invalid ZIP files, authentication, ownership isolation, secure filenames, and physical cleanup.
+The upload/preprocessing suite contains 36 test methods covering selection rules,
+content and limits, multiple/ZIP handling, background jobs, processing counters,
+worker/queue failures, ownership, naming, and physical cleanup.
 
 ```text
 Command: python manage.py test uploads --verbosity 2
 Latest result: Passed
-Combined authentication/upload suite: 29 tests passed
-Verification date: 2026-07-14
+Combined authentication/upload suite: 50 tests passed
+Verification date: 2026-07-15
 ```
 
 ## 14. Manual verification result
@@ -225,18 +227,47 @@ This confirmed multipart upload, database persistence, secure storage, metadata 
 
 ## 15. Frontend integration
 
-The frontend must provide:
+The upload page must present three separate cards in one horizontal row on desktop:
 
-- Single, multiple, and ZIP file selectors
-- Client-side format and size guidance
-- Upload progress for large requests
-- Per-file accepted and rejected results
-- Batch summary display
-- Authenticated image listing and downloads
-- Delete confirmation
-- Clear display of backend rejection reasons
+```text
+┌────────────────────┐  ┌────────────────────┐  ┌────────────────────┐
+│ Single Image       │  │ Multiple Images    │  │ ZIP Archive        │
+│ Choose one image   │  │ Choose 2–150       │  │ Choose one .zip    │
+│ [Select Image]     │  │ [Select Images]    │  │ [Select ZIP]       │
+└────────────────────┘  └────────────────────┘  └────────────────────┘
+```
 
-Client-side validation is for usability; backend validation remains authoritative.
+On narrow phone screens the cards may stack vertically for accessibility, but
+they remain three distinct actions.
+
+### Single-image card
+
+- File input without the `multiple` attribute.
+- Opens the phone photo picker or desktop file picker.
+- Uses `accept="image/jpeg,image/png,image/webp,image/bmp,image/tiff,image/gif"`.
+- Requires exactly one image and calls `POST /api/images/upload/single/`.
+
+### Multiple-image card
+
+- File input with the `multiple` attribute.
+- Requests multi-selection from a phone photo picker or desktop folder picker.
+- Requires 2–150 images and displays the selected count.
+- Sends repeated `files` fields to `POST /api/images/upload/multiple/`.
+
+The installed mobile browser and operating system provide the actual album or
+file-picker interface; the frontend requests multiple selection.
+
+### ZIP card
+
+- File input without the `multiple` attribute.
+- Uses `accept=".zip,application/zip"`.
+- Requires exactly one ZIP and calls `POST /api/images/upload/zip/`.
+- Rejects images and other non-ZIP selections.
+
+Every card also displays size/format guidance, progress, accepted/rejected
+results, batch summaries, authenticated downloads, deletion confirmation, and
+backend rejection reasons. Client-side validation improves usability; backend
+validation remains authoritative.
 
 ## 16. Limitations and next stages
 
@@ -244,7 +275,8 @@ Client-side validation is for usability; backend validation remains authoritativ
 - A 2 GB upload also requires compatible proxy and hosting limits.
 - Upload completion does not mean enhancement completion.
 - Resizing, standardization, Zero-DCE, quality assessment, face detection, and identity grouping belong to subsequent processing features.
-- Background processing and live progress will be added before large batches are enhanced.
+- Celery background preprocessing is complete for multiple and ZIP batches; live
+  percentage/ETA updates remain a separate planned feature.
 
 ## 17. Completion checklist
 
@@ -259,3 +291,5 @@ Client-side validation is for usability; backend validation remains authoritativ
 - [x] Django system check passed
 - [x] API documented
 - [x] Real manual upload verified
+- [x] Multiple and ZIP preprocessing queued through Celery
+- [x] Queue and worker failures represented in batch state

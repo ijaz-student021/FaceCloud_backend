@@ -14,9 +14,9 @@ The limits are environment-configurable. Reverse proxies and hosting platforms m
 
 ## Endpoints
 
-- `POST /api/images/upload/single/` - multipart field `file` or `image`
-- `POST /api/images/upload/multiple/` - repeated multipart field `files`
-- `POST /api/images/upload/zip/` - multipart field `file` or `archive`
+- `POST /api/images/upload/single/` - exactly one image
+- `POST /api/images/upload/multiple/` - at least two images using repeated `files` fields
+- `POST /api/images/upload/zip/` - exactly one ZIP archive
 - `GET /api/images/batches/`
 - `GET /api/images/batches/{id}/`
 - `DELETE /api/images/batches/{id}/`
@@ -31,6 +31,10 @@ The limits are environment-configurable. Reverse proxies and hosting platforms m
 
 Every list, detail, download, and deletion query is restricted to the authenticated owner. Invalid files in a multiple-image or ZIP batch are recorded with a rejection reason while valid files continue processing.
 
-Accepted images extracted from a ZIP are automatically passed through the
-preprocessing format gateway. Transparent images produce PNG copies and other
-images produce JPEG copies before later enhancement stages.
+Accepted ZIP images are queued for preprocessing. Existing PNG/JPEG formats are
+preserved; other transparent images produce PNG and other images produce JPEG.
+
+Single images preprocess immediately. Multiple images use the Celery queue. The
+preprocessing endpoint remains available for explicit PNG/JPEG output or forced
+reprocessing. Batch responses expose processing state, counters, task ID,
+timestamps, and a safe error message.

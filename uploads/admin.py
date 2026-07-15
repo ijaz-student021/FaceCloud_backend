@@ -13,10 +13,14 @@ class ImageUploadInline(admin.TabularInline):
 
 @admin.register(UploadBatch)
 class UploadBatchAdmin(admin.ModelAdmin):
-    list_display = ("id", "owner", "upload_type", "status", "total_files", "accepted_files", "rejected_files", "created_at")
-    list_filter = ("upload_type", "status", "created_at")
+    list_display = ("id", "owner", "upload_type", "status", "processing_status", "total_files", "processed_files", "created_at")
+    list_filter = ("upload_type", "status", "processing_status", "created_at")
     search_fields = ("owner__username", "owner__email", "original_archive_name", "display_name")
-    readonly_fields = ("total_files", "accepted_files", "rejected_files", "total_size", "created_at", "updated_at")
+    readonly_fields = (
+        "total_files", "accepted_files", "rejected_files", "total_size", "processing_status",
+        "processed_files", "processing_failed_files", "processing_task_id", "processing_error",
+        "processing_started_at", "processing_finished_at", "created_at", "updated_at",
+    )
     inlines = [ImageUploadInline]
 
     def delete_model(self, request, obj):

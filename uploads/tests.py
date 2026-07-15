@@ -2,6 +2,7 @@ import io
 import os
 import tempfile
 import zipfile
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -9,6 +10,7 @@ from django.test import override_settings
 from django.urls import reverse
 from PIL import Image
 from rest_framework import status
+from rest_framework.exceptions import ValidationError
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -53,7 +55,11 @@ class ImageUploadTests(APITestCase):
 
     def setUp(self):
         self.media_directory = tempfile.TemporaryDirectory()
-        self.settings_override = override_settings(MEDIA_ROOT=self.media_directory.name)
+        self.settings_override = override_settings(
+            MEDIA_ROOT=self.media_directory.name,
+            CELERY_TASK_ALWAYS_EAGER=True,
+            CELERY_TASK_EAGER_PROPAGATES=True,
+        )
         self.settings_override.enable()
         self.user = User.objects.create_user(
             username="owner",
@@ -88,6 +94,20 @@ class ImageUploadTests(APITestCase):
         self.assertEqual(len(image.checksum_sha256), 64)
         self.assertNotIn("My Profile", image.original_file.name)
         self.assertTrue(image.original_file.storage.exists(image.original_file.name))
+        result = ImagePreprocessingResult.objects.get(image=image)
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.requested_format, "auto")
+
+    def test_single_upload_rejects_zero_or_multiple_files(self):
+        missing = self.client.post(reverse("image-upload-single"), {}, format="multipart")
+        multiple = self.client.post(
+            reverse("image-upload-single"),
+            {"file": [make_image("one.jpg"), make_image("two.jpg")]},
+            format="multipart",
+        )
+        self.assertEqual(missing.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(multiple.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("exactly one", str(multiple.data["file"]).lower())
 
     def test_invalid_content_is_rejected_without_stored_file(self):
         fake = SimpleUploadedFile("fake.jpg", b"not an image", content_type="image/jpeg")
@@ -135,6 +155,39 @@ class ImageUploadTests(APITestCase):
         self.assertEqual(response.data["status"], "partial")
         self.assertEqual(response.data["accepted_files"], 2)
         self.assertEqual(response.data["rejected_files"], 1)
+        results = ImagePreprocessingResult.objects.filter(image__batch_id=response.data["id"])
+        self.assertEqual(results.count(), 2)
+        self.assertFalse(results.exclude(status="completed").exists())
+
+    def test_all_upload_modes_return_automatic_preprocessing_results(self):
+        single = self.client.post(
+            reverse("image-upload-single"),
+            {"file": make_image("single.png", "PNG")},
+            format="multipart",
+        )
+        multiple = self.client.post(
+            reverse("image-upload-multiple"),
+            {"files": [make_image("one.jpg"), make_image("two.png", "PNG")]},
+            format="multipart",
+        )
+        archive = make_zip([("zip.webp", make_custom_image("zip.webp", "WEBP").read())])
+        zipped = self.client.post(reverse("image-upload-zip"), {"file": archive}, format="multipart")
+
+        for response in (single, multiple, zipped):
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+            for image_data in response.data["images"]:
+                if image_data["status"] == "uploaded":
+                    self.assertEqual(image_data["preprocessing"]["status"], "completed")
+                    self.assertIn(image_data["preprocessing"]["output_format"], {"png", "jpeg"})
+
+    def test_multiple_upload_requires_at_least_two_images(self):
+        response = self.client.post(
+            reverse("image-upload-multiple"),
+            {"files": [make_image("only-one.jpg")]},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("at least two", str(response.data["files"]).lower())
 
     @override_settings(MAX_UPLOAD_BATCH_FILES=2)
     def test_multiple_upload_enforces_batch_count(self):
@@ -176,7 +229,7 @@ class ImageUploadTests(APITestCase):
         self.assertEqual(results.count(), 2)
         self.assertFalse(results.exclude(status="completed").exists())
         self.assertEqual(results.get(image__original_name="transparent.webp").output_format, "png")
-        self.assertEqual(results.get(image__original_name="photo.png").output_format, "jpeg")
+        self.assertEqual(results.get(image__original_name="photo.png").output_format, "png")
 
     def test_zip_path_traversal_is_rejected(self):
         archive = make_zip([("../escape.jpg", image_bytes())])
@@ -193,6 +246,17 @@ class ImageUploadTests(APITestCase):
         archive = SimpleUploadedFile("images.zip", b"not a zip", content_type="application/zip")
         response = self.client.post(reverse("image-upload-zip"), {"file": archive}, format="multipart")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_zip_upload_requires_exactly_one_archive(self):
+        missing = self.client.post(reverse("image-upload-zip"), {}, format="multipart")
+        multiple = self.client.post(
+            reverse("image-upload-zip"),
+            {"file": [make_zip([("one.jpg", image_bytes())], "one.zip"), make_zip([("two.jpg", image_bytes())], "two.zip")]},
+            format="multipart",
+        )
+        self.assertEqual(missing.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(multiple.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("exactly one", str(multiple.data["file"]).lower())
 
     def test_unauthenticated_and_unverified_users_cannot_upload(self):
         self.client.credentials()
@@ -324,6 +388,12 @@ class ImageUploadTests(APITestCase):
         self.assertEqual(response.data["output_format"], "png")
         self.assertTrue(response.data["had_transparency"])
 
+    def test_auto_format_preserves_opaque_png_as_png(self):
+        image = self.upload_image(make_custom_image("text-screenshot.png", "PNG"))
+        result = ImagePreprocessingResult.objects.get(image=image)
+        self.assertEqual(result.requested_format, "auto")
+        self.assertEqual(result.output_format, "png")
+
     def test_transparent_png_to_jpeg_uses_configured_background(self):
         image = self.upload_image(
             make_custom_image("transparent.png", "PNG", mode="RGBA", size=(8, 8), color=(255, 0, 0, 0))
@@ -408,3 +478,28 @@ class ImageUploadTests(APITestCase):
         processed_path = result.processed_file.path
         self.client.delete(reverse("image-upload-detail", kwargs={"pk": image.pk}))
         self.assertFalse(os.path.exists(processed_path))
+
+    def test_multiple_batch_reports_background_processing_failure(self):
+        with patch("uploads.tasks.preprocess_image", side_effect=ValidationError("worker failure")):
+            response = self.client.post(
+                reverse("image-upload-multiple"),
+                {"files": [make_image("one.jpg"), make_image("two.jpg")]},
+                format="multipart",
+            )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["processing_status"], "failed")
+        self.assertEqual(response.data["processed_files"], 0)
+        self.assertEqual(response.data["processing_failed_files"], 2)
+        self.assertTrue(response.data["processing_error"])
+
+    def test_batch_reports_queue_unavailable_without_losing_originals(self):
+        with patch("uploads.tasks.preprocess_batch_task.apply_async", side_effect=OSError("redis unavailable")):
+            response = self.client.post(
+                reverse("image-upload-multiple"),
+                {"files": [make_image("one.jpg"), make_image("two.jpg")]},
+                format="multipart",
+            )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["accepted_files"], 2)
+        self.assertEqual(response.data["processing_status"], "failed")
+        self.assertIn("queue", response.data["processing_error"].lower())

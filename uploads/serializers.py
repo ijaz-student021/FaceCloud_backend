@@ -64,11 +64,16 @@ class UploadBatchSerializer(serializers.ModelSerializer):
         model = UploadBatch
         fields = [
             "id", "upload_type", "original_archive_name", "display_name", "status", "total_files",
-            "accepted_files", "rejected_files", "total_size", "created_at", "updated_at", "images",
+            "accepted_files", "rejected_files", "total_size", "processing_status",
+            "processed_files", "processing_failed_files", "processing_task_id",
+            "processing_error", "processing_started_at", "processing_finished_at",
+            "created_at", "updated_at", "images",
         ]
         read_only_fields = [
             "upload_type", "original_archive_name", "status", "total_files", "accepted_files",
-            "rejected_files", "total_size", "created_at", "updated_at", "images",
+            "rejected_files", "total_size", "processing_status", "processed_files",
+            "processing_failed_files", "processing_task_id", "processing_error",
+            "processing_started_at", "processing_finished_at", "created_at", "updated_at", "images",
         ]
 
     def validate_display_name(self, value):
