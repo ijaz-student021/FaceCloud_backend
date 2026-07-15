@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import ImageUpload, UploadBatch
+from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
 
 
 class ImageUploadInline(admin.TabularInline):
@@ -15,7 +15,7 @@ class ImageUploadInline(admin.TabularInline):
 class UploadBatchAdmin(admin.ModelAdmin):
     list_display = ("id", "owner", "upload_type", "status", "total_files", "accepted_files", "rejected_files", "created_at")
     list_filter = ("upload_type", "status", "created_at")
-    search_fields = ("owner__username", "owner__email", "original_archive_name")
+    search_fields = ("owner__username", "owner__email", "original_archive_name", "display_name")
     readonly_fields = ("total_files", "accepted_files", "rejected_files", "total_size", "created_at", "updated_at")
     inlines = [ImageUploadInline]
 
@@ -43,3 +43,16 @@ class ImageUploadAdmin(admin.ModelAdmin):
     def delete_queryset(self, request, queryset):
         for image in queryset:
             image.delete()
+
+
+@admin.register(ImagePreprocessingResult)
+class ImagePreprocessingResultAdmin(admin.ModelAdmin):
+    list_display = ("id", "image", "owner", "status", "original_format", "output_format", "output_name", "updated_at")
+    list_filter = ("status", "original_format", "output_format", "created_at")
+    search_fields = ("output_name", "image__original_name", "owner__username", "owner__email")
+    readonly_fields = (
+        "image", "owner", "status", "requested_format", "requested_name", "original_format",
+        "output_format", "output_name", "processed_file", "original_width", "original_height",
+        "output_width", "output_height", "original_file_size", "processed_file_size",
+        "had_transparency", "processing_duration_ms", "failure_reason", "created_at", "updated_at",
+    )

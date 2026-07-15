@@ -12,6 +12,11 @@ def original_upload_path(instance, filename):
     return f"users/{instance.owner_id}/originals/{uuid.uuid4().hex}{extension}"
 
 
+def processed_upload_path(instance, filename):
+    extension = Path(filename).suffix.lower()
+    return f"users/{instance.owner_id}/preprocessed/{uuid.uuid4().hex}{extension}"
+
+
 class UploadBatch(models.Model):
     TYPE_CHOICES = [
         ("single", "Single image"),
@@ -28,6 +33,7 @@ class UploadBatch(models.Model):
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="upload_batches")
     upload_type = models.CharField(max_length=10, choices=TYPE_CHOICES)
     original_archive_name = models.CharField(max_length=255, blank=True)
+    display_name = models.CharField(max_length=120, blank=True)
     status = models.CharField(max_length=12, choices=STATUS_CHOICES, default="uploaded")
     total_files = models.PositiveIntegerField(default=0)
     accepted_files = models.PositiveIntegerField(default=0)
@@ -62,8 +68,56 @@ class ImageUpload(models.Model):
         ordering = ["-created_at"]
 
 
+class ImagePreprocessingResult(models.Model):
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("processing", "Processing"),
+        ("completed", "Completed"),
+        ("failed", "Failed"),
+    ]
+    FORMAT_CHOICES = [("auto", "Automatic"), ("png", "PNG"), ("jpeg", "JPEG")]
+
+    image = models.OneToOneField(
+        ImageUpload,
+        on_delete=models.CASCADE,
+        related_name="preprocessing_result",
+    )
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="image_preprocessing_results",
+    )
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default="pending")
+    requested_format = models.CharField(max_length=8, choices=FORMAT_CHOICES, default="auto")
+    requested_name = models.CharField(max_length=120, blank=True)
+    original_format = models.CharField(max_length=20, blank=True)
+    output_format = models.CharField(max_length=10, blank=True)
+    output_name = models.CharField(max_length=255, blank=True)
+    processed_file = models.FileField(upload_to=processed_upload_path, blank=True)
+    original_width = models.PositiveIntegerField(null=True, blank=True)
+    original_height = models.PositiveIntegerField(null=True, blank=True)
+    output_width = models.PositiveIntegerField(null=True, blank=True)
+    output_height = models.PositiveIntegerField(null=True, blank=True)
+    original_file_size = models.PositiveBigIntegerField(default=0)
+    processed_file_size = models.PositiveBigIntegerField(default=0)
+    had_transparency = models.BooleanField(default=False)
+    processing_duration_ms = models.PositiveIntegerField(default=0)
+    failure_reason = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
 
 @receiver(post_delete, sender=ImageUpload)
 def delete_stored_image(sender, instance, **kwargs):
     if instance.original_file:
         instance.original_file.storage.delete(instance.original_file.name)
+
+
+@receiver(post_delete, sender=ImagePreprocessingResult)
+def delete_preprocessed_image(sender, instance, **kwargs):
+    if instance.processed_file:
+        instance.processed_file.storage.delete(instance.processed_file.name)

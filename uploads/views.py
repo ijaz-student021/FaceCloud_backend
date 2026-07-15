@@ -5,9 +5,14 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import ImageUpload, UploadBatch
-from .serializers import ImageUploadSerializer, UploadBatchSerializer
-from .services import create_image_batch, create_zip_batch, delete_batch
+from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
+from .serializers import (
+    ImagePreprocessingResultSerializer,
+    ImageUploadSerializer,
+    PreprocessImageRequestSerializer,
+    UploadBatchSerializer,
+)
+from .services import create_image_batch, create_zip_batch, delete_batch, preprocess_image
 
 
 class SingleImageUploadView(APIView):
@@ -54,7 +59,7 @@ class UploadBatchListView(generics.ListAPIView):
         return UploadBatch.objects.filter(owner=self.request.user).prefetch_related("images")
 
 
-class UploadBatchDetailView(generics.RetrieveDestroyAPIView):
+class UploadBatchDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = UploadBatchSerializer
     permission_classes = [permissions.IsAuthenticated]
 
@@ -96,4 +101,58 @@ class ImageDownloadView(APIView):
             as_attachment=True,
             filename=image.original_name,
             content_type=image.mime_type,
+        )
+
+
+class ImagePreprocessView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "image_preprocess"
+
+    def post(self, request, pk):
+        image = get_object_or_404(
+            ImageUpload.objects.filter(owner=request.user, status="uploaded"),
+            pk=pk,
+        )
+        request_serializer = PreprocessImageRequestSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
+        result, processed = preprocess_image(
+            image,
+            requested_format=request_serializer.validated_data["output_format"],
+            requested_name=request_serializer.validated_data["output_name"],
+            force=request_serializer.validated_data["force"],
+        )
+        response_status = status.HTTP_201_CREATED if processed else status.HTTP_200_OK
+        return Response(
+            ImagePreprocessingResultSerializer(result, context={"request": request}).data,
+            status=response_status,
+        )
+
+
+class ImagePreprocessingDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        result = get_object_or_404(
+            ImagePreprocessingResult.objects.filter(owner=request.user).select_related("image"),
+            image_id=pk,
+        )
+        return Response(ImagePreprocessingResultSerializer(result, context={"request": request}).data)
+
+
+class ImagePreprocessingDownloadView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        result = get_object_or_404(
+            ImagePreprocessingResult.objects.filter(owner=request.user, status="completed"),
+            image_id=pk,
+        )
+        if not result.processed_file:
+            return Response({"detail": "The processed image is unavailable."}, status=status.HTTP_404_NOT_FOUND)
+        content_type = "image/png" if result.output_format == "png" else "image/jpeg"
+        return FileResponse(
+            result.processed_file.open("rb"),
+            as_attachment=True,
+            filename=result.output_name,
+            content_type=content_type,
         )

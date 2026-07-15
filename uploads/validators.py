@@ -7,10 +7,23 @@ from django.conf import settings
 from PIL import Image, UnidentifiedImageError
 from rest_framework.exceptions import ValidationError
 
-ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".gif"}
 FORMAT_DETAILS = {
     "JPEG": (".jpg", "image/jpeg"),
     "PNG": (".png", "image/png"),
+    "WEBP": (".webp", "image/webp"),
+    "BMP": (".bmp", "image/bmp"),
+    "TIFF": (".tiff", "image/tiff"),
+    "GIF": (".gif", "image/gif"),
+}
+
+FORMAT_EXTENSIONS = {
+    "JPEG": {".jpg", ".jpeg"},
+    "PNG": {".png"},
+    "WEBP": {".webp"},
+    "BMP": {".bmp"},
+    "TIFF": {".tif", ".tiff"},
+    "GIF": {".gif"},
 }
 
 
@@ -31,7 +44,7 @@ def validate_image_file(uploaded_file, original_name=None):
     name = safe_original_name(original_name or uploaded_file.name)
     extension = PurePosixPath(name).suffix.lower()
     if extension not in ALLOWED_EXTENSIONS:
-        raise ValidationError("Unsupported file type. Only JPG, JPEG, and PNG are allowed.")
+        raise ValidationError("Unsupported file type. Allowed formats are JPG, JPEG, PNG, WebP, BMP, TIFF, and static GIF.")
     if uploaded_file.size <= 0:
         raise ValidationError("The image file is empty.")
     if uploaded_file.size > settings.MAX_IMAGE_UPLOAD_SIZE:
@@ -44,14 +57,15 @@ def validate_image_file(uploaded_file, original_name=None):
         with Image.open(uploaded_file) as image:
             image_format = image.format
             width, height = image.size
+            frame_count = getattr(image, "n_frames", 1)
             image.verify()
         if image_format not in FORMAT_DETAILS:
             raise ValidationError("Unsupported image content.")
         canonical_extension, mime_type = FORMAT_DETAILS[image_format]
-        if image_format == "JPEG" and extension not in {".jpg", ".jpeg"}:
+        if extension not in FORMAT_EXTENSIONS[image_format]:
             raise ValidationError("The filename extension does not match the image content.")
-        if image_format == "PNG" and extension != ".png":
-            raise ValidationError("The filename extension does not match the image content.")
+        if image_format == "GIF" and frame_count != 1:
+            raise ValidationError("Animated GIF files are not supported; upload a static image.")
         if width * height > settings.MAX_IMAGE_PIXELS:
             raise ValidationError("The image dimensions exceed the configured pixel limit.")
     except ValidationError:

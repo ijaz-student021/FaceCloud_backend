@@ -12,7 +12,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import ImageUpload, UploadBatch
+from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
 
 User = get_user_model()
 
@@ -34,6 +34,18 @@ def make_zip(entries, name="images.zip"):
 
 def image_bytes(image_format="JPEG"):
     return make_image("temporary.jpg", image_format).read()
+
+
+def make_custom_image(name, image_format, mode="RGB", size=(32, 24), color="blue", exif=None):
+    content = io.BytesIO()
+    image = Image.new(mode, size, color=color)
+    options = {"exif": exif} if exif else {}
+    image.save(content, format=image_format, **options)
+    mime_types = {
+        "JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp",
+        "BMP": "image/bmp", "TIFF": "image/tiff", "GIF": "image/gif",
+    }
+    return SimpleUploadedFile(name, content.getvalue(), content_type=mime_types[image_format])
 
 
 class ImageUploadTests(APITestCase):
@@ -148,6 +160,24 @@ class ImageUploadTests(APITestCase):
         self.assertEqual(response.data["rejected_files"], 1)
         self.assertEqual(response.data["original_archive_name"], "images.zip")
 
+    def test_zip_upload_automatically_preprocesses_webp_and_png_images(self):
+        webp = make_custom_image(
+            "transparent.webp", "WEBP", mode="RGBA", color=(255, 0, 0, 0)
+        ).read()
+        png = make_custom_image("photo.png", "PNG").read()
+        archive = make_zip([("web/transparent.webp", webp), ("png/photo.png", png)])
+
+        response = self.client.post(reverse("image-upload-zip"), {"file": archive}, format="multipart")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["accepted_files"], 2)
+        self.assertEqual(response.data["rejected_files"], 0)
+        results = ImagePreprocessingResult.objects.filter(image__batch_id=response.data["id"])
+        self.assertEqual(results.count(), 2)
+        self.assertFalse(results.exclude(status="completed").exists())
+        self.assertEqual(results.get(image__original_name="transparent.webp").output_format, "png")
+        self.assertEqual(results.get(image__original_name="photo.png").output_format, "jpeg")
+
     def test_zip_path_traversal_is_rejected(self):
         archive = make_zip([("../escape.jpg", image_bytes())])
         response = self.client.post(reverse("image-upload-zip"), {"file": archive}, format="multipart")
@@ -228,3 +258,153 @@ class ImageUploadTests(APITestCase):
         stored_path = image.original_file.path
         self.user.delete()
         self.assertFalse(os.path.exists(stored_path))
+
+    def upload_image(self, uploaded_file):
+        response = self.client.post(reverse("image-upload-single"), {"file": uploaded_file}, format="multipart")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["accepted_files"], 1)
+        return ImageUpload.objects.get(pk=response.data["images"][0]["id"])
+
+    def preprocess(self, image, **payload):
+        return self.client.post(reverse("image-preprocess", kwargs={"pk": image.pk}), payload, format="json")
+
+    def test_upload_accepts_webp_bmp_tiff_and_static_gif(self):
+        cases = [
+            ("photo.webp", "WEBP"),
+            ("photo.bmp", "BMP"),
+            ("photo.tiff", "TIFF"),
+            ("photo.gif", "GIF"),
+        ]
+        for name, image_format in cases:
+            with self.subTest(image_format=image_format):
+                response = self.client.post(
+                    reverse("image-upload-single"),
+                    {"file": make_custom_image(name, image_format)},
+                    format="multipart",
+                )
+                self.assertEqual(response.data["accepted_files"], 1)
+
+    def test_animated_gif_is_rejected(self):
+        content = io.BytesIO()
+        frames = [Image.new("RGB", (10, 10), color) for color in ("red", "blue")]
+        frames[0].save(content, format="GIF", save_all=True, append_images=frames[1:], duration=100, loop=0)
+        uploaded = SimpleUploadedFile("animated.gif", content.getvalue(), content_type="image/gif")
+        response = self.client.post(reverse("image-upload-single"), {"file": uploaded}, format="multipart")
+        self.assertEqual(response.data["rejected_files"], 1)
+        self.assertIn("Animated GIF", response.data["images"][0]["rejection_reason"])
+
+    def test_webp_is_converted_to_requested_jpeg_and_original_is_preserved(self):
+        image = self.upload_image(make_custom_image("source.webp", "WEBP", size=(40, 30)))
+        original_checksum = image.checksum_sha256
+        original_path = image.original_file.path
+        response = self.preprocess(image, output_format="jpeg", output_name="Profile Photo")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["output_format"], "jpeg")
+        self.assertEqual(response.data["output_name"], "Profile Photo.jpg")
+        result = ImagePreprocessingResult.objects.get(image=image)
+        with Image.open(result.processed_file.path) as processed:
+            self.assertEqual(processed.format, "JPEG")
+        image.refresh_from_db()
+        self.assertEqual(image.checksum_sha256, original_checksum)
+        self.assertTrue(os.path.exists(original_path))
+
+    def test_bmp_and_tiff_convert_to_png(self):
+        for name, image_format in (("source.bmp", "BMP"), ("source.tif", "TIFF")):
+            with self.subTest(image_format=image_format):
+                image = self.upload_image(make_custom_image(name, image_format))
+                response = self.preprocess(image, output_format="png")
+                self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+                self.assertEqual(response.data["output_format"], "png")
+
+    def test_auto_format_preserves_transparency_as_png(self):
+        image = self.upload_image(
+            make_custom_image("transparent.png", "PNG", mode="RGBA", color=(255, 0, 0, 0))
+        )
+        response = self.preprocess(image, output_format="auto")
+        self.assertEqual(response.data["output_format"], "png")
+        self.assertTrue(response.data["had_transparency"])
+
+    def test_transparent_png_to_jpeg_uses_configured_background(self):
+        image = self.upload_image(
+            make_custom_image("transparent.png", "PNG", mode="RGBA", size=(8, 8), color=(255, 0, 0, 0))
+        )
+        response = self.preprocess(image, output_format="jpeg")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        result = ImagePreprocessingResult.objects.get(image=image)
+        with Image.open(result.processed_file.path) as processed:
+            pixel = processed.convert("RGB").getpixel((4, 4))
+            self.assertTrue(all(channel > 240 for channel in pixel))
+
+    @override_settings(PREPROCESS_MAX_WIDTH=20, PREPROCESS_MAX_HEIGHT=20)
+    def test_preprocessing_resizes_without_upscaling_and_preserves_aspect_ratio(self):
+        large = self.upload_image(make_image("large.jpg", size=(40, 20)))
+        response = self.preprocess(large, output_format="jpeg")
+        self.assertEqual((response.data["output_width"], response.data["output_height"]), (20, 10))
+        small = self.upload_image(make_image("small.jpg", size=(10, 5)))
+        response = self.preprocess(small, output_format="jpeg")
+        self.assertEqual((response.data["output_width"], response.data["output_height"]), (10, 5))
+
+    def test_exif_orientation_is_corrected(self):
+        exif = Image.Exif()
+        exif[274] = 6
+        image = self.upload_image(make_custom_image("rotated.jpg", "JPEG", size=(30, 20), exif=exif))
+        response = self.preprocess(image, output_format="jpeg")
+        self.assertEqual((response.data["output_width"], response.data["output_height"]), (20, 30))
+
+    def test_safe_output_naming_and_idempotent_reuse(self):
+        image = self.upload_image(make_image())
+        first = self.preprocess(image, output_format="png", output_name="../unsafe\\profile?.jpg")
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(first.data["output_name"], "profile.png")
+        original_stored_name = ImagePreprocessingResult.objects.get(image=image).processed_file.name
+        second = self.preprocess(image, output_format="png", output_name="../unsafe\\profile?.jpg")
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertEqual(ImagePreprocessingResult.objects.get(image=image).processed_file.name, original_stored_name)
+
+    def test_force_reprocessing_replaces_old_processed_file(self):
+        image = self.upload_image(make_image())
+        self.preprocess(image, output_format="jpeg")
+        result = ImagePreprocessingResult.objects.get(image=image)
+        old_path = result.processed_file.path
+        response = self.preprocess(image, output_format="jpeg", force=True)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        result.refresh_from_db()
+        self.assertNotEqual(result.processed_file.path, old_path)
+        self.assertFalse(os.path.exists(old_path))
+
+    def test_preprocessing_status_download_and_cross_user_access(self):
+        image = self.upload_image(make_image())
+        self.preprocess(image, output_format="png", output_name="download")
+        detail = self.client.get(reverse("image-preprocessing-detail", kwargs={"pk": image.pk}))
+        download = self.client.get(reverse("image-preprocessing-download", kwargs={"pk": image.pk}))
+        self.assertEqual(detail.status_code, status.HTTP_200_OK)
+        self.assertEqual(download.status_code, status.HTTP_200_OK)
+        for closer in list(download._resource_closers):
+            closer()
+        download._resource_closers.clear()
+        other = User.objects.create_user(
+            username="preprocess-other", email="preprocess-other@example.com",
+            password=self.password, is_email_verified=True,
+        )
+        self.authenticate(other)
+        self.assertEqual(self.client.post(reverse("image-preprocess", kwargs={"pk": image.pk}), {}, format="json").status_code, 404)
+        self.assertEqual(self.client.get(reverse("image-preprocessing-detail", kwargs={"pk": image.pk})).status_code, 404)
+        self.assertEqual(self.client.get(reverse("image-preprocessing-download", kwargs={"pk": image.pk})).status_code, 404)
+
+    def test_batch_display_name_can_be_renamed_by_owner_only(self):
+        image = self.upload_image(make_image())
+        response = self.client.patch(
+            reverse("upload-batch-detail", kwargs={"pk": image.batch_id}),
+            {"display_name": "  Ali   Wedding Photos  "},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["display_name"], "Ali Wedding Photos")
+
+    def test_deleting_image_removes_processed_file(self):
+        image = self.upload_image(make_image())
+        self.preprocess(image, output_format="png")
+        result = ImagePreprocessingResult.objects.get(image=image)
+        processed_path = result.processed_file.path
+        self.client.delete(reverse("image-upload-detail", kwargs={"pk": image.pk}))
+        self.assertFalse(os.path.exists(processed_path))
