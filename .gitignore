@@ -1,0 +1,39 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Local databases and backups
+db.sqlite3
+db.sqlite3-*
+backups/
+*.dump
+*.sql
+
+# User uploads and generated files
+media/
+staticfiles/
+downloaded-image.*
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Temporary review/output files
+.docx_review/
+*.log
