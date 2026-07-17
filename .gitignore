@@ -36,4 +36,5 @@ Thumbs.db
 
 # Temporary review/output files
 .docx_review/
+.runtime/
 *.log

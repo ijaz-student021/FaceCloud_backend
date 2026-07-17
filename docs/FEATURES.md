@@ -23,12 +23,21 @@ Status definitions:
 | PostgreSQL 18 migration | Complete |
 | Image preprocessing and format standardization | Complete |
 | Celery preprocessing queue | Complete |
-| AI enhancement | Planned |
+| Image enhancement | Partial: OpenCV baseline complete; Zero-DCE remains |
 | Quality assessment and face validation | Planned |
 | Identity grouping and moderation | Planned |
 | Reports, analytics, and notifications | Planned |
 | Live camera detection and enhancement | Planned |
 | Frontend dashboards | Planned for frontend integration |
+
+### Detailed documentation available
+
+- [Features 01–03: Authentication, accounts, authorization, and audit](features/01-authentication-and-authorization.md)
+- [Features 04–08: Image uploads, batches, secure storage, and cleanup](features/02-image-upload-and-secure-storage.md)
+- [Feature 09: Image preprocessing and standardization](features/09-image-preprocessing-and-standardization.md)
+- [Features 10–12: Image-enhancement foundation and remaining processing work](features/10-12-image-enhancement.md)
+- [Features 27, 31, and 46: Moderator organization panel and tenant privacy](features/27-31-46-moderator-organization-panel.md)
+- [Feature 42: PostgreSQL data platform](features/42-postgresql-data-platform.md)
 
 ## 3. Identity, access, and security foundation
 
@@ -198,9 +207,11 @@ explicitly through the preprocessing API.
 - Processing-copy generation
 - Memory-conscious handling of large inputs
 
-### Feature 10: Enhancement-level selection — Planned
+### Feature 10: Enhancement-level selection — Complete backend
 
 Lets users control enhancement strength while preserving an automatic option.
+The choices, persistence, single-image API, batch API, and applied-level metadata
+are implemented. Frontend integration remains separate.
 
 - Low enhancement
 - Medium enhancement
@@ -210,9 +221,11 @@ Lets users control enhancement strength while preserving an automatic option.
 - Preview and selected-level metadata
 - Report integration
 
-### Feature 11: OpenCV enhancement — Planned
+### Feature 11: OpenCV enhancement — Complete baseline
 
 Provides a fast traditional baseline for correction and model comparison.
+The production luminance policy, separate output storage, Celery batch execution,
+owner-only APIs, secure downloads, and automated tests are implemented.
 
 - Gamma and brightness correction
 - Contrast adjustment
@@ -249,9 +262,12 @@ Allows users to judge enhancement results visually and quantitatively.
 
 ## 6. Quality and facial validation
 
-### Feature 14: Image quality assessment — Planned
+### Feature 14: Image quality assessment — Partial
 
-Calculates objective signals that determine whether an image is usable.
+Calculates objective signals that determine whether an image is usable. The
+adaptive OpenCV router measures luminance, contrast, blur, estimated noise,
+highlight/shadow clipping, and resolution. Face-specific and learned assessment
+remain.
 
 - Brightness score
 - Blur and sharpness scores
@@ -329,14 +345,15 @@ Allows users and moderators to correct automatic grouping decisions.
 
 ### Feature 20: Background batch processing — Partial
 
-Moves expensive work outside request-response execution. Preprocessing jobs are
-complete; enhancement and recognition jobs will reuse this foundation.
+Moves expensive work outside request-response execution. Preprocessing and OpenCV
+enhancement jobs are implemented; recognition, advanced retry, and cancellation
+workflows remain.
 
 - Celery preprocessing worker and Redis configuration — Complete
-- Per-image and per-batch jobs
+- Per-image and per-batch enhancement jobs — Complete
 - Controlled concurrency
 - Retry and timeout policies
-- Preprocessing failure isolation and batch counters — Complete
+- Preprocessing and enhancement failure isolation and batch counters — Complete
 - Cancellation where safe
 - CPU/GPU resource limits
 
@@ -417,15 +434,29 @@ Allows controlled external viewing without exposing a user account.
 
 ### Feature 27: Moderator review system — Partial
 
-The role and reusable permission foundation exists; the operational review workflow remains.
+The global role and reusable permission foundation exists; organization-scoped
+member management and the operational review workflow remain.
 
+- Organization-scoped moderator access
+- Active-organization member directory with no visibility into other organizations
+- Personal user content remains private and is never exposed through organization membership alone
+- Moderator access is limited to organization-owned content or content explicitly shared for review
+- Out-of-scope users and resources return a non-disclosing not-found response
+- Invite, resend, cancel, deactivate, reactivate, and remove-member workflows
+- Membership removal instead of unsafe global-account deletion
+- Protected owner, administrator, and last-owner rules
+- Organization dashboard summary and operational metrics
+- Organization batch monitoring, retry, reprocessing, and safe cancellation
+- Duplicate image, face, and identity-group review
+- Moderator assignment, deadline, and escalation notifications
+- Organization-scoped CSV, PDF, and JSON reports and exports
 - Low-confidence review queue
 - Original/enhanced comparison
-- Approve, reject, or keep in review
+- Approve, reject, correct, reprocess, escalate, or keep in review
 - Rejection-reason management
 - Identity correction
 - Duplicate-group merging
-- Moderator audit history
+- Immutable membership and moderator audit history
 
 ### Feature 28: Complete user activity timeline — Partial
 
@@ -465,13 +496,26 @@ Provides the primary workspace for normal users.
 
 ### Feature 31: Moderator dashboard — Planned frontend integration
 
-Provides a protected operational workspace for review decisions.
+Provides a protected organization-scoped workspace for membership management and
+review decisions.
 
+- Active organization and membership context
+- Active-organization member directory only; no cross-organization user discovery
+- Member invitation, activation, deactivation, and removal controls
+- Organization-owned upload, processing, identity, and report visibility
+- Explicit review-sharing workspace for user content submitted to moderators
+- No access to members' personal images, passwords, tokens, sessions, or live cameras
+- Dashboard cards for members, reviews, batches, storage, and recent activity
+- Batch and duplicate management workspaces
+- Moderator notification center
+- Protected organization report and export controls
 - Queue summary and filters
 - Image, quality, identity, and duplicate review
-- Approve/reject actions
+- Approve, reject, correct, reprocess, and escalate actions
 - Group corrections
-- Moderator activity history
+- Membership and moderator activity history
+- No access to global platform administration
+- Backend-enforced tenant filtering on every list, detail, action, download, and export API
 
 ### Feature 32: Admin analytics dashboard — Planned
 
@@ -591,6 +635,11 @@ Account and upload controls exist; advanced facial-data controls remain.
 
 - JWT, role, ownership, throttling, and secure filenames
 - Protected downloads and deletion
+- Three content scopes: personal, organization-owned, and explicitly shared for review
+- Personal content visible only to its owner unless the owner grants a specific review scope
+- Organization moderators restricted to their active organization and authorized content scopes
+- No moderator or administrator access to passwords, tokens, or live-camera feeds
+- Non-disclosing authorization failures to reduce user and resource enumeration
 - Facial-data retention policy
 - Consent records
 - Encryption-at-rest configuration
@@ -628,8 +677,7 @@ Maintains stable integration contracts and implementation documentation.
 - Root project README
 - Per-feature implementation documents
 - Upload endpoint reference
-- Database migration guide
-- Reusable documentation template
+- PostgreSQL platform documentation
 - Planned Swagger/OpenAPI integration
 - Planned live/WebSocket documentation
 
@@ -637,11 +685,30 @@ Maintains stable integration contracts and implementation documentation.
 
 Protects completed behavior from regression as the platform grows.
 
-- 50 authentication, upload, preprocessing, and queue tests passing against PostgreSQL
+- 63 authentication, upload, preprocessing, adaptive OpenCV enhancement, restoration-routing, ownership, and queue tests passing against PostgreSQL
 - Django system and migration-drift checks
 - Security, ownership, ZIP, and cleanup tests
 - Manual registration, token, profile, and real upload verification
 - Planned enhancement, face, queue, moderator, storage, and live-load tests
+
+### Feature 46: Organization and tenant management — Planned
+
+Separates customer organizations and provides safe organization-level ownership,
+membership, moderation, and data access.
+
+- Organization creation, status, subscription, quota, and owner management
+- Owner, moderator, and member organization roles
+- Secure, expiring member invitations
+- Organization-scoped uploads, images, jobs, groups, reports, and reviews
+- Explicit content ownership and visibility fields for personal, organization-owned, and review-shared data
+- Organization membership does not automatically grant access to a member's personal content
+- Time-bounded, revocable review access where temporary moderator visibility is required
+- Member activation, deactivation, removal, and resource-retention policies
+- Prevention of cross-organization access and face matching by default
+- Queryset, object-permission, download, report, and background-task tenant isolation
+- Organization audit history
+- Safe backfill of existing users and content into personal organizations
+- Global deletion controlled by the account owner or FaceCloud administrator
 
 ## 14. Optional future extensions
 
@@ -660,26 +727,23 @@ The following items remain outside the required core until the preceding feature
 
 ## 15. Recommended implementation sequence
 
-1. Image preprocessing and standardization
-2. OpenCV enhancement baseline
-3. Zero-DCE integration
-4. Quality assessment
-5. Face detection and validation
-6. Processing state model
-7. Celery and Redis background processing
-8. Live batch progress
-9. Reports and result downloads
-10. Duplicate detection
-11. Face embeddings and identity grouping
-12. Identity management and moderator review
-13. Notifications and full activity timeline
-14. Admin analytics and system health
-15. Uploaded-image model comparison
-16. Live camera detection
-17. Real-time enhancement and communication
-18. Live comparison page
-19. Private cloud storage
-20. Production security, load testing, and deployment
+1. Zero-DCE integration
+2. Quality assessment
+3. Face detection and validation
+4. Live batch progress, retry, and cancellation
+5. Reports and result downloads
+6. Duplicate detection
+7. Face embeddings and identity grouping
+8. Organization and tenant management
+9. Identity management and organization-scoped moderator review
+10. Notifications and full activity timeline
+11. Admin analytics and system health
+12. Uploaded-image model comparison
+13. Live camera detection
+14. Real-time enhancement and communication
+15. Live comparison page
+16. Private cloud storage
+17. Production security, load testing, and deployment
 
 ## 16. Documentation rule
 
@@ -691,4 +755,4 @@ Every implemented feature must finish with:
 4. Automated tests
 5. Manual or operational verification
 6. A separate document under `docs/features/`
-7. An updated status in this catalogue and `docs/README.md`
+7. An updated status in this catalogue and its dedicated file under `docs/features/`

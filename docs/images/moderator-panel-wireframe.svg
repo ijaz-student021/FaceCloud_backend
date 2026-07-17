@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="2200" viewBox="0 0 1600 2200" role="img" aria-labelledby="title desc">
+  <title id="title">FaceCloud Organization Moderator Panel Workflow</title>
+  <desc id="desc">Wireframe flowchart for moderator login, organization authorization, dashboard, member management, review and duplicate management, batch management, audit logging, notifications, and reports.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L12,6 L0,12 z" fill="#ffffff"/>
+    </marker>
+    <style>
+      .box { fill: #ffffff; stroke: #ffffff; stroke-width: 3; }
+      .decision { fill: #ffffff; stroke: #ffffff; stroke-width: 3; }
+      .line { fill: none; stroke: #ffffff; stroke-width: 4; marker-end: url(#arrow); }
+      .branch { fill: none; stroke: #ffffff; stroke-width: 4; }
+      .text { fill: #000000; font-family: Arial, Helvetica, sans-serif; font-size: 20px; font-weight: 700; text-anchor: middle; dominant-baseline: middle; }
+      .small { font-size: 20px; }
+      .label { fill: #ffffff; font-family: Arial, Helvetica, sans-serif; font-size: 20px; font-weight: 700; paint-order: stroke; stroke: #000000; stroke-width: 7; stroke-linejoin: round; }
+      .title { fill: #ffffff; font-family: Arial, Helvetica, sans-serif; font-size: 20px; font-weight: 700; text-anchor: middle; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="2200" fill="#000000"/>
+  <text x="800" y="45" class="title">FaceCloud Organization Moderator Panel</text>
+
+  <rect x="610" y="80" width="380" height="80" class="box"/>
+  <text x="800" y="120" class="text">Open Moderator Panel</text>
+  <path d="M800 160 L800 210" class="line"/>
+
+  <rect x="650" y="215" width="300" height="80" class="box"/>
+  <text x="800" y="255" class="text">Moderator Login</text>
+  <path d="M800 295 L800 350" class="line"/>
+
+  <polygon points="800,350 1010,500 800,650 590,500" class="decision"/>
+  <text x="800" y="475" class="text small">
+    <tspan x="800" dy="0">JWT Valid and Active</tspan>
+    <tspan x="800" dy="32">Organization Moderator?</tspan>
+  </text>
+
+  <path d="M590 500 L280 500 L280 590" class="line"/>
+  <text x="540" y="480" class="label">No</text>
+  <rect x="120" y="595" width="320" height="80" class="box"/>
+  <text x="280" y="635" class="text">Access Denied</text>
+  <path d="M280 675 L280 740" class="line"/>
+  <rect x="190" y="745" width="180" height="70" class="box"/>
+  <text x="280" y="780" class="text">End</text>
+
+  <path d="M800 650 L800 720" class="line"/>
+  <text x="825" y="690" class="label">Yes</text>
+  <rect x="570" y="725" width="460" height="90" class="box"/>
+  <text x="800" y="770" class="text">Organization Moderator Dashboard</text>
+  <path d="M800 815 L800 885" class="line"/>
+
+  <polygon points="800,885 1010,1030 800,1175 590,1030" class="decision"/>
+  <text x="800" y="1010" class="text small">
+    <tspan x="800" dy="0">Choose Organization</tspan>
+    <tspan x="800" dy="32">Management Area</tspan>
+  </text>
+
+  <path d="M590 1030 L270 1030 L270 1130" class="line"/>
+  <path d="M800 1175 L800 1265" class="line"/>
+  <path d="M1010 1030 L1330 1030 L1330 1130" class="line"/>
+  <text x="300" y="1000" class="label">Members</text>
+  <text x="825" y="1215" class="label">Reviews</text>
+  <text x="1215" y="1000" class="label">Batches</text>
+
+  <rect x="70" y="1135" width="400" height="90" class="box"/>
+  <text x="270" y="1165" class="text small">
+    <tspan x="270" dy="0">View Active Organization</tspan>
+    <tspan x="270" dy="28">Members Only</tspan>
+  </text>
+  <path d="M270 1225 L270 1290" class="line"/>
+  <rect x="55" y="1295" width="430" height="120" class="box"/>
+  <text x="270" y="1335" class="text small">
+    <tspan x="270" dy="0">Invite, Resend, Deactivate,</tspan>
+    <tspan x="270" dy="32">Reactivate or Remove Member</tspan>
+  </text>
+  <path d="M270 1415 L270 1490" class="line"/>
+  <polygon points="270,1490 430,1600 270,1710 110,1600" class="decision"/>
+  <text x="270" y="1585" class="text small">
+    <tspan x="270" dy="0">Target is Normal</tspan>
+    <tspan x="270" dy="30">Organization Member?</tspan>
+  </text>
+  <path d="M110 1600 L25 1600 L25 1780 L130 1780" class="line"/>
+  <text x="70" y="1575" class="label">No</text>
+  <rect x="135" y="1740" width="330" height="80" class="box"/>
+  <text x="300" y="1780" class="text small">Block and Show Reason</text>
+  <path d="M270 1710 L270 1840 L560 1840" class="line"/>
+  <text x="290" y="1750" class="label">Yes</text>
+
+  <rect x="575" y="1270" width="450" height="90" class="box"/>
+  <text x="800" y="1315" class="text">Review and Duplicate Queue</text>
+  <path d="M800 1360 L800 1425" class="line"/>
+  <rect x="560" y="1430" width="480" height="120" class="box"/>
+  <text x="800" y="1470" class="text small">
+    <tspan x="800" dy="0">View Image, Quality Scores,</tspan>
+    <tspan x="800" dy="32">Faces and Duplicate Evidence</tspan>
+  </text>
+  <path d="M800 1550 L800 1610" class="line"/>
+  <polygon points="800,1610 975,1730 800,1850 625,1730" class="decision"/>
+  <text x="800" y="1710" class="text small">
+    <tspan x="800" dy="0">Moderator</tspan>
+    <tspan x="800" dy="30">Decision</tspan>
+  </text>
+  <path d="M625 1730 L545 1730 L545 1840 L650 1840" class="line"/>
+  <text x="510" y="1705" class="label">Approve</text>
+  <path d="M975 1730 L1055 1730 L1055 1840 L950 1840" class="line"/>
+  <text x="1000" y="1705" class="label">Reject / Correct</text>
+
+  <rect x="1130" y="1135" width="400" height="90" class="box"/>
+  <text x="1330" y="1180" class="text">Batch Management</text>
+  <path d="M1330 1225 L1330 1290" class="line"/>
+  <rect x="1115" y="1295" width="430" height="120" class="box"/>
+  <text x="1330" y="1335" class="text small">
+    <tspan x="1330" dy="0">Monitor, Retry, Reprocess,</tspan>
+    <tspan x="1330" dy="32">Cancel or Download Report</tspan>
+  </text>
+  <path d="M1330 1415 L1330 1490" class="line"/>
+  <polygon points="1330,1490 1490,1600 1330,1710 1170,1600" class="decision"/>
+  <text x="1330" y="1585" class="text small">
+    <tspan x="1330" dy="0">Action Allowed and</tspan>
+    <tspan x="1330" dy="30">Job Safe to Change?</tspan>
+  </text>
+  <path d="M1490 1600 L1570 1600 L1570 1780 L1465 1780" class="line"/>
+  <text x="1505" y="1575" class="label">No</text>
+  <rect x="1135" y="1740" width="330" height="80" class="box"/>
+  <text x="1300" y="1780" class="text small">Block and Show Reason</text>
+  <path d="M1330 1710 L1330 1840 L1040 1840" class="line"/>
+  <text x="1350" y="1750" class="label">Yes</text>
+
+  <rect x="560" y="1845" width="480" height="90" class="box"/>
+  <text x="800" y="1890" class="text">Apply Action and Update Status</text>
+  <path d="M800 1935 L800 1985" class="line"/>
+  <rect x="600" y="1990" width="400" height="80" class="box"/>
+  <text x="800" y="2030" class="text">Add Immutable Audit Entry</text>
+  <path d="M800 2070 L800 2110" class="line"/>
+  <rect x="425" y="2115" width="750" height="70" class="box"/>
+  <text x="800" y="2150" class="text small">Send Notifications and Generate Authorized Reports</text>
+</svg>

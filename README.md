@@ -60,4 +60,5 @@ python manage.py makemigrations --check --dry-run
 
 ## Documentation
 
-Feature-level implementation documentation is maintained in [`docs/features`](docs/features). The documentation index and database migration notes are available in [`docs/README.md`](docs/README.md).
+The authoritative feature catalogue is [`docs/FEATURES.md`](docs/FEATURES.md).
+Detailed documentation for implemented or materially designed features is maintained in [`docs/features`](docs/features).

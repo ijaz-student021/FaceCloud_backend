@@ -7,7 +7,7 @@ redis
 django-celery-results
 boto3
 django-storages
-opencv-python-headless
+opencv-contrib-python-headless==5.0.0.93
 numpy
 Pillow
 drf-spectacular

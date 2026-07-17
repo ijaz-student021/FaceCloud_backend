@@ -1,4 +1,4 @@
-# Feature 03: Image Preprocessing and Standardization
+# Feature 09: Image Preprocessing and Standardization
 
 ## Status
 
@@ -31,7 +31,9 @@ Upload -> content validation -> format gateway -> EXIF orientation correction
   composited over the configured background.
 - EXIF orientation is applied before output.
 - Aspect ratio is preserved and smaller images are not enlarged.
-- Output is bounded by the configured maximum width and height.
+- Output is bounded by the configured maximum width and height. The default is
+  4096×4096 with JPEG quality 95 to preserve normal camera detail while still
+  protecting memory for exceptionally large inputs.
 - RGB, RGBA, grayscale, palette, and CMYK inputs are normalized safely.
 - The generated copy does not retain source EXIF or GPS metadata.
 
