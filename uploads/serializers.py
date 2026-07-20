@@ -1,6 +1,8 @@
 from rest_framework import serializers
 
 from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
+from validation.models import FaceValidationResult
+from quality_control.models import ImageQualityDecision
 
 
 class ImagePreprocessingResultSerializer(serializers.ModelSerializer):
@@ -55,6 +57,82 @@ class ImageUploadSerializer(serializers.ModelSerializer):
         except ImagePreprocessingResult.DoesNotExist:
             return None
         return ImagePreprocessingResultSerializer(result, context=self.context).data
+
+
+class MyImageSerializer(ImageUploadSerializer):
+    batch_display_name = serializers.CharField(source="batch.display_name", read_only=True)
+    upload_type = serializers.CharField(source="batch.upload_type", read_only=True)
+    display_status = serializers.SerializerMethodField()
+    latest_enhancement = serializers.SerializerMethodField()
+    face_validation = serializers.SerializerMethodField()
+    quality_decision = serializers.SerializerMethodField()
+
+    class Meta(ImageUploadSerializer.Meta):
+        fields = ImageUploadSerializer.Meta.fields + [
+            "batch_display_name", "upload_type", "display_status",
+            "latest_enhancement", "face_validation", "quality_decision", "updated_at",
+        ]
+
+    @staticmethod
+    def _latest_result(obj):
+        prefetched = getattr(obj, "ordered_enhancement_results", None)
+        if prefetched is not None:
+            return prefetched[0] if prefetched else None
+        return obj.enhancement_results.order_by("-created_at").first()
+
+    def get_latest_enhancement(self, obj):
+        result = self._latest_result(obj)
+        if result is None:
+            return None
+        from enhancement.serializers import ImageEnhancementResultSerializer
+        return ImageEnhancementResultSerializer(result, context=self.context).data
+
+    def get_face_validation(self, obj):
+        try:
+            result = obj.face_validation
+        except FaceValidationResult.DoesNotExist:
+            return None
+        from validation.serializers import FaceValidationResultSerializer
+        return FaceValidationResultSerializer(result).data
+
+    def get_quality_decision(self, obj):
+        try:
+            result = obj.quality_decision
+        except ImageQualityDecision.DoesNotExist:
+            return None
+        from quality_control.serializers import ImageQualityDecisionSerializer
+        return ImageQualityDecisionSerializer(result).data
+
+    def get_display_status(self, obj):
+        if obj.status == "rejected":
+            return "rejected"
+        try:
+            quality = obj.quality_decision
+        except ImageQualityDecision.DoesNotExist:
+            quality = None
+        if quality:
+            if quality.status in {"pending", "queued", "processing", "failed"}:
+                return "quality_failed" if quality.status == "failed" else "quality_processing"
+            if quality.decision in {"rejected", "needs_review"}:
+                return quality.decision
+        try:
+            validation = obj.face_validation
+        except FaceValidationResult.DoesNotExist:
+            validation = None
+        if validation and validation.decision in {"rejected", "needs_review", "failed"}:
+            return validation.decision
+        result = self._latest_result(obj)
+        if result is not None:
+            return result.status
+        if quality and quality.status == "completed" and quality.decision == "accepted":
+            return "accepted"
+        try:
+            preprocessing = obj.preprocessing_result
+        except ImagePreprocessingResult.DoesNotExist:
+            return "uploaded"
+        if preprocessing.status == "completed":
+            return "ready"
+        return "preprocessing" if preprocessing.status in {"pending", "processing"} else "failed"
 
 
 class UploadBatchSerializer(serializers.ModelSerializer):

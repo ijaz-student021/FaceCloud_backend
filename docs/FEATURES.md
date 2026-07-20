@@ -23,9 +23,10 @@ Status definitions:
 | PostgreSQL 18 migration | Complete |
 | Image preprocessing and format standardization | Complete |
 | Celery preprocessing queue | Complete |
-| Image enhancement | Partial: OpenCV baseline complete; Zero-DCE remains |
-| Quality assessment and face validation | Planned |
+| Image enhancement | Complete backend: OpenCV, EDSR, and official Zero-DCE inference |
+| Quality assessment, face validation, and final decisions | Complete backend baseline |
 | Identity grouping and moderation | Planned |
+| User dashboard statistics and My Images API | Complete backend; frontend integration remains |
 | Reports, analytics, and notifications | Planned |
 | Live camera detection and enhancement | Planned |
 | Frontend dashboards | Planned for frontend integration |
@@ -37,7 +38,11 @@ Status definitions:
 - [Feature 09: Image preprocessing and standardization](features/09-image-preprocessing-and-standardization.md)
 - [Features 10–12: Image-enhancement foundation and remaining processing work](features/10-12-image-enhancement.md)
 - [Features 27, 31, and 46: Moderator organization panel and tenant privacy](features/27-31-46-moderator-organization-panel.md)
+- [Feature 30: User dashboard statistics and My Images API](features/30-user-dashboard-and-my-images.md)
+- [Feature 15: Face detection and validation](features/15-face-detection-and-validation.md)
+- [Features 14–16: Quality scoring and final decision workflow](features/14-16-quality-decision-workflow.md)
 - [Feature 42: PostgreSQL data platform](features/42-postgresql-data-platform.md)
+- [Features 20–21: Background processing and live batch progress](features/20-21-live-batch-progress.md)
 
 ## 3. Identity, access, and security foundation
 
@@ -235,22 +240,24 @@ owner-only APIs, secure downloads, and automated tests are implemented.
 - CPU-based execution
 - Processing-time and quality measurements
 
-### Feature 12: Zero-DCE AI enhancement — Planned
+### Feature 12: Zero-DCE AI enhancement — Complete backend
 
 Uses deep learning to improve low-light images while preserving facial detail.
 
-- Model loading and warm-up
-- CPU and GPU execution paths
-- Adaptive low-light correction
-- Overexposure control
+- Official Epoch99 checkpoint exported reproducibly to ONNX
+- Lightweight OpenCV-DNN CPU inference
+- Low-light routing with adaptive OpenCV fallback
+- Quality guard against destructive luminance or clipping growth
 - Batch inference
-- Model/version metadata
+- Provider, model, curve, dimensions, license, and fallback metadata
 - Enhanced-image persistence
-- Failure and timeout handling
+- Safe missing/corrupt-model failure handling
 
-### Feature 13: Before-and-after comparison — Planned
+### Feature 13: Before-and-after comparison — Partial backend
 
 Allows users to judge enhancement results visually and quantitatively.
+Owner-scoped original, standardized, and enhanced URLs plus normalized quality
+metadata are implemented. The interactive frontend comparison remains.
 
 - Original and enhanced previews
 - Side-by-side comparison
@@ -262,12 +269,11 @@ Allows users to judge enhancement results visually and quantitatively.
 
 ## 6. Quality and facial validation
 
-### Feature 14: Image quality assessment — Partial
+### Feature 14: Image quality assessment — Complete backend
 
 Calculates objective signals that determine whether an image is usable. The
 adaptive OpenCV router measures luminance, contrast, blur, estimated noise,
-highlight/shadow clipping, and resolution. Face-specific and learned assessment
-remain.
+highlight/shadow clipping, resolution, normalized scores, and final decisions.
 
 - Brightness score
 - Blur and sharpness scores
@@ -277,20 +283,23 @@ remain.
 - Configurable thresholds
 - Overall quality score
 
-### Feature 15: Face detection and validation — Planned
+### Feature 15: Face detection and validation — Complete baseline
 
-Ensures the image contains exactly one suitable, visible face.
+Validates individual portraits and supported group images containing up to five people.
+
+The OpenCV baseline, persisted decisions, automatic execution, owner-only API,
+My Images and dashboard integration, review-safe decisions, and tests are complete.
 
 - Face detection and count
-- No-face and multiple-face rejection
+- No-face review and support for group images containing 3–5 people
 - Face-size and position validation
-- Partial-face and visibility checks
+- Boundary and minimum-size checks
 - Detection confidence
 - Clear validation feedback
 
-### Feature 16: Processing status workflow — Planned
+### Feature 16: Processing status workflow — Complete quality-decision foundation
 
-Tracks each image through the complete processing lifecycle.
+Tracks preprocessing, face validation, quality analysis, and final quality decisions.
 
 - Uploaded
 - Pending
@@ -301,7 +310,7 @@ Tracks each image through the complete processing lifecycle.
 - Failed
 - Completed
 - Cancelled
-- Status history, timestamps, and reasons
+- Current status, timestamps, task ID, and all decision reasons
 
 ### Feature 17: Duplicate image and face detection — Planned
 
@@ -357,7 +366,7 @@ workflows remain.
 - Cancellation where safe
 - CPU/GPU resource limits
 
-### Feature 21: Live batch progress tracker — Planned
+### Feature 21: Live batch progress tracker — Complete backend
 
 Reports real processing progress for multiple-image and ZIP jobs.
 
@@ -368,6 +377,9 @@ Reports real processing progress for multiple-image and ZIP jobs.
 - Estimated completion time
 - Live frontend updates
 - Final completion state
+- Persistent per-image stage, percentage, timestamps, and failure details
+- Owner-scoped progress, failed-image retry, and cooperative cancellation APIs
+- Polling-ready updates for frontend refresh every 2–3 seconds
 
 ## 9. Results, reports, and distribution
 
@@ -685,7 +697,7 @@ Maintains stable integration contracts and implementation documentation.
 
 Protects completed behavior from regression as the platform grows.
 
-- 63 authentication, upload, preprocessing, adaptive OpenCV enhancement, restoration-routing, ownership, and queue tests passing against PostgreSQL
+- 64 authentication, upload, preprocessing, adaptive OpenCV enhancement, normalized-quality, restoration-routing, ownership, and queue tests passing against PostgreSQL
 - Django system and migration-drift checks
 - Security, ownership, ZIP, and cleanup tests
 - Manual registration, token, profile, and real upload verification
@@ -727,23 +739,19 @@ The following items remain outside the required core until the preceding feature
 
 ## 15. Recommended implementation sequence
 
-1. Zero-DCE integration
-2. Quality assessment
-3. Face detection and validation
-4. Live batch progress, retry, and cancellation
-5. Reports and result downloads
-6. Duplicate detection
-7. Face embeddings and identity grouping
-8. Organization and tenant management
-9. Identity management and organization-scoped moderator review
-10. Notifications and full activity timeline
-11. Admin analytics and system health
-12. Uploaded-image model comparison
-13. Live camera detection
-14. Real-time enhancement and communication
-15. Live comparison page
-16. Private cloud storage
-17. Production security, load testing, and deployment
+1. Processing reports and secure result downloads
+2. Duplicate detection
+3. Face embeddings and identity grouping
+4. Organization and tenant management
+5. Identity management and organization-scoped moderator review
+6. Notifications and full activity timeline
+7. Admin analytics and system health
+8. Uploaded-image model comparison
+9. Live camera detection
+10. Real-time enhancement and communication
+11. Live comparison page
+12. Private cloud storage
+13. Production security, load testing, and deployment
 
 ## 16. Documentation rule
 

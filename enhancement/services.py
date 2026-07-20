@@ -18,8 +18,10 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from uploads.models import ImagePreprocessingResult
+from quality_control.models import ImageQualityDecision
 
 from .models import EnhancementLevel, EnhancementStatus, ImageEnhancementResult
+from .zero_dce import ZeroDCEUnavailable, enhance_with_zero_dce
 
 
 LEVEL_POLICIES = {
@@ -100,6 +102,39 @@ def analyze_image_quality(image):
         "highlight_clipping_percent": round(highlight_clipping, 3),
         "defects": defects,
         "needs_ai_restoration": restoration_required,
+    }
+
+
+def compare_image_quality(source, output):
+    """Compare images at the source pixel grid to avoid resolution-biased scores."""
+    source_height, source_width = source.shape[:2]
+    if output.shape[:2] != (source_height, source_width):
+        comparable_output = cv2.resize(
+            output,
+            (source_width, source_height),
+            interpolation=cv2.INTER_AREA,
+        )
+    else:
+        comparable_output = output
+    before = analyze_image_quality(source)
+    after = analyze_image_quality(comparable_output)
+    metric_names = (
+        "mean_luminance",
+        "contrast_stddev",
+        "laplacian_sharpness",
+        "estimated_noise",
+        "shadow_clipping_percent",
+        "highlight_clipping_percent",
+    )
+    return {
+        "method": "source_resolution_normalized_v1",
+        "reference_dimensions": [source_width, source_height],
+        "before": before,
+        "after": after,
+        "deltas": {
+            name: round(after[name] - before[name], 3)
+            for name in metric_names
+        },
     }
 
 
@@ -216,22 +251,38 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
 
     input_quality = analyze_image_quality(image)
     working_image, restoration = restore_low_resolution(image, input_quality)
-    lab = cv2.cvtColor(working_image, cv2.COLOR_BGR2LAB)
-    luminance, channel_a, channel_b = cv2.split(lab)
+    guard_reference = working_image.copy()
+    zero_dce = {
+        "requested": any(defect in input_quality["defects"] for defect in ("low_light", "severe_low_light")),
+        "applied": False, "fallback_reason": "",
+    }
+    if zero_dce["requested"] and settings.ZERO_DCE_ENABLED:
+        try:
+            working_image, zero_metadata = enhance_with_zero_dce(working_image)
+            zero_dce.update(zero_metadata)
+            zero_dce["applied"] = True
+        except ZeroDCEUnavailable as error:
+            zero_dce["fallback_reason"] = str(error)
+    elif zero_dce["requested"]:
+        zero_dce["fallback_reason"] = "Zero-DCE is disabled."
     mean_luminance = input_quality["mean_luminance"]
     applied_level = _auto_level(mean_luminance) if requested_level == EnhancementLevel.AUTO else requested_level
     policy = _adapt_policy(LEVEL_POLICIES[applied_level], input_quality)
-
-    corrected = cv2.LUT(luminance, _gamma_lut(policy["gamma"]))
-    clahe = cv2.createCLAHE(
-        clipLimit=policy["clahe_clip"],
-        tileGridSize=(policy["clahe_grid"], policy["clahe_grid"]),
-    )
-    corrected = clahe.apply(corrected)
-    corrected = cv2.addWeighted(
-        luminance, 1.0 - policy["blend"], corrected, policy["blend"], 0
-    )
-    enhanced = cv2.cvtColor(cv2.merge((corrected, channel_a, channel_b)), cv2.COLOR_LAB2BGR)
+    if zero_dce["applied"]:
+        enhanced = working_image
+    else:
+        lab = cv2.cvtColor(working_image, cv2.COLOR_BGR2LAB)
+        luminance, channel_a, channel_b = cv2.split(lab)
+        corrected = cv2.LUT(luminance, _gamma_lut(policy["gamma"]))
+        clahe = cv2.createCLAHE(
+            clipLimit=policy["clahe_clip"],
+            tileGridSize=(policy["clahe_grid"], policy["clahe_grid"]),
+        )
+        corrected = clahe.apply(corrected)
+        corrected = cv2.addWeighted(
+            luminance, 1.0 - policy["blend"], corrected, policy["blend"], 0
+        )
+        enhanced = cv2.cvtColor(cv2.merge((corrected, channel_a, channel_b)), cv2.COLOR_LAB2BGR)
 
     if policy["denoise"]:
         enhanced = cv2.fastNlMeansDenoisingColored(
@@ -244,10 +295,16 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
         )
 
     enhanced, output_quality, guard = _quality_guard(
-        working_image, enhanced, applied_level, analyze_image_quality(working_image)
+        guard_reference, enhanced, applied_level, analyze_image_quality(guard_reference)
     )
+    normalized_comparison = compare_image_quality(image, enhanced)
 
     warnings = []
+    if zero_dce["requested"] and not zero_dce["applied"]:
+        warnings.append(
+            "Zero-DCE was requested for low light but was unavailable; "
+            "the adaptive OpenCV fallback was used."
+        )
     if input_quality["needs_ai_restoration"] and not restoration["applied"]:
         warnings.append(
             "Severe blur or low resolution requires an AI restoration model; "
@@ -257,12 +314,14 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
     parameters = {
         **policy,
         "mean_input_luminance": round(mean_luminance, 2),
-        "algorithm": "opencv_adaptive_restoration_router_v2",
-        "colour_policy": "preserve_lab_chroma_channels",
+        "algorithm": "zero_dce_hybrid_v1" if zero_dce["applied"] else "opencv_adaptive_restoration_router_v2",
+        "colour_policy": "learned_rgb_curves" if zero_dce["applied"] else "preserve_lab_chroma_channels",
         "quality_before": input_quality,
         "quality_after": output_quality,
+        "quality_comparison": normalized_comparison,
         "quality_guard": guard,
         "restoration": restoration,
+        "zero_dce": zero_dce,
         "warnings": warnings,
     }
     return enhanced, applied_level, parameters
@@ -306,6 +365,14 @@ def create_enhancement_result(image, requested_level=EnhancementLevel.AUTO, batc
         raise ValidationError("The image must finish preprocessing before enhancement.") from error
     if preprocessing.status != "completed" or not preprocessing.processed_file:
         raise ValidationError("The image must finish preprocessing before enhancement.")
+    try:
+        quality = image.quality_decision
+    except ImageQualityDecision.DoesNotExist:
+        quality = None
+    if quality and quality.status == "completed" and quality.decision != "accepted":
+        raise ValidationError(
+            "This image must be accepted by the quality workflow before enhancement."
+        )
     return ImageEnhancementResult.objects.create(
         owner=image.owner,
         image=image,

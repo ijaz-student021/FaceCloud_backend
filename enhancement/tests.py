@@ -16,10 +16,12 @@ from uploads.models import ImagePreprocessingResult, ImageUpload, UploadBatch
 from .models import EnhancementBatchJob, EnhancementLevel, ImageEnhancementResult
 from .services import (
     analyze_image_quality,
+    compare_image_quality,
     enhance_bgr,
     process_enhancement_result,
     restore_low_resolution,
 )
+from .tasks import process_enhancement_image
 
 User = get_user_model()
 
@@ -102,7 +104,7 @@ class EnhancementModelTests(TestCase):
 
 
 class OpenCVPolicyTests(SimpleTestCase):
-    @override_settings(AI_RESTORATION_ENABLED=False)
+    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=False)
     def test_auto_selects_high_for_dark_image_and_improves_luminance(self):
         source = np.full((80, 80, 3), 35, dtype=np.uint8)
         enhanced, level, parameters = enhance_bgr(source, EnhancementLevel.AUTO)
@@ -110,6 +112,38 @@ class OpenCVPolicyTests(SimpleTestCase):
         self.assertEqual(level, EnhancementLevel.HIGH)
         self.assertGreater(float(np.mean(enhanced)), float(np.mean(source)))
         self.assertEqual(parameters["colour_policy"], "preserve_lab_chroma_channels")
+
+    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True)
+    @patch("enhancement.services.enhance_with_zero_dce")
+    def test_dark_image_routes_through_genuine_zero_dce_provider(self, zero_dce):
+        source = np.full((80, 80, 3), 35, dtype=np.uint8)
+        zero_dce.return_value = (
+            np.full_like(source, 95),
+            {"provider": "official_zero_dce_onnx_opencv_dnn", "curve_iterations": 8},
+        )
+
+        enhanced, level, parameters = enhance_bgr(source, EnhancementLevel.AUTO)
+
+        self.assertEqual(level, EnhancementLevel.HIGH)
+        self.assertTrue(parameters["zero_dce"]["applied"])
+        self.assertEqual(parameters["algorithm"], "zero_dce_hybrid_v1")
+        self.assertEqual(parameters["colour_policy"], "learned_rgb_curves")
+        self.assertGreater(float(enhanced.mean()), float(source.mean()))
+
+    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True)
+    @patch("enhancement.services.enhance_with_zero_dce")
+    def test_zero_dce_failure_uses_auditable_opencv_fallback(self, zero_dce):
+        from enhancement.zero_dce import ZeroDCEUnavailable
+
+        zero_dce.side_effect = ZeroDCEUnavailable("model missing")
+        source = np.full((80, 80, 3), 35, dtype=np.uint8)
+
+        enhanced, _, parameters = enhance_bgr(source, EnhancementLevel.AUTO)
+
+        self.assertFalse(parameters["zero_dce"]["applied"])
+        self.assertEqual(parameters["zero_dce"]["fallback_reason"], "model missing")
+        self.assertEqual(parameters["algorithm"], "opencv_adaptive_restoration_router_v2")
+        self.assertGreater(float(enhanced.mean()), float(source.mean()))
 
     def test_well_lit_image_uses_low_policy(self):
         source = np.full((40, 40, 3), 190, dtype=np.uint8)
@@ -133,6 +167,19 @@ class OpenCVPolicyTests(SimpleTestCase):
         self.assertIn("quality_before", parameters)
         self.assertIn("quality_after", parameters)
         self.assertIn("quality_guard", parameters)
+
+    def test_quality_comparison_normalizes_output_to_source_dimensions(self):
+        source = np.zeros((90, 120, 3), dtype=np.uint8)
+        cv2.rectangle(source, (20, 20), (100, 70), (220, 220, 220), 2)
+        enlarged = cv2.resize(source, (240, 180), interpolation=cv2.INTER_CUBIC)
+
+        comparison = compare_image_quality(source, enlarged)
+
+        self.assertEqual(comparison["method"], "source_resolution_normalized_v1")
+        self.assertEqual(comparison["reference_dimensions"], [120, 90])
+        self.assertEqual(comparison["before"]["width"], 120)
+        self.assertEqual(comparison["after"]["width"], 120)
+        self.assertIn("laplacian_sharpness", comparison["deltas"])
 
     @override_settings(AI_RESTORATION_ENABLED=True)
     @patch("enhancement.services._load_edsr_model")
@@ -173,7 +220,7 @@ class OpenCVPolicyTests(SimpleTestCase):
         self.assertTrue(parameters["warnings"])
 
 
-@override_settings(MEDIA_ROOT=tempfile.mkdtemp())
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), AI_RESTORATION_ENABLED=False)
 class EnhancementProcessingAndAPITests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(
@@ -211,15 +258,23 @@ class EnhancementProcessingAndAPITests(TestCase):
         self.assertNotEqual(result.enhanced_file.name, self.preprocessing.processed_file.name)
         self.assertGreater(result.output_file_size, 0)
 
-    def test_owner_can_enhance_and_other_user_cannot_read_or_download(self):
+    @patch("enhancement.views.process_enhancement_image.apply_async")
+    def test_owner_can_queue_enhancement_and_other_user_cannot_read_or_download(
+        self, apply_async
+    ):
         create = self.client.post(
             reverse("enhancement:image-enhance", kwargs={"image_id": self.image.pk}),
             {"level": "medium"}, format="json",
         )
-        self.assertEqual(create.status_code, 201)
+        self.assertEqual(create.status_code, 202)
         result_id = create.data["id"]
-        self.assertEqual(create.data["status"], "completed")
-        self.assertIsNotNone(create.data["download_url"])
+        self.assertEqual(create.data["status"], "queued")
+        self.assertTrue(create.data["task_id"])
+        self.assertIsNone(create.data["download_url"])
+        apply_async.assert_called_once()
+
+        task_result = process_enhancement_image.run(result_id)
+        self.assertEqual(task_result["status"], "completed")
 
         self.client.force_authenticate(self.other)
         detail = self.client.get(reverse("enhancement:result-detail", kwargs={"pk": result_id}))

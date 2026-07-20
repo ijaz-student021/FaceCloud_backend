@@ -123,6 +123,7 @@ class ImageEnhancementResult(models.Model):
     output_height = models.PositiveIntegerField(null=True, blank=True)
     output_file_size = models.PositiveBigIntegerField(default=0)
     processing_duration_ms = models.PositiveIntegerField(default=0)
+    task_id = models.CharField(max_length=255, blank=True, db_index=True)
     applied_parameters = models.JSONField(default=dict, blank=True)
     failure_reason = models.TextField(blank=True)
     started_at = models.DateTimeField(null=True, blank=True)

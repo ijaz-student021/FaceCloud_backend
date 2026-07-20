@@ -17,8 +17,8 @@ from .serializers import (
     EnhancementRequestSerializer,
     ImageEnhancementResultSerializer,
 )
-from .services import create_enhancement_result, process_enhancement_result
-from .tasks import process_enhancement_batch
+from .services import create_enhancement_result
+from .tasks import process_enhancement_batch, process_enhancement_image
 
 
 class ImageEnhanceView(APIView):
@@ -35,10 +35,25 @@ class ImageEnhanceView(APIView):
             result = create_enhancement_result(image, payload.validated_data["level"])
         except IntegrityError as error:
             raise ValidationError("This image already has an active enhancement operation.") from error
-        result = process_enhancement_result(result)
+        task_id = uuid.uuid4().hex
+        result.status = EnhancementStatus.QUEUED
+        result.task_id = task_id
+        result.save(update_fields=["status", "task_id", "updated_at"])
+        try:
+            process_enhancement_image.apply_async(args=[result.pk], task_id=task_id)
+        except Exception:
+            result.status = EnhancementStatus.FAILED
+            result.failure_reason = "The background enhancement queue is unavailable."
+            result.finished_at = timezone.now()
+            result.save(
+                update_fields=[
+                    "status", "failure_reason", "finished_at", "updated_at",
+                ]
+            )
+        result.refresh_from_db()
         return Response(
             ImageEnhancementResultSerializer(result, context={"request": request}).data,
-            status=status.HTTP_201_CREATED,
+            status=status.HTTP_202_ACCEPTED,
         )
 
 

@@ -36,6 +36,13 @@ class UploadBatch(models.Model):
         ("completed", "Completed"),
         ("partial", "Partially completed"),
         ("failed", "Failed"),
+        ("cancelled", "Cancelled"),
+    ]
+    STAGE_CHOICES = [
+        ("uploaded", "Uploaded"), ("queued", "Queued"),
+        ("preprocessing", "Preprocessing"), ("face_validation", "Face validation"),
+        ("quality_analysis", "Quality analysis"), ("enhancement", "Enhancement"),
+        ("finalizing", "Finalizing"), ("completed", "Completed"),
     ]
 
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="upload_batches")
@@ -58,6 +65,10 @@ class UploadBatch(models.Model):
     processing_error = models.TextField(blank=True)
     processing_started_at = models.DateTimeField(null=True, blank=True)
     processing_finished_at = models.DateTimeField(null=True, blank=True)
+    current_stage = models.CharField(max_length=24, choices=STAGE_CHOICES, default="uploaded")
+    cancellation_requested = models.BooleanField(default=False)
+    retry_count = models.PositiveSmallIntegerField(default=0)
+    progress_updated_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -127,6 +138,36 @@ class ImagePreprocessingResult(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+
+
+class BatchImageProgress(models.Model):
+    STATUS_CHOICES = [
+        ("queued", "Queued"), ("processing", "Processing"),
+        ("accepted", "Accepted"), ("rejected", "Rejected"),
+        ("needs_review", "Needs review"), ("completed", "Completed"),
+        ("failed", "Failed"), ("cancelled", "Cancelled"),
+    ]
+
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="batch_image_progress")
+    batch = models.ForeignKey(UploadBatch, on_delete=models.CASCADE, related_name="image_progress")
+    image = models.OneToOneField(ImageUpload, on_delete=models.CASCADE, related_name="processing_progress")
+    stage = models.CharField(max_length=24, choices=UploadBatch.STAGE_CHOICES, default="uploaded")
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="queued")
+    progress_percentage = models.FloatField(default=10.0)
+    failure_stage = models.CharField(max_length=24, blank=True)
+    failure_reason = models.TextField(blank=True)
+    retry_count = models.PositiveSmallIntegerField(default=0)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["image_id"]
+        indexes = [
+            models.Index(fields=["owner", "status"]),
+            models.Index(fields=["batch", "stage"]),
+        ]
 
 
 

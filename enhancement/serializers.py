@@ -17,7 +17,7 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
         fields = [
             "id", "image", "batch_job", "requested_level", "applied_level", "status",
             "output_name", "output_format", "output_width", "output_height",
-            "output_file_size", "processing_duration_ms", "applied_parameters",
+            "output_file_size", "processing_duration_ms", "task_id", "applied_parameters",
             "failure_reason", "original_download_url", "standardized_download_url",
             "download_url", "started_at", "finished_at", "created_at",
         ]

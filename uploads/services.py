@@ -208,6 +208,12 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
         and not force
         and existing.processed_file
     ):
+        if not hasattr(image_upload, "face_validation"):
+            from validation.services import validate_image_faces_safely
+            validate_image_faces_safely(image_upload)
+        if not hasattr(image_upload, "quality_decision"):
+            from quality_control.services import enqueue_quality_analysis
+            enqueue_quality_analysis(image_upload)
         return existing, False
 
     started = time.perf_counter()
@@ -265,6 +271,10 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
             result.processing_duration_ms = max(1, round((time.perf_counter() - started) * 1000))
             result.failure_reason = ""
             result.save()
+        from validation.services import validate_image_faces_safely
+        validate_image_faces_safely(image_upload)
+        from quality_control.services import enqueue_quality_analysis
+        enqueue_quality_analysis(image_upload)
         if old_file_name and old_file_name != result.processed_file.name:
             result.processed_file.storage.delete(old_file_name)
         return result, True

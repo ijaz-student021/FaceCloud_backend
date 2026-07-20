@@ -1,16 +1,24 @@
 from django.http import FileResponse
+from django.conf import settings
+from django.db import transaction
 from django.shortcuts import get_object_or_404
-from django.db.models import Prefetch
+from django.db.models import OuterRef, Prefetch, Q, Subquery
+from django.utils import timezone
 from rest_framework import generics, permissions, status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.exceptions import ValidationError
+from rest_framework.pagination import PageNumberPagination
 
-from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
+from enhancement.models import ImageEnhancementResult
+
+from .models import BatchImageProgress, ImagePreprocessingResult, ImageUpload, UploadBatch
+from .progress import batch_progress_payload, sync_image_progress
 from .serializers import (
     ImagePreprocessingResultSerializer,
     ImageUploadSerializer,
+    MyImageSerializer,
     PreprocessImageRequestSerializer,
     UploadBatchSerializer,
 )
@@ -96,12 +104,200 @@ class UploadBatchDetailView(generics.RetrieveUpdateDestroyAPIView):
         delete_batch(instance)
 
 
+class UploadBatchProgressView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, batch_id):
+        batch = get_object_or_404(UploadBatch.objects.filter(owner=request.user), pk=batch_id)
+        return Response(batch_progress_payload(batch))
+
+
+class UploadBatchCancelView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, batch_id):
+        with transaction.atomic():
+            batch = get_object_or_404(
+                UploadBatch.objects.select_for_update().filter(owner=request.user), pk=batch_id,
+            )
+            batch.cancellation_requested = True
+            batch.processing_status = "cancelled"
+            batch.save(update_fields=["cancellation_requested", "processing_status", "updated_at"])
+            BatchImageProgress.objects.filter(batch=batch).exclude(
+                status__in=["accepted", "rejected", "needs_review", "completed", "failed", "cancelled"],
+            ).update(
+                stage="completed", status="cancelled", progress_percentage=100,
+                failure_reason="Processing was cancelled by the user.",
+                finished_at=timezone.now(),
+            )
+        return Response(batch_progress_payload(batch))
+
+
+class UploadBatchRetryView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, batch_id):
+        from enhancement.models import EnhancementStatus
+        from enhancement.tasks import process_enhancement_image
+        from quality_control.services import enqueue_quality_analysis
+        from validation.services import validate_image_faces_safely
+        import uuid
+
+        batch = get_object_or_404(UploadBatch.objects.filter(owner=request.user), pk=batch_id)
+        failed = list(batch.image_progress.filter(status="failed").select_related("image"))
+        if not failed:
+            raise ValidationError("This batch has no failed images to retry.")
+        maximum = getattr(settings, "BATCH_PROGRESS_MAX_RETRIES", 3)
+        if batch.retry_count >= maximum:
+            raise ValidationError(f"The maximum of {maximum} batch retries has been reached.")
+        batch.cancellation_requested = False
+        batch.retry_count += 1
+        batch.processing_status = "queued"
+        batch.save(update_fields=["cancellation_requested", "retry_count", "processing_status", "updated_at"])
+        needs_preprocessing = False
+        for progress in failed:
+            progress.retry_count += 1
+            progress.status = "queued"
+            progress.failure_reason = ""
+            progress.finished_at = None
+            progress.save(update_fields=["retry_count", "status", "failure_reason", "finished_at", "updated_at"])
+            image = progress.image
+            if progress.failure_stage == "preprocessing":
+                ImagePreprocessingResult.objects.filter(image=image).update(
+                    status="pending", failure_reason="",
+                )
+                needs_preprocessing = True
+            elif progress.failure_stage == "face_validation":
+                validate_image_faces_safely(image)
+                enqueue_quality_analysis(image)
+            elif progress.failure_stage == "quality_analysis":
+                enqueue_quality_analysis(image)
+            elif progress.failure_stage == "enhancement":
+                result = image.enhancement_results.filter(status=EnhancementStatus.FAILED).order_by("-created_at").first()
+                if result:
+                    task_id = uuid.uuid4().hex
+                    result.status = EnhancementStatus.QUEUED
+                    result.task_id = task_id
+                    result.failure_reason = ""
+                    result.finished_at = None
+                    result.save(update_fields=["status", "task_id", "failure_reason", "finished_at", "updated_at"])
+                    process_enhancement_image.apply_async(args=[result.pk], task_id=task_id)
+            sync_image_progress(image.pk)
+        if needs_preprocessing:
+            enqueue_batch_preprocessing(batch)
+        return Response(batch_progress_payload(batch), status=status.HTTP_202_ACCEPTED)
+
+
 class ImageUploadListView(generics.ListAPIView):
     serializer_class = ImageUploadSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         return ImageUpload.objects.filter(owner=self.request.user).select_related("batch", "preprocessing_result")
+
+
+class MyImagesPagination(PageNumberPagination):
+    page_size = 24
+    page_size_query_param = "page_size"
+    max_page_size = 100
+
+
+class MyImageListView(generics.ListAPIView):
+    serializer_class = MyImageSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = MyImagesPagination
+
+    valid_statuses = {
+        "uploaded", "preprocessing", "ready", "pending", "queued",
+        "processing", "completed", "partial", "failed", "cancelled", "rejected",
+        "accepted", "needs_review",
+        "quality_processing", "quality_failed",
+    }
+    ordering_fields = {
+        "newest": "-created_at", "oldest": "created_at", "name": "original_name",
+        "-name": "-original_name", "size": "file_size", "-size": "-file_size",
+    }
+
+    def get_queryset(self):
+        latest = ImageEnhancementResult.objects.filter(image_id=OuterRef("pk")).order_by("-created_at")
+        enhancement_results = ImageEnhancementResult.objects.order_by("-created_at")
+        queryset = (
+            ImageUpload.objects.filter(owner=self.request.user)
+            .select_related("batch", "preprocessing_result", "face_validation", "quality_decision")
+            .prefetch_related(Prefetch(
+                "enhancement_results",
+                queryset=enhancement_results,
+                to_attr="ordered_enhancement_results",
+            ))
+            .annotate(latest_enhancement_status=Subquery(latest.values("status")[:1]))
+        )
+
+        search = self.request.query_params.get("search", "").strip()
+        if search:
+            queryset = queryset.filter(original_name__icontains=search)
+
+        batch = self.request.query_params.get("batch")
+        if batch:
+            if not batch.isdigit():
+                raise ValidationError({"batch": "Batch must be a positive integer."})
+            queryset = queryset.filter(batch_id=int(batch))
+
+        upload_type = self.request.query_params.get("upload_type")
+        if upload_type:
+            if upload_type not in {"single", "multiple", "zip"}:
+                raise ValidationError({"upload_type": "Use single, multiple, or zip."})
+            queryset = queryset.filter(batch__upload_type=upload_type)
+
+        selected_status = self.request.query_params.get("status", "").strip().lower()
+        if selected_status and selected_status != "all":
+            if selected_status not in self.valid_statuses:
+                raise ValidationError({"status": "Unsupported image status filter."})
+            if selected_status == "rejected":
+                queryset = queryset.filter(
+                    Q(status="rejected") | Q(quality_decision__decision="rejected")
+                )
+            elif selected_status in {"accepted", "needs_review"}:
+                queryset = queryset.filter(quality_decision__decision=selected_status)
+            elif selected_status == "quality_processing":
+                queryset = queryset.filter(quality_decision__status__in=["pending", "queued", "processing"])
+            elif selected_status == "quality_failed":
+                queryset = queryset.filter(quality_decision__status="failed")
+            elif selected_status == "uploaded":
+                queryset = queryset.filter(status="uploaded", preprocessing_result__isnull=True)
+            elif selected_status == "preprocessing":
+                queryset = queryset.filter(preprocessing_result__status__in=["pending", "processing"])
+            elif selected_status == "ready":
+                queryset = queryset.filter(
+                    preprocessing_result__status="completed",
+                    latest_enhancement_status__isnull=True,
+                )
+            elif selected_status == "failed":
+                queryset = queryset.filter(
+                    Q(preprocessing_result__status="failed")
+                    | Q(latest_enhancement_status="failed")
+                    | Q(quality_decision__status="failed")
+                )
+            else:
+                queryset = queryset.filter(latest_enhancement_status=selected_status)
+
+        for parameter, lookup in (
+            ("min_score", "quality_decision__overall_score__gte"),
+            ("max_score", "quality_decision__overall_score__lte"),
+        ):
+            raw_value = self.request.query_params.get(parameter)
+            if raw_value:
+                try:
+                    value = float(raw_value)
+                except ValueError as error:
+                    raise ValidationError({parameter: "Enter a number from 0 to 100."}) from error
+                if not 0 <= value <= 100:
+                    raise ValidationError({parameter: "Enter a number from 0 to 100."})
+                queryset = queryset.filter(**{lookup: value})
+
+        ordering = self.request.query_params.get("ordering", "newest")
+        if ordering not in self.ordering_fields:
+            raise ValidationError({"ordering": "Use newest, oldest, name, -name, size, or -size."})
+        return queryset.order_by(self.ordering_fields[ordering], "-pk")
 
 
 class ImageUploadDetailView(generics.RetrieveDestroyAPIView):

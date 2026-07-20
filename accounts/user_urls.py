@@ -9,10 +9,12 @@ from .views import (
     LogoutAllView,
     LogoutView,
     ProfileView,
+    UserDashboardView,
 )
 
 urlpatterns = [
     path("profile/", ProfileView.as_view(), name="profile"),
+    path("dashboard/", UserDashboardView.as_view(), name="user-dashboard"),
     path("change-password/", ChangePasswordView.as_view(), name="change-password"),
     path("logout/", LogoutView.as_view(), name="logout"),
     path("logout-all/", LogoutAllView.as_view(), name="logout-all"),

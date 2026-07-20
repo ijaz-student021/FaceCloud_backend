@@ -10,6 +10,7 @@ from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from .models import AuthEvent
+from .dashboard import build_user_dashboard
 from .permissions import IsAdminRole
 from .serializers import (
     AdminUserSerializer,
@@ -218,6 +219,13 @@ class AuthEventListView(generics.ListAPIView):
             for item in events
         ]
         return Response(data)
+
+
+class UserDashboardView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        return Response(build_user_dashboard(request.user))
 
 
 class AdminUserListView(generics.ListAPIView):
