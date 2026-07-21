@@ -25,6 +25,7 @@ Status definitions:
 | Celery preprocessing queue | Complete |
 | Image enhancement | Complete backend: OpenCV, EDSR, and official Zero-DCE inference |
 | Quality assessment, face validation, and final decisions | Complete backend baseline |
+| Duplicate image and face-region detection | Complete backend baseline |
 | Identity grouping and moderation | Planned |
 | User dashboard statistics and My Images API | Complete backend; frontend integration remains |
 | Reports, analytics, and notifications | Planned |
@@ -33,6 +34,7 @@ Status definitions:
 
 ### Detailed documentation available
 
+- [Remaining user-dashboard features and implementation order](USER_DASHBOARD_REMAINING_FEATURES.md)
 - [Features 01–03: Authentication, accounts, authorization, and audit](features/01-authentication-and-authorization.md)
 - [Features 04–08: Image uploads, batches, secure storage, and cleanup](features/02-image-upload-and-secure-storage.md)
 - [Feature 09: Image preprocessing and standardization](features/09-image-preprocessing-and-standardization.md)
@@ -41,6 +43,8 @@ Status definitions:
 - [Feature 30: User dashboard statistics and My Images API](features/30-user-dashboard-and-my-images.md)
 - [Feature 15: Face detection and validation](features/15-face-detection-and-validation.md)
 - [Features 14–16: Quality scoring and final decision workflow](features/14-16-quality-decision-workflow.md)
+- [Feature 17: Duplicate image and face-region detection](features/17-duplicate-image-and-face-detection.md)
+- [Feature 18: Face recognition and identity-grouping implementation plan](features/18-face-recognition-and-identity-grouping.md)
 - [Feature 42: PostgreSQL data platform](features/42-postgresql-data-platform.md)
 - [Features 20–21: Background processing and live batch progress](features/20-21-live-batch-progress.md)
 
@@ -253,11 +257,13 @@ Uses deep learning to improve low-light images while preserving facial detail.
 - Enhanced-image persistence
 - Safe missing/corrupt-model failure handling
 
-### Feature 13: Before-and-after comparison — Partial backend
+### Feature 13: Before-and-after comparison — Complete backend
 
 Allows users to judge enhancement results visually and quantitatively.
-Owner-scoped original, standardized, and enhanced URLs plus normalized quality
-metadata are implemented. The interactive frontend comparison remains.
+The dedicated owner-scoped comparison API returns original, standardized, and
+enhanced metadata and secure URLs plus source-resolution-normalized quality
+measurements. It handles incomplete, missing-file, unauthenticated, and
+cross-user requests safely. The interactive frontend view remains to be wired.
 
 - Original and enhanced previews
 - Side-by-side comparison
@@ -266,6 +272,8 @@ metadata are implemented. The interactive frontend comparison remains.
 - Enhancement-level display
 - Quality-score differences
 - Selected-result download
+- Processing duration, algorithm, output dimensions, file sizes, and warnings
+- Authenticated endpoint: `GET /api/enhancements/results/{id}/comparison/`
 
 ## 6. Quality and facial validation
 
@@ -312,17 +320,26 @@ Tracks preprocessing, face validation, quality analysis, and final quality decis
 - Cancelled
 - Current status, timestamps, task ID, and all decision reasons
 
-### Feature 17: Duplicate image and face detection — Planned
+### Feature 17: Duplicate image and face detection — Complete backend baseline
 
-Prevents redundant storage and detects visually duplicated facial content.
+Detects redundant uploads and visually repeated facial regions without exposing
+one user's images or fingerprints to another user. Detection produces warnings
+and review evidence; it never deletes or rejects an upload automatically.
 
-- Exact checksum matching
-- Visual similarity checks
-- Facial-embedding comparison
-- Duplicate warnings
-- Suspected-duplicate review state
-- Duplicate identity-group detection
-- Moderator confirmation and audit history
+- Owner-scoped SHA-256 exact matching with automatic confirmation
+- Owner-scoped 64-bit DCT perceptual-hash comparison for modified copies
+- Face-region perceptual fingerprints generated from validated face boxes
+- Asynchronous Celery execution after preprocessing and face validation
+- `no_duplicate`, `duplicate`, and `needs_review` decisions
+- Suspected, confirmed, and dismissed match states
+- Owner-only result, match, rerun, and review APIs
+- PostgreSQL constraints and transactional locking for idempotent processing
+- Safe generic failures with no internal hash disclosure through the API
+- My Images duplicate summary integration
+
+Learned facial embeddings and duplicate identity-group merging remain part of
+Features 18 and 19. Face-region fingerprints in this baseline are similarity
+evidence only and are not biometric identity recognition.
 
 ## 7. Recognition and identity organization
 

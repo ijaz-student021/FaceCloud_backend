@@ -2,6 +2,7 @@ from django.urls import path
 
 from .views import (
     BatchEnhanceView,
+    EnhancementComparisonView,
     EnhancementDownloadView,
     EnhancementJobDetailView,
     EnhancementJobListView,
@@ -19,5 +20,10 @@ urlpatterns = [
     path("jobs/<int:pk>/", EnhancementJobDetailView.as_view(), name="job-detail"),
     path("results/", EnhancementResultListView.as_view(), name="result-list"),
     path("results/<int:pk>/", EnhancementResultDetailView.as_view(), name="result-detail"),
+    path(
+        "results/<int:pk>/comparison/",
+        EnhancementComparisonView.as_view(),
+        name="result-comparison",
+    ),
     path("results/<int:pk>/download/", EnhancementDownloadView.as_view(), name="result-download"),
 ]

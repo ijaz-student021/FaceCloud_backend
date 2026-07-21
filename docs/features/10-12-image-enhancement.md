@@ -95,6 +95,7 @@ task from processing a result superseded by a newer task.
 | GET | `/api/enhancements/jobs/{id}/` | Read progress and results |
 | GET | `/api/enhancements/results/` | List the user's results |
 | GET | `/api/enhancements/results/{id}/` | Read one result and comparison URLs |
+| GET | `/api/enhancements/results/{id}/comparison/` | Read the completed result's secure before/after comparison contract |
 | GET | `/api/enhancements/results/{id}/download/` | Download an enhanced image securely |
 
 Request body:
@@ -168,6 +169,27 @@ because Laplacian variance changes with the pixel scale. Frontend comparison
 cards should use `quality_comparison`; technical details may additionally show
 the native `quality_after` values.
 
+### Comparison API contract
+
+`GET /api/enhancements/results/{id}/comparison/` returns only an authenticated
+owner's completed result. It includes original, standardized, and enhanced
+metadata and protected download URLs, the applied enhancement level and
+algorithm, processing time, warnings, and the normalized metrics needed by the
+frontend comparison page.
+
+The public metric names are `brightness`, `contrast`, `sharpness`, `noise`,
+`shadow_clipping`, and `highlight_clipping`. Every metric contains `before`,
+`after`, and `change`. The response never contains storage paths, model paths,
+tokens, or internal task data.
+
+State and privacy behavior:
+
+- A result owned by another user returns HTTP 404 to avoid resource discovery.
+- An unauthenticated request is rejected by JWT authentication.
+- A queued, processing, failed, cancelled, or partial result returns HTTP 409.
+- A completed result whose stored files are gone returns HTTP 410.
+- A completed legacy result without normalized measurements returns HTTP 409.
+
 ## 9. EDSR restoration behavior
 
 - EDSR is requested only when the quality router identifies low resolution.
@@ -196,7 +218,7 @@ The real non-eager Celery pipeline was verified on `image6.jpg` on July 20, 2026
 | Normalized comparison method | `source_resolution_normalized_v1` |
 | Normalized sharpness | 69.99 before, 63.1 after |
 | PostgreSQL migration | applied successfully |
-| Automated test suite | 64 tests passing |
+| Automated test suite | 85 tests passing |
 | Django system check | no issues |
 | Redis and Celery | connected and ready |
 
@@ -261,8 +283,8 @@ The local model path is `.runtime/models/zero_dce_epoch99.onnx`. Runtime assets 
 - `enhancement/serializers.py`
 - `enhancement/views.py`
 - `enhancement/urls.py`
+- `enhancement/tests.py`
 - `enhancement/migrations/0001_initial.py`
 - `enhancement/migrations/0002_imageenhancementresult_task_id.py`
-- `enhancement/tests.py`
 - `config/settings.py`
 - `config/urls.py`

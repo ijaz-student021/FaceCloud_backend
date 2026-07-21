@@ -211,6 +211,11 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
         if not hasattr(image_upload, "face_validation"):
             from validation.services import validate_image_faces_safely
             validate_image_faces_safely(image_upload)
+        if settings.DUPLICATE_AUTO_ANALYZE and not hasattr(
+            image_upload, "duplicate_analysis"
+        ):
+            from duplicates.services import enqueue_duplicate_analysis
+            enqueue_duplicate_analysis(image_upload)
         if not hasattr(image_upload, "quality_decision"):
             from quality_control.services import enqueue_quality_analysis
             enqueue_quality_analysis(image_upload)
@@ -273,6 +278,9 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
             result.save()
         from validation.services import validate_image_faces_safely
         validate_image_faces_safely(image_upload)
+        if settings.DUPLICATE_AUTO_ANALYZE:
+            from duplicates.services import enqueue_duplicate_analysis
+            enqueue_duplicate_analysis(image_upload, force=force)
         from quality_control.services import enqueue_quality_analysis
         enqueue_quality_analysis(image_upload)
         if old_file_name and old_file_name != result.processed_file.name:

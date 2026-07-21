@@ -15,6 +15,7 @@ from .models import EnhancementBatchJob, EnhancementStatus, ImageEnhancementResu
 from .serializers import (
     EnhancementBatchJobSerializer,
     EnhancementRequestSerializer,
+    ImageEnhancementComparisonSerializer,
     ImageEnhancementResultSerializer,
 )
 from .services import create_enhancement_result
@@ -148,3 +149,56 @@ class EnhancementDownloadView(APIView):
             result.enhanced_file.open("rb"), as_attachment=True,
             filename=result.output_name, content_type=content_type,
         )
+
+
+class EnhancementComparisonView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @staticmethod
+    def _stored_file_exists(file_field):
+        if not file_field or not file_field.name:
+            return False
+        try:
+            return file_field.storage.exists(file_field.name)
+        except (OSError, ValueError):
+            return False
+
+    def get(self, request, pk):
+        result = get_object_or_404(
+            ImageEnhancementResult.objects.filter(owner=request.user).select_related(
+                "image", "preprocessing_result"
+            ),
+            pk=pk,
+        )
+        if result.status != EnhancementStatus.COMPLETED:
+            payload = {
+                "detail": "Comparison is available only after enhancement completes.",
+                "status": result.status,
+            }
+            if result.status == EnhancementStatus.FAILED and result.failure_reason:
+                payload["failure_reason"] = result.failure_reason
+            return Response(payload, status=status.HTTP_409_CONFLICT)
+
+        required_files = (
+            result.image.original_file,
+            result.preprocessing_result.processed_file,
+            result.enhanced_file,
+        )
+        if not all(self._stored_file_exists(file_field) for file_field in required_files):
+            return Response(
+                {"detail": "One or more comparison images are no longer available."},
+                status=status.HTTP_410_GONE,
+            )
+
+        comparison = result.applied_parameters.get("quality_comparison")
+        if not isinstance(comparison, dict) or not comparison.get("method"):
+            return Response(
+                {"detail": "Comparison measurements are unavailable for this result."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        serializer = ImageEnhancementComparisonSerializer(
+            result,
+            context={"request": request},
+        )
+        return Response(serializer.data)

@@ -223,7 +223,10 @@ class MyImageListView(generics.ListAPIView):
         enhancement_results = ImageEnhancementResult.objects.order_by("-created_at")
         queryset = (
             ImageUpload.objects.filter(owner=self.request.user)
-            .select_related("batch", "preprocessing_result", "face_validation", "quality_decision")
+            .select_related(
+                "batch", "preprocessing_result", "face_validation",
+                "quality_decision", "duplicate_analysis",
+            )
             .prefetch_related(Prefetch(
                 "enhancement_results",
                 queryset=enhancement_results,

@@ -3,6 +3,7 @@ from rest_framework import serializers
 from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
 from validation.models import FaceValidationResult
 from quality_control.models import ImageQualityDecision
+from duplicates.models import DuplicateAnalysis
 
 
 class ImagePreprocessingResultSerializer(serializers.ModelSerializer):
@@ -66,11 +67,13 @@ class MyImageSerializer(ImageUploadSerializer):
     latest_enhancement = serializers.SerializerMethodField()
     face_validation = serializers.SerializerMethodField()
     quality_decision = serializers.SerializerMethodField()
+    duplicate_analysis = serializers.SerializerMethodField()
 
     class Meta(ImageUploadSerializer.Meta):
         fields = ImageUploadSerializer.Meta.fields + [
             "batch_display_name", "upload_type", "display_status",
-            "latest_enhancement", "face_validation", "quality_decision", "updated_at",
+            "latest_enhancement", "face_validation", "quality_decision",
+            "duplicate_analysis", "updated_at",
         ]
 
     @staticmethod
@@ -102,6 +105,14 @@ class MyImageSerializer(ImageUploadSerializer):
             return None
         from quality_control.serializers import ImageQualityDecisionSerializer
         return ImageQualityDecisionSerializer(result).data
+
+    def get_duplicate_analysis(self, obj):
+        try:
+            result = obj.duplicate_analysis
+        except DuplicateAnalysis.DoesNotExist:
+            return None
+        from duplicates.serializers import DuplicateAnalysisSerializer
+        return DuplicateAnalysisSerializer(result, context=self.context).data
 
     def get_display_status(self, obj):
         if obj.status == "rejected":

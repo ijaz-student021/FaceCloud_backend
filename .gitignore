@@ -43,6 +43,7 @@ Thumbs.db
 FaceCloud_Dataset/
 FaceCloud_dataset/
 Dataset/
+Dataset.zip
 training_outputs/
 *.pt
 *.pth

@@ -232,14 +232,18 @@ class EnhancementProcessingAndAPITests(TestCase):
             password="ForestRiver!4821", is_email_verified=True,
         )
         self.batch = UploadBatch.objects.create(owner=self.user, upload_type="single")
-        self.image = ImageUpload.objects.create(
-            owner=self.user, batch=self.batch, original_name="dark.jpg", status="uploaded",
-        )
         success, encoded = cv2.imencode(".jpg", np.full((64, 64, 3), 40, dtype=np.uint8))
         self.assertTrue(success)
+        self.image = ImageUpload.objects.create(
+            owner=self.user, batch=self.batch, original_name="dark.jpg",
+            file_extension=".jpg", mime_type="image/jpeg", file_size=len(encoded.tobytes()),
+            width=64, height=64, status="uploaded",
+        )
+        self.image.original_file.save("dark.jpg", ContentFile(encoded.tobytes()))
         self.preprocessing = ImagePreprocessingResult.objects.create(
             owner=self.user, image=self.image, status="completed", output_format="jpeg",
             output_name="dark.jpg", output_width=64, output_height=64,
+            processed_file_size=len(encoded.tobytes()),
         )
         self.preprocessing.processed_file.save("dark.jpg", ContentFile(encoded.tobytes()))
         self.client = APIClient()
@@ -281,6 +285,111 @@ class EnhancementProcessingAndAPITests(TestCase):
         download = self.client.get(reverse("enhancement:result-download", kwargs={"pk": result_id}))
         self.assertEqual(detail.status_code, 404)
         self.assertEqual(download.status_code, 404)
+
+    def test_owner_receives_normalized_comparison_contract(self):
+        result = ImageEnhancementResult.objects.create(
+            owner=self.user,
+            image=self.image,
+            preprocessing_result=self.preprocessing,
+            requested_level=EnhancementLevel.AUTO,
+        )
+        result = process_enhancement_result(result)
+
+        response = self.client.get(
+            reverse("enhancement:result-comparison", kwargs={"pk": result.pk})
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["result_id"], result.pk)
+        self.assertEqual(response.data["image_id"], self.image.pk)
+        self.assertEqual(response.data["status"], "completed")
+        self.assertTrue(response.data["algorithm"])
+        self.assertEqual(
+            response.data["comparison"]["method"],
+            "source_resolution_normalized_v1",
+        )
+        self.assertEqual(
+            response.data["comparison"]["reference_dimensions"], [64, 64]
+        )
+        self.assertEqual(
+            set(response.data["comparison"]["metrics"]),
+            {
+                "brightness", "contrast", "sharpness", "noise",
+                "shadow_clipping", "highlight_clipping",
+            },
+        )
+        self.assertIn("/api/images/", response.data["original"]["download_url"])
+        self.assertIn("/preprocessing/download/", response.data["standardized"]["download_url"])
+        self.assertIn("/api/enhancements/results/", response.data["enhanced"]["download_url"])
+        self.assertNotIn("users/", str(response.data))
+
+    def test_comparison_is_private_and_requires_authentication(self):
+        result = ImageEnhancementResult.objects.create(
+            owner=self.user,
+            image=self.image,
+            preprocessing_result=self.preprocessing,
+            requested_level=EnhancementLevel.AUTO,
+        )
+        result = process_enhancement_result(result)
+        url = reverse("enhancement:result-comparison", kwargs={"pk": result.pk})
+
+        self.client.force_authenticate(self.other)
+        self.assertEqual(self.client.get(url).status_code, 404)
+
+        self.client.force_authenticate(user=None)
+        self.assertEqual(self.client.get(url).status_code, 401)
+
+    def test_comparison_rejects_incomplete_and_missing_file_results(self):
+        pending = ImageEnhancementResult.objects.create(
+            owner=self.user,
+            image=self.image,
+            preprocessing_result=self.preprocessing,
+            requested_level=EnhancementLevel.AUTO,
+        )
+        pending_response = self.client.get(
+            reverse("enhancement:result-comparison", kwargs={"pk": pending.pk})
+        )
+        self.assertEqual(pending_response.status_code, 409)
+        self.assertEqual(pending_response.data["status"], "pending")
+
+        pending.status = "failed"
+        pending.failure_reason = "Safe processing failure."
+        pending.save(update_fields=["status", "failure_reason", "updated_at"])
+        failed_response = self.client.get(
+            reverse("enhancement:result-comparison", kwargs={"pk": pending.pk})
+        )
+        self.assertEqual(failed_response.status_code, 409)
+        self.assertEqual(failed_response.data["status"], "failed")
+        self.assertEqual(
+            failed_response.data["failure_reason"], "Safe processing failure."
+        )
+
+        pending.status = "completed"
+        pending.applied_parameters = {
+            "quality_comparison": {"method": "source_resolution_normalized_v1"}
+        }
+        pending.save(update_fields=["status", "applied_parameters", "updated_at"])
+        missing_response = self.client.get(
+            reverse("enhancement:result-comparison", kwargs={"pk": pending.pk})
+        )
+        self.assertEqual(missing_response.status_code, 410)
+
+    def test_comparison_requires_normalized_measurements(self):
+        result = ImageEnhancementResult.objects.create(
+            owner=self.user,
+            image=self.image,
+            preprocessing_result=self.preprocessing,
+            requested_level=EnhancementLevel.AUTO,
+        )
+        result = process_enhancement_result(result)
+        result.applied_parameters = {}
+        result.save(update_fields=["applied_parameters", "updated_at"])
+
+        response = self.client.get(
+            reverse("enhancement:result-comparison", kwargs={"pk": result.pk})
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("measurements", response.data["detail"].lower())
 
     def test_batch_api_processes_ready_images_and_reports_progress(self):
         response = self.client.post(

@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     "enhancement",
     "validation",
     "quality_control",
+    "duplicates",
 ]
 
 MIDDLEWARE = [
@@ -207,6 +208,15 @@ QUALITY_REJECT_CONTRAST = env.float("QUALITY_REJECT_CONTRAST", default=12.0)
 QUALITY_REVIEW_CONTRAST = env.float("QUALITY_REVIEW_CONTRAST", default=20.0)
 QUALITY_REVIEW_NOISE = env.float("QUALITY_REVIEW_NOISE", default=10.0)
 QUALITY_ACCEPT_SCORE = env.float("QUALITY_ACCEPT_SCORE", default=60.0)
+
+# Duplicate detection. Perceptual and face-region matches are review evidence,
+# not identity recognition and never create cross-user matches.
+DUPLICATE_AUTO_ANALYZE = env.bool("DUPLICATE_AUTO_ANALYZE", default=True)
+DUPLICATE_PERCEPTUAL_HASH_DISTANCE = env.int(
+    "DUPLICATE_PERCEPTUAL_HASH_DISTANCE", default=8,
+)
+DUPLICATE_FACE_HASH_DISTANCE = env.int("DUPLICATE_FACE_HASH_DISTANCE", default=6)
+DUPLICATE_MAX_CANDIDATES = env.int("DUPLICATE_MAX_CANDIDATES", default=5000)
 
 CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="redis://127.0.0.1:6379/0")
 CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default="redis://127.0.0.1:6379/1")
