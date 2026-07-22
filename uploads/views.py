@@ -321,6 +321,18 @@ class ImageDownloadView(APIView):
         )
         if not image.original_file:
             return Response({"detail": "The stored image is unavailable."}, status=status.HTTP_404_NOT_FOUND)
+        from downloads.models import DownloadEvent
+        from downloads.services import record_download
+        record_download(
+            owner=request.user,
+            resource_type=DownloadEvent.ResourceType.ORIGINAL_IMAGE,
+            resource_id=image.pk,
+            batch_id=image.batch_id,
+            image_id=image.pk,
+            filename=image.original_name,
+            file_size=image.file_size,
+            content_type=image.mime_type,
+        )
         return FileResponse(
             image.original_file.open("rb"),
             as_attachment=True,
@@ -375,6 +387,18 @@ class ImagePreprocessingDownloadView(APIView):
         if not result.processed_file:
             return Response({"detail": "The processed image is unavailable."}, status=status.HTTP_404_NOT_FOUND)
         content_type = "image/png" if result.output_format == "png" else "image/jpeg"
+        from downloads.models import DownloadEvent
+        from downloads.services import record_download
+        record_download(
+            owner=request.user,
+            resource_type=DownloadEvent.ResourceType.STANDARDIZED_IMAGE,
+            resource_id=result.pk,
+            batch_id=result.image.batch_id,
+            image_id=result.image_id,
+            filename=result.output_name,
+            file_size=result.processed_file_size,
+            content_type=content_type,
+        )
         return FileResponse(
             result.processed_file.open("rb"),
             as_attachment=True,

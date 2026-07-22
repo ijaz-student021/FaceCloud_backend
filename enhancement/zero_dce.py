@@ -1,4 +1,4 @@
-"""OpenCV-DNN inference for the official Zero-DCE curve-estimation network."""
+"""OpenCV-DNN inference for FaceCloud's private curve-estimation network."""
 
 import threading
 from pathlib import Path
@@ -36,8 +36,58 @@ def _inference_size(width, height, maximum_edge):
     return max(1, round(width * scale)), max(1, round(height * scale))
 
 
+def _resize_curve_region(curve, x_start, y_start, x_end, y_end, width, height):
+    """Interpolate a curve map for one destination tile without a full-size map."""
+    curve_height, curve_width = curve.shape[:2]
+    target_x = np.arange(x_start, x_end, dtype=np.float32)
+    target_y = np.arange(y_start, y_end, dtype=np.float32)
+    source_x = ((target_x + 0.5) * curve_width / width) - 0.5
+    source_y = ((target_y + 0.5) * curve_height / height) - 0.5
+    map_x, map_y = np.meshgrid(source_x, source_y)
+    return cv2.remap(
+        curve,
+        map_x,
+        map_y,
+        interpolation=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REPLICATE,
+    )
+
+
+def _apply_curves_tiled(image, curves, tile_edge):
+    height, width = image.shape[:2]
+    output = np.empty_like(image)
+    tile_edge = max(128, int(tile_edge))
+    curve_maps = [
+        curves[0, index * 3:(index + 1) * 3].transpose(1, 2, 0)
+        for index in range(8)
+    ]
+    for y_start in range(0, height, tile_edge):
+        y_end = min(height, y_start + tile_edge)
+        for x_start in range(0, width, tile_edge):
+            x_end = min(width, x_start + tile_edge)
+            tile = cv2.cvtColor(
+                image[y_start:y_end, x_start:x_end], cv2.COLOR_BGR2RGB
+            ).astype(np.float32) / 255.0
+            for curve in curve_maps:
+                tile_curve = _resize_curve_region(
+                    curve,
+                    x_start,
+                    y_start,
+                    x_end,
+                    y_end,
+                    width,
+                    height,
+                )
+                tile = tile + tile_curve * (tile * tile - tile)
+                tile = np.clip(tile, 0.0, 1.0)
+            output[y_start:y_end, x_start:x_end] = cv2.cvtColor(
+                np.rint(tile * 255.0).astype(np.uint8), cv2.COLOR_RGB2BGR
+            )
+    return output
+
+
 def enhance_with_zero_dce(image):
-    """Enhance BGR uint8 input using official Zero-DCE learned curve parameters."""
+    """Predict compact curve maps and apply them to the full-resolution input."""
     if image is None or image.size == 0 or image.ndim != 3 or image.shape[2] != 3:
         raise ZeroDCEUnavailable("Zero-DCE received an invalid image.")
     height, width = image.shape[:2]
@@ -61,19 +111,18 @@ def enhance_with_zero_dce(image):
     if curves.ndim != 4 or curves.shape[0] != 1 or curves.shape[1] != 24:
         raise ZeroDCEUnavailable("Zero-DCE returned an unexpected curve tensor.")
 
-    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-    for index in range(8):
-        curve = curves[0, index * 3:(index + 1) * 3].transpose(1, 2, 0)
-        if curve.shape[:2] != (height, width):
-            curve = cv2.resize(curve, (width, height), interpolation=cv2.INTER_LINEAR)
-        rgb = rgb + curve * (rgb * rgb - rgb)
-        rgb = np.clip(rgb, 0.0, 1.0)
-    output = cv2.cvtColor(np.rint(rgb * 255.0).astype(np.uint8), cv2.COLOR_RGB2BGR)
+    output = _apply_curves_tiled(
+        image,
+        curves,
+        settings.ZERO_DCE_FULL_RESOLUTION_TILE_EDGE,
+    )
     return output, {
-        "provider": "official_zero_dce_onnx_opencv_dnn",
+        "provider": "facecloud_private_curve_onnx_opencv_dnn",
         "model_path": Path(settings.ZERO_DCE_MODEL_PATH).name,
         "input_dimensions": [width, height],
         "inference_dimensions": [infer_width, infer_height],
         "curve_iterations": 8,
-        "license": "CC-BY-NC-4.0 academic/non-commercial",
+        "model_ownership": "private_facecloud_model",
+        "resolution_policy": "proxy_curve_prediction_full_resolution_application",
+        "full_resolution_tile_edge": settings.ZERO_DCE_FULL_RESOLUTION_TILE_EDGE,
     }

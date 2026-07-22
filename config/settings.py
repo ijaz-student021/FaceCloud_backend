@@ -59,6 +59,9 @@ INSTALLED_APPS = [
     "validation",
     "quality_control",
     "duplicates",
+    "reports",
+    "downloads",
+    "notifications",
 ]
 
 MIDDLEWARE = [
@@ -189,6 +192,21 @@ ZERO_DCE_MODEL_PATH = env(
     default=str(BASE_DIR / ".runtime" / "models" / "zero_dce_epoch99.onnx"),
 )
 ZERO_DCE_MAX_INFERENCE_EDGE = env.int("ZERO_DCE_MAX_INFERENCE_EDGE", default=1024)
+ZERO_DCE_FULL_RESOLUTION_TILE_EDGE = env.int(
+    "ZERO_DCE_FULL_RESOLUTION_TILE_EDGE", default=1024
+)
+ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION = env.bool(
+    "ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION", default=True
+)
+ENHANCEMENT_MODEL_LUMINANCE_THRESHOLD = env.float(
+    "ENHANCEMENT_MODEL_LUMINANCE_THRESHOLD", default=0.45
+)
+ENHANCEMENT_MODEL_LUMINANCE_TARGET = env.float(
+    "ENHANCEMENT_MODEL_LUMINANCE_TARGET", default=0.60
+)
+ENHANCEMENT_MAX_HIGHLIGHT_CLIPPING_PERCENT = env.float(
+    "ENHANCEMENT_MAX_HIGHLIGHT_CLIPPING_PERCENT", default=5.0
+)
 
 QUALITY_IDEAL_LUMINANCE = env.float("QUALITY_IDEAL_LUMINANCE", default=135.0)
 QUALITY_SHARPNESS_TARGET = env.float("QUALITY_SHARPNESS_TARGET", default=150.0)
@@ -232,6 +250,22 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_TASK_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 BATCH_PROGRESS_MAX_RETRIES = env.int("BATCH_PROGRESS_MAX_RETRIES", default=3)
+DOWNLOAD_PACKAGE_TTL_HOURS = env.int("DOWNLOAD_PACKAGE_TTL_HOURS", default=24)
+DOWNLOAD_PACKAGE_MAX_FILES = env.int("DOWNLOAD_PACKAGE_MAX_FILES", default=500)
+DOWNLOAD_PACKAGE_MAX_UNCOMPRESSED_SIZE = env.int(
+    "DOWNLOAD_PACKAGE_MAX_UNCOMPRESSED_SIZE",
+    default=15 * 1024 * 1024 * 1024,
+)
+DOWNLOAD_PACKAGE_COMPRESSION_LEVEL = env.int(
+    "DOWNLOAD_PACKAGE_COMPRESSION_LEVEL", default=6,
+)
+NOTIFICATION_EMAILS_ENABLED = env.bool(
+    "NOTIFICATION_EMAILS_ENABLED", default=True,
+)
+NOTIFICATION_RETENTION_DAYS = env.int("NOTIFICATION_RETENTION_DAYS", default=90)
+NOTIFICATION_EMAIL_MAX_RETRIES = env.int(
+    "NOTIFICATION_EMAIL_MAX_RETRIES", default=3,
+)
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -255,6 +289,9 @@ REST_FRAMEWORK = {
         "image_upload": "100/hour",
         "zip_upload": "20/hour",
         "image_preprocess": "100/hour",
+        "report_generation": "60/hour",
+        "download_package": "30/hour",
+        "notification_action": "300/hour",
     },
 }
 

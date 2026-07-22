@@ -23,12 +23,16 @@ Status definitions:
 | PostgreSQL 18 migration | Complete |
 | Image preprocessing and format standardization | Complete |
 | Celery preprocessing queue | Complete |
-| Image enhancement | Complete backend: OpenCV, EDSR, and official Zero-DCE inference |
+| Image enhancement | Complete backend: adaptive OpenCV, EDSR, and private FaceCloud curve inference |
+| Non-destructive photo gallery editor | Complete backend; frontend slider wiring remains |
 | Quality assessment, face validation, and final decisions | Complete backend baseline |
 | Duplicate image and face-region detection | Complete backend baseline |
 | Identity grouping and moderation | Planned |
 | User dashboard statistics and My Images API | Complete backend; frontend integration remains |
-| Reports, analytics, and notifications | Planned |
+| Processing reports | Complete backend; frontend integration remains |
+| Secure image and batch downloads | Complete backend; frontend integration remains |
+| Analytics | Planned |
+| In-app and email notifications | Complete backend baseline; frontend integration remains |
 | Live camera detection and enhancement | Planned |
 | Frontend dashboards | Planned for frontend integration |
 
@@ -47,6 +51,10 @@ Status definitions:
 - [Feature 18: Face recognition and identity-grouping implementation plan](features/18-face-recognition-and-identity-grouping.md)
 - [Feature 42: PostgreSQL data platform](features/42-postgresql-data-platform.md)
 - [Features 20–21: Background processing and live batch progress](features/20-21-live-batch-progress.md)
+- [Feature 22: Processing reports](features/22-processing-reports.md)
+- [Feature 23: Secure image and batch downloads](features/23-secure-image-and-batch-downloads.md)
+- [Feature 29: In-app and email notifications](features/29-in-app-and-email-notifications.md)
+- [Feature 47: Non-destructive photo gallery editor](features/47-nondestructive-gallery-editor.md)
 
 ## 3. Identity, access, and security foundation
 
@@ -248,7 +256,7 @@ owner-only APIs, secure downloads, and automated tests are implemented.
 
 Uses deep learning to improve low-light images while preserving facial detail.
 
-- Official Epoch99 checkpoint exported reproducibly to ONNX
+- Private FaceCloud Epoch99 checkpoint exported reproducibly to ONNX
 - Lightweight OpenCV-DNN CPU inference
 - Low-light routing with adaptive OpenCV fallback
 - Quality guard against destructive luminance or clipping growth
@@ -400,29 +408,44 @@ Reports real processing progress for multiple-image and ZIP jobs.
 
 ## 9. Results, reports, and distribution
 
-### Feature 22: Processing reports — Planned
+### Feature 22: Processing reports — Complete backend
 
-Produces durable evidence for each processed image and batch.
+Produces durable, owner-scoped evidence for each processed image and completed
+batch. JSON, CSV, and PDF files are generated asynchronously from one immutable,
+versioned snapshot. Frontend Downloads-page integration remains.
 
 - Filename and processing status
 - Rejection or failure reason
 - Brightness, blur, sharpness, and quality scores
 - Face count and confidence
-- Identity group and confidence
+- Explicit unavailable identity placeholder until Feature 18 is implemented
 - Duplicate result and enhancement level
 - Processing time and protected result links
 - CSV, PDF, and JSON formats
+- Owner-only generation, listing, retrieval, regeneration, and downloads
+- Terminal-state enforcement and idempotent active requests
+- UUID-based protected report storage and physical cleanup
+- CSV formula-injection protection and safe PDF rendering
+- Celery generation with generic queue and rendering failures
+- Database integrity constraints and stored SHA-256 file checksum
 
-### Feature 23: Image and batch downloads — Planned
+### Feature 23: Image and batch downloads — Complete backend
 
-Provides secure delivery of original, enhanced, and batch results.
+Provides secure owner-only delivery of individual artifacts and asynchronous,
+expiring batch-result packages. Frontend Downloads-page integration remains.
 
-- Individual original or enhanced downloads
-- Accepted-image ZIP packages
-- Full batch result ZIP
-- Report downloads
-- Authenticated or expiring links
-- Download activity records
+- Individual original, standardized, enhanced, and report downloads
+- Accepted-enhanced-image ZIP packages
+- Complete batch ZIP with `original/`, `standardized/`, and `enhanced/` folders
+- JSON, CSV, or PDF report embedded in every package
+- Safe manifest describing included and unavailable artifacts
+- Celery generation with active-request idempotency and generic failures
+- Authenticated owner-only package listing, retrieval, deletion, and download
+- 24-hour expiry and safe failed/expired-package regeneration
+- Filename sanitization, collision handling, bounded ZIP generation, and ZIP64
+- SHA-256 package checksums and UUID-based protected storage
+- Download history for images, reports, and generated packages
+- Physical file cleanup on expiry and deletion
 
 ### Feature 24: Identity-group ZIP export — Planned
 
@@ -499,16 +522,22 @@ Authentication events exist; processing and content events will extend the timel
 - Share-link activity
 - Administrative actions
 
-### Feature 29: In-app and email notifications — Partial
+### Feature 29: In-app and email notifications — Complete backend baseline
 
-Verification and password-reset email exist; processing notifications remain.
+Provides an owner-scoped notification center, unread state, preferences, and
+optional Celery email delivery for currently implemented processing workflows.
 
-- Upload received
-- Processing started and completed
-- Accepted/rejected/review summaries
-- Moderator decisions
-- Report and download availability
-- Share-link expiration
+- Upload-received and processing-started events
+- Enhancement and quality accepted/rejected/review/failed events
+- Multiple-image and ZIP batch-completion summaries
+- Report-ready/failed and download-package-ready/failed events
+- Paginated list, filters, unread count, mark-read, mark-all-read, and delete APIs
+- Persistent per-user processing, email, identity, and live-session preferences
+- Verified-address email delivery with bounded retries and safe internal links
+- Idempotency protection against duplicate worker and polling events
+- Owner isolation, safe metadata allowlisting, and retention cleanup
+- Extension publishers for identity, sharing, moderator, and live features when
+  those owning workflows are implemented
 
 ## 11. User-facing dashboards
 
@@ -714,7 +743,9 @@ Maintains stable integration contracts and implementation documentation.
 
 Protects completed behavior from regression as the platform grows.
 
-- 64 authentication, upload, preprocessing, adaptive OpenCV enhancement, normalized-quality, restoration-routing, ownership, and queue tests passing against PostgreSQL
+- 140 authentication, upload, preprocessing, enhancement, validation, quality,
+  duplicate-detection, dashboard, report, download, ownership, cleanup, and queue tests
+  passing against PostgreSQL
 - Django system and migration-drift checks
 - Security, ownership, ZIP, and cleanup tests
 - Manual registration, token, profile, and real upload verification
@@ -739,6 +770,23 @@ membership, moderation, and data access.
 - Safe backfill of existing users and content into personal organizations
 - Global deletion controlled by the account owner or FaceCloud administrator
 
+### Feature 47: Non-destructive photo gallery editor — Complete backend
+
+Lets users refine a completed enhancement without replacing the original or the
+primary AI result. The frontend can provide immediate client-side previews and
+submit the chosen values for a full-resolution, asynchronous server render.
+
+- Auto correction based on scene luminance percentiles and contrast
+- Manual brightness, contrast, shadows, saturation, and highlights controls
+- Slider API range from -100 to 100 with a recommended everyday range of -50 to 50
+- Conservative clipping and contrast-loss guard
+- Original pixel-grid preservation during the final render
+- Immutable edit versions with one selectable current version
+- Owner-only listing, status, activation, deletion, and download APIs
+- Celery execution so large images do not block API requests
+- Secure download history for edited outputs
+- Original upload and primary enhancement are never overwritten
+
 ## 14. Optional future extensions
 
 The following items remain outside the required core until the preceding features are complete:
@@ -756,19 +804,18 @@ The following items remain outside the required core until the preceding feature
 
 ## 15. Recommended implementation sequence
 
-1. Processing reports and secure result downloads
-2. Duplicate detection
-3. Face embeddings and identity grouping
-4. Organization and tenant management
-5. Identity management and organization-scoped moderator review
-6. Notifications and full activity timeline
-7. Admin analytics and system health
-8. Uploaded-image model comparison
-9. Live camera detection
-10. Real-time enhancement and communication
-11. Live comparison page
-12. Private cloud storage
-13. Production security, load testing, and deployment
+1. Face embeddings and identity grouping
+2. Organization and tenant management
+3. Identity management and organization-scoped moderator review
+4. Identity-group ZIP downloads
+5. Notifications and full activity timeline
+6. Admin analytics and system health
+7. Uploaded-image model comparison
+8. Live camera detection
+9. Real-time enhancement and communication
+10. Live comparison page
+11. Private cloud storage
+12. Production security, load testing, and deployment
 
 ## 16. Documentation rule
 

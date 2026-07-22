@@ -13,15 +13,24 @@ from rest_framework.test import APIClient
 
 from uploads.models import ImagePreprocessingResult, ImageUpload, UploadBatch
 
-from .models import EnhancementBatchJob, EnhancementLevel, ImageEnhancementResult
+from .models import (
+    EditMode,
+    EnhancementBatchJob,
+    EnhancementLevel,
+    ImageEditVersion,
+    ImageEnhancementResult,
+)
 from .services import (
+    apply_gallery_adjustments,
     analyze_image_quality,
     compare_image_quality,
     enhance_bgr,
     process_enhancement_result,
+    process_image_edit,
     restore_low_resolution,
 )
-from .tasks import process_enhancement_image
+from .tasks import process_enhancement_image, process_gallery_edit
+from .zero_dce import _apply_curves_tiled
 
 User = get_user_model()
 
@@ -104,6 +113,17 @@ class EnhancementModelTests(TestCase):
 
 
 class OpenCVPolicyTests(SimpleTestCase):
+    def test_zero_curve_tiles_preserve_full_pixel_grid_without_seams(self):
+        source = np.random.default_rng(2026).integers(
+            0, 256, size=(260, 270, 3), dtype=np.uint8
+        )
+        curves = np.zeros((1, 24, 32, 32), dtype=np.float32)
+
+        output = _apply_curves_tiled(source, curves, tile_edge=128)
+
+        self.assertEqual(output.shape, source.shape)
+        np.testing.assert_array_equal(output, source)
+
     @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=False)
     def test_auto_selects_high_for_dark_image_and_improves_luminance(self):
         source = np.full((80, 80, 3), 35, dtype=np.uint8)
@@ -129,6 +149,60 @@ class OpenCVPolicyTests(SimpleTestCase):
         self.assertEqual(parameters["algorithm"], "zero_dce_hybrid_v1")
         self.assertEqual(parameters["colour_policy"], "learned_rgb_curves")
         self.assertGreater(float(enhanced.mean()), float(source.mean()))
+
+    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True)
+    @patch("enhancement.services.enhance_with_zero_dce")
+    def test_learned_model_cannot_over_brighten_or_shift_source_chroma(
+        self, zero_dce
+    ):
+        source = np.zeros((96, 96, 3), dtype=np.uint8)
+        source[:, :] = (35, 55, 85)
+        zero_dce.return_value = (
+            np.full_like(source, (245, 180, 230)),
+            {"provider": "private_facecloud_curve", "curve_iterations": 8},
+        )
+
+        enhanced, level, parameters = enhance_bgr(source, EnhancementLevel.MEDIUM)
+
+        before = parameters["quality_before"]
+        after = parameters["quality_after"]
+        guard = parameters["quality_guard"]
+        self.assertEqual(level, EnhancementLevel.MEDIUM)
+        self.assertLessEqual(
+            after["mean_luminance"] - before["mean_luminance"], 18.5
+        )
+        self.assertLessEqual(guard["mean_chroma_shift"], 3.5)
+        self.assertIn("luminance_gain_limited", guard["reasons"])
+        self.assertEqual(
+            parameters["zero_dce"]["chroma_protection"],
+            "preserve_source_lab_chroma",
+        )
+
+    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True)
+    @patch("enhancement.services.enhance_with_zero_dce")
+    def test_learned_model_guard_preserves_source_contrast(self, zero_dce):
+        source = np.full((96, 96, 3), 40, dtype=np.uint8)
+        source[:, 48:] = 100
+        zero_dce.return_value = (
+            np.full_like(source, 180),
+            {"provider": "private_facecloud_curve", "curve_iterations": 8},
+        )
+
+        _enhanced, _, parameters = enhance_bgr(source, EnhancementLevel.HIGH)
+
+        before = parameters["quality_before"]["contrast_stddev"]
+        after = parameters["quality_after"]["contrast_stddev"]
+        self.assertGreaterEqual(after, before * 0.75)
+        self.assertIn("contrast_preserved", parameters["quality_guard"]["reasons"])
+
+    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=False)
+    def test_overexposed_input_is_not_brightened(self):
+        source = np.full((96, 96, 3), 225, dtype=np.uint8)
+
+        enhanced, _, parameters = enhance_bgr(source, EnhancementLevel.AUTO)
+
+        self.assertEqual(parameters["exposure_mode"], "darken")
+        self.assertLessEqual(float(enhanced.mean()), float(source.mean()))
 
     @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True)
     @patch("enhancement.services.enhance_with_zero_dce")
@@ -167,6 +241,46 @@ class OpenCVPolicyTests(SimpleTestCase):
         self.assertIn("quality_before", parameters)
         self.assertIn("quality_after", parameters)
         self.assertIn("quality_guard", parameters)
+        self.assertEqual(
+            parameters["quality_guard"]["policy"],
+            "adaptive_natural_output_guard_v2",
+        )
+
+    def test_gallery_manual_controls_preserve_dimensions_and_limit_clipping(self):
+        source = np.zeros((120, 180, 3), dtype=np.uint8)
+        source[:, :90] = (35, 55, 75)
+        source[:, 90:] = (200, 215, 230)
+
+        rendered, metadata = apply_gallery_adjustments(
+            source,
+            EditMode.MANUAL,
+            {
+                "brightness": 100,
+                "contrast": 50,
+                "shadows": 35,
+                "saturation": 25,
+                "highlights": 60,
+            },
+        )
+
+        self.assertEqual(rendered.shape, source.shape)
+        self.assertTrue(metadata["dimensions_preserved"])
+        self.assertLessEqual(
+            metadata["quality_after"]["highlight_clipping_percent"],
+            max(
+                5.0,
+                metadata["quality_before"]["highlight_clipping_percent"] + 2.0,
+            ),
+        )
+
+    def test_gallery_auto_mode_is_scene_aware_and_conservative(self):
+        source = np.full((100, 100, 3), 210, dtype=np.uint8)
+
+        rendered, metadata = apply_gallery_adjustments(source, EditMode.AUTO)
+
+        self.assertEqual(rendered.shape, source.shape)
+        self.assertLessEqual(abs(float(rendered.mean()) - float(source.mean())), 20)
+        self.assertLessEqual(metadata["requested"]["brightness"], 0)
 
     def test_quality_comparison_normalizes_output_to_source_dimensions(self):
         source = np.zeros((90, 120, 3), dtype=np.uint8)
@@ -262,6 +376,44 @@ class EnhancementProcessingAndAPITests(TestCase):
         self.assertNotEqual(result.enhanced_file.name, self.preprocessing.processed_file.name)
         self.assertGreater(result.output_file_size, 0)
 
+    def test_enhancement_uses_original_pixel_grid_instead_of_small_proxy(self):
+        success, full = cv2.imencode(
+            ".jpg", np.full((96, 160, 3), 90, dtype=np.uint8)
+        )
+        self.assertTrue(success)
+        self.image.original_file.delete(save=False)
+        self.image.original_file.save("full.jpg", ContentFile(full.tobytes()))
+        self.image.width = 160
+        self.image.height = 96
+        self.image.save(update_fields=["width", "height", "updated_at"])
+        success, proxy = cv2.imencode(
+            ".jpg", np.full((32, 48, 3), 90, dtype=np.uint8)
+        )
+        self.assertTrue(success)
+        self.preprocessing.processed_file.delete(save=False)
+        self.preprocessing.processed_file.save(
+            "proxy.jpg", ContentFile(proxy.tobytes())
+        )
+        self.preprocessing.output_width = 48
+        self.preprocessing.output_height = 32
+        self.preprocessing.save(
+            update_fields=["output_width", "output_height", "updated_at"]
+        )
+        result = ImageEnhancementResult.objects.create(
+            owner=self.user,
+            image=self.image,
+            preprocessing_result=self.preprocessing,
+            requested_level=EnhancementLevel.LOW,
+        )
+
+        result = process_enhancement_result(result)
+
+        self.assertEqual((result.output_width, result.output_height), (160, 96))
+        self.assertEqual(
+            result.applied_parameters["source_resolution_strategy"],
+            "full_resolution_original",
+        )
+
     @patch("enhancement.views.process_enhancement_image.apply_async")
     def test_owner_can_queue_enhancement_and_other_user_cannot_read_or_download(
         self, apply_async
@@ -322,6 +474,73 @@ class EnhancementProcessingAndAPITests(TestCase):
         self.assertIn("/preprocessing/download/", response.data["standardized"]["download_url"])
         self.assertIn("/api/enhancements/results/", response.data["enhanced"]["download_url"])
         self.assertNotIn("users/", str(response.data))
+
+    @patch("enhancement.views.process_gallery_edit.apply_async")
+    def test_owner_can_render_versioned_gallery_edit_and_other_user_cannot_access(
+        self, apply_async
+    ):
+        result = ImageEnhancementResult.objects.create(
+            owner=self.user,
+            image=self.image,
+            preprocessing_result=self.preprocessing,
+            requested_level=EnhancementLevel.AUTO,
+        )
+        result = process_enhancement_result(result)
+        create = self.client.post(
+            reverse(
+                "enhancement:edit-list-create", kwargs={"result_id": result.pk}
+            ),
+            {
+                "mode": "manual",
+                "adjustments": {
+                    "brightness": 12,
+                    "contrast": 8,
+                    "shadows": 10,
+                    "saturation": 5,
+                    "highlights": -6,
+                },
+            },
+            format="json",
+        )
+        self.assertEqual(create.status_code, 202)
+        self.assertEqual(create.data["status"], "queued")
+        edit_id = create.data["id"]
+        apply_async.assert_called_once()
+
+        task_result = process_gallery_edit.run(edit_id)
+        self.assertEqual(task_result["status"], "completed")
+        edit = ImageEditVersion.objects.get(pk=edit_id)
+        self.assertTrue(edit.is_current)
+        self.assertEqual(
+            (edit.output_width, edit.output_height),
+            (result.output_width, result.output_height),
+        )
+        self.assertTrue(edit.edited_file)
+
+        self.client.force_authenticate(self.other)
+        self.assertEqual(
+            self.client.get(
+                reverse("enhancement:edit-detail", kwargs={"pk": edit_id})
+            ).status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.get(
+                reverse("enhancement:edit-download", kwargs={"pk": edit_id})
+            ).status_code,
+            404,
+        )
+
+    def test_editor_configuration_exposes_auto_and_five_manual_controls(self):
+        response = self.client.get(reverse("enhancement:editor-configuration"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["non_destructive"])
+        self.assertEqual(response.data["modes"], ["auto", "manual"])
+        self.assertEqual(
+            set(response.data["controls"]),
+            {"brightness", "contrast", "shadows", "saturation", "highlights"},
+        )
 
     def test_comparison_is_private_and_requires_authentication(self):
         result = ImageEnhancementResult.objects.create(

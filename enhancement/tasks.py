@@ -2,8 +2,13 @@ from celery import shared_task
 from django.db import transaction
 from django.utils import timezone
 
-from .models import EnhancementBatchJob, EnhancementStatus, ImageEnhancementResult
-from .services import process_enhancement_result
+from .models import (
+    EnhancementBatchJob,
+    EnhancementStatus,
+    ImageEditVersion,
+    ImageEnhancementResult,
+)
+from .services import process_enhancement_result, process_image_edit
 
 
 @shared_task(bind=True, name="enhancement.process_image", acks_late=True)
@@ -38,7 +43,15 @@ def process_enhancement_image(self, result_id):
                     "status", "failure_reason", "finished_at", "updated_at",
                 ]
             )
+        from notifications.events import notify_enhancement_result
+        from uploads.progress import sync_image_progress
+        notify_enhancement_result(result)
+        sync_image_progress(result.image_id)
         return {"result_id": result_id, "status": result.status}
+    from notifications.events import notify_enhancement_result
+    from uploads.progress import sync_image_progress
+    notify_enhancement_result(result)
+    sync_image_progress(result.image_id)
     return {"result_id": result_id, "status": result.status}
 
 
@@ -75,6 +88,11 @@ def process_enhancement_batch(self, job_id):
             process_enhancement_result(result)
         except Exception:
             pass
+        result.refresh_from_db()
+        from notifications.events import notify_enhancement_result
+        from uploads.progress import sync_image_progress
+        notify_enhancement_result(result)
+        sync_image_progress(result.image_id)
         successful = job.results.filter(status=EnhancementStatus.COMPLETED).count()
         failed = job.results.filter(status=EnhancementStatus.FAILED).count()
         EnhancementBatchJob.objects.filter(pk=job_id).update(
@@ -100,3 +118,35 @@ def process_enhancement_batch(self, job_id):
         finished_at=timezone.now(),
     )
     return {"job_id": job_id, "status": final_status, "successful": successful, "failed": failed}
+
+
+@shared_task(bind=True, name="enhancement.process_gallery_edit", acks_late=True)
+def process_gallery_edit(self, edit_id):
+    task_id = self.request.id or ""
+    with transaction.atomic():
+        edit = ImageEditVersion.objects.select_for_update().get(pk=edit_id)
+        if edit.status in (
+            EnhancementStatus.COMPLETED,
+            EnhancementStatus.CANCELLED,
+        ):
+            return {"edit_id": edit_id, "status": edit.status}
+        if edit.task_id and task_id and edit.task_id != task_id:
+            return {"edit_id": edit_id, "status": "superseded"}
+    try:
+        edit = process_image_edit(edit)
+    except Exception:
+        edit.refresh_from_db()
+        if edit.status not in (
+            EnhancementStatus.COMPLETED,
+            EnhancementStatus.FAILED,
+            EnhancementStatus.CANCELLED,
+        ):
+            edit.status = EnhancementStatus.FAILED
+            edit.failure_reason = "The background gallery-edit task failed safely."
+            edit.finished_at = timezone.now()
+            edit.save(
+                update_fields=[
+                    "status", "failure_reason", "finished_at", "updated_at",
+                ]
+            )
+    return {"edit_id": edit_id, "status": edit.status}

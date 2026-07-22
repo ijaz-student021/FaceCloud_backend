@@ -70,6 +70,10 @@ def create_image_batch(owner, upload_type, files):
     if len(files) > settings.MAX_UPLOAD_BATCH_FILES:
         raise ValidationError(f"A batch cannot contain more than {settings.MAX_UPLOAD_BATCH_FILES} images.")
     batch = UploadBatch.objects.create(owner=owner, upload_type=upload_type)
+    from notifications.events import notify_upload_received
+    transaction.on_commit(
+        lambda batch_id=batch.pk: notify_upload_received(batch_id)
+    )
     for uploaded_file in files:
         try:
             saved_image = _save_valid_image(batch, owner, uploaded_file)
@@ -110,6 +114,11 @@ def create_zip_batch(owner, uploaded_zip):
         owner=owner,
         upload_type="zip",
         original_archive_name=safe_original_name(uploaded_zip.name),
+    )
+    from notifications.events import notify_upload_received
+
+    transaction.on_commit(
+        lambda batch_id=batch.pk: notify_upload_received(batch_id)
     )
     uploaded_zip.seek(0)
     with zipfile.ZipFile(uploaded_zip) as archive:

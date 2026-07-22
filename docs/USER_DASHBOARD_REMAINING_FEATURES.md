@@ -9,17 +9,18 @@ dashboard screens. Administrator-only and moderator-only work is excluded.
 The portal currently has working foundations for authentication, uploads,
 preprocessing, enhancement, quality decisions, face validation, duplicate
 detection, batch progress, dashboard statistics, My Images listing, and protected
-individual downloads.
+individual downloads. The backend also provides a non-destructive Auto/Manual
+gallery editor; the frontend still needs to connect its sliders and polling UI.
 
 ## Summary
 
-Seventeen catalogue features still contain work required by the user dashboard:
+Fourteen catalogue features still contain work required by the user dashboard:
 
-- 13 planned user features
-- 4 partially complete user features
+- 11 planned user features
+- 3 partially complete user features
 - 7 practical implementation workstreams
 
-The affected catalogue numbers are Features 18–20, 22–26, 28–30, and 36–41.
+The affected catalogue numbers are Features 18–20, 24–26, 28, 30, and 36–41.
 
 ## 1. Identity and Person Folders
 
@@ -72,31 +73,31 @@ Remaining work:
 
 ## 3. Reports and Downloads
 
-### Feature 22: Processing reports — Planned
+### Feature 22: Processing reports — Complete backend
 
-Generate durable image and batch evidence for the Downloads page.
+Owner-scoped image and batch reports are implemented in JSON, CSV, and PDF.
+Generation runs through Celery and includes normalized quality, face, duplicate,
+enhancement, duration, reason, and protected-link fields. The Downloads page only
+needs to connect to these APIs and poll queued jobs.
 
-Remaining work:
+Frontend integration work:
 
-- Include filename, status, failure or rejection reason, and enhancement level.
-- Include brightness, blur, sharpness, quality score, and face count.
-- Include duplicate and identity-group results where available.
-- Include processing time and protected result links.
-- Generate owner-scoped CSV, PDF, and JSON reports.
+- Add JSON, CSV, and PDF selection to the Downloads page.
+- Poll queued/generating report state and enable downloads when ready.
+- Show safe report failures and a regenerate action.
 
-### Feature 23: Image and batch downloads — Planned workflow
+### Feature 23: Image and batch downloads — Complete backend
 
-Protected individual original, standardized, and enhanced downloads exist. The
-complete Downloads-page workflow remains.
+Protected original, standardized, enhanced, and report downloads now create
+owner-only history entries. Accepted-results and complete-batch ZIP packages are
+generated asynchronously, expire safely, and can be regenerated.
 
-Remaining work:
+Frontend integration work:
 
-- Generate accepted-image ZIP files.
-- Generate complete batch-result ZIP files.
-- Add report downloads.
-- Record download history and timestamps.
-- Regenerate expired download packages safely.
-- Expose only files owned by the authenticated user.
+- Add accepted-results and complete-batch package actions.
+- Add JSON, CSV, and PDF report-format selection.
+- Poll queued/generating packages and enable ready downloads.
+- Display download history, expiry, failures, regeneration, and deletion.
 
 ### Feature 24: Identity-group ZIP export — Planned
 
@@ -149,21 +150,19 @@ Remaining work:
 - Record report, download, export, and share-link events.
 - Return a paginated owner-only timeline with filters.
 
-### Feature 29: In-app and email notifications — Partial
+### Feature 29: In-app and email notifications — Backend complete
 
-Email verification and password-reset messages exist. Processing notifications and
-the dashboard preference controls remain.
+The backend now persists owner-scoped notifications and preferences, publishes
+events from upload, enhancement, quality, batch, report, and download workflows,
+and optionally sends eligible emails through Celery. It provides paginated list,
+filter, unread-count, mark-read, mark-all-read, delete, and preference APIs.
 
-Remaining work:
+Frontend integration remaining:
 
-- Persist each user's notification preferences.
-- Send upload-received and processing-started notifications.
-- Send accepted, rejected, failed, and needs-review results.
-- Send multiple/ZIP batch-completion summaries.
-- Notify when an identity group or report is ready.
-- Notify about expiring share links where appropriate.
-- Provide an in-app notification list, unread count, and read actions.
-- Respect the user's email and live-session preference switches.
+- Connect the dashboard bell, notification panel, unread actions, and Settings
+  toggles to `/api/notifications/`.
+- Add identity-group, share-expiration, moderator-decision, and live-session
+  producers when those owning backend features are implemented.
 
 ## 5. User Dashboard Integration
 
@@ -259,15 +258,13 @@ Remaining work:
 1. Feature 18 — face recognition and identity grouping
 2. Feature 19 — identity group management
 3. Feature 20 — background-recognition hardening
-4. Feature 22 — processing reports
-5. Features 23 and 24 — batch and identity-group downloads
-6. Feature 28 — complete activity timeline
-7. Feature 29 — notifications and preferences
-8. Feature 30 — replace all remaining demonstration data
-9. Feature 26 — secure share links
-10. Feature 25 — watermark exports
-11. Features 36–40 — production live-camera workflow
-12. Feature 41 — final privacy, retention, consent, and erasure hardening
+4. Feature 24 — identity-group downloads
+5. Feature 28 — complete activity timeline
+6. Feature 30 — replace all remaining demonstration data
+7. Feature 26 — secure share links
+8. Feature 25 — watermark exports
+9. Features 36–40 — production live-camera workflow
+10. Feature 41 — final privacy, retention, consent, and erasure hardening
 
 ## Next feature
 

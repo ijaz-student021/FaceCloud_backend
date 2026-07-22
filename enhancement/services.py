@@ -5,6 +5,7 @@ left unchanged so the baseline does not intentionally normalize skin tones.
 """
 
 import hashlib
+import logging
 import time
 import threading
 from pathlib import Path
@@ -16,12 +17,22 @@ from django.core.files.base import ContentFile
 from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
+from PIL import Image, ImageColor, ImageOps, UnidentifiedImageError
 
 from uploads.models import ImagePreprocessingResult
 from quality_control.models import ImageQualityDecision
 
-from .models import EnhancementLevel, EnhancementStatus, ImageEnhancementResult
+from .models import (
+    EditMode,
+    EnhancementLevel,
+    EnhancementStatus,
+    ImageEditVersion,
+    ImageEnhancementResult,
+)
 from .zero_dce import ZeroDCEUnavailable, enhance_with_zero_dce
+
+
+logger = logging.getLogger(__name__)
 
 
 LEVEL_POLICIES = {
@@ -36,6 +47,36 @@ LEVEL_POLICIES = {
     EnhancementLevel.HIGH: {
         "gamma": 0.80, "clahe_clip": 1.55, "clahe_grid": 8,
         "blend": 0.52, "sharpen": 0.14, "denoise": 0,
+    },
+}
+
+# These limits are deliberately conservative.  Enhancement levels control how
+# far the output may move from the source; they do not promise that every model
+# candidate will be used at full strength.
+OUTPUT_GUARD_POLICIES = {
+    EnhancementLevel.LOW: {
+        "learned_model_strength": 0.30,
+        "max_luminance_gain": 10.0,
+        "max_luminance_loss": 8.0,
+        "minimum_contrast_ratio": 0.88,
+        "max_highlight_clipping_growth": 1.0,
+        "max_chroma_shift": 2.5,
+    },
+    EnhancementLevel.MEDIUM: {
+        "learned_model_strength": 0.45,
+        "max_luminance_gain": 18.0,
+        "max_luminance_loss": 12.0,
+        "minimum_contrast_ratio": 0.82,
+        "max_highlight_clipping_growth": 1.5,
+        "max_chroma_shift": 3.5,
+    },
+    EnhancementLevel.HIGH: {
+        "learned_model_strength": 0.60,
+        "max_luminance_gain": 30.0,
+        "max_luminance_loss": 18.0,
+        "minimum_contrast_ratio": 0.75,
+        "max_highlight_clipping_growth": 2.0,
+        "max_chroma_shift": 5.0,
     },
 }
 
@@ -67,6 +108,9 @@ def analyze_image_quality(image):
     noise = float(np.median(np.abs(gray.astype(np.float32) - smooth.astype(np.float32))))
     shadow_clipping = float(np.mean(gray <= 5) * 100)
     highlight_clipping = float(np.mean(gray >= 250) * 100)
+    luminance_percentiles = np.percentile(gray, (5, 25, 50, 75, 95))
+    dark_pixel_percent = float(np.mean(gray < 64) * 100)
+    bright_pixel_percent = float(np.mean(gray > 224) * 100)
     height, width = gray.shape
     shortest_edge = min(width, height)
 
@@ -100,6 +144,15 @@ def analyze_image_quality(image):
         "estimated_noise": round(noise, 2),
         "shadow_clipping_percent": round(shadow_clipping, 3),
         "highlight_clipping_percent": round(highlight_clipping, 3),
+        "luminance_percentiles": {
+            "p05": round(float(luminance_percentiles[0]), 2),
+            "p25": round(float(luminance_percentiles[1]), 2),
+            "p50": round(float(luminance_percentiles[2]), 2),
+            "p75": round(float(luminance_percentiles[3]), 2),
+            "p95": round(float(luminance_percentiles[4]), 2),
+        },
+        "dark_pixel_percent": round(dark_pixel_percent, 3),
+        "bright_pixel_percent": round(bright_pixel_percent, 3),
         "defects": defects,
         "needs_ai_restoration": restoration_required,
     }
@@ -194,9 +247,37 @@ def restore_low_resolution(image, quality):
         return image, metadata
 
 
-def _adapt_policy(base_policy, quality):
+def _adapt_policy(base_policy, quality, level):
     policy = dict(base_policy)
     defects = quality["defects"]
+    mean_luminance = quality["mean_luminance"]
+    if mean_luminance > 175 or "overexposed_highlights" in defects:
+        policy["exposure_mode"] = "darken"
+        policy["gamma"] = {
+            EnhancementLevel.LOW: 1.04,
+            EnhancementLevel.MEDIUM: 1.08,
+            EnhancementLevel.HIGH: 1.12,
+        }[level]
+        policy["blend"] = min(policy["blend"], {
+            EnhancementLevel.LOW: 0.18,
+            EnhancementLevel.MEDIUM: 0.26,
+            EnhancementLevel.HIGH: 0.34,
+        }[level])
+        # CLAHE can brighten an already bright, nearly uniform image.  Gamma
+        # correction alone is safer in this branch.
+        policy["use_clahe"] = False
+    elif mean_luminance >= 115:
+        policy["exposure_mode"] = "balanced"
+        policy["gamma"] = 1.0
+        policy["blend"] = min(policy["blend"], {
+            EnhancementLevel.LOW: 0.12,
+            EnhancementLevel.MEDIUM: 0.20,
+            EnhancementLevel.HIGH: 0.28,
+        }[level])
+        policy["use_clahe"] = True
+    else:
+        policy["exposure_mode"] = "brighten"
+        policy["use_clahe"] = True
     if "visible_noise" in defects:
         policy["denoise"] = 2
     if "mild_blur" in defects:
@@ -211,34 +292,146 @@ def _adapt_policy(base_policy, quality):
     return policy
 
 
-def _quality_guard(original, candidate, level, input_quality):
-    """Blend toward the original when enhancement becomes destructive."""
-    output_quality = analyze_image_quality(candidate)
-    max_luminance_gain = {
-        EnhancementLevel.LOW: 14,
-        EnhancementLevel.MEDIUM: 28,
-        EnhancementLevel.HIGH: 42,
-    }[level]
-    luminance_gain = output_quality["mean_luminance"] - input_quality["mean_luminance"]
+def _mean_chroma_shift(original, candidate):
+    original_lab = cv2.cvtColor(original, cv2.COLOR_BGR2LAB).astype(np.float32)
+    candidate_lab = cv2.cvtColor(candidate, cv2.COLOR_BGR2LAB).astype(np.float32)
+    return float(np.mean(np.abs(candidate_lab[:, :, 1:] - original_lab[:, :, 1:])))
+
+
+def _preserve_source_chroma(original, candidate):
+    """Use learned luminance while retaining the source hue and skin colour."""
+    original_lab = cv2.cvtColor(original, cv2.COLOR_BGR2LAB)
+    candidate_lab = cv2.cvtColor(candidate, cv2.COLOR_BGR2LAB)
+    protected_lab = cv2.merge(
+        (candidate_lab[:, :, 0], original_lab[:, :, 1], original_lab[:, :, 2])
+    )
+    return cv2.cvtColor(protected_lab, cv2.COLOR_LAB2BGR)
+
+
+def _adaptive_learned_strength(input_quality, level):
+    """Scale model strength by the actual need for additional exposure."""
+    mean = input_quality["mean_luminance"] / 255.0
+    median = input_quality["luminance_percentiles"]["p50"] / 255.0
+    scene_luminance = (mean * 0.6) + (median * 0.4)
+    threshold = settings.ENHANCEMENT_MODEL_LUMINANCE_THRESHOLD
+    target = max(settings.ENHANCEMENT_MODEL_LUMINANCE_TARGET, threshold + 0.01)
+    level_cap = OUTPUT_GUARD_POLICIES[level]["learned_model_strength"]
+    if scene_luminance >= threshold:
+        return 0.0, scene_luminance
+    need = np.clip((target - scene_luminance) / target, 0.0, 1.0)
+    return float(level_cap * need), scene_luminance
+
+
+def _quality_guard(original, candidate, level, input_quality, learned_model=False):
+    """Apply a measurable, adaptive blend when a candidate becomes destructive."""
+    limits = OUTPUT_GUARD_POLICIES[level]
+    raw_quality = analyze_image_quality(candidate)
+    raw_luminance_delta = (
+        raw_quality["mean_luminance"] - input_quality["mean_luminance"]
+    )
+    raw_clipping_growth = (
+        raw_quality["highlight_clipping_percent"]
+        - input_quality["highlight_clipping_percent"]
+    )
+    scene_luminance = input_quality["mean_luminance"] / 255.0
+    if learned_model:
+        strength, scene_luminance = _adaptive_learned_strength(
+            input_quality, level
+        )
+    else:
+        strength = 1.0
+    reasons = []
+
+    if raw_luminance_delta > limits["max_luminance_gain"]:
+        strength = min(strength, limits["max_luminance_gain"] / raw_luminance_delta)
+        reasons.append("luminance_gain_limited")
+    elif raw_luminance_delta < -limits["max_luminance_loss"]:
+        strength = min(
+            strength,
+            limits["max_luminance_loss"] / abs(raw_luminance_delta),
+        )
+        reasons.append("luminance_loss_limited")
+    if raw_clipping_growth > limits["max_highlight_clipping_growth"]:
+        strength = min(
+            strength,
+            limits["max_highlight_clipping_growth"] / raw_clipping_growth,
+        )
+        reasons.append("highlight_clipping_limited")
+
+    strength = max(0.0, min(1.0, strength))
+    minimum_contrast = (
+        input_quality["contrast_stddev"] * limits["minimum_contrast_ratio"]
+    )
+    guarded = original
+    output_quality = input_quality
+    chroma_shift = 0.0
+    # Re-evaluate the real blended pixels rather than assuming that metrics are
+    # linear. Reducing strength always moves the candidate toward the source.
+    clipping_limit = settings.ENHANCEMENT_MAX_HIGHLIGHT_CLIPPING_PERCENT
+    for _attempt in range(12):
+        guarded = cv2.addWeighted(original, 1.0 - strength, candidate, strength, 0)
+        output_quality = analyze_image_quality(guarded)
+        chroma_shift = _mean_chroma_shift(original, guarded)
+        contrast_ok = output_quality["contrast_stddev"] >= minimum_contrast
+        clipping_growth = (
+            output_quality["highlight_clipping_percent"]
+            - input_quality["highlight_clipping_percent"]
+        )
+        clipping_ok = clipping_growth <= limits["max_highlight_clipping_growth"]
+        absolute_clipping_ok = (
+            output_quality["highlight_clipping_percent"] <= clipping_limit
+        )
+        chroma_ok = chroma_shift <= limits["max_chroma_shift"]
+        if contrast_ok and clipping_ok and absolute_clipping_ok and chroma_ok:
+            break
+        if not contrast_ok and "contrast_preserved" not in reasons:
+            reasons.append("contrast_preserved")
+        if not clipping_ok and "highlight_clipping_limited" not in reasons:
+            reasons.append("highlight_clipping_limited")
+        if (
+            not absolute_clipping_ok
+            and "absolute_highlight_clipping_limited" not in reasons
+        ):
+            reasons.append("absolute_highlight_clipping_limited")
+        if not chroma_ok and "chroma_shift_limited" not in reasons:
+            reasons.append("chroma_shift_limited")
+        strength *= 0.72
+
+    luminance_delta = (
+        output_quality["mean_luminance"] - input_quality["mean_luminance"]
+    )
     clipping_growth = (
         output_quality["highlight_clipping_percent"]
         - input_quality["highlight_clipping_percent"]
     )
-    fallback_applied = False
-    guarded = candidate
-    if luminance_gain > max_luminance_gain or clipping_growth > 3:
-        guarded = cv2.addWeighted(original, 0.45, candidate, 0.55, 0)
-        output_quality = analyze_image_quality(guarded)
-        fallback_applied = True
+    if output_quality["highlight_clipping_percent"] > clipping_limit:
+        logger.warning(
+            "Enhancement output retained %.3f%% clipped highlights after guarding.",
+            output_quality["highlight_clipping_percent"],
+        )
     return guarded, output_quality, {
-        "fallback_blend_applied": fallback_applied,
-        "luminance_gain": round(
-            output_quality["mean_luminance"] - input_quality["mean_luminance"], 2
+        "policy": "adaptive_natural_output_guard_v2",
+        "fallback_blend_applied": strength < 0.999,
+        "applied_candidate_strength": round(strength, 4),
+        "reasons": reasons,
+        "limits": limits,
+        "scene_luminance_normalized": round(scene_luminance, 4),
+        "model_luminance_threshold": settings.ENHANCEMENT_MODEL_LUMINANCE_THRESHOLD,
+        "model_luminance_target": settings.ENHANCEMENT_MODEL_LUMINANCE_TARGET,
+        "absolute_highlight_clipping_limit": clipping_limit,
+        "raw_candidate": {
+            "luminance_delta": round(raw_luminance_delta, 2),
+            "contrast_stddev": raw_quality["contrast_stddev"],
+            "highlight_clipping_growth": round(raw_clipping_growth, 3),
+        },
+        "luminance_gain": round(luminance_delta, 2),
+        "contrast_retention_ratio": round(
+            output_quality["contrast_stddev"]
+            / max(input_quality["contrast_stddev"], 0.001),
+            4,
         ),
-        "highlight_clipping_growth": round(
-            output_quality["highlight_clipping_percent"]
-            - input_quality["highlight_clipping_percent"], 3
-        ),
+        "mean_chroma_shift": round(chroma_shift, 3),
+        "highlight_clipping_growth": round(clipping_growth, 3),
     }
 
 
@@ -267,18 +460,20 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
         zero_dce["fallback_reason"] = "Zero-DCE is disabled."
     mean_luminance = input_quality["mean_luminance"]
     applied_level = _auto_level(mean_luminance) if requested_level == EnhancementLevel.AUTO else requested_level
-    policy = _adapt_policy(LEVEL_POLICIES[applied_level], input_quality)
+    policy = _adapt_policy(LEVEL_POLICIES[applied_level], input_quality, applied_level)
     if zero_dce["applied"]:
-        enhanced = working_image
+        enhanced = _preserve_source_chroma(guard_reference, working_image)
+        zero_dce["chroma_protection"] = "preserve_source_lab_chroma"
     else:
         lab = cv2.cvtColor(working_image, cv2.COLOR_BGR2LAB)
         luminance, channel_a, channel_b = cv2.split(lab)
         corrected = cv2.LUT(luminance, _gamma_lut(policy["gamma"]))
-        clahe = cv2.createCLAHE(
-            clipLimit=policy["clahe_clip"],
-            tileGridSize=(policy["clahe_grid"], policy["clahe_grid"]),
-        )
-        corrected = clahe.apply(corrected)
+        if policy["use_clahe"]:
+            clahe = cv2.createCLAHE(
+                clipLimit=policy["clahe_clip"],
+                tileGridSize=(policy["clahe_grid"], policy["clahe_grid"]),
+            )
+            corrected = clahe.apply(corrected)
         corrected = cv2.addWeighted(
             luminance, 1.0 - policy["blend"], corrected, policy["blend"], 0
         )
@@ -295,7 +490,11 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
         )
 
     enhanced, output_quality, guard = _quality_guard(
-        guard_reference, enhanced, applied_level, analyze_image_quality(guard_reference)
+        guard_reference,
+        enhanced,
+        applied_level,
+        analyze_image_quality(guard_reference),
+        learned_model=zero_dce["applied"],
     )
     normalized_comparison = compare_image_quality(image, enhanced)
 
@@ -341,6 +540,47 @@ def _read_standardized_image(preprocessing):
     return decoded
 
 
+def _read_full_resolution_original(result):
+    """Decode the EXIF-oriented original without a resize or destructive overwrite."""
+    original = result.image.original_file
+    if not original:
+        raise ValidationError("The original image is unavailable.")
+    original.open("rb")
+    try:
+        with Image.open(original) as source:
+            source.load()
+            working = ImageOps.exif_transpose(source)
+            if working.mode in {"RGBA", "LA"} or (
+                working.mode == "P" and "transparency" in working.info
+            ):
+                rgba = working.convert("RGBA")
+                background = Image.new(
+                    "RGB",
+                    rgba.size,
+                    ImageColor.getrgb(settings.PREPROCESS_TRANSPARENT_BACKGROUND),
+                )
+                background.paste(rgba, mask=rgba.getchannel("A"))
+                working = background
+            else:
+                working = working.convert("RGB")
+            rgb = np.asarray(working, dtype=np.uint8)
+    except (UnidentifiedImageError, OSError, SyntaxError) as error:
+        raise ValidationError("The original image cannot be decoded safely.") from error
+    finally:
+        original.close()
+    return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+
+
+def _read_enhancement_source(result):
+    if settings.ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION:
+        try:
+            return _read_full_resolution_original(result), "full_resolution_original"
+        except ValidationError:
+            # Legacy rows can legitimately have only their standardized file.
+            pass
+    return _read_standardized_image(result.preprocessing_result), "standardized_fallback"
+
+
 def _encode_output(image, preprocessing):
     use_png = preprocessing.output_format == "png"
     extension = ".png" if use_png else ".jpg"
@@ -350,6 +590,15 @@ def _encode_output(image, preprocessing):
         if use_png
         else [cv2.IMWRITE_JPEG_QUALITY, settings.PREPROCESS_JPEG_QUALITY]
     )
+    if not use_png and hasattr(cv2, "IMWRITE_JPEG_SAMPLING_FACTOR") and hasattr(
+        cv2, "IMWRITE_JPEG_SAMPLING_FACTOR_444"
+    ):
+        options.extend(
+            [
+                cv2.IMWRITE_JPEG_SAMPLING_FACTOR,
+                cv2.IMWRITE_JPEG_SAMPLING_FACTOR_444,
+            ]
+        )
     success, encoded = cv2.imencode(extension, image, options)
     if not success:
         raise ValidationError("The enhanced image could not be encoded safely.")
@@ -404,8 +653,12 @@ def process_enhancement_result(result):
     started = time.perf_counter()
     stored_name = None
     try:
-        source = _read_standardized_image(result.preprocessing_result)
+        source, source_strategy = _read_enhancement_source(result)
         enhanced, applied_level, parameters = enhance_bgr(source, result.requested_level)
+        parameters["source_resolution_strategy"] = source_strategy
+        parameters["source_dimensions"] = [
+            int(source.shape[1]), int(source.shape[0])
+        ]
         payload, extension, output_format = _encode_output(enhanced, result.preprocessing_result)
         source_stem = Path(result.preprocessing_result.output_name or result.image.original_name).stem
         output_name = f"{source_stem}_enhanced_{applied_level}{extension}"
@@ -442,3 +695,207 @@ def process_enhancement_result(result):
         result.finished_at = timezone.now()
         result.save(update_fields=["status", "failure_reason", "processing_duration_ms", "finished_at", "updated_at"])
         raise ValidationError("The image could not be enhanced safely.") from error
+
+
+EDITOR_CONTROL_NAMES = (
+    "brightness",
+    "contrast",
+    "shadows",
+    "saturation",
+    "highlights",
+)
+
+
+def _auto_editor_adjustments(quality):
+    """Create restrained corrections from the image rather than a fixed preset."""
+    percentiles = quality["luminance_percentiles"]
+    brightness = np.clip((135.0 - quality["mean_luminance"]) * 0.22, -16, 16)
+    contrast = np.clip((48.0 - quality["contrast_stddev"]) * 0.65, -8, 20)
+    shadows = np.clip((68.0 - percentiles["p25"]) * 0.35, 0, 22)
+    highlights = -np.clip((percentiles["p95"] - 224.0) * 0.45, 0, 24)
+    return {
+        "brightness": round(float(brightness), 2),
+        "contrast": round(float(contrast), 2),
+        "shadows": round(float(shadows), 2),
+        "saturation": 0.0,
+        "highlights": round(float(highlights), 2),
+    }
+
+
+def _render_editor_controls(source, controls, strength=1.0):
+    """Apply bounded tone controls in LAB while preserving the source pixel grid."""
+    lab = cv2.cvtColor(source, cv2.COLOR_BGR2LAB).astype(np.float32)
+    luminance, channel_a, channel_b = cv2.split(lab)
+    effective = {
+        name: float(controls.get(name, 0.0)) * strength
+        for name in EDITOR_CONTROL_NAMES
+    }
+
+    luminance += effective["brightness"] * 0.35
+    midpoint = float(np.median(luminance))
+    contrast_factor = 1.0 + (effective["contrast"] * 0.005)
+    luminance = midpoint + ((luminance - midpoint) * contrast_factor)
+
+    normalized = np.clip(luminance / 255.0, 0.0, 1.0)
+    shadow_mask = np.square(1.0 - normalized)
+    highlight_mask = np.square(normalized)
+    luminance += shadow_mask * effective["shadows"] * 0.45
+    luminance += highlight_mask * effective["highlights"] * 0.40
+
+    saturation_factor = 1.0 + (effective["saturation"] * 0.004)
+    channel_a = 128.0 + ((channel_a - 128.0) * saturation_factor)
+    channel_b = 128.0 + ((channel_b - 128.0) * saturation_factor)
+    rendered_lab = cv2.merge(
+        (
+            np.clip(luminance, 0, 255).astype(np.uint8),
+            np.clip(channel_a, 0, 255).astype(np.uint8),
+            np.clip(channel_b, 0, 255).astype(np.uint8),
+        )
+    )
+    return cv2.cvtColor(rendered_lab, cv2.COLOR_LAB2BGR), effective
+
+
+def apply_gallery_adjustments(source, mode, requested_adjustments=None):
+    """Render one non-destructive Auto or Manual gallery edit."""
+    if source is None or source.size == 0:
+        raise ValidationError("The enhanced image cannot be edited safely.")
+    if mode not in EditMode.values:
+        raise ValidationError({"mode": "Choose auto or manual."})
+
+    before = analyze_image_quality(source)
+    if mode == EditMode.AUTO:
+        controls = _auto_editor_adjustments(before)
+    else:
+        requested_adjustments = requested_adjustments or {}
+        controls = {
+            name: float(requested_adjustments.get(name, 0.0))
+            for name in EDITOR_CONTROL_NAMES
+        }
+
+    strength = 1.0
+    clipping_limit = max(
+        settings.ENHANCEMENT_MAX_HIGHLIGHT_CLIPPING_PERCENT,
+        before["highlight_clipping_percent"] + 2.0,
+    )
+    reasons = []
+    rendered = source.copy()
+    effective = controls
+    after = before
+    for _attempt in range(10):
+        rendered, effective = _render_editor_controls(source, controls, strength)
+        after = analyze_image_quality(rendered)
+        contrast_floor = before["contrast_stddev"] * 0.70
+        if (
+            after["highlight_clipping_percent"] <= clipping_limit
+            and after["contrast_stddev"] >= contrast_floor
+        ):
+            break
+        if after["highlight_clipping_percent"] > clipping_limit:
+            if "highlight_clipping_limited" not in reasons:
+                reasons.append("highlight_clipping_limited")
+        if after["contrast_stddev"] < contrast_floor:
+            if "contrast_loss_limited" not in reasons:
+                reasons.append("contrast_loss_limited")
+        strength *= 0.78
+
+    return rendered, {
+        "mode": mode,
+        "policy": "non_destructive_gallery_editor_v1",
+        "requested": controls,
+        "effective": {name: round(value, 3) for name, value in effective.items()},
+        "safety_strength": round(strength, 4),
+        "safety_reasons": reasons,
+        "quality_before": before,
+        "quality_after": after,
+        "dimensions_preserved": source.shape[:2] == rendered.shape[:2],
+    }
+
+
+def _read_edited_source(edit):
+    source_file = edit.enhancement_result.enhanced_file
+    if not source_file:
+        raise ValidationError("The enhanced image is unavailable.")
+    source_file.open("rb")
+    try:
+        payload = source_file.read()
+    finally:
+        source_file.close()
+    decoded = cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if decoded is None:
+        raise ValidationError("The enhanced image cannot be decoded safely.")
+    return decoded
+
+
+def process_image_edit(edit):
+    """Render and persist a gallery edit as a separate immutable file version."""
+    with transaction.atomic():
+        edit = (
+            ImageEditVersion.objects.select_for_update()
+            .select_related("enhancement_result__preprocessing_result", "owner")
+            .get(pk=edit.pk)
+        )
+        if edit.status == EnhancementStatus.COMPLETED and edit.edited_file:
+            return edit
+        if edit.status == EnhancementStatus.CANCELLED:
+            return edit
+        edit.status = EnhancementStatus.PROCESSING
+        edit.started_at = edit.started_at or timezone.now()
+        edit.failure_reason = ""
+        edit.save(
+            update_fields=["status", "started_at", "failure_reason", "updated_at"]
+        )
+
+    started = time.perf_counter()
+    stored_name = None
+    try:
+        source = _read_edited_source(edit)
+        rendered, metadata = apply_gallery_adjustments(
+            source,
+            edit.mode,
+            edit.requested_adjustments,
+        )
+        preprocessing = edit.enhancement_result.preprocessing_result
+        payload, extension, output_format = _encode_output(rendered, preprocessing)
+        source_stem = Path(edit.enhancement_result.output_name).stem
+        output_name = f"{source_stem}_edit_{edit.pk}{extension}"
+        edit.edited_file.save(output_name, ContentFile(payload), save=False)
+        stored_name = edit.edited_file.name
+        edit.status = EnhancementStatus.COMPLETED
+        edit.applied_adjustments = metadata["effective"]
+        edit.output_name = output_name
+        edit.output_format = output_format
+        edit.output_width = int(rendered.shape[1])
+        edit.output_height = int(rendered.shape[0])
+        edit.output_file_size = len(payload)
+        edit.processing_duration_ms = max(
+            1, round((time.perf_counter() - started) * 1000)
+        )
+        edit.quality_metadata = metadata
+        edit.failure_reason = ""
+        edit.finished_at = timezone.now()
+        with transaction.atomic():
+            ImageEditVersion.objects.filter(
+                enhancement_result=edit.enhancement_result,
+                is_current=True,
+            ).exclude(pk=edit.pk).update(is_current=False)
+            edit.is_current = True
+            edit.save()
+        return edit
+    except Exception as error:
+        if stored_name:
+            edit.edited_file.storage.delete(stored_name)
+        edit.status = EnhancementStatus.FAILED
+        edit.failure_reason = "The gallery edit could not be rendered safely."
+        edit.processing_duration_ms = max(
+            1, round((time.perf_counter() - started) * 1000)
+        )
+        edit.finished_at = timezone.now()
+        edit.save(
+            update_fields=[
+                "status", "failure_reason", "processing_duration_ms",
+                "finished_at", "updated_at",
+            ]
+        )
+        if isinstance(error, ValidationError):
+            raise
+        raise ValidationError("The gallery edit could not be rendered safely.") from error

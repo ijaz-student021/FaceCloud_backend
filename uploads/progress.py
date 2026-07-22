@@ -120,6 +120,9 @@ def recompute_batch_progress(batch_id):
         current_stage=stage, processing_status=processing_status,
         progress_updated_at=timezone.now(),
     )
+    if processing_status in {"completed", "partial", "failed", "cancelled"}:
+        from notifications.events import notify_batch_completed
+        notify_batch_completed(batch_id, counts)
     return {"total": total, "counts": counts, "percentage": percentage, "stage": stage, "status": processing_status}
 
 

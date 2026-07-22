@@ -1,16 +1,65 @@
 from rest_framework import serializers
 
-from .models import EnhancementBatchJob, EnhancementLevel, ImageEnhancementResult
+from .models import (
+    EditMode,
+    EnhancementBatchJob,
+    EnhancementLevel,
+    EnhancementStatus,
+    ImageEditVersion,
+    ImageEnhancementResult,
+)
 
 
 class EnhancementRequestSerializer(serializers.Serializer):
     level = serializers.ChoiceField(choices=EnhancementLevel.choices, default=EnhancementLevel.AUTO)
 
 
+class GalleryAdjustmentSerializer(serializers.Serializer):
+    brightness = serializers.FloatField(min_value=-100, max_value=100, default=0)
+    contrast = serializers.FloatField(min_value=-100, max_value=100, default=0)
+    shadows = serializers.FloatField(min_value=-100, max_value=100, default=0)
+    saturation = serializers.FloatField(min_value=-100, max_value=100, default=0)
+    highlights = serializers.FloatField(min_value=-100, max_value=100, default=0)
+
+
+class GalleryEditRequestSerializer(serializers.Serializer):
+    mode = serializers.ChoiceField(choices=EditMode.choices, default=EditMode.AUTO)
+    adjustments = GalleryAdjustmentSerializer(required=False, default=dict)
+
+    def validate(self, attrs):
+        if attrs["mode"] == EditMode.AUTO:
+            attrs["adjustments"] = {}
+        return attrs
+
+
+class ImageEditVersionSerializer(serializers.ModelSerializer):
+    download_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ImageEditVersion
+        fields = [
+            "id", "enhancement_result", "mode", "requested_adjustments",
+            "applied_adjustments", "status", "output_name", "output_format",
+            "output_width", "output_height", "output_file_size",
+            "processing_duration_ms", "task_id", "quality_metadata",
+            "failure_reason", "is_current", "download_url", "started_at",
+            "finished_at", "created_at", "updated_at",
+        ]
+
+    def get_download_url(self, obj):
+        if obj.status != EnhancementStatus.COMPLETED or not obj.edited_file:
+            return None
+        path = f"/api/enhancements/edits/{obj.pk}/download/"
+        request = self.context.get("request")
+        return request.build_absolute_uri(path) if request else path
+
+
 class ImageEnhancementResultSerializer(serializers.ModelSerializer):
     download_url = serializers.SerializerMethodField()
     original_download_url = serializers.SerializerMethodField()
     standardized_download_url = serializers.SerializerMethodField()
+    editor_url = serializers.SerializerMethodField()
+    current_edit = serializers.SerializerMethodField()
 
     class Meta:
         model = ImageEnhancementResult
@@ -19,7 +68,8 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
             "output_name", "output_format", "output_width", "output_height",
             "output_file_size", "processing_duration_ms", "task_id", "applied_parameters",
             "failure_reason", "original_download_url", "standardized_download_url",
-            "download_url", "started_at", "finished_at", "created_at",
+            "download_url", "editor_url", "current_edit", "started_at",
+            "finished_at", "created_at",
         ]
 
     def _absolute(self, path):
@@ -37,6 +87,21 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
             return None
         path = f"/api/enhancements/results/{obj.pk}/download/"
         return self._absolute(path)
+
+    def get_editor_url(self, obj):
+        if obj.status != EnhancementStatus.COMPLETED or not obj.enhanced_file:
+            return None
+        return self._absolute(f"/api/enhancements/results/{obj.pk}/edits/")
+
+    def get_current_edit(self, obj):
+        current = next(
+            (edit for edit in obj.edit_versions.all() if edit.is_current), None
+        )
+        if current is None:
+            return None
+        return ImageEditVersionSerializer(
+            current, context=self.context
+        ).data
 
 
 class ImageEnhancementComparisonSerializer(serializers.Serializer):

@@ -15,4 +15,8 @@ def analyze_image_quality_task(self, decision_id):
         result = process_quality_decision(decision_id)
     except Exception:
         result.refresh_from_db()
+    from notifications.events import notify_quality_result
+    from uploads.progress import sync_image_progress
+    notify_quality_result(result)
+    sync_image_progress(result.image_id)
     return {"decision_id": decision_id, "status": result.status, "decision": result.decision}

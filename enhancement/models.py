@@ -15,6 +15,11 @@ def enhanced_upload_path(instance, filename):
     return f"users/{instance.owner_id}/enhanced/{uuid.uuid4().hex}{extension}"
 
 
+def edited_upload_path(instance, filename):
+    extension = Path(filename).suffix.lower()
+    return f"users/{instance.owner_id}/edited/{uuid.uuid4().hex}{extension}"
+
+
 class EnhancementLevel(models.TextChoices):
     LOW = "low", "Low"
     MEDIUM = "medium", "Medium"
@@ -151,3 +156,66 @@ class ImageEnhancementResult(models.Model):
 def delete_enhanced_image(sender, instance, **kwargs):
     if instance.enhanced_file:
         instance.enhanced_file.storage.delete(instance.enhanced_file.name)
+
+
+class EditMode(models.TextChoices):
+    AUTO = "auto", "Automatic"
+    MANUAL = "manual", "Manual"
+
+
+class ImageEditVersion(models.Model):
+    """A non-destructive, user-owned render derived from an enhanced result."""
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="image_edit_versions",
+    )
+    enhancement_result = models.ForeignKey(
+        ImageEnhancementResult,
+        on_delete=models.CASCADE,
+        related_name="edit_versions",
+    )
+    mode = models.CharField(max_length=8, choices=EditMode.choices)
+    requested_adjustments = models.JSONField(default=dict)
+    applied_adjustments = models.JSONField(default=dict)
+    status = models.CharField(
+        max_length=12,
+        choices=EnhancementStatus.choices,
+        default=EnhancementStatus.PENDING,
+    )
+    edited_file = models.FileField(upload_to=edited_upload_path, blank=True)
+    output_name = models.CharField(max_length=255, blank=True)
+    output_format = models.CharField(max_length=10, blank=True)
+    output_width = models.PositiveIntegerField(null=True, blank=True)
+    output_height = models.PositiveIntegerField(null=True, blank=True)
+    output_file_size = models.PositiveBigIntegerField(default=0)
+    processing_duration_ms = models.PositiveIntegerField(default=0)
+    task_id = models.CharField(max_length=255, blank=True, db_index=True)
+    quality_metadata = models.JSONField(default=dict, blank=True)
+    failure_reason = models.TextField(blank=True)
+    is_current = models.BooleanField(default=False)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["owner", "-created_at"]),
+            models.Index(fields=["enhancement_result", "status"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["enhancement_result"],
+                condition=Q(status__in=["pending", "queued", "processing"]),
+                name="enhancement_one_active_edit_per_result",
+            )
+        ]
+
+
+@receiver(post_delete, sender=ImageEditVersion)
+def delete_edited_image(sender, instance, **kwargs):
+    if instance.edited_file:
+        instance.edited_file.storage.delete(instance.edited_file.name)

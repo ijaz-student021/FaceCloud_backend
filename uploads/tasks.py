@@ -26,6 +26,9 @@ def preprocess_batch_task(self, batch_id):
             ]
         )
 
+    from notifications.events import notify_processing_started
+    notify_processing_started(batch_id)
+
     image_ids = list(
         ImageUpload.objects.filter(batch_id=batch_id, status="uploaded")
         .order_by("pk")
