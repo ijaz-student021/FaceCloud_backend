@@ -195,6 +195,26 @@ ZERO_DCE_MAX_INFERENCE_EDGE = env.int("ZERO_DCE_MAX_INFERENCE_EDGE", default=102
 ZERO_DCE_FULL_RESOLUTION_TILE_EDGE = env.int(
     "ZERO_DCE_FULL_RESOLUTION_TILE_EDGE", default=1024
 )
+ADAPTIVE_DENOISE_ENABLED = env.bool("ADAPTIVE_DENOISE_ENABLED", default=False)
+ADAPTIVE_DENOISE_BREAKPOINTS = tuple(
+    float(value)
+    for value in env.list(
+        "ADAPTIVE_DENOISE_BREAKPOINTS",
+        default=["1.0", "2.0", "3.5", "5.0", "7.0"],
+    )
+)
+ADAPTIVE_DENOISE_STRENGTHS = tuple(
+    int(value)
+    for value in env.list(
+        "ADAPTIVE_DENOISE_STRENGTHS",
+        default=["0", "3", "4", "5", "6", "7"],
+    )
+)
+# TODO(commercial-gfpgan): complete dependency/model licensing and deployment
+# review before enabling these separately isolated restoration-worker switches.
+# They intentionally remain disabled until the later Parts 5-7 review.
+GFPGAN_ENABLED = env.bool("GFPGAN_ENABLED", default=False)
+GFPGAN_QUEUE_ENABLED = env.bool("GFPGAN_QUEUE_ENABLED", default=False)
 ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION = env.bool(
     "ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION", default=True
 )

@@ -8,6 +8,9 @@ import hashlib
 import logging
 import time
 import threading
+from bisect import bisect_right
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
@@ -82,6 +85,45 @@ OUTPUT_GUARD_POLICIES = {
 
 _SUPERRES_LOCK = threading.Lock()
 _SUPERRES_CACHE = {}
+
+
+@dataclass
+class EnhancementPipelineContext:
+    """Mutable state shared by the independently testable pipeline stages."""
+
+    source_image: np.ndarray
+    requested_level: str
+    input_quality: dict = field(default_factory=dict)
+    applied_level: str = ""
+    policy: dict = field(default_factory=dict)
+    current_image: np.ndarray | None = None
+    final_guard_reference: np.ndarray | None = None
+    output_quality: dict = field(default_factory=dict)
+    restoration: dict = field(default_factory=dict)
+    zero_dce: dict = field(default_factory=dict)
+    quality_guards: dict = field(default_factory=dict)
+    post_exposure_noise: dict = field(default_factory=dict)
+    adaptive_denoise: dict = field(default_factory=dict)
+    stage_timings_ms: dict = field(default_factory=dict)
+    stage_order: list = field(default_factory=list)
+    warnings: list = field(default_factory=list)
+
+    def __post_init__(self):
+        if self.current_image is None:
+            self.current_image = self.source_image.copy()
+
+
+@contextmanager
+def _timed_pipeline_stage(context, stage_name):
+    started_at = time.perf_counter()
+    try:
+        yield
+    finally:
+        context.stage_timings_ms[stage_name] = round(
+            (time.perf_counter() - started_at) * 1000,
+            3,
+        )
+        context.stage_order.append(stage_name)
 
 
 def _auto_level(mean_luminance):
@@ -435,95 +477,290 @@ def _quality_guard(original, candidate, level, input_quality, learned_model=Fals
     }
 
 
-def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
-    """Return an enhanced BGR image, applied level, and auditable parameters."""
+def analyze_original_stage(context):
+    """Validate the source, measure it once, and select the policy."""
+    image = context.source_image
     if image is None or image.size == 0 or len(image.shape) != 3 or image.shape[2] != 3:
         raise ValidationError("The standardized image cannot be decoded safely.")
-    if requested_level not in EnhancementLevel.values:
+    if context.requested_level not in EnhancementLevel.values:
         raise ValidationError({"level": "Choose low, medium, high, or auto."})
 
-    input_quality = analyze_image_quality(image)
-    working_image, restoration = restore_low_resolution(image, input_quality)
-    guard_reference = working_image.copy()
-    zero_dce = {
-        "requested": any(defect in input_quality["defects"] for defect in ("low_light", "severe_low_light")),
-        "applied": False, "fallback_reason": "",
-    }
-    if zero_dce["requested"] and settings.ZERO_DCE_ENABLED:
-        try:
-            working_image, zero_metadata = enhance_with_zero_dce(working_image)
-            zero_dce.update(zero_metadata)
-            zero_dce["applied"] = True
-        except ZeroDCEUnavailable as error:
-            zero_dce["fallback_reason"] = str(error)
-    elif zero_dce["requested"]:
-        zero_dce["fallback_reason"] = "Zero-DCE is disabled."
-    mean_luminance = input_quality["mean_luminance"]
-    applied_level = _auto_level(mean_luminance) if requested_level == EnhancementLevel.AUTO else requested_level
-    policy = _adapt_policy(LEVEL_POLICIES[applied_level], input_quality, applied_level)
-    if zero_dce["applied"]:
-        enhanced = _preserve_source_chroma(guard_reference, working_image)
-        zero_dce["chroma_protection"] = "preserve_source_lab_chroma"
-    else:
-        lab = cv2.cvtColor(working_image, cv2.COLOR_BGR2LAB)
-        luminance, channel_a, channel_b = cv2.split(lab)
-        corrected = cv2.LUT(luminance, _gamma_lut(policy["gamma"]))
-        if policy["use_clahe"]:
-            clahe = cv2.createCLAHE(
-                clipLimit=policy["clahe_clip"],
-                tileGridSize=(policy["clahe_grid"], policy["clahe_grid"]),
-            )
-            corrected = clahe.apply(corrected)
-        corrected = cv2.addWeighted(
-            luminance, 1.0 - policy["blend"], corrected, policy["blend"], 0
-        )
-        enhanced = cv2.cvtColor(cv2.merge((corrected, channel_a, channel_b)), cv2.COLOR_LAB2BGR)
-
-    if policy["denoise"]:
-        enhanced = cv2.fastNlMeansDenoisingColored(
-            enhanced, None, policy["denoise"], policy["denoise"], 7, 21
-        )
-    if policy["sharpen"]:
-        blurred = cv2.GaussianBlur(enhanced, (0, 0), 1.0)
-        enhanced = cv2.addWeighted(
-            enhanced, 1.0 + policy["sharpen"], blurred, -policy["sharpen"], 0
-        )
-
-    enhanced, output_quality, guard = _quality_guard(
-        guard_reference,
-        enhanced,
-        applied_level,
-        analyze_image_quality(guard_reference),
-        learned_model=zero_dce["applied"],
+    context.input_quality = analyze_image_quality(image)
+    mean_luminance = context.input_quality["mean_luminance"]
+    context.applied_level = (
+        _auto_level(mean_luminance)
+        if context.requested_level == EnhancementLevel.AUTO
+        else context.requested_level
     )
-    normalized_comparison = compare_image_quality(image, enhanced)
+    context.policy = _adapt_policy(
+        LEVEL_POLICIES[context.applied_level],
+        context.input_quality,
+        context.applied_level,
+    )
+    context.zero_dce = {
+        "requested": any(
+            defect in context.input_quality["defects"]
+            for defect in ("low_light", "severe_low_light")
+        ),
+        "applied": False,
+        "fallback_reason": "",
+    }
+    return context
 
-    warnings = []
-    if zero_dce["requested"] and not zero_dce["applied"]:
-        warnings.append(
+
+def exposure_enhancement_stage(context):
+    """Apply learned exposure curves or the auditable OpenCV fallback."""
+    source = context.source_image
+    working = source
+    if context.zero_dce["requested"] and settings.ZERO_DCE_ENABLED:
+        try:
+            working, zero_metadata = enhance_with_zero_dce(source)
+            context.zero_dce.update(zero_metadata)
+            context.zero_dce["applied"] = True
+        except ZeroDCEUnavailable as error:
+            context.zero_dce["fallback_reason"] = str(error)
+    elif context.zero_dce["requested"]:
+        context.zero_dce["fallback_reason"] = "Zero-DCE is disabled."
+
+    if context.zero_dce["applied"]:
+        context.current_image = _preserve_source_chroma(source, working)
+        context.zero_dce["chroma_protection"] = "preserve_source_lab_chroma"
+        return context
+
+    policy = context.policy
+    lab = cv2.cvtColor(source, cv2.COLOR_BGR2LAB)
+    luminance, channel_a, channel_b = cv2.split(lab)
+    corrected = cv2.LUT(luminance, _gamma_lut(policy["gamma"]))
+    if policy["use_clahe"]:
+        clahe = cv2.createCLAHE(
+            clipLimit=policy["clahe_clip"],
+            tileGridSize=(policy["clahe_grid"], policy["clahe_grid"]),
+        )
+        corrected = clahe.apply(corrected)
+    corrected = cv2.addWeighted(
+        luminance,
+        1.0 - policy["blend"],
+        corrected,
+        policy["blend"],
+        0,
+    )
+    context.current_image = cv2.cvtColor(
+        cv2.merge((corrected, channel_a, channel_b)),
+        cv2.COLOR_LAB2BGR,
+    )
+    return context
+
+
+def output_guard_a_stage(context):
+    """Guard exposure output before any noise or detail processing."""
+    guarded, output_quality, metadata = _quality_guard(
+        context.source_image,
+        context.current_image,
+        context.applied_level,
+        context.input_quality,
+        learned_model=context.zero_dce["applied"],
+    )
+    metadata["stage"] = "post_exposure"
+    context.current_image = guarded
+    context.output_quality = output_quality
+    context.quality_guards["guard_a"] = metadata
+    return context
+
+
+def measure_post_exposure_noise_stage(context):
+    """Measure revealed noise only after safe exposure correction."""
+    quality = analyze_image_quality(context.current_image)
+    context.post_exposure_noise = {
+        "measurement_point": "after_guard_a",
+        "estimated_noise": quality["estimated_noise"],
+        "visible_noise": "visible_noise" in quality["defects"],
+        "quality": quality,
+    }
+    return context
+
+
+def _adaptive_denoise_strength(noise_score):
+    breakpoints = tuple(settings.ADAPTIVE_DENOISE_BREAKPOINTS)
+    strengths = tuple(settings.ADAPTIVE_DENOISE_STRENGTHS)
+    if len(strengths) != len(breakpoints) + 1:
+        raise RuntimeError(
+            "ADAPTIVE_DENOISE_STRENGTHS must contain exactly one more "
+            "value than ADAPTIVE_DENOISE_BREAKPOINTS."
+        )
+    if tuple(sorted(breakpoints)) != breakpoints:
+        raise RuntimeError("ADAPTIVE_DENOISE_BREAKPOINTS must be ascending.")
+    return int(strengths[bisect_right(breakpoints, float(noise_score))])
+
+
+def adaptive_denoise_stage(context):
+    """Denoise measured output noise without inventing facial detail."""
+    enabled = bool(settings.ADAPTIVE_DENOISE_ENABLED)
+    noise_score = context.post_exposure_noise["estimated_noise"]
+    strength = 0
+    reason = "not_required"
+
+    if enabled and context.applied_level in {
+        EnhancementLevel.MEDIUM,
+        EnhancementLevel.HIGH,
+    }:
+        strength = _adaptive_denoise_strength(noise_score)
+        reason = "post_exposure_noise_mapping"
+    elif enabled:
+        reason = "low_level_preserves_source_texture"
+    else:
+        # Preserve the legacy, input-defect-driven behaviour while the new
+        # rollout flag remains disabled.
+        strength = int(context.policy.get("denoise", 0))
+        reason = "feature_flag_disabled_legacy_policy"
+
+    if "severe_blur" in context.input_quality["defects"]:
+        strength = 0
+        reason = "severe_blur_protection"
+
+    applied = strength > 0
+    if applied:
+        context.current_image = cv2.fastNlMeansDenoisingColored(
+            context.current_image,
+            None,
+            strength,
+            strength,
+            7,
+            21,
+        )
+    context.adaptive_denoise = {
+        "enabled": enabled,
+        "applied": applied,
+        "strength": strength,
+        "reason": reason,
+        "input_noise_score": noise_score,
+        "measurement_point": "after_guard_a",
+        "breakpoints": list(settings.ADAPTIVE_DENOISE_BREAKPOINTS),
+        "strengths": list(settings.ADAPTIVE_DENOISE_STRENGTHS),
+    }
+    return context
+
+
+def low_resolution_restoration_stage(context):
+    """Run EDSR only after denoise and only if resolution is still low."""
+    quality_at_stage = analyze_image_quality(context.current_image)
+    restored, metadata = restore_low_resolution(
+        context.current_image,
+        quality_at_stage,
+    )
+    metadata["stage"] = "after_adaptive_denoise"
+    metadata["quality_at_stage"] = quality_at_stage
+    context.current_image = restored
+    context.restoration = metadata
+    # Guard B protects subsequent sharpening (and future restoration stages)
+    # against this safe, resolution-normalized reference.
+    context.final_guard_reference = restored.copy()
+    return context
+
+
+def sharpen_stage(context):
+    """Apply only the bounded policy sharpening after optional restoration."""
+    strength = context.policy["sharpen"]
+    if strength:
+        blurred = cv2.GaussianBlur(context.current_image, (0, 0), 1.0)
+        context.current_image = cv2.addWeighted(
+            context.current_image,
+            1.0 + strength,
+            blurred,
+            -strength,
+            0,
+        )
+    return context
+
+
+def output_guard_b_stage(context):
+    """Apply the final safety guard after denoise, EDSR, and sharpening."""
+    reference = context.final_guard_reference
+    reference_quality = analyze_image_quality(reference)
+    guarded, output_quality, metadata = _quality_guard(
+        reference,
+        context.current_image,
+        context.applied_level,
+        reference_quality,
+        learned_model=False,
+    )
+    metadata["stage"] = "final_output"
+    context.current_image = guarded
+    context.output_quality = output_quality
+    context.quality_guards["guard_b"] = metadata
+    return context
+
+
+def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
+    """Return an enhanced BGR image, applied level, and auditable parameters."""
+    context = EnhancementPipelineContext(image, requested_level)
+    stages = (
+        ("analyze_original", analyze_original_stage),
+        ("exposure_enhancement", exposure_enhancement_stage),
+        ("output_guard_a", output_guard_a_stage),
+        ("measure_post_exposure_noise", measure_post_exposure_noise_stage),
+        ("adaptive_denoise", adaptive_denoise_stage),
+        ("low_resolution_restoration", low_resolution_restoration_stage),
+        ("sharpen", sharpen_stage),
+        ("output_guard_b", output_guard_b_stage),
+    )
+    for stage_name, stage_function in stages:
+        with _timed_pipeline_stage(context, stage_name):
+            stage_function(context)
+
+    normalized_comparison = compare_image_quality(
+        context.source_image,
+        context.current_image,
+    )
+    if context.zero_dce["requested"] and not context.zero_dce["applied"]:
+        context.warnings.append(
             "Zero-DCE was requested for low light but was unavailable; "
             "the adaptive OpenCV fallback was used."
         )
-    if input_quality["needs_ai_restoration"] and not restoration["applied"]:
-        warnings.append(
+    if (
+        context.input_quality["needs_ai_restoration"]
+        and not context.restoration["applied"]
+    ):
+        context.warnings.append(
             "Severe blur or low resolution requires an AI restoration model; "
             "the baseline avoids inventing facial detail."
         )
 
     parameters = {
-        **policy,
-        "mean_input_luminance": round(mean_luminance, 2),
-        "algorithm": "zero_dce_hybrid_v1" if zero_dce["applied"] else "opencv_adaptive_restoration_router_v2",
-        "colour_policy": "learned_rgb_curves" if zero_dce["applied"] else "preserve_lab_chroma_channels",
-        "quality_before": input_quality,
-        "quality_after": output_quality,
+        **context.policy,
+        "mean_input_luminance": context.input_quality["mean_luminance"],
+        "algorithm": (
+            "zero_dce_hybrid_v1"
+            if context.zero_dce["applied"]
+            else "opencv_adaptive_restoration_router_v2"
+        ),
+        "pipeline_version": "staged_natural_enhancement_v1",
+        "colour_policy": (
+            "learned_rgb_curves"
+            if context.zero_dce["applied"]
+            else "preserve_lab_chroma_channels"
+        ),
+        "quality_before": context.input_quality,
+        "quality_after": context.output_quality,
         "quality_comparison": normalized_comparison,
-        "quality_guard": guard,
-        "restoration": restoration,
-        "zero_dce": zero_dce,
-        "warnings": warnings,
+        # Backward-compatible alias retained for clients that previously
+        # consumed the single exposure guard. The complete two-guard contract
+        # is available in ``quality_guards``.
+        "quality_guard": context.quality_guards["guard_a"],
+        "quality_guards": context.quality_guards,
+        "post_exposure_noise": context.post_exposure_noise,
+        "adaptive_denoise": context.adaptive_denoise,
+        "restoration": context.restoration,
+        "zero_dce": context.zero_dce,
+        "stage_order": context.stage_order,
+        "stage_timings_ms": context.stage_timings_ms,
+        "feature_flags": {
+            "adaptive_denoise_enabled": settings.ADAPTIVE_DENOISE_ENABLED,
+            "gfpgan_enabled": settings.GFPGAN_ENABLED,
+            "gfpgan_queue_enabled": settings.GFPGAN_QUEUE_ENABLED,
+        },
+        "warnings": context.warnings,
     }
-    return enhanced, applied_level, parameters
+    return context.current_image, context.applied_level, parameters
 
 
 def _read_standardized_image(preprocessing):

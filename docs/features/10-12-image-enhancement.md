@@ -46,6 +46,10 @@ the non-destructive Auto/Manual gallery editor are also implemented.
 - Source-chroma preservation for learned curve-model output
 - Automatic blending toward the original whenever a candidate is too aggressive
 - Auditable guard metadata with raw-candidate and final-output measurements
+- Named, independently testable pipeline stages with per-stage timings
+- Separate post-exposure Guard A and final-output Guard B safety decisions
+- Post-Guard-A noise measurement and feature-flagged adaptive denoising
+- EDSR ordering after denoise so enlargement does not amplify avoidable noise
 - AI-restoration warning for severe blur and low-resolution inputs
 - Optional CPU EDSR 2x super-resolution routing for low-resolution inputs
 - Bounded output-pixel safety limit and automatic OpenCV fallback
@@ -64,8 +68,11 @@ Standardized image
   -> choose Low, Medium, High, or Auto
   -> create an owner-scoped enhancement job
   -> queue processing through Celery and Redis
-  -> route low-resolution input through optional EDSR 2x restoration
-  -> apply the OpenCV enhancement policy
+  -> analyse the original and apply exposure enhancement
+  -> apply output Guard A
+  -> measure revealed noise and optionally denoise
+  -> route still-low-resolution output through optional EDSR 2x restoration
+  -> apply bounded sharpening and output Guard B
   -> save the enhanced output separately
   -> update progress and terminal status
   -> expose secure comparison and download data
@@ -206,6 +213,7 @@ State and privacy behavior:
 ## 9. EDSR restoration behavior
 
 - EDSR is requested only when the quality router identifies low resolution.
+- EDSR executes after post-exposure noise measurement and denoising.
 - The configured model is OpenCV DNN EDSR at 2x scale.
 - The model is cached in each Celery worker process after its first load.
 - The maximum output-pixel setting prevents unsafe memory growth.
@@ -218,7 +226,9 @@ State and privacy behavior:
 ### Natural-output protection
 
 Every learned-model result passes through `adaptive_natural_output_guard_v2`
-before it is saved. The guard is designed to improve an image without turning a
+immediately after exposure enhancement (Guard A). A second guard runs after
+denoising, optional EDSR, and sharpening (Guard B). The guards are designed to
+improve an image without turning a
 normally exposed face unnaturally bright or washing out skin colour and contrast.
 
 - Dark inputs use a controlled brightening policy.
@@ -271,7 +281,7 @@ The real non-eager Celery pipeline and natural-output guard were verified on
 | Final chroma shift | 0.265 |
 | Final applied model strength | 17.67% |
 | Guard actions | luminance gain limited; contrast preserved |
-| Automated test suite | 140 tests passing |
+| Automated test suite | 146 tests passing |
 | Django system check | no issues |
 | Redis and Celery | connected and ready |
 
@@ -309,7 +319,8 @@ flagged for a future face-restoration model and quality review.
 - Production inference uses OpenCV DNN and does not require PyTorch.
 - Low-light inputs can request the private model; normally exposed and bright
   inputs retain conservative, exposure-aware processing.
-- EDSR can run first when low resolution is detected, followed by Zero-DCE for low light.
+- Zero-DCE or the OpenCV exposure fallback runs first. Guarded output is
+  measured and denoised before EDSR is considered for low-resolution input.
 - Eight learned RGB curve maps are applied at the original output dimensions.
 - Source chroma is restored and adaptive output guarding is applied before save.
 - Missing, disabled, corrupt, or incompatible models fall back safely to adaptive OpenCV.
@@ -401,3 +412,51 @@ Auto request example:
 - `enhancement/migrations/0003_imageeditversion.py`
 - `config/settings.py`
 - `config/urls.py`
+
+## 18. Staged pipeline checkpoint (Parts 1-4)
+
+The first four commercially structured hardening parts are implemented without
+starting face restoration or GFPGAN integration:
+
+1. Rollout flags were added for `ADAPTIVE_DENOISE_ENABLED`,
+   `GFPGAN_ENABLED`, and `GFPGAN_QUEUE_ENABLED`. All default to `False`.
+2. Enhancement orchestration now uses an `EnhancementPipelineContext` and
+   named stages. Stored parameters include `stage_order` and
+   `stage_timings_ms`.
+3. Guard A protects the exposure result before noise is measured. Optional
+   adaptive denoising maps the measured post-exposure noise score to a bounded
+   OpenCV strength using configurable breakpoints and strengths.
+4. EDSR now executes only after denoising and rechecks the current image for
+   low resolution at that point. Final sharpening is protected by Guard B.
+
+The original `quality_guard` metadata key remains an alias of Guard A for
+existing clients. New clients should use `quality_guards.guard_a` and
+`quality_guards.guard_b`.
+
+The adaptive denoise rollout is intentionally disabled by default. With it
+disabled, the legacy denoise policy remains in effect. The GFPGAN flags are
+reserved only; no GFPGAN dependency, model, queue, or per-face restoration code
+is included in this checkpoint.
+
+> **Commercialization TODO:** before any later GFPGAN stage is enabled, perform
+> and record a formal license review for the dependency, pretrained weights,
+> model source, redistribution terms, and deployment method. This checkpoint
+> makes no claim that GFPGAN is approved for commercial use.
+
+Automated regression coverage includes extremely dark, normally exposed,
+bright, low-resolution, and multi-face scene fixtures. It verifies bounded
+highlight clipping, contrast retention, normalized comparisons, stage ordering,
+feature-flag behavior, and denoise-before-EDSR execution.
+
+Synthetic checkpoint measurements with adaptive denoise enabled and AI model
+files disabled are shown below. These fixtures make the routing deterministic;
+they are regression evidence, not a substitute for the later consented
+photographic evaluation set.
+
+| Fixture | Auto level | Luminance before -> after | Contrast before -> after | Highlight clipping |
+|---|---:|---:|---:|---:|
+| Extremely dark | High | 14.56 -> 24.33 | 5.03 -> 8.94 | 0% |
+| Normal portrait | Low | 144.67 -> 147.67 | 5.97 -> 5.98 | 0% |
+| Bright portrait | Low | 225.50 -> 225.50 | 3.36 -> 3.36 | 0% |
+| Low-resolution portrait | Low | 144.68 -> 151.11 | 5.92 -> 6.87 | 0% |
+| Multi-face group | Medium | 101.69 -> 107.88 | 25.27 -> 25.74 | 0% |

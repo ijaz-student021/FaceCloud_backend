@@ -21,10 +21,15 @@ from .models import (
     ImageEnhancementResult,
 )
 from .services import (
+    EnhancementPipelineContext,
     apply_gallery_adjustments,
     analyze_image_quality,
+    analyze_original_stage,
     compare_image_quality,
     enhance_bgr,
+    exposure_enhancement_stage,
+    measure_post_exposure_noise_stage,
+    output_guard_a_stage,
     process_enhancement_result,
     process_image_edit,
     restore_low_resolution,
@@ -113,6 +118,239 @@ class EnhancementModelTests(TestCase):
 
 
 class OpenCVPolicyTests(SimpleTestCase):
+    @override_settings(
+        AI_RESTORATION_ENABLED=False,
+        ZERO_DCE_ENABLED=False,
+        ADAPTIVE_DENOISE_ENABLED=False,
+        GFPGAN_ENABLED=False,
+        GFPGAN_QUEUE_ENABLED=False,
+    )
+    def test_rollout_flags_default_to_safe_disabled_pipeline(self):
+        source = np.full((96, 96, 3), 135, dtype=np.uint8)
+
+        _enhanced, _level, parameters = enhance_bgr(
+            source,
+            EnhancementLevel.AUTO,
+        )
+
+        self.assertEqual(
+            parameters["feature_flags"],
+            {
+                "adaptive_denoise_enabled": False,
+                "gfpgan_enabled": False,
+                "gfpgan_queue_enabled": False,
+            },
+        )
+        self.assertFalse(parameters["adaptive_denoise"]["enabled"])
+        self.assertFalse(parameters["adaptive_denoise"]["applied"])
+
+    @override_settings(
+        AI_RESTORATION_ENABLED=False,
+        ZERO_DCE_ENABLED=False,
+        ADAPTIVE_DENOISE_ENABLED=False,
+    )
+    def test_pipeline_exposes_stable_stage_order_and_timings(self):
+        source = np.full((96, 96, 3), 75, dtype=np.uint8)
+
+        _enhanced, _level, parameters = enhance_bgr(
+            source,
+            EnhancementLevel.AUTO,
+        )
+
+        expected_order = [
+            "analyze_original",
+            "exposure_enhancement",
+            "output_guard_a",
+            "measure_post_exposure_noise",
+            "adaptive_denoise",
+            "low_resolution_restoration",
+            "sharpen",
+            "output_guard_b",
+        ]
+        self.assertEqual(parameters["stage_order"], expected_order)
+        self.assertEqual(
+            list(parameters["stage_timings_ms"]),
+            expected_order,
+        )
+        self.assertTrue(
+            all(
+                duration >= 0
+                for duration in parameters["stage_timings_ms"].values()
+            )
+        )
+        self.assertEqual(
+            set(parameters["quality_guards"]),
+            {"guard_a", "guard_b"},
+        )
+
+    @override_settings(
+        AI_RESTORATION_ENABLED=False,
+        ZERO_DCE_ENABLED=False,
+    )
+    def test_individual_exposure_stages_share_a_pipeline_context(self):
+        source = np.full((96, 96, 3), 55, dtype=np.uint8)
+        context = EnhancementPipelineContext(
+            source,
+            EnhancementLevel.AUTO,
+        )
+
+        analyze_original_stage(context)
+        exposure_enhancement_stage(context)
+        output_guard_a_stage(context)
+        measure_post_exposure_noise_stage(context)
+
+        self.assertEqual(context.applied_level, EnhancementLevel.HIGH)
+        self.assertIn("guard_a", context.quality_guards)
+        self.assertEqual(
+            context.post_exposure_noise["measurement_point"],
+            "after_guard_a",
+        )
+        self.assertEqual(context.current_image.shape, source.shape)
+
+    @override_settings(
+        AI_RESTORATION_ENABLED=False,
+        ZERO_DCE_ENABLED=False,
+        ADAPTIVE_DENOISE_ENABLED=True,
+        ADAPTIVE_DENOISE_BREAKPOINTS=(),
+        ADAPTIVE_DENOISE_STRENGTHS=(4,),
+    )
+    @patch("enhancement.services.cv2.fastNlMeansDenoisingColored")
+    def test_adaptive_denoise_uses_post_exposure_noise_mapping(self, denoise):
+        source = np.random.default_rng(18).integers(
+            15,
+            120,
+            size=(160, 160, 3),
+            dtype=np.uint8,
+        )
+        denoise.side_effect = lambda image, *_args: image.copy()
+
+        _enhanced, _level, parameters = enhance_bgr(
+            source,
+            EnhancementLevel.HIGH,
+        )
+
+        denoise.assert_called_once()
+        metadata = parameters["adaptive_denoise"]
+        self.assertTrue(metadata["enabled"])
+        self.assertTrue(metadata["applied"])
+        self.assertEqual(metadata["strength"], 4)
+        self.assertEqual(metadata["measurement_point"], "after_guard_a")
+
+    @override_settings(
+        AI_RESTORATION_ENABLED=True,
+        ZERO_DCE_ENABLED=False,
+        ADAPTIVE_DENOISE_ENABLED=True,
+        ADAPTIVE_DENOISE_BREAKPOINTS=(),
+        ADAPTIVE_DENOISE_STRENGTHS=(3,),
+    )
+    @patch("enhancement.services._load_edsr_model")
+    @patch("enhancement.services.cv2.fastNlMeansDenoisingColored")
+    def test_edsr_runs_after_denoise_for_still_low_resolution_image(
+        self,
+        denoise,
+        load_model,
+    ):
+        events = []
+        source = np.random.default_rng(19).integers(
+            20,
+            130,
+            size=(120, 100, 3),
+            dtype=np.uint8,
+        )
+
+        def apply_denoise(image, *_args):
+            events.append("denoise")
+            return image.copy()
+
+        model = Mock()
+
+        def apply_edsr(image):
+            events.append("edsr")
+            return cv2.resize(image, (200, 240), interpolation=cv2.INTER_CUBIC)
+
+        denoise.side_effect = apply_denoise
+        model.upsample.side_effect = apply_edsr
+        load_model.return_value = model
+
+        enhanced, _level, parameters = enhance_bgr(
+            source,
+            EnhancementLevel.HIGH,
+        )
+
+        self.assertEqual(events, ["denoise", "edsr"])
+        self.assertEqual(enhanced.shape[:2], (240, 200))
+        self.assertTrue(parameters["restoration"]["applied"])
+        self.assertEqual(
+            parameters["restoration"]["stage"],
+            "after_adaptive_denoise",
+        )
+
+    @override_settings(
+        AI_RESTORATION_ENABLED=False,
+        ZERO_DCE_ENABLED=False,
+        ADAPTIVE_DENOISE_ENABLED=True,
+        ADAPTIVE_DENOISE_BREAKPOINTS=(1.0, 2.0, 3.5, 5.0, 7.0),
+        ADAPTIVE_DENOISE_STRENGTHS=(0, 3, 4, 5, 6, 7),
+    )
+    def test_five_scene_regression_fixtures_remain_natural_and_measurable(self):
+        rng = np.random.default_rng(2026)
+        extreme_dark = rng.integers(2, 28, size=(180, 240, 3), dtype=np.uint8)
+        normal_portrait = np.full((180, 240, 3), (95, 135, 175), dtype=np.uint8)
+        cv2.circle(normal_portrait, (120, 90), 48, (105, 150, 195), -1)
+        bright_portrait = np.full((180, 240, 3), (210, 225, 238), dtype=np.uint8)
+        cv2.circle(bright_portrait, (120, 90), 48, (195, 215, 232), -1)
+        low_resolution = cv2.resize(
+            normal_portrait,
+            (90, 120),
+            interpolation=cv2.INTER_AREA,
+        )
+        multi_face = np.full((180, 300, 3), (65, 85, 105), dtype=np.uint8)
+        for center in ((60, 90), (150, 90), (240, 90)):
+            cv2.circle(multi_face, center, 34, (105, 145, 185), -1)
+
+        fixtures = {
+            "extremely_dark": extreme_dark,
+            "normal_portrait": normal_portrait,
+            "bright_portrait": bright_portrait,
+            "low_resolution_portrait": low_resolution,
+            "multi_face_group": multi_face,
+        }
+        comparisons = {}
+        for name, source in fixtures.items():
+            with self.subTest(scene=name):
+                enhanced, _level, parameters = enhance_bgr(
+                    source,
+                    EnhancementLevel.AUTO,
+                )
+                comparison = parameters["quality_comparison"]
+                comparisons[name] = comparison
+                self.assertEqual(enhanced.shape, source.shape)
+                self.assertEqual(
+                    comparison["reference_dimensions"],
+                    [source.shape[1], source.shape[0]],
+                )
+                self.assertLessEqual(
+                    comparison["after"]["highlight_clipping_percent"],
+                    max(
+                        5.0,
+                        comparison["before"]["highlight_clipping_percent"]
+                        + 2.1,
+                    ),
+                )
+                self.assertGreaterEqual(
+                    comparison["after"]["contrast_stddev"],
+                    comparison["before"]["contrast_stddev"] * 0.74,
+                )
+
+        self.assertGreater(
+            comparisons["extremely_dark"]["after"]["mean_luminance"],
+            comparisons["extremely_dark"]["before"]["mean_luminance"],
+        )
+        self.assertLessEqual(
+            comparisons["bright_portrait"]["after"]["mean_luminance"],
+            comparisons["bright_portrait"]["before"]["mean_luminance"] + 1.0,
+        )
+
     def test_zero_curve_tiles_preserve_full_pixel_grid_without_seams(self):
         source = np.random.default_rng(2026).integers(
             0, 256, size=(260, 270, 3), dtype=np.uint8
