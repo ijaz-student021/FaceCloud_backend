@@ -210,11 +210,31 @@ ADAPTIVE_DENOISE_STRENGTHS = tuple(
         default=["0", "3", "4", "5", "6", "7"],
     )
 )
-# TODO(commercial-gfpgan): complete dependency/model licensing and deployment
-# review before enabling these separately isolated restoration-worker switches.
-# They intentionally remain disabled until the later Parts 5-7 review.
+# The company has confirmed a private commercial license for the supplied
+# checkpoint.  The artifact and license evidence remain outside source control.
+# Both switches stay disabled until the isolated worker passes rollout QA.
 GFPGAN_ENABLED = env.bool("GFPGAN_ENABLED", default=False)
 GFPGAN_QUEUE_ENABLED = env.bool("GFPGAN_QUEUE_ENABLED", default=False)
+GFPGAN_QUEUE_NAME = env("GFPGAN_QUEUE_NAME", default="gfpgan")
+GFPGAN_MODEL_PATH = env(
+    "GFPGAN_MODEL_PATH",
+    default=str(BASE_DIR / ".runtime" / "models" / "gfpgan" / "GFPGANv1.4.pth"),
+)
+GFPGAN_MODEL_SHA256 = env(
+    "GFPGAN_MODEL_SHA256",
+    default="e2cd4703ab14f4d01fd1383a8a8b266f9a5833dacee8e6a79d3bf21a1b6be5ad",
+)
+GFPGAN_ARCH = env("GFPGAN_ARCH", default="clean")
+GFPGAN_CHANNEL_MULTIPLIER = env.int("GFPGAN_CHANNEL_MULTIPLIER", default=2)
+GFPGAN_DEVICE = env("GFPGAN_DEVICE", default="auto")
+GFPGAN_RESTORATION_WEIGHT = env.float(
+    "GFPGAN_RESTORATION_WEIGHT", default=0.35
+)
+GFPGAN_OUTPUT_BLEND = env.float("GFPGAN_OUTPUT_BLEND", default=0.40)
+GFPGAN_MAX_FACES = env.int("GFPGAN_MAX_FACES", default=5)
+GFPGAN_MAX_INPUT_PIXELS = env.int(
+    "GFPGAN_MAX_INPUT_PIXELS", default=12_000_000
+)
 PER_FACE_METRICS_ENABLED = env.bool("PER_FACE_METRICS_ENABLED", default=False)
 IDENTITY_EMBEDDING_ENABLED = env.bool("IDENTITY_EMBEDDING_ENABLED", default=False)
 ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION = env.bool(
@@ -271,6 +291,11 @@ CELERY_TASK_SOFT_TIME_LIMIT = env.int("CELERY_TASK_SOFT_TIME_LIMIT", default=55 
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_TASK_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
+if GFPGAN_QUEUE_ENABLED:
+    CELERY_TASK_ROUTES = {
+        "enhancement.process_image": {"queue": GFPGAN_QUEUE_NAME},
+        "enhancement.process_batch": {"queue": GFPGAN_QUEUE_NAME},
+    }
 BATCH_PROGRESS_MAX_RETRIES = env.int("BATCH_PROGRESS_MAX_RETRIES", default=3)
 DOWNLOAD_PACKAGE_TTL_HOURS = env.int("DOWNLOAD_PACKAGE_TTL_HOURS", default=24)
 DOWNLOAD_PACKAGE_MAX_FILES = env.int("DOWNLOAD_PACKAGE_MAX_FILES", default=500)

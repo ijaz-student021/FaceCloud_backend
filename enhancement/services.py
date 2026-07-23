@@ -32,6 +32,7 @@ from .models import (
     ImageEditVersion,
     ImageEnhancementResult,
 )
+from .gfpgan import GFPGANUnavailable, restore_faces
 from .zero_dce import ZeroDCEUnavailable, enhance_with_zero_dce
 
 
@@ -100,6 +101,7 @@ class EnhancementPipelineContext:
     final_guard_reference: np.ndarray | None = None
     output_quality: dict = field(default_factory=dict)
     restoration: dict = field(default_factory=dict)
+    face_restoration: dict = field(default_factory=dict)
     zero_dce: dict = field(default_factory=dict)
     quality_guards: dict = field(default_factory=dict)
     post_exposure_noise: dict = field(default_factory=dict)
@@ -657,6 +659,76 @@ def low_resolution_restoration_stage(context):
     return context
 
 
+def restore_degraded_faces(image, input_quality):
+    """Build a conservative GFPGAN candidate for genuinely degraded faces."""
+    eligible_defects = sorted(
+        set(input_quality["defects"])
+        & {"severe_blur", "mild_blur", "low_resolution"}
+    )
+    metadata = {
+        "requested": bool(eligible_defects),
+        "eligible_defects": eligible_defects,
+        "enabled": bool(settings.GFPGAN_ENABLED),
+        "applied": False,
+        "provider": "private_gfpgan_v1_4",
+        "fallback_reason": "",
+        "identity_safeguard": (
+            "conservative_weight_and_blend; embedding verification pending"
+        ),
+    }
+    if not metadata["requested"]:
+        metadata["fallback_reason"] = "Face restoration is not required."
+        return image, metadata
+    if not settings.GFPGAN_ENABLED:
+        metadata["fallback_reason"] = "Private face restoration is disabled."
+        return image, metadata
+
+    blend = min(max(float(settings.GFPGAN_OUTPUT_BLEND), 0.0), 0.60)
+    try:
+        candidate, provider_metadata = restore_faces(image)
+        blended = cv2.addWeighted(candidate, blend, image, 1.0 - blend, 0)
+        if blended.shape != image.shape:
+            raise GFPGANUnavailable(
+                "The restored candidate did not preserve the source pixel grid."
+            )
+        metadata.update(provider_metadata)
+        metadata.update(
+            {
+                "applied": True,
+                "output_blend": blend,
+                "input_dimensions": [int(image.shape[1]), int(image.shape[0])],
+                "output_dimensions": [
+                    int(blended.shape[1]),
+                    int(blended.shape[0]),
+                ],
+                "quality_before": analyze_image_quality(image),
+                "quality_after_candidate_blend": analyze_image_quality(blended),
+            }
+        )
+        return blended, metadata
+    except GFPGANUnavailable as error:
+        metadata["fallback_reason"] = str(error)
+        return image, metadata
+    except (RuntimeError, ValueError, TypeError, cv2.error, OSError):
+        logger.exception("GFPGAN candidate validation failed safely.")
+        metadata["fallback_reason"] = (
+            "The face-restoration candidate failed validation safely."
+        )
+        return image, metadata
+
+
+def face_restoration_stage(context):
+    """Restore only eligible degraded faces; keep the background unchanged."""
+    restored, metadata = restore_degraded_faces(
+        context.current_image,
+        context.input_quality,
+    )
+    metadata["stage"] = "after_low_resolution_restoration"
+    context.current_image = restored
+    context.face_restoration = metadata
+    return context
+
+
 def sharpen_stage(context):
     """Apply only the bounded policy sharpening after optional restoration."""
     strength = context.policy["sharpen"]
@@ -700,6 +772,7 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
         ("measure_post_exposure_noise", measure_post_exposure_noise_stage),
         ("adaptive_denoise", adaptive_denoise_stage),
         ("low_resolution_restoration", low_resolution_restoration_stage),
+        ("face_restoration", face_restoration_stage),
         ("sharpen", sharpen_stage),
         ("output_guard_b", output_guard_b_stage),
     )
@@ -719,21 +792,26 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
     if (
         context.input_quality["needs_ai_restoration"]
         and not context.restoration["applied"]
+        and not context.face_restoration["applied"]
     ):
         context.warnings.append(
             "Severe blur or low resolution requires an AI restoration model; "
             "the baseline avoids inventing facial detail."
         )
 
+    algorithm = (
+        "zero_dce_hybrid_v1"
+        if context.zero_dce["applied"]
+        else "opencv_adaptive_restoration_router_v2"
+    )
+    if context.face_restoration["applied"]:
+        algorithm = f"{algorithm}+private_gfpgan_v1_4"
+
     parameters = {
         **context.policy,
         "mean_input_luminance": context.input_quality["mean_luminance"],
-        "algorithm": (
-            "zero_dce_hybrid_v1"
-            if context.zero_dce["applied"]
-            else "opencv_adaptive_restoration_router_v2"
-        ),
-        "pipeline_version": "staged_natural_enhancement_v1",
+        "algorithm": algorithm,
+        "pipeline_version": "staged_natural_enhancement_v2",
         "colour_policy": (
             "learned_rgb_curves"
             if context.zero_dce["applied"]
@@ -750,6 +828,7 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
         "post_exposure_noise": context.post_exposure_noise,
         "adaptive_denoise": context.adaptive_denoise,
         "restoration": context.restoration,
+        "face_restoration": context.face_restoration,
         "zero_dce": context.zero_dce,
         "stage_order": context.stage_order,
         "stage_timings_ms": context.stage_timings_ms,

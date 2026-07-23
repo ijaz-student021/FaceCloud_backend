@@ -164,6 +164,7 @@ class OpenCVPolicyTests(SimpleTestCase):
             "measure_post_exposure_noise",
             "adaptive_denoise",
             "low_resolution_restoration",
+            "face_restoration",
             "sharpen",
             "output_guard_b",
         ]

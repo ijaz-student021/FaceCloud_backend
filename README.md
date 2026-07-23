@@ -14,15 +14,13 @@ FaceCloud is an AI-powered facial image enhancement, validation, organization, a
 - Owner-only image listing, downloads, and deletion
 - Secure UUID storage paths and physical cleanup
 - PostgreSQL 18 development database
-- Automated authentication, ownership, upload, and storage tests
+- OpenCV, private curve-model, EDSR, and guarded optional GFPGAN enhancement
+- Celery and Redis background processing with an isolated GFPGAN queue option
+- Automated authentication, ownership, upload, storage, enhancement, quality,
+  progress, reporting, notification, duplicate, and identity tests
 
 ## Planned capabilities
 
-- Image preprocessing and standardization
-- OpenCV and Zero-DCE enhancement
-- Quality scoring and face validation
-- Background batch processing and live progress
-- Face recognition and identity grouping
 - Moderator review and reporting
 - Live camera face detection and enhancement comparison
 - Private cloud storage and production deployment
@@ -34,7 +32,7 @@ FaceCloud is an AI-powered facial image enhancement, validation, organization, a
 - PostgreSQL
 - Simple JWT
 - Pillow and OpenCV
-- Planned Celery and Redis processing
+- Celery and Redis processing
 - Planned AWS S3 storage
 
 ## Local setup

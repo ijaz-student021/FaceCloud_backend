@@ -1,0 +1,7 @@
+# Install in a dedicated Python 3.10/3.11 worker environment, not the main
+# Python 3.14 development environment. Install the hardware-appropriate
+# PyTorch build first, then install this file.
+-r requirements.txt
+gfpgan==1.3.8
+basicsr==1.4.2
+facexlib==0.3.0

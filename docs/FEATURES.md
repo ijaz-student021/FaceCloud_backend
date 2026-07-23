@@ -264,6 +264,16 @@ Uses deep learning to improve low-light images while preserving facial detail.
 - Provider, model, curve, dimensions, license, and fallback metadata
 - Enhanced-image persistence
 - Safe missing/corrupt-model failure handling
+- Private GFPGAN v1.4 face-restoration adapter for eligible blurry or
+  low-resolution faces
+- Checksum-pinned private checkpoint with no automatic model download
+- Face-only restoration with the background upsampler disabled
+- Same-pixel-grid validation, conservative restoration weight and output blend
+- Safe fallback when the optional runtime, checkpoint, face, or output is invalid
+- Dedicated Celery queue configuration for an isolated Python 3.10/3.11 worker
+
+The GFPGAN integration is implemented but remains disabled by default until the
+private worker environment completes consented photographic rollout QA.
 
 ### Feature 13: Before-and-after comparison — Complete backend
 

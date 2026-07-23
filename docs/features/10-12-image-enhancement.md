@@ -10,7 +10,9 @@ Current status: **Complete backend**. Enhancement levels, adaptive OpenCV proces
 optional EDSR restoration, private FaceCloud curve-model inference, Celery execution,
 progress, owner-only APIs, comparison metadata, secure downloads, and adaptive
 natural-output protection are implemented. Full-resolution source preservation and
-the non-destructive Auto/Manual gallery editor are also implemented.
+the non-destructive Auto/Manual gallery editor are also implemented. A private,
+checksum-pinned GFPGAN v1.4 face-restoration stage is implemented behind disabled
+rollout flags for isolated-worker evaluation.
 
 ## 2. Implemented foundation
 
@@ -434,14 +436,7 @@ existing clients. New clients should use `quality_guards.guard_a` and
 `quality_guards.guard_b`.
 
 The adaptive denoise rollout is intentionally disabled by default. With it
-disabled, the legacy denoise policy remains in effect. The GFPGAN flags are
-reserved only; no GFPGAN dependency, model, queue, or per-face restoration code
-is included in this checkpoint.
-
-> **Commercialization TODO:** before any later GFPGAN stage is enabled, perform
-> and record a formal license review for the dependency, pretrained weights,
-> model source, redistribution terms, and deployment method. This checkpoint
-> makes no claim that GFPGAN is approved for commercial use.
+disabled, the legacy denoise policy remains in effect.
 
 Automated regression coverage includes extremely dark, normally exposed,
 bright, low-resolution, and multi-face scene fixtures. It verifies bounded
@@ -460,3 +455,76 @@ photographic evaluation set.
 | Bright portrait | Low | 225.50 -> 225.50 | 3.36 -> 3.36 | 0% |
 | Low-resolution portrait | Low | 144.68 -> 151.11 | 5.92 -> 6.87 | 0% |
 | Multi-face group | Medium | 101.69 -> 107.88 | 25.27 -> 25.74 | 0% |
+
+## 19. Private GFPGAN v1.4 rollout checkpoint
+
+The company has confirmed that private commercial permission for the supplied
+GFPGAN v1.4 checkpoint is recorded outside this repository. The agreement,
+checkpoint, and commercial terms must never be committed or returned through an
+API.
+
+Implemented controls:
+
+1. The private checkpoint is stored at
+   `.runtime/models/gfpgan/GFPGANv1.4.pth`; `.runtime/` is Git-ignored.
+2. Its complete SHA-256 is configured and verified before the optional GFPGAN
+   package is imported or the checkpoint is loaded.
+3. No model is downloaded automatically. A missing or modified artifact safely
+   falls back to the existing enhancement pipeline.
+4. Loading is lazy and process-cached. Inference is serialized within a worker
+   to avoid concurrent use of one model instance.
+5. Restoration is eligible only for severe blur, mild blur, or low resolution.
+   Normally exposed, sharp, sufficiently large images skip the model.
+6. GFPGAN uses `upscale=1`, the `clean` architecture, no background upsampler,
+   restoration weight `0.35`, and a bounded final blend of `0.40`.
+7. Candidates that contain no face, exceed five faces or the configured pixel
+   limit, change dimensions, contain invalid pixels, or fail inference are
+   rejected without failing the overall enhancement.
+8. Guard B evaluates face restoration and sharpening against the pre-GFPGAN
+   reference. The uploaded original remains unchanged.
+9. Stored metadata includes provider, checksum prefix, face count, dimensions,
+   timing, candidate quality, fallback reason, and identity-safeguard state. It
+   excludes the private path and license terms.
+10. `GFPGAN_ENABLED` and `GFPGAN_QUEUE_ENABLED` default to `False`.
+
+### Isolated worker setup
+
+Use a separate Python 3.10 or 3.11 environment. Install the correct CPU or CUDA
+PyTorch build for the deployment host first, then run:
+
+```powershell
+python -m pip install -r requirements-gfpgan.txt
+```
+
+Verify the checkpoint:
+
+```powershell
+(Get-FileHash `
+  -LiteralPath ".runtime\models\gfpgan\GFPGANv1.4.pth" `
+  -Algorithm SHA256).Hash.ToLowerInvariant()
+```
+
+Expected SHA-256:
+
+```text
+e2cd4703ab14f4d01fd1383a8a8b266f9a5833dacee8e6a79d3bf21a1b6be5ad
+```
+
+Start the isolated worker:
+
+```powershell
+celery -A config worker --loglevel=info --pool=solo -Q gfpgan
+```
+
+Only after that worker is healthy should the deployment set
+`GFPGAN_ENABLED=True` and `GFPGAN_QUEUE_ENABLED=True` and restart its processes.
+The queue switch routes image and batch enhancement tasks to `gfpgan`. Rollback
+sets both flags to `False`.
+
+### Remaining production enablement gate
+
+Run a consented evaluation set containing dark, dim, normal, bright, blurry,
+low-resolution, multi-face, different-skin-tone, and occlusion cases. Review
+identity fidelity manually and add embedding-based identity-drift protection
+before aggressive restoration is allowed. Until that gate passes, the adapter
+is ready for controlled QA but remains off for users.
