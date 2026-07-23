@@ -304,13 +304,17 @@ highlight/shadow clipping, resolution, normalized scores, and final decisions.
 Validates individual portraits and supported group images containing up to five people.
 
 The OpenCV baseline, persisted decisions, automatic execution, owner-only API,
-My Images and dashboard integration, review-safe decisions, and tests are complete.
+My Images and dashboard integration, review-safe decisions, detector adapter,
+and feature-flagged full-resolution per-face measurements are complete.
 
 - Face detection and count
 - No-face review and support for group images containing 3–5 people
 - Face-size and position validation
 - Boundary and minimum-size checks
-- Detection confidence
+- Detector score with explicit non-probability confidence provenance
+- Standardized-to-full-resolution coordinate mapping
+- Per-face blur, luminance, highlight clipping, crop size, and boundary state
+- Landmark and pose/occlusion availability without fabricated values
 - Clear validation feedback
 
 ### Feature 16: Processing status workflow — Complete quality-decision foundation

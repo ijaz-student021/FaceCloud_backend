@@ -215,6 +215,8 @@ ADAPTIVE_DENOISE_STRENGTHS = tuple(
 # They intentionally remain disabled until the later Parts 5-7 review.
 GFPGAN_ENABLED = env.bool("GFPGAN_ENABLED", default=False)
 GFPGAN_QUEUE_ENABLED = env.bool("GFPGAN_QUEUE_ENABLED", default=False)
+PER_FACE_METRICS_ENABLED = env.bool("PER_FACE_METRICS_ENABLED", default=False)
+IDENTITY_EMBEDDING_ENABLED = env.bool("IDENTITY_EMBEDDING_ENABLED", default=False)
 ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION = env.bool(
     "ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION", default=True
 )
