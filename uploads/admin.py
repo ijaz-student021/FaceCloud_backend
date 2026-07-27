@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
+from .models import BatchImageProgress, ImagePreprocessingResult, ImageUpload, UploadBatch
 
 
 class ImageUploadInline(admin.TabularInline):
@@ -60,3 +60,11 @@ class ImagePreprocessingResultAdmin(admin.ModelAdmin):
         "output_width", "output_height", "original_file_size", "processed_file_size",
         "had_transparency", "processing_duration_ms", "failure_reason", "created_at", "updated_at",
     )
+
+
+@admin.register(BatchImageProgress)
+class BatchImageProgressAdmin(admin.ModelAdmin):
+    list_display = ("image", "batch", "owner", "stage", "status", "progress_percentage", "retry_count", "updated_at")
+    list_filter = ("stage", "status", "updated_at")
+    search_fields = ("image__original_name", "owner__username", "owner__email")
+    readonly_fields = [field.name for field in BatchImageProgress._meta.fields]

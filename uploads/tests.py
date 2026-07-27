@@ -14,7 +14,8 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
+from .models import BatchImageProgress, ImagePreprocessingResult, ImageUpload, UploadBatch
+from enhancement.models import ImageEnhancementResult
 
 User = get_user_model()
 
@@ -97,6 +98,93 @@ class ImageUploadTests(APITestCase):
         result = ImagePreprocessingResult.objects.get(image=image)
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.requested_format, "auto")
+
+    def test_batch_progress_is_persistent_and_owner_scoped(self):
+        batch = UploadBatch.objects.create(owner=self.user, upload_type="multiple", total_files=1, accepted_files=1)
+        image = ImageUpload.objects.create(
+            owner=self.user, batch=batch, original_name="progress.jpg", status="uploaded",
+        )
+        ImagePreprocessingResult.objects.create(owner=self.user, image=image, status="processing")
+        response = self.client.get(reverse("upload-batch-progress", args=[batch.pk]))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["images"][0]["stage"], "preprocessing")
+        self.assertGreater(response.data["progress_percentage"], 0)
+        self.assertTrue(BatchImageProgress.objects.filter(image=image).exists())
+
+        other = User.objects.create_user(username="progress-other", password=self.password, is_email_verified=True)
+        other_batch = UploadBatch.objects.create(owner=other, upload_type="single")
+        forbidden = self.client.get(reverse("upload-batch-progress", args=[other_batch.pk]))
+        self.assertEqual(forbidden.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_batch_cancel_sets_cooperative_cancellation_state(self):
+        batch = UploadBatch.objects.create(owner=self.user, upload_type="multiple", total_files=1, accepted_files=1)
+        image = ImageUpload.objects.create(owner=self.user, batch=batch, original_name="cancel.jpg", status="uploaded")
+        response = self.client.post(reverse("upload-batch-cancel", args=[batch.pk]))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        batch.refresh_from_db()
+        self.assertTrue(batch.cancellation_requested)
+        self.assertEqual(response.data["images"][0]["status"], "cancelled")
+
+    @patch("uploads.views.enqueue_batch_preprocessing")
+    def test_batch_retry_only_requeues_failed_images(self, enqueue):
+        batch = UploadBatch.objects.create(owner=self.user, upload_type="multiple", total_files=1, accepted_files=1)
+        image = ImageUpload.objects.create(owner=self.user, batch=batch, original_name="retry.jpg", status="uploaded")
+        ImagePreprocessingResult.objects.create(
+            owner=self.user, image=image, status="failed", failure_reason="decoder failed",
+        )
+        self.client.get(reverse("upload-batch-progress", args=[batch.pk]))
+        response = self.client.post(reverse("upload-batch-retry", args=[batch.pk]))
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        batch.refresh_from_db()
+        self.assertEqual(batch.retry_count, 1)
+        enqueue.assert_called_once()
+
+    def test_my_images_is_paginated_filterable_and_owner_scoped(self):
+        own_batch = UploadBatch.objects.create(owner=self.user, upload_type="single")
+        own_image = ImageUpload.objects.create(
+            owner=self.user, batch=own_batch, original_name="portrait.jpg",
+            status="uploaded", file_size=120,
+        )
+        ImagePreprocessingResult.objects.create(
+            owner=self.user, image=own_image, status="completed",
+        )
+        other = User.objects.create_user(
+            username="other-gallery", email="other-gallery@example.com",
+            password=self.password, is_email_verified=True,
+        )
+        other_batch = UploadBatch.objects.create(owner=other, upload_type="single")
+        ImageUpload.objects.create(
+            owner=other, batch=other_batch, original_name="private.jpg", status="uploaded",
+        )
+
+        response = self.client.get(reverse("my-image-list"), {"search": "portrait", "status": "ready"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], own_image.pk)
+        self.assertEqual(response.data["results"][0]["display_status"], "ready")
+        self.assertNotContains(response, "private.jpg")
+
+    def test_my_images_uses_latest_enhancement_status(self):
+        batch = UploadBatch.objects.create(owner=self.user, upload_type="single")
+        image = ImageUpload.objects.create(
+            owner=self.user, batch=batch, original_name="latest.jpg", status="uploaded",
+        )
+        preprocessing = ImagePreprocessingResult.objects.create(
+            owner=self.user, image=image, status="completed",
+        )
+        ImageEnhancementResult.objects.create(
+            owner=self.user, image=image, preprocessing_result=preprocessing, status="completed",
+        )
+        latest = ImageEnhancementResult.objects.create(
+            owner=self.user, image=image, preprocessing_result=preprocessing, status="failed",
+        )
+
+        response = self.client.get(reverse("my-image-list"), {"status": "failed"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["latest_enhancement"]["id"], latest.pk)
 
     def test_single_upload_rejects_zero_or_multiple_files(self):
         missing = self.client.post(reverse("image-upload-single"), {}, format="multipart")

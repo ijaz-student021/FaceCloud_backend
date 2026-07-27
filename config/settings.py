@@ -56,6 +56,12 @@ INSTALLED_APPS = [
     "accounts",
     "uploads",
     "enhancement",
+    "validation",
+    "quality_control",
+    "duplicates",
+    "reports",
+    "downloads",
+    "notifications",
 ]
 
 MIDDLEWARE = [
@@ -180,6 +186,97 @@ AI_RESTORATION_SCALE = env.int("AI_RESTORATION_SCALE", default=2)
 AI_RESTORATION_MAX_OUTPUT_PIXELS = env.int(
     "AI_RESTORATION_MAX_OUTPUT_PIXELS", default=20_000_000
 )
+ZERO_DCE_ENABLED = env.bool("ZERO_DCE_ENABLED", default=True)
+ZERO_DCE_MODEL_PATH = env(
+    "ZERO_DCE_MODEL_PATH",
+    default=str(BASE_DIR / ".runtime" / "models" / "zero_dce_epoch99.onnx"),
+)
+ZERO_DCE_MAX_INFERENCE_EDGE = env.int("ZERO_DCE_MAX_INFERENCE_EDGE", default=1024)
+ZERO_DCE_FULL_RESOLUTION_TILE_EDGE = env.int(
+    "ZERO_DCE_FULL_RESOLUTION_TILE_EDGE", default=1024
+)
+ADAPTIVE_DENOISE_ENABLED = env.bool("ADAPTIVE_DENOISE_ENABLED", default=False)
+ADAPTIVE_DENOISE_BREAKPOINTS = tuple(
+    float(value)
+    for value in env.list(
+        "ADAPTIVE_DENOISE_BREAKPOINTS",
+        default=["1.0", "2.0", "3.5", "5.0", "7.0"],
+    )
+)
+ADAPTIVE_DENOISE_STRENGTHS = tuple(
+    int(value)
+    for value in env.list(
+        "ADAPTIVE_DENOISE_STRENGTHS",
+        default=["0", "3", "4", "5", "6", "7"],
+    )
+)
+# The company has confirmed a private commercial license for the supplied
+# checkpoint.  The artifact and license evidence remain outside source control.
+# Both switches stay disabled until the isolated worker passes rollout QA.
+GFPGAN_ENABLED = env.bool("GFPGAN_ENABLED", default=False)
+GFPGAN_QUEUE_ENABLED = env.bool("GFPGAN_QUEUE_ENABLED", default=False)
+GFPGAN_QUEUE_NAME = env("GFPGAN_QUEUE_NAME", default="gfpgan")
+GFPGAN_MODEL_PATH = env(
+    "GFPGAN_MODEL_PATH",
+    default=str(BASE_DIR / ".runtime" / "models" / "gfpgan" / "GFPGANv1.4.pth"),
+)
+GFPGAN_MODEL_SHA256 = env(
+    "GFPGAN_MODEL_SHA256",
+    default="e2cd4703ab14f4d01fd1383a8a8b266f9a5833dacee8e6a79d3bf21a1b6be5ad",
+)
+GFPGAN_ARCH = env("GFPGAN_ARCH", default="clean")
+GFPGAN_CHANNEL_MULTIPLIER = env.int("GFPGAN_CHANNEL_MULTIPLIER", default=2)
+GFPGAN_DEVICE = env("GFPGAN_DEVICE", default="auto")
+GFPGAN_RESTORATION_WEIGHT = env.float(
+    "GFPGAN_RESTORATION_WEIGHT", default=0.35
+)
+GFPGAN_OUTPUT_BLEND = env.float("GFPGAN_OUTPUT_BLEND", default=0.40)
+GFPGAN_MAX_FACES = env.int("GFPGAN_MAX_FACES", default=5)
+GFPGAN_MAX_INPUT_PIXELS = env.int(
+    "GFPGAN_MAX_INPUT_PIXELS", default=12_000_000
+)
+PER_FACE_METRICS_ENABLED = env.bool("PER_FACE_METRICS_ENABLED", default=False)
+IDENTITY_EMBEDDING_ENABLED = env.bool("IDENTITY_EMBEDDING_ENABLED", default=False)
+ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION = env.bool(
+    "ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION", default=True
+)
+ENHANCEMENT_MODEL_LUMINANCE_THRESHOLD = env.float(
+    "ENHANCEMENT_MODEL_LUMINANCE_THRESHOLD", default=0.45
+)
+ENHANCEMENT_MODEL_LUMINANCE_TARGET = env.float(
+    "ENHANCEMENT_MODEL_LUMINANCE_TARGET", default=0.60
+)
+ENHANCEMENT_MAX_HIGHLIGHT_CLIPPING_PERCENT = env.float(
+    "ENHANCEMENT_MAX_HIGHLIGHT_CLIPPING_PERCENT", default=5.0
+)
+
+QUALITY_IDEAL_LUMINANCE = env.float("QUALITY_IDEAL_LUMINANCE", default=135.0)
+QUALITY_SHARPNESS_TARGET = env.float("QUALITY_SHARPNESS_TARGET", default=150.0)
+QUALITY_CONTRAST_TARGET = env.float("QUALITY_CONTRAST_TARGET", default=55.0)
+QUALITY_MAX_NOISE = env.float("QUALITY_MAX_NOISE", default=12.0)
+QUALITY_MAX_TOTAL_CLIPPING = env.float("QUALITY_MAX_TOTAL_CLIPPING", default=20.0)
+QUALITY_RESOLUTION_TARGET = env.int("QUALITY_RESOLUTION_TARGET", default=720)
+QUALITY_REJECT_SHARPNESS = env.float("QUALITY_REJECT_SHARPNESS", default=20.0)
+QUALITY_REVIEW_SHARPNESS = env.float("QUALITY_REVIEW_SHARPNESS", default=60.0)
+QUALITY_REJECT_MIN_EDGE = env.int("QUALITY_REJECT_MIN_EDGE", default=240)
+QUALITY_REVIEW_MIN_EDGE = env.int("QUALITY_REVIEW_MIN_EDGE", default=480)
+QUALITY_REJECT_MIN_LUMINANCE = env.float("QUALITY_REJECT_MIN_LUMINANCE", default=25.0)
+QUALITY_REVIEW_MIN_LUMINANCE = env.float("QUALITY_REVIEW_MIN_LUMINANCE", default=55.0)
+QUALITY_REJECT_MAX_LUMINANCE = env.float("QUALITY_REJECT_MAX_LUMINANCE", default=235.0)
+QUALITY_REVIEW_MAX_LUMINANCE = env.float("QUALITY_REVIEW_MAX_LUMINANCE", default=210.0)
+QUALITY_REJECT_CONTRAST = env.float("QUALITY_REJECT_CONTRAST", default=12.0)
+QUALITY_REVIEW_CONTRAST = env.float("QUALITY_REVIEW_CONTRAST", default=20.0)
+QUALITY_REVIEW_NOISE = env.float("QUALITY_REVIEW_NOISE", default=10.0)
+QUALITY_ACCEPT_SCORE = env.float("QUALITY_ACCEPT_SCORE", default=60.0)
+
+# Duplicate detection. Perceptual and face-region matches are review evidence,
+# not identity recognition and never create cross-user matches.
+DUPLICATE_AUTO_ANALYZE = env.bool("DUPLICATE_AUTO_ANALYZE", default=True)
+DUPLICATE_PERCEPTUAL_HASH_DISTANCE = env.int(
+    "DUPLICATE_PERCEPTUAL_HASH_DISTANCE", default=8,
+)
+DUPLICATE_FACE_HASH_DISTANCE = env.int("DUPLICATE_FACE_HASH_DISTANCE", default=6)
+DUPLICATE_MAX_CANDIDATES = env.int("DUPLICATE_MAX_CANDIDATES", default=5000)
 
 CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="redis://127.0.0.1:6379/0")
 CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default="redis://127.0.0.1:6379/1")
@@ -194,6 +291,28 @@ CELERY_TASK_SOFT_TIME_LIMIT = env.int("CELERY_TASK_SOFT_TIME_LIMIT", default=55 
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_TASK_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
+if GFPGAN_QUEUE_ENABLED:
+    CELERY_TASK_ROUTES = {
+        "enhancement.process_image": {"queue": GFPGAN_QUEUE_NAME},
+        "enhancement.process_batch": {"queue": GFPGAN_QUEUE_NAME},
+    }
+BATCH_PROGRESS_MAX_RETRIES = env.int("BATCH_PROGRESS_MAX_RETRIES", default=3)
+DOWNLOAD_PACKAGE_TTL_HOURS = env.int("DOWNLOAD_PACKAGE_TTL_HOURS", default=24)
+DOWNLOAD_PACKAGE_MAX_FILES = env.int("DOWNLOAD_PACKAGE_MAX_FILES", default=500)
+DOWNLOAD_PACKAGE_MAX_UNCOMPRESSED_SIZE = env.int(
+    "DOWNLOAD_PACKAGE_MAX_UNCOMPRESSED_SIZE",
+    default=15 * 1024 * 1024 * 1024,
+)
+DOWNLOAD_PACKAGE_COMPRESSION_LEVEL = env.int(
+    "DOWNLOAD_PACKAGE_COMPRESSION_LEVEL", default=6,
+)
+NOTIFICATION_EMAILS_ENABLED = env.bool(
+    "NOTIFICATION_EMAILS_ENABLED", default=True,
+)
+NOTIFICATION_RETENTION_DAYS = env.int("NOTIFICATION_RETENTION_DAYS", default=90)
+NOTIFICATION_EMAIL_MAX_RETRIES = env.int(
+    "NOTIFICATION_EMAIL_MAX_RETRIES", default=3,
+)
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -217,6 +336,9 @@ REST_FRAMEWORK = {
         "image_upload": "100/hour",
         "zip_upload": "20/hour",
         "image_preprocess": "100/hour",
+        "report_generation": "60/hour",
+        "download_package": "30/hour",
+        "notification_action": "300/hour",
     },
 }
 

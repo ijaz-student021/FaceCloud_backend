@@ -38,3 +38,13 @@ Thumbs.db
 .docx_review/
 .runtime/
 *.log
+
+# Private training data, checkpoints and exported models
+FaceCloud_Dataset/
+FaceCloud_dataset/
+Dataset/
+Dataset.zip
+training_outputs/
+*.pt
+*.pth
+*.onnx

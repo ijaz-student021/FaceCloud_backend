@@ -10,6 +10,10 @@ from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import AuthEvent
+from enhancement.models import ImageEnhancementResult
+from uploads.models import ImagePreprocessingResult, ImageUpload, UploadBatch
+from validation.models import FaceValidationResult
+from quality_control.models import ImageQualityDecision
 
 User = get_user_model()
 
@@ -54,6 +58,48 @@ class AuthenticationTests(APITestCase):
         self.assertFalse(user.is_email_verified)
         self.assertEqual(len(mail.outbox), 1)
         self.assertTrue(AuthEvent.objects.filter(user=user, event="registered").exists())
+
+    def test_dashboard_statistics_and_activity_are_owner_scoped(self):
+        user = self.create_user(username="dashboard", email="dashboard@example.com")
+        other = self.create_user(username="dashboard-other", email="dashboard-other@example.com")
+        batch = UploadBatch.objects.create(owner=user, upload_type="single")
+        image = ImageUpload.objects.create(
+            owner=user, batch=batch, original_name="dashboard.jpg",
+            status="uploaded", file_size=100,
+        )
+        preprocessing = ImagePreprocessingResult.objects.create(
+            owner=user, image=image, status="completed", processed_file_size=80,
+        )
+        ImageEnhancementResult.objects.create(
+            owner=user, image=image, preprocessing_result=preprocessing,
+            status="completed", output_file_size=70,
+        )
+        FaceValidationResult.objects.create(
+            owner=user, image=image, preprocessing_result=preprocessing,
+            decision="accepted", face_count=1,
+        )
+        ImageQualityDecision.objects.create(
+            owner=user, image=image, preprocessing_result=preprocessing,
+            face_validation=image.face_validation, status="completed",
+            decision="accepted", overall_score=82,
+        )
+        other_batch = UploadBatch.objects.create(owner=other, upload_type="single")
+        ImageUpload.objects.create(
+            owner=other, batch=other_batch, original_name="private.jpg", status="rejected",
+        )
+        self.authenticate(user)
+
+        response = self.client.get(reverse("user-dashboard"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["summary"]["total_images"], 1)
+        self.assertEqual(response.data["summary"]["enhanced_images"], 1)
+        self.assertEqual(response.data["summary"]["rejected_images"], 0)
+        self.assertEqual(response.data["summary"]["storage_bytes"], 250)
+        self.assertEqual(response.data["summary"]["average_quality_score"], 82)
+        self.assertEqual(len(response.data["uploads_last_7_days"]), 7)
+        self.assertEqual(response.data["recent_uploads"][0]["filename"], "dashboard.jpg")
+        self.assertNotContains(response, "private.jpg")
 
     def test_registration_rejects_weak_password_and_duplicate_email_case_insensitively(self):
         self.create_user()

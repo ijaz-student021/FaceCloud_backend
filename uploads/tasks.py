@@ -26,13 +26,24 @@ def preprocess_batch_task(self, batch_id):
             ]
         )
 
+    from notifications.events import notify_processing_started
+    notify_processing_started(batch_id)
+
     image_ids = list(
         ImageUpload.objects.filter(batch_id=batch_id, status="uploaded")
         .order_by("pk")
         .values_list("pk", flat=True)
     )
     for image_id in image_ids:
+        if UploadBatch.objects.filter(pk=batch_id, cancellation_requested=True).exists():
+            UploadBatch.objects.filter(pk=batch_id).update(
+                processing_status="cancelled", processing_finished_at=timezone.now(),
+            )
+            return {"batch_id": batch_id, "status": "cancelled"}
         image = ImageUpload.objects.get(pk=image_id)
+        existing = ImagePreprocessingResult.objects.filter(image=image).first()
+        if existing and existing.status == "completed":
+            continue
         try:
             preprocess_image(image, requested_format="auto")
         except Exception as error:
@@ -59,7 +70,7 @@ def preprocess_batch_task(self, batch_id):
     else:
         final_status = "failed"
 
-    UploadBatch.objects.filter(pk=batch_id).update(
+    UploadBatch.objects.filter(pk=batch_id, cancellation_requested=False).update(
         processing_status=final_status,
         processed_files=completed,
         processing_failed_files=failed,

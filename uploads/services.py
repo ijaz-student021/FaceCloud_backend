@@ -70,6 +70,10 @@ def create_image_batch(owner, upload_type, files):
     if len(files) > settings.MAX_UPLOAD_BATCH_FILES:
         raise ValidationError(f"A batch cannot contain more than {settings.MAX_UPLOAD_BATCH_FILES} images.")
     batch = UploadBatch.objects.create(owner=owner, upload_type=upload_type)
+    from notifications.events import notify_upload_received
+    transaction.on_commit(
+        lambda batch_id=batch.pk: notify_upload_received(batch_id)
+    )
     for uploaded_file in files:
         try:
             saved_image = _save_valid_image(batch, owner, uploaded_file)
@@ -110,6 +114,11 @@ def create_zip_batch(owner, uploaded_zip):
         owner=owner,
         upload_type="zip",
         original_archive_name=safe_original_name(uploaded_zip.name),
+    )
+    from notifications.events import notify_upload_received
+
+    transaction.on_commit(
+        lambda batch_id=batch.pk: notify_upload_received(batch_id)
     )
     uploaded_zip.seek(0)
     with zipfile.ZipFile(uploaded_zip) as archive:
@@ -208,6 +217,17 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
         and not force
         and existing.processed_file
     ):
+        if not hasattr(image_upload, "face_validation"):
+            from validation.services import validate_image_faces_safely
+            validate_image_faces_safely(image_upload)
+        if settings.DUPLICATE_AUTO_ANALYZE and not hasattr(
+            image_upload, "duplicate_analysis"
+        ):
+            from duplicates.services import enqueue_duplicate_analysis
+            enqueue_duplicate_analysis(image_upload)
+        if not hasattr(image_upload, "quality_decision"):
+            from quality_control.services import enqueue_quality_analysis
+            enqueue_quality_analysis(image_upload)
         return existing, False
 
     started = time.perf_counter()
@@ -265,6 +285,13 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
             result.processing_duration_ms = max(1, round((time.perf_counter() - started) * 1000))
             result.failure_reason = ""
             result.save()
+        from validation.services import validate_image_faces_safely
+        validate_image_faces_safely(image_upload)
+        if settings.DUPLICATE_AUTO_ANALYZE:
+            from duplicates.services import enqueue_duplicate_analysis
+            enqueue_duplicate_analysis(image_upload, force=force)
+        from quality_control.services import enqueue_quality_analysis
+        enqueue_quality_analysis(image_upload)
         if old_file_name and old_file_name != result.processed_file.name:
             result.processed_file.storage.delete(old_file_name)
         return result, True
