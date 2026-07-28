@@ -27,14 +27,15 @@ def validate_unique_email(value, instance=None):
     return email
 
 
-class RegisterSerializer(serializers.ModelSerializer):
+class RegisterSerializer(serializers.Serializer):
+    username = serializers.CharField(max_length=150)
     email = serializers.EmailField(required=True, allow_blank=False)
     password = serializers.CharField(write_only=True, trim_whitespace=False)
-
-    class Meta:
-        model = User
-        fields = ["id", "username", "email", "password"]
-        read_only_fields = ["id"]
+    password_confirm = serializers.CharField(
+        required=False,
+        write_only=True,
+        trim_whitespace=False,
+    )
 
     def validate_username(self, value):
         value = User.normalize_username(value).strip()
@@ -46,12 +47,26 @@ class RegisterSerializer(serializers.ModelSerializer):
         return validate_unique_email(value)
 
     def validate(self, attrs):
+        password_confirm = attrs.pop("password_confirm", None)
+        if password_confirm is not None and password_confirm != attrs["password"]:
+            raise serializers.ValidationError(
+                {"password_confirm": "Passwords do not match."}
+            )
         candidate = User(username=attrs.get("username"), email=attrs.get("email"))
         password_validation.validate_password(attrs["password"], user=candidate)
         return attrs
 
-    def create(self, validated_data):
-        return User.objects.create_user(**validated_data)
+
+class VerifyRegistrationSerializer(serializers.Serializer):
+    registration_id = serializers.UUIDField()
+    code = serializers.RegexField(
+        regex=r"^\d{6}$",
+        error_messages={"invalid": "Enter the six-digit verification code."},
+    )
+
+
+class ResendVerificationSerializer(serializers.Serializer):
+    registration_id = serializers.UUIDField()
 
 
 class FaceCloudTokenObtainPairSerializer(serializers.Serializer):

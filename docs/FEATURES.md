@@ -15,7 +15,7 @@ Status definitions:
 
 | Area | Status |
 |---|---|
-| Authentication and account management | Complete |
+| Authentication and account management | Complete, including six-digit pending signup verification |
 | Role-based authorization | Complete |
 | Authentication audit events | Complete |
 | Single, multiple, and ZIP image upload | Complete |
@@ -63,9 +63,13 @@ Status definitions:
 Provides the complete account lifecycle and proves the identity of API users.
 
 - Registration with username, email, and password
+- Six-digit email verification before permanent user creation
+- Hashed pending password and code storage
+- Verification expiry, attempt locking, resend cooldown, and hourly send limits
+- Atomic verified-user creation and pending-secret cleanup
 - Required, unique, normalized email addresses
 - Strong password validation and secure hashing
-- Email verification and verification resend
+- Email verification and verification-code resend
 - Login using username, email, or identifier
 - JWT access and refresh tokens
 - Password change and password reset
@@ -757,7 +761,7 @@ Maintains stable integration contracts and implementation documentation.
 
 Protects completed behavior from regression as the platform grows.
 
-- 140 authentication, upload, preprocessing, enhancement, validation, quality,
+- 162 authentication, upload, preprocessing, enhancement, validation, quality,
   duplicate-detection, dashboard, report, download, ownership, cleanup, and queue tests
   passing against PostgreSQL
 - Django system and migration-drift checks

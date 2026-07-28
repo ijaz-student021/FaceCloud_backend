@@ -1,6 +1,13 @@
+import logging
+from datetime import timedelta
+
+from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.tokens import default_token_generator
-from django.db import transaction
+from django.db import IntegrityError, transaction
+from django.db.models import Q
+from django.utils import timezone
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 from rest_framework import generics, permissions, status
@@ -9,7 +16,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from .models import AuthEvent
+from .models import AuthEvent, PendingRegistration
 from .dashboard import build_user_dashboard
 from .permissions import IsAdminRole
 from .serializers import (
@@ -22,27 +29,117 @@ from .serializers import (
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     RegisterSerializer,
+    ResendVerificationSerializer,
     UserSerializer,
+    VerifyRegistrationSerializer,
 )
 from .services import (
+    generate_verification_code,
+    mask_email,
     record_auth_event,
     send_password_reset_email,
+    send_signup_verification_code,
     send_verification_email,
 )
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
-class RegisterView(generics.CreateAPIView):
-    serializer_class = RegisterSerializer
+class RegisterView(APIView):
     permission_classes = [permissions.AllowAny]
     throttle_scope = "registration"
 
-    @transaction.atomic
-    def perform_create(self, serializer):
-        user = serializer.save()
-        send_verification_email(user)
-        record_auth_event("registered", self.request, user, user.email)
+    def post(self, request):
+        serializer = RegisterSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        username = serializer.validated_data["username"]
+        email = serializer.validated_data["email"]
+        password = serializer.validated_data["password"]
+        code = generate_verification_code()
+        now = timezone.now()
+        expires_at = now + timedelta(
+            seconds=settings.SIGNUP_VERIFICATION_CODE_LIFETIME_SECONDS
+        )
+        resend_at = now + timedelta(
+            seconds=settings.SIGNUP_VERIFICATION_RESEND_COOLDOWN_SECONDS
+        )
+
+        try:
+            with transaction.atomic():
+                active = list(
+                    PendingRegistration.objects.select_for_update().filter(
+                        Q(username__iexact=username) | Q(email__iexact=email),
+                        status__in=PendingRegistration.ACTIVE_STATUSES,
+                    )
+                )
+                conflicting = next(
+                    (
+                        item
+                        for item in active
+                        if item.username.lower() != username.lower()
+                        or item.email.lower() != email.lower()
+                    ),
+                    None,
+                )
+                if conflicting:
+                    return Response(
+                        {
+                            "detail": (
+                                "An active registration already uses this "
+                                "username or email address."
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                pending = active[0] if active else PendingRegistration()
+                pending.username = username
+                pending.email = email
+                pending.password_hash = make_password(password)
+                pending.code_hash = make_password(code)
+                pending.status = PendingRegistration.STATUS_PENDING
+                pending.failed_attempts = 0
+                pending.resend_count = 1
+                pending.resend_window_started_at = now
+                pending.code_expires_at = expires_at
+                pending.resend_available_at = resend_at
+                pending.consumed_at = None
+                pending.created_user = None
+                pending.save()
+
+                send_signup_verification_code(email, code)
+                record_auth_event(
+                    "registration_pending",
+                    request,
+                    identifier=email,
+                    details={"registration_id": str(pending.public_id)},
+                )
+                record_auth_event(
+                    "verification_code_sent",
+                    request,
+                    identifier=email,
+                    details={"registration_id": str(pending.public_id)},
+                )
+        except Exception:
+            logger.exception("Unable to send signup verification email.")
+            return Response(
+                {"detail": "Verification email delivery is temporarily unavailable."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        return Response(
+            {
+                "registration_id": str(pending.public_id),
+                "email": mask_email(email),
+                "detail": "A six-digit verification code has been sent.",
+                "expires_in_seconds": settings.SIGNUP_VERIFICATION_CODE_LIFETIME_SECONDS,
+                "resend_available_in_seconds": (
+                    settings.SIGNUP_VERIFICATION_RESEND_COOLDOWN_SECONDS
+                ),
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
 
 
 class FaceCloudTokenObtainPairView(TokenObtainPairView):
@@ -59,12 +156,357 @@ class VerifyEmailView(APIView):
     permission_classes = [permissions.AllowAny]
     throttle_scope = "verification"
 
+    def post(self, request):
+        serializer = VerifyRegistrationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        registration_id = serializer.validated_data["registration_id"]
+        code = serializer.validated_data["code"]
+        now = timezone.now()
+
+        with transaction.atomic():
+            pending = (
+                PendingRegistration.objects.select_for_update()
+                .filter(public_id=registration_id)
+                .first()
+            )
+            if not pending:
+                return Response(
+                    {"detail": "Invalid or expired verification request."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if (
+                pending.status == PendingRegistration.STATUS_CONSUMED
+                and pending.created_user
+            ):
+                return Response(
+                    {
+                        "detail": "Account has already been created.",
+                        "user": UserSerializer(pending.created_user).data,
+                        "login_required": True,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+            if pending.status == PendingRegistration.STATUS_LOCKED:
+                return Response(
+                    {"detail": "Too many incorrect attempts. Request a new code."},
+                    status=status.HTTP_423_LOCKED,
+                )
+            if pending.status in {
+                PendingRegistration.STATUS_CANCELLED,
+                PendingRegistration.STATUS_EXPIRED,
+            }:
+                return Response(
+                    {"detail": "Invalid or expired verification request."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if pending.code_expires_at <= now:
+                pending.status = PendingRegistration.STATUS_EXPIRED
+                pending.save(update_fields=["status", "updated_at"])
+                return Response(
+                    {
+                        "detail": (
+                            "The verification code has expired. Request a new code."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not check_password(code, pending.code_hash):
+                pending.failed_attempts += 1
+                attempts_remaining = max(
+                    0,
+                    settings.SIGNUP_VERIFICATION_MAX_ATTEMPTS
+                    - pending.failed_attempts,
+                )
+                if attempts_remaining == 0:
+                    pending.status = PendingRegistration.STATUS_LOCKED
+                pending.save(
+                    update_fields=["failed_attempts", "status", "updated_at"]
+                )
+                response_status = (
+                    status.HTTP_423_LOCKED
+                    if attempts_remaining == 0
+                    else status.HTTP_400_BAD_REQUEST
+                )
+                return Response(
+                    {
+                        "detail": (
+                            "Too many incorrect attempts. Request a new code."
+                            if attempts_remaining == 0
+                            else "Incorrect verification code."
+                        ),
+                        "attempts_remaining": attempts_remaining,
+                    },
+                    status=response_status,
+                )
+
+            if User.objects.filter(
+                Q(username__iexact=pending.username)
+                | Q(email__iexact=pending.email)
+            ).exists():
+                pending.status = PendingRegistration.STATUS_CANCELLED
+                pending.password_hash = ""
+                pending.code_hash = ""
+                pending.save(
+                    update_fields=[
+                        "status",
+                        "password_hash",
+                        "code_hash",
+                        "updated_at",
+                    ]
+                )
+                return Response(
+                    {
+                        "detail": (
+                            "The username or email was claimed. "
+                            "Restart registration."
+                        )
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            try:
+                with transaction.atomic():
+                    user = User(
+                        username=pending.username,
+                        email=pending.email,
+                        role="user",
+                        is_email_verified=True,
+                    )
+                    user.password = pending.password_hash
+                    user.save(force_insert=True)
+            except IntegrityError:
+                pending.status = PendingRegistration.STATUS_CANCELLED
+                pending.password_hash = ""
+                pending.code_hash = ""
+                pending.save(
+                    update_fields=[
+                        "status",
+                        "password_hash",
+                        "code_hash",
+                        "updated_at",
+                    ]
+                )
+                return Response(
+                    {
+                        "detail": (
+                            "The username or email was claimed. "
+                            "Restart registration."
+                        )
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            pending.status = PendingRegistration.STATUS_CONSUMED
+            pending.consumed_at = now
+            pending.created_user = user
+            pending.password_hash = ""
+            pending.code_hash = ""
+            pending.save(
+                update_fields=[
+                    "status",
+                    "consumed_at",
+                    "created_user",
+                    "password_hash",
+                    "code_hash",
+                    "updated_at",
+                ]
+            )
+            record_auth_event("registered", request, user, user.email)
+            record_auth_event("email_verified", request, user, user.email)
+
+        return Response(
+            {
+                "detail": "Email verified and account created successfully.",
+                "user": UserSerializer(user).data,
+                "login_required": True,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ResendVerificationView(APIView):
+    permission_classes = [permissions.AllowAny]
+    throttle_scope = "verification"
+
+    def post(self, request):
+        serializer = ResendVerificationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        registration_id = serializer.validated_data["registration_id"]
+        now = timezone.now()
+        generic_detail = (
+            "If the registration is eligible, a new verification code has been sent."
+        )
+        code = generate_verification_code()
+
+        try:
+            with transaction.atomic():
+                pending = (
+                    PendingRegistration.objects.select_for_update()
+                    .filter(public_id=registration_id)
+                    .first()
+                )
+                if not pending or pending.status in {
+                    PendingRegistration.STATUS_CONSUMED,
+                    PendingRegistration.STATUS_CANCELLED,
+                }:
+                    return Response({"detail": generic_detail})
+                if pending.resend_available_at > now:
+                    retry_after = max(
+                        1,
+                        int((pending.resend_available_at - now).total_seconds()),
+                    )
+                    return Response(
+                        {
+                            "detail": "Please wait before requesting another code.",
+                            "retry_after_seconds": retry_after,
+                        },
+                        status=status.HTTP_429_TOO_MANY_REQUESTS,
+                    )
+
+                window_age = now - pending.resend_window_started_at
+                if window_age >= timedelta(hours=1):
+                    pending.resend_count = 0
+                    pending.resend_window_started_at = now
+                if (
+                    pending.resend_count
+                    >= settings.SIGNUP_VERIFICATION_MAX_SENDS_PER_HOUR
+                ):
+                    retry_after = max(
+                        1,
+                        int(
+                            (
+                                pending.resend_window_started_at
+                                + timedelta(hours=1)
+                                - now
+                            ).total_seconds()
+                        ),
+                    )
+                    return Response(
+                        {
+                            "detail": "Verification send limit reached.",
+                            "retry_after_seconds": retry_after,
+                        },
+                        status=status.HTTP_429_TOO_MANY_REQUESTS,
+                    )
+
+                conflicting_user = User.objects.filter(
+                    Q(username__iexact=pending.username)
+                    | Q(email__iexact=pending.email)
+                ).exists()
+                conflicting_pending = PendingRegistration.objects.filter(
+                    Q(username__iexact=pending.username)
+                    | Q(email__iexact=pending.email),
+                    status__in=PendingRegistration.ACTIVE_STATUSES,
+                ).exclude(pk=pending.pk).exists()
+                if conflicting_user or conflicting_pending:
+                    pending.status = PendingRegistration.STATUS_CANCELLED
+                    pending.password_hash = ""
+                    pending.code_hash = ""
+                    pending.save(
+                        update_fields=[
+                            "status",
+                            "password_hash",
+                            "code_hash",
+                            "updated_at",
+                        ]
+                    )
+                    return Response(
+                        {"detail": "Registration can no longer be completed."},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+
+                pending.code_hash = make_password(code)
+                pending.code_expires_at = now + timedelta(
+                    seconds=settings.SIGNUP_VERIFICATION_CODE_LIFETIME_SECONDS
+                )
+                pending.resend_available_at = now + timedelta(
+                    seconds=settings.SIGNUP_VERIFICATION_RESEND_COOLDOWN_SECONDS
+                )
+                pending.failed_attempts = 0
+                pending.resend_count += 1
+                pending.status = PendingRegistration.STATUS_PENDING
+                pending.save()
+                send_signup_verification_code(pending.email, code)
+                record_auth_event(
+                    "verification_code_sent",
+                    request,
+                    identifier=pending.email,
+                    details={
+                        "registration_id": str(pending.public_id),
+                        "reason": "resend",
+                    },
+                )
+        except Exception:
+            logger.exception("Unable to resend signup verification email.")
+            return Response(
+                {"detail": "Verification email delivery is temporarily unavailable."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        return Response(
+            {
+                "detail": generic_detail,
+                "resend_available_in_seconds": (
+                    settings.SIGNUP_VERIFICATION_RESEND_COOLDOWN_SECONDS
+                ),
+            }
+        )
+
+
+class RegistrationStatusView(APIView):
+    permission_classes = [permissions.AllowAny]
+    throttle_scope = "verification_status"
+
+    def get(self, request, registration_id):
+        pending = PendingRegistration.objects.filter(
+            public_id=registration_id
+        ).first()
+        if not pending:
+            return Response(
+                {"detail": "Invalid or expired verification request."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        now = timezone.now()
+        public_status = pending.status
+        if (
+            public_status == PendingRegistration.STATUS_PENDING
+            and pending.code_expires_at <= now
+        ):
+            public_status = PendingRegistration.STATUS_EXPIRED
+        return Response(
+            {
+                "status": public_status,
+                "email": mask_email(pending.email),
+                "expires_in_seconds": max(
+                    0,
+                    int((pending.code_expires_at - now).total_seconds()),
+                ),
+                "resend_available_in_seconds": max(
+                    0,
+                    int((pending.resend_available_at - now).total_seconds()),
+                ),
+                "attempts_remaining": max(
+                    0,
+                    settings.SIGNUP_VERIFICATION_MAX_ATTEMPTS
+                    - pending.failed_attempts,
+                ),
+            }
+        )
+
+
+class VerifyEmailChangeView(APIView):
+    permission_classes = [permissions.AllowAny]
+    throttle_scope = "verification"
+
     def get(self, request, uidb64, token):
         try:
             uid = force_str(urlsafe_base64_decode(uidb64))
             user = User.objects.get(pk=uid)
         except (User.DoesNotExist, ValueError, TypeError, OverflowError):
-            return Response({"detail": "Invalid link."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Invalid link."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if user.is_email_verified:
             return Response({"detail": "Email is already verified."})
         if not default_token_generator.check_token(user, token):
@@ -76,18 +518,6 @@ class VerifyEmailView(APIView):
         user.save(update_fields=["is_email_verified"])
         record_auth_event("email_verified", request, user, user.email)
         return Response({"detail": "Email verified successfully."})
-
-
-class ResendVerificationView(APIView):
-    permission_classes = [permissions.AllowAny]
-    throttle_scope = "verification"
-
-    def post(self, request):
-        email = request.data.get("email", "").strip().lower()
-        user = User.objects.filter(email__iexact=email, is_email_verified=False).first()
-        if user and user.is_active and not user.is_suspended:
-            send_verification_email(user)
-        return Response({"detail": "If the account is eligible, a verification email has been sent."})
 
 
 class ProfileView(generics.RetrieveUpdateAPIView):

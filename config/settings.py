@@ -313,6 +313,25 @@ NOTIFICATION_RETENTION_DAYS = env.int("NOTIFICATION_RETENTION_DAYS", default=90)
 NOTIFICATION_EMAIL_MAX_RETRIES = env.int(
     "NOTIFICATION_EMAIL_MAX_RETRIES", default=3,
 )
+SIGNUP_VERIFICATION_CODE_LIFETIME_SECONDS = env.int(
+    "SIGNUP_VERIFICATION_CODE_LIFETIME_SECONDS", default=600,
+)
+SIGNUP_VERIFICATION_RESEND_COOLDOWN_SECONDS = env.int(
+    "SIGNUP_VERIFICATION_RESEND_COOLDOWN_SECONDS", default=60,
+)
+SIGNUP_VERIFICATION_MAX_ATTEMPTS = env.int(
+    "SIGNUP_VERIFICATION_MAX_ATTEMPTS", default=5,
+)
+SIGNUP_VERIFICATION_MAX_SENDS_PER_HOUR = env.int(
+    "SIGNUP_VERIFICATION_MAX_SENDS_PER_HOUR", default=5,
+)
+SIGNUP_VERIFICATION_RETENTION_HOURS = env.int(
+    "SIGNUP_VERIFICATION_RETENTION_HOURS", default=24,
+)
+SIGNUP_VERIFICATION_SUPPORT_EMAIL = env(
+    "SIGNUP_VERIFICATION_SUPPORT_EMAIL",
+    default="support@facecloud.local",
+)
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -331,6 +350,7 @@ REST_FRAMEWORK = {
         "login": "20/hour",
         "token_refresh": "60/hour",
         "verification": "10/hour",
+        "verification_status": "60/hour",
         "password_reset": "10/hour",
         "password_change": "10/hour",
         "image_upload": "100/hour",
