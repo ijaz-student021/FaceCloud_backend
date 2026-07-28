@@ -1,15 +1,19 @@
 import hashlib
+import io
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import numpy as np
+from django.core.management import call_command
 from django.test import SimpleTestCase, override_settings
 
 from .gfpgan import (
     GFPGANUnavailable,
     _load_restorer,
+    _numpy_nms,
     clear_model_cache,
+    gfpgan_healthcheck,
     restore_faces,
 )
 from .services import analyze_image_quality, enhance_bgr, restore_degraded_faces
@@ -18,6 +22,29 @@ from .services import analyze_image_quality, enhance_bgr, restore_degraded_faces
 class GFPGANAdapterTests(SimpleTestCase):
     def tearDown(self):
         clear_model_cache()
+
+    @staticmethod
+    def _auxiliary_settings(directory):
+        root = Path(directory)
+        weights = root / "gfpgan" / "weights"
+        weights.mkdir(parents=True)
+        detector = weights / "detection_Resnet50_Final.pth"
+        parser = weights / "parsing_parsenet.pth"
+        detector_payload = b"test-detector"
+        parser_payload = b"test-parser"
+        detector.write_bytes(detector_payload)
+        parser.write_bytes(parser_payload)
+        return {
+            "BASE_DIR": root,
+            "GFPGAN_DETECTION_MODEL_PATH": detector,
+            "GFPGAN_DETECTION_MODEL_SHA256": hashlib.sha256(
+                detector_payload
+            ).hexdigest(),
+            "GFPGAN_PARSING_MODEL_PATH": parser,
+            "GFPGAN_PARSING_MODEL_SHA256": hashlib.sha256(
+                parser_payload
+            ).hexdigest(),
+        }
 
     @override_settings(
         GFPGAN_MODEL_PATH="missing-private-model.pth",
@@ -48,6 +75,51 @@ class GFPGANAdapterTests(SimpleTestCase):
                     _load_restorer()
             runtime_import.assert_not_called()
 
+    def test_healthcheck_reports_safe_checkpoint_metadata_without_loading_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            model_path = Path(directory) / "GFPGANv1.4.pth"
+            payload = b"licensed-test-checkpoint"
+            model_path.write_bytes(payload)
+            expected_hash = hashlib.sha256(payload).hexdigest()
+            auxiliary_settings = self._auxiliary_settings(directory)
+            with (
+                override_settings(
+                    GFPGAN_MODEL_PATH=str(model_path),
+                    GFPGAN_MODEL_SHA256=expected_hash,
+                    **auxiliary_settings,
+                ),
+                patch("enhancement.gfpgan._load_restorer") as load_restorer,
+            ):
+                metadata = gfpgan_healthcheck(load_model=False)
+
+            self.assertEqual(metadata["checkpoint"], "GFPGANv1.4.pth")
+            self.assertEqual(
+                metadata["checkpoint_sha256_prefix"],
+                expected_hash[:12],
+            )
+            self.assertFalse(metadata["runtime_loaded"])
+            load_restorer.assert_not_called()
+
+    def test_management_preflight_validates_checkpoint_without_exposing_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            model_path = Path(directory) / "GFPGANv1.4.pth"
+            payload = b"licensed-test-checkpoint"
+            model_path.write_bytes(payload)
+            expected_hash = hashlib.sha256(payload).hexdigest()
+            auxiliary_settings = self._auxiliary_settings(directory)
+            output = io.StringIO()
+            with override_settings(
+                GFPGAN_MODEL_PATH=str(model_path),
+                GFPGAN_MODEL_SHA256=expected_hash,
+                **auxiliary_settings,
+            ):
+                call_command("check_gfpgan", stdout=output)
+
+            rendered = output.getvalue()
+            self.assertIn("GFPGAN preflight passed.", rendered)
+            self.assertIn('"runtime_loaded": false', rendered)
+            self.assertNotIn(str(model_path.parent), rendered)
+
     def test_valid_checksum_builds_clean_v14_runtime_without_background_upscale(
         self,
     ):
@@ -56,6 +128,7 @@ class GFPGANAdapterTests(SimpleTestCase):
             payload = b"test-checkpoint"
             model_path.write_bytes(payload)
             expected_hash = hashlib.sha256(payload).hexdigest()
+            auxiliary_settings = self._auxiliary_settings(directory)
             restorer_class = Mock()
             restorer_instance = Mock()
             restorer_class.return_value = restorer_instance
@@ -69,6 +142,7 @@ class GFPGANAdapterTests(SimpleTestCase):
                     GFPGAN_ARCH="clean",
                     GFPGAN_CHANNEL_MULTIPLIER=2,
                     GFPGAN_DEVICE="auto",
+                    **auxiliary_settings,
                 ),
                 patch(
                     "enhancement.gfpgan._import_runtime",
@@ -107,6 +181,24 @@ class GFPGANAdapterTests(SimpleTestCase):
 
         with self.assertRaisesRegex(GFPGANUnavailable, "dimensions"):
             restore_faces(source)
+
+    @override_settings(GFPGAN_MAX_INPUT_PIXELS=1_000_000)
+    def test_provider_rejects_non_uint8_input(self):
+        source = np.zeros((64, 64, 3), dtype=np.float32)
+        with self.assertRaisesRegex(GFPGANUnavailable, "input image is invalid"):
+            restore_faces(source)
+
+    def test_numpy_nms_fallback_suppresses_overlapping_lower_score_box(self):
+        detections = np.array(
+            [
+                [0, 0, 20, 20, 0.95],
+                [1, 1, 21, 21, 0.80],
+                [50, 50, 70, 70, 0.70],
+            ],
+            dtype=np.float32,
+        )
+
+        self.assertEqual(_numpy_nms(detections, 0.4), [0, 2])
 
 
 class GFPGANPipelineTests(SimpleTestCase):
@@ -150,11 +242,95 @@ class GFPGANPipelineTests(SimpleTestCase):
         restoration = parameters["face_restoration"]
         self.assertTrue(restoration["applied"])
         self.assertEqual(restoration["faces_restored"], 1)
-        self.assertEqual(restoration["output_blend"], 0.40)
+        self.assertLess(restoration["output_blend"], 0.40)
+        self.assertTrue(restoration["candidate_guard"]["accepted"])
+        self.assertTrue(restoration["candidate_guard"]["blend_reduced"])
         self.assertEqual(enhanced.shape, source.shape)
         self.assertIn("private_gfpgan_v1_4", parameters["algorithm"])
         self.assertIn("face_restoration", parameters["stage_order"])
+        self.assertIn("validate_output", parameters["stage_order"])
+        self.assertTrue(parameters["resolution_contract"]["validated"])
+        self.assertTrue(
+            parameters["resolution_contract"][
+                "enhanced_image_was_not_downscaled"
+            ]
+        )
         self.assertLess(float(enhanced.mean()), 150.0)
+
+    @override_settings(
+        GFPGAN_ENABLED=True,
+        GFPGAN_OUTPUT_BLEND=0.25,
+        GFPGAN_MIN_OUTPUT_BLEND=0.08,
+    )
+    @patch("enhancement.services.restore_faces")
+    def test_safe_face_restoration_uses_configured_blend(self, provider):
+        source = np.full((96, 96, 3), 80, dtype=np.uint8)
+        provider.return_value = (
+            np.full_like(source, 88),
+            {
+                "provider": "private_gfpgan_v1_4",
+                "faces_restored": 1,
+                "dimensions_preserved": True,
+            },
+        )
+
+        restored, metadata = restore_degraded_faces(
+            source,
+            {"defects": ["severe_blur"]},
+        )
+
+        self.assertTrue(metadata["applied"])
+        self.assertEqual(metadata["output_blend"], 0.25)
+        self.assertTrue(metadata["candidate_guard"]["accepted"])
+        self.assertFalse(metadata["candidate_guard"]["blend_reduced"])
+        self.assertGreater(float(restored.mean()), float(source.mean()))
+
+    @override_settings(
+        GFPGAN_ENABLED=True,
+        GFPGAN_OUTPUT_BLEND=0.25,
+        GFPGAN_MIN_OUTPUT_BLEND=0.20,
+    )
+    @patch("enhancement.services.restore_faces")
+    def test_destructive_candidate_is_rejected_at_minimum_safe_blend(self, provider):
+        source = np.full((96, 96, 3), 90, dtype=np.uint8)
+        destructive = np.zeros_like(source)
+        destructive[:, ::2] = (255, 0, 255)
+        destructive[:, 1::2] = (0, 255, 0)
+        provider.return_value = (
+            destructive,
+            {
+                "provider": "private_gfpgan_v1_4",
+                "faces_restored": 1,
+                "dimensions_preserved": True,
+            },
+        )
+
+        restored, metadata = restore_degraded_faces(
+            source,
+            {"defects": ["severe_blur"]},
+        )
+
+        self.assertFalse(metadata["applied"])
+        self.assertFalse(metadata["candidate_guard"]["accepted"])
+        self.assertIn("quality limits", metadata["fallback_reason"])
+        np.testing.assert_array_equal(restored, source)
+
+    @override_settings(
+        GFPGAN_ENABLED=True,
+        GFPGAN_ALLOW_MILD_BLUR=False,
+    )
+    @patch("enhancement.services.restore_faces")
+    def test_mild_blur_can_be_excluded_by_rollout_policy(self, provider):
+        source = np.full((800, 800, 3), 100, dtype=np.uint8)
+
+        restored, metadata = restore_degraded_faces(
+            source,
+            {"defects": ["mild_blur"]},
+        )
+
+        self.assertIs(restored, source)
+        self.assertFalse(metadata["requested"])
+        provider.assert_not_called()
 
     @override_settings(
         GFPGAN_ENABLED=True,

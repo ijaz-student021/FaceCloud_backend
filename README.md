@@ -19,7 +19,7 @@ The backend is designed around three principles:
 - 23 features are complete or have complete backend foundations.
 - 7 features are partially implemented.
 - 17 features are planned.
-- 162 automated backend tests pass against the current PostgreSQL-backed project.
+- 171 automated backend tests pass against the current PostgreSQL-backed project.
 - The next major implementation area is private, owner-scoped face recognition
   and identity grouping.
 
@@ -59,7 +59,7 @@ Scene analysis and adaptive enhancement routing
 Optional noise reduction and EDSR x2 restoration
         |
         v
-Optional guarded GFPGAN face restoration (disabled by default)
+Optional guarded GFPGAN face restoration (private deployment enablement)
         |
         v
 Output-quality guards, face validation and duplicate evidence
@@ -233,13 +233,38 @@ Relevant endpoints:
 | Private FaceCloud curve model | Adaptive low-light correction | Enabled when the private ONNX checkpoint is configured |
 | OpenCV enhancement | Conservative traditional correction and fallback | Enabled |
 | EDSR x2 | Resolution restoration for eligible low-resolution inputs | Enabled when its private model file is configured |
-| GFPGAN v1.4 adapter | Optional face-only restoration for eligible degraded faces | Implemented, checksum pinned, disabled by default pending isolated-worker QA |
+| GFPGAN v1.4 adapter | Guarded face-only restoration for eligible degraded faces | Isolated worker and real-image smoke test passed; portable default remains off because private artifacts are not distributed |
 | OpenCV face detector | Baseline face detection and validation | Enabled |
 | Perceptual hashing | Owner-scoped duplicate evidence | Enabled |
 | Face embedding provider | Recognition and identity grouping | Planned; no global face matching exists |
 
 Private checkpoints, user media, runtime outputs, datasets, credentials, and local
 database backups must never be committed to Git.
+
+### Guarded GFPGAN deployment
+
+GFPGAN is an optional, private-deployment stage—not an unconditional beauty
+filter. The backend sends only eligible degraded faces to restoration, applies a
+bounded blend, preserves the original pixel grid, and rejects unsafe results
+using SSIM, pixel-change, colour, clipping, face-count, and output-shape guards.
+It does not claim biometric identity verification.
+
+The portable repository keeps GFPGAN disabled because the licensed checkpoint
+and auxiliary detection/parsing weights are private. After configuring the
+private files and hashes in `.env`, validate the installation with:
+
+```powershell
+python manage.py check_gfpgan --load-model
+```
+
+Run GFPGAN jobs in their isolated Celery queue:
+
+```powershell
+.\scripts\start_gfpgan_worker.ps1
+```
+
+This separation prevents the CPU-heavy restoration stage from blocking normal
+uploads, reports, notifications, and other background jobs.
 
 ## Technology
 
@@ -297,6 +322,13 @@ $env:CELERY_TASK_ALWAYS_EAGER = "False"
 .\venv\Scripts\celery.exe -A config worker --loglevel=info --pool=solo
 ```
 
+When private GFPGAN restoration is enabled, also start its dedicated worker in a
+third terminal:
+
+```powershell
+.\scripts\start_gfpgan_worker.ps1
+```
+
 ### 6. Start Django
 
 Use another PowerShell terminal:
@@ -318,9 +350,9 @@ python manage.py test --keepdb
 The current verified full-suite result is:
 
 ```text
-Found 162 test(s).
+Found 171 test(s).
 System check identified no issues (0 silenced).
-Ran 162 tests
+Ran 171 tests
 OK
 ```
 

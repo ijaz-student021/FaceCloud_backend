@@ -37,6 +37,7 @@ Thumbs.db
 # Temporary review/output files
 .docx_review/
 .runtime/
+gfpgan/weights/
 *.log
 
 # Private training data, checkpoints and exported models
