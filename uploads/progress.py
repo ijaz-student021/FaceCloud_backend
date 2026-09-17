@@ -10,7 +10,8 @@ TERMINAL_STATUSES = {"accepted", "rejected", "needs_review", "completed", "faile
 STAGE_PROGRESS = {
     "uploaded": 10.0, "queued": 12.0, "preprocessing": 30.0,
     "face_validation": 45.0, "quality_analysis": 65.0,
-    "enhancement": 95.0, "finalizing": 98.0, "completed": 100.0,
+    "identity_grouping": 75.0, "enhancement": 95.0,
+    "finalizing": 98.0, "completed": 100.0,
 }
 
 
@@ -28,9 +29,18 @@ def _state_for_image(image):
     if image.status == "rejected":
         return "completed", "rejected", 100.0, "uploaded", image.rejection_reason
 
+    try:
+        identity = image.identity_analysis
+    except Exception:
+        identity = None
+    if identity and identity.status in {"pending", "queued", "processing"}:
+        return "identity_grouping", "processing" if identity.status == "processing" else "queued", 75.0, "", ""
+
     enhancement = image.enhancement_results.order_by("-created_at").first()
     if enhancement:
         if enhancement.status == "completed":
+            if identity and identity.status == "needs_review":
+                return "completed", "needs_review", 100.0, "", ""
             return "completed", "completed", 100.0, "", ""
         if enhancement.status == "failed":
             return "enhancement", "failed", 95.0, "enhancement", enhancement.failure_reason
@@ -46,6 +56,8 @@ def _state_for_image(image):
         if quality.status == "failed":
             return "quality_analysis", "failed", 65.0, "quality_analysis", quality.failure_reason
         if quality.status == "completed":
+            if identity and identity.status == "needs_review":
+                return "completed", "needs_review", 100.0, "", ""
             decision = quality.decision or "needs_review"
             return "completed", decision, 100.0, "", ""
         return "quality_analysis", "processing" if quality.status == "processing" else "queued", 52.0, "", ""

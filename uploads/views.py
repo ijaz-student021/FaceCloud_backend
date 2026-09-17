@@ -226,6 +226,7 @@ class MyImageListView(generics.ListAPIView):
             .select_related(
                 "batch", "preprocessing_result", "face_validation",
                 "quality_decision", "duplicate_analysis",
+                "identity_analysis",
             )
             .prefetch_related(Prefetch(
                 "enhancement_results",
@@ -237,7 +238,13 @@ class MyImageListView(generics.ListAPIView):
 
         search = self.request.query_params.get("search", "").strip()
         if search:
-            queryset = queryset.filter(original_name__icontains=search)
+            queryset = queryset.filter(Q(original_name__icontains=search) | Q(identity_faces__memberships__identity_group__display_name__icontains=search)).distinct()
+
+        identity_group = self.request.query_params.get("identity_group")
+        if identity_group:
+            if not identity_group.isdigit():
+                raise ValidationError({"identity_group": "Identity group must be a positive integer."})
+            queryset = queryset.filter(identity_faces__memberships__identity_group_id=int(identity_group), identity_faces__memberships__identity_group__owner=self.request.user, identity_faces__memberships__state__in=["auto_matched", "new_group", "confirmed"]).distinct()
 
         batch = self.request.query_params.get("batch")
         if batch:

@@ -124,6 +124,8 @@ class OpenCVPolicyTests(SimpleTestCase):
         ADAPTIVE_DENOISE_ENABLED=False,
         GFPGAN_ENABLED=False,
         GFPGAN_QUEUE_ENABLED=False,
+        HD_RESTORATION_ENABLED=False,
+        NAFNET_DEBLUR_ENABLED=False,
     )
     def test_rollout_flags_default_to_safe_disabled_pipeline(self):
         source = np.full((96, 96, 3), 135, dtype=np.uint8)
@@ -139,6 +141,8 @@ class OpenCVPolicyTests(SimpleTestCase):
                 "adaptive_denoise_enabled": False,
                 "gfpgan_enabled": False,
                 "gfpgan_queue_enabled": False,
+                "hd_restoration_enabled": False,
+                "nafnet_deblur_enabled": False,
             },
         )
         self.assertFalse(parameters["adaptive_denoise"]["enabled"])
@@ -164,6 +168,7 @@ class OpenCVPolicyTests(SimpleTestCase):
             "measure_post_exposure_noise",
             "adaptive_denoise",
             "low_resolution_restoration",
+            "hd_restoration",
             "face_restoration",
             "sharpen",
             "output_guard_b",
@@ -849,6 +854,10 @@ class EnhancementProcessingAndAPITests(TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertIn("measurements", response.data["detail"].lower())
 
+    @override_settings(
+        CELERY_TASK_ALWAYS_EAGER=True,
+        CELERY_TASK_EAGER_PROPAGATES=True,
+    )
     def test_batch_api_processes_ready_images_and_reports_progress(self):
         response = self.client.post(
             reverse("enhancement:batch-enhance", kwargs={"batch_id": self.batch.pk}),

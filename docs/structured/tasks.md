@@ -1,0 +1,180 @@
+# FaceCloud Engineering Task Plan
+
+## Status definitions
+
+- **Done:** implementation and required verification completed
+- **In progress:** active work exists but acceptance criteria are incomplete
+- **Next:** approved immediate work
+- **Backlog:** planned after higher-priority dependencies
+- **Blocked:** cannot proceed without a named external dependency or decision
+
+## 1. Recently completed
+
+| Task | Status | Evidence |
+|---|---|---|
+| Feature 18 recognition baseline | Done | YuNet/SFace adapters, models, services and tests |
+| Feature 19 group management backend | Done | Identity-group and membership APIs/tests |
+| Verify NAFNet and Real-ESRGAN files | Done | Restricted loads, tensor validation and hashes |
+| Implement optional HD restoration adapter | Done | Checksums, tiling, fallbacks and enhancement tests |
+| Add HD-restoration documentation | Done | `features/hd-deblur-super-resolution-pipeline.md` |
+
+## 2. Immediate tasks
+
+### T-001 — Complete Feature 18 production calibration
+
+- **Status:** Next
+- Build a consented, tenant-safe evaluation dataset.
+- Measure false matches, missed matches, ambiguity, and demographic performance.
+- Select production SFace thresholds and document the evaluation.
+- Enable automatic analysis only after acceptance criteria pass.
+
+### T-002 — Complete Feature 19 frontend integration
+
+- **Status:** Next
+- Connect the Person Folders page to identity-group APIs.
+- Add rename, merge, split, confirm, reject, remove, and undo interactions.
+- Display confidence and review states without exposing raw embeddings.
+
+### T-003 — Replace or correctly run NAFNet
+
+- **Status:** Blocked
+- **Blocker:** Current checkpoint/runtime produces corrupted output.
+- Evaluate the official `NAFNetLocal` runtime and local-pooling conversion.
+- Reject any candidate with tiling, chroma corruption, or identity drift.
+- Keep `NAFNET_DEBLUR_ENABLED=False` until visual QA passes.
+
+### T-004 — Productionize Real-ESRGAN
+
+- **Status:** In progress
+- Provision a dedicated GPU Celery queue.
+- Benchmark tile sizes, memory, throughput, and cancellation.
+- Add end-to-end tests for 2× output and provenance.
+- Enable the feature gradually after operational QA.
+
+### T-005 — Finish background recognition jobs
+
+- **Status:** Next
+- Add retry policy, cancellation, resource controls, and idempotency tests.
+- Ensure progress accurately distinguishes enhancement, validation, and identity work.
+
+## 3. Privacy and moderation tasks
+
+### T-006 — Biometric consent and retention
+
+- **Status:** Next
+- Record consent purpose and timestamp.
+- Add configurable embedding retention and deletion.
+- Add account/tenant export and deletion verification.
+- Document encryption-at-rest requirements.
+
+### T-007 — Moderator workflow completion
+
+- **Status:** Backlog
+- Organization-scoped queues and decisions
+- Corrections, reasons, and complete audit history
+- Frontend moderator dashboard integration
+
+### T-008 — Organization and tenant management
+
+- **Status:** Backlog
+- Tenant membership and moderator assignment
+- Tenant-scoped queries, storage, reports, embeddings, and policies
+- Automated cross-tenant isolation tests
+
+## 4. Platform and frontend tasks
+
+| Task | Status |
+|---|---|
+| Connect completed dashboard APIs to frontend | Next |
+| Connect reports, downloads and notifications | Next |
+| Complete editor slider integration | Next |
+| Admin analytics dashboard | Backlog |
+| System health frontend page | Next |
+| Model comparison page | Backlog |
+| Secure expiring share links | Backlog |
+| Watermark options | Backlog |
+| Private cloud storage | Backlog |
+| Live camera detection and enhancement | Backlog |
+
+## 5. Complete remaining-feature register
+
+This table includes every incomplete, planned, or integration-dependent catalogue
+item. Detailed acceptance criteria remain in `FEATURES.md`.
+
+| Feature | Remaining deliverable | Status | Task |
+|---:|---|---|---|
+| 10–13 | Enhancement controls, comparison and frontend wiring | Next | T-010 |
+| 14–17 | Quality, face-validation and duplicate decision UI | Next | T-011 |
+| 18 | SFace threshold calibration and production enablement | Next | T-001 |
+| 19 | Person Folders frontend and correction workflow | Next | T-002 |
+| 20 | Recognition retries, cancellation, concurrency and monitoring | Next | T-005 |
+| 21 | Batch-progress frontend integration | Next | T-012 |
+| 22 | JSON/CSV/PDF report frontend integration | Next | T-013 |
+| 23 | Image and batch package frontend integration | Next | T-014 |
+| 24 | Connect completed identity-group ZIP API to Person Folders | Next | T-015 |
+| 25 | Export watermark options | Backlog | T-016 |
+| 26 | Secure expiring share links | Backlog | T-017 |
+| 27 | Organization-scoped moderator review | Backlog | T-007 |
+| 28 | Complete owner activity timeline | Backlog | T-018 |
+| 29 | Notification panel and preferences UI | Next | T-019 |
+| 30 | User dashboard and My Images integration | Next | T-020 |
+| 31 | Moderator dashboard frontend | Backlog | T-021 |
+| 32 | Admin analytics dashboard | Backlog | T-022 |
+| 33 | Platform-wide administrative controls | Backlog | T-023 |
+| 34 | Connect completed system health API to an admin page | Next | T-024 |
+| 35 | Uploaded-image model comparison page | Backlog | T-025 |
+| 36–40 | Complete live-camera release | Backlog | T-026–T-030 |
+| 41 | Consent, retention, encryption, export and erasure | Next | T-006 |
+| 43 | Private cloud/object storage | Backlog | T-031 |
+| 44 | OpenAPI and developer documentation | Backlog | T-032 |
+| 45 | Load, performance, camera and integration QA | Continuous | T-033 |
+| 46 | Organization and tenant management | Backlog | T-008 |
+| 47 | Gallery-editor frontend integration | Next | T-034 |
+
+### Register workstreams
+
+- **T-010–T-011:** enhancement and decision user interfaces.
+- **T-012–T-014:** progress, reports and package delivery.
+- **T-015–T-017:** identity export, watermarks and secure sharing.
+- **T-018–T-021:** activity, notifications, user and moderator portals.
+- **T-022–T-025:** analytics, administration, health and model comparison.
+- **T-026–T-030:** camera detection, enhancement, comparison, transport and privacy.
+- **T-031:** private object storage, lifecycle, migration and deletion verification.
+- **T-032:** OpenAPI schema, examples, error catalogue and deployment instructions.
+- **T-033:** load, performance, security, restoration and end-to-end suites.
+- **T-034:** editor sliders, previews, versions, undo and downloads.
+
+## 6. Generative restoration research
+
+### T-009 — Define generative restoration mode
+
+- **Status:** Backlog
+- Confirm business need, consent language, commercial licensing, cost, and GPU plan.
+- Store outputs separately with `is_ai_generated` and `recognition_eligible=false`.
+- Add scene-change, face-identity, artifact, and provenance checks.
+- Never replace the conservative default mode.
+
+## 7. Continuous verification
+
+Run before each handoff:
+
+```powershell
+.\venv\Scripts\python.exe manage.py check
+.\venv\Scripts\python.exe manage.py makemigrations --check --dry-run
+.\venv\Scripts\python.exe manage.py test --keepdb
+git diff --check
+```
+
+## 8. Recommended execution order
+
+1. Feature 18 threshold calibration and privacy controls
+2. Feature 19 Person Folders frontend integration
+3. Recognition-job reliability and moderator review
+4. GPU queue and Real-ESRGAN operational QA
+5. Organization/tenant isolation
+6. Remaining frontend dashboards and sharing features
+7. Generative restoration research only after licensing and consent approval
+
+Then execute the remaining register by dependency: export/download foundations,
+moderation and tenancy, administration and health, private storage, and finally
+the coordinated live-camera release.

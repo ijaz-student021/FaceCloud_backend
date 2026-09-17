@@ -17,6 +17,7 @@ from .models import FaceValidationResult
 from .services import (
     HEURISTIC_CONFIDENCE_TYPE,
     FaceDetection,
+    OpenCVYuNetFaceDetector,
     _validate_detection_contract,
     _detect,
     validate_image_faces,
@@ -28,7 +29,10 @@ User = get_user_model()
 class FaceValidationTests(APITestCase):
     def setUp(self):
         self.media = tempfile.TemporaryDirectory()
-        self.override = override_settings(MEDIA_ROOT=self.media.name)
+        self.override = override_settings(
+            MEDIA_ROOT=self.media.name,
+            FACE_DETECTOR_PROVIDER="haar_v1",
+        )
         self.override.enable()
         self.user = User.objects.create_user(
             username="face-owner", email="face-owner@example.com",
@@ -69,6 +73,17 @@ class FaceValidationTests(APITestCase):
         boxes, confidences = _detect(np.full((120, 120), 128, dtype=np.uint8))
         self.assertEqual(len(boxes), len(confidences))
 
+    @override_settings(FACE_DETECTOR_PROVIDER="yunet_v1")
+    def test_installed_yunet_model_supports_dynamic_input_and_contract(self):
+        detector = OpenCVYuNetFaceDetector()
+        for width, height in ((320, 320), (640, 480)):
+            result = detector.detect(
+                np.full((height, width, 3), 127, dtype=np.uint8)
+            )
+            _validate_detection_contract(result)
+            self.assertEqual(result.detector, "opencv_yunet")
+            self.assertEqual(len(result.boxes), len(result.landmarks))
+
     def test_detector_contract_rejects_mismatched_metadata(self):
         with self.assertRaisesMessage(
             ValidationError,
@@ -100,7 +115,11 @@ class FaceValidationTests(APITestCase):
         self.assertFalse(result.per_face_metrics_enabled)
         self.assertEqual(
             set(result.faces[0]),
-            {"x", "y", "width", "height", "area_ratio", "confidence"},
+            {
+                "x", "y", "width", "height", "area_ratio", "confidence",
+                "standardized_box", "standardized_landmarks", "landmarks",
+                "landmark_confidence",
+            },
         )
 
     @override_settings(PER_FACE_METRICS_ENABLED=True)

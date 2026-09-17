@@ -44,9 +44,16 @@ def _import_runtime():
 def _resolve_device(torch):
     configured = str(settings.GFPGAN_DEVICE).strip().lower()
     if configured == "auto":
-        configured = "cuda" if torch.cuda.is_available() else "cpu"
+        if torch.cuda.is_available():
+            configured = "cuda"
+        elif torch.backends.mps.is_available():
+            configured = "mps"
+        else:
+            configured = "cpu"
     if configured == "cuda" and not torch.cuda.is_available():
         raise GFPGANUnavailable("The configured GFPGAN CUDA device is unavailable.")
+    if configured == "mps" and not torch.backends.mps.is_available():
+        raise GFPGANUnavailable("The configured GFPGAN MPS device is unavailable.")
     try:
         return torch.device(configured)
     except (RuntimeError, ValueError) as error:

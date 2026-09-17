@@ -61,6 +61,7 @@ class GFPGANAdapterTests(SimpleTestCase):
             restorer_class.return_value = restorer_instance
             torch = Mock()
             torch.cuda.is_available.return_value = False
+            torch.backends.mps.is_available.return_value = False
             torch.device.side_effect = lambda name: name
             with (
                 override_settings(

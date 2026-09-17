@@ -26,7 +26,9 @@ urlpatterns = [
     path("api/validation/", include("validation.urls")),
     path("api/quality/", include("quality_control.urls")),
     path("api/duplicates/", include("duplicates.urls")),
+    path("api/identities/", include("identities.urls")),
     path("api/reports/", include("reports.urls")),
     path("api/downloads/", include("downloads.urls")),
     path("api/notifications/", include("notifications.urls")),
+    path("api/system/", include("operations.urls")),
 ]

@@ -42,6 +42,7 @@ class UploadBatch(models.Model):
         ("uploaded", "Uploaded"), ("queued", "Queued"),
         ("preprocessing", "Preprocessing"), ("face_validation", "Face validation"),
         ("quality_analysis", "Quality analysis"), ("enhancement", "Enhancement"),
+        ("identity_grouping", "Identity grouping"),
         ("finalizing", "Finalizing"), ("completed", "Completed"),
     ]
 

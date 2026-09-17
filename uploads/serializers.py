@@ -68,12 +68,14 @@ class MyImageSerializer(ImageUploadSerializer):
     face_validation = serializers.SerializerMethodField()
     quality_decision = serializers.SerializerMethodField()
     duplicate_analysis = serializers.SerializerMethodField()
+    identity_analysis = serializers.SerializerMethodField()
+    identity_groups = serializers.SerializerMethodField()
 
     class Meta(ImageUploadSerializer.Meta):
         fields = ImageUploadSerializer.Meta.fields + [
             "batch_display_name", "upload_type", "display_status",
             "latest_enhancement", "face_validation", "quality_decision",
-            "duplicate_analysis", "updated_at",
+            "duplicate_analysis", "identity_analysis", "identity_groups", "updated_at",
         ]
 
     @staticmethod
@@ -113,6 +115,18 @@ class MyImageSerializer(ImageUploadSerializer):
             return None
         from duplicates.serializers import DuplicateAnalysisSerializer
         return DuplicateAnalysisSerializer(result, context=self.context).data
+
+    def get_identity_analysis(self, obj):
+        try:
+            result = obj.identity_analysis
+        except Exception:
+            return None
+        from identities.serializers import IdentityAnalysisSerializer
+        return IdentityAnalysisSerializer(result).data
+
+    def get_identity_groups(self, obj):
+        memberships = obj.identity_faces.filter(memberships__state__in=["auto_matched", "new_group", "confirmed"]).values("memberships__identity_group_id", "memberships__identity_group__display_name").distinct()
+        return [{"id": row["memberships__identity_group_id"], "display_name": row["memberships__identity_group__display_name"]} for row in memberships if row["memberships__identity_group_id"]]
 
     def get_display_status(self, obj):
         if obj.status == "rejected":

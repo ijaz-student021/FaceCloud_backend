@@ -33,6 +33,11 @@ from .models import (
     ImageEnhancementResult,
 )
 from .gfpgan import GFPGANUnavailable, restore_faces
+from .hd_restoration import (
+    HDRestorationUnavailable,
+    deblur_with_nafnet,
+    upscale_with_realesrgan,
+)
 from .zero_dce import ZeroDCEUnavailable, enhance_with_zero_dce
 
 
@@ -101,6 +106,7 @@ class EnhancementPipelineContext:
     final_guard_reference: np.ndarray | None = None
     output_quality: dict = field(default_factory=dict)
     restoration: dict = field(default_factory=dict)
+    hd_restoration: dict = field(default_factory=dict)
     face_restoration: dict = field(default_factory=dict)
     zero_dce: dict = field(default_factory=dict)
     quality_guards: dict = field(default_factory=dict)
@@ -594,6 +600,36 @@ def _adaptive_denoise_strength(noise_score):
     return int(strengths[bisect_right(breakpoints, float(noise_score))])
 
 
+def _gradient_edge_strength(image):
+    """Normalized 0-1 gradient magnitude: ~1 at edges, ~0 in flat regions."""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gradient_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+    gradient_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+    gradient = cv2.GaussianBlur(cv2.magnitude(gradient_x, gradient_y), (0, 0), 3.0)
+    edge_reference = float(np.percentile(gradient, 75)) + 1e-6
+    return np.clip(gradient / edge_reference, 0.0, 1.0)
+
+
+def _edge_aware_denoise(image, strength):
+    """Blend a strong NLM candidate into flat regions only.
+
+    Flat, low-gradient regions (sky, walls, canopy interior) get the full
+    denoise strength. High-gradient regions (faces, edges, text, vehicle
+    trim) keep the sharp source, since a single global NLM strength either
+    leaves grain in flat areas or smears real detail once it is strong
+    enough to clear that grain.
+    """
+    strong = cv2.fastNlMeansDenoisingColored(image, None, strength, strength, 7, 21)
+    edge_strength = _gradient_edge_strength(image)
+    denoise_weight = (1.0 - edge_strength) ** 2.0
+    denoise_weight = cv2.merge([denoise_weight] * 3).astype(np.float32)
+    blended = (
+        image.astype(np.float32) * (1.0 - denoise_weight)
+        + strong.astype(np.float32) * denoise_weight
+    )
+    return np.clip(blended, 0, 255).astype(np.uint8)
+
+
 def adaptive_denoise_stage(context):
     """Denoise measured output noise without inventing facial detail."""
     enabled = bool(settings.ADAPTIVE_DENOISE_ENABLED)
@@ -621,19 +657,13 @@ def adaptive_denoise_stage(context):
 
     applied = strength > 0
     if applied:
-        context.current_image = cv2.fastNlMeansDenoisingColored(
-            context.current_image,
-            None,
-            strength,
-            strength,
-            7,
-            21,
-        )
+        context.current_image = _edge_aware_denoise(context.current_image, strength)
     context.adaptive_denoise = {
         "enabled": enabled,
         "applied": applied,
         "strength": strength,
         "reason": reason,
+        "method": "edge_aware_nlm_blend",
         "input_noise_score": noise_score,
         "measurement_point": "after_guard_a",
         "breakpoints": list(settings.ADAPTIVE_DENOISE_BREAKPOINTS),
@@ -645,10 +675,20 @@ def adaptive_denoise_stage(context):
 def low_resolution_restoration_stage(context):
     """Run EDSR only after denoise and only if resolution is still low."""
     quality_at_stage = analyze_image_quality(context.current_image)
-    restored, metadata = restore_low_resolution(
-        context.current_image,
-        quality_at_stage,
-    )
+    if settings.HD_RESTORATION_ENABLED:
+        restored = context.current_image
+        metadata = {
+            "requested": False,
+            "applied": False,
+            "provider": "opencv_dnn_edsr",
+            "scale": settings.AI_RESTORATION_SCALE,
+            "fallback_reason": "Superseded by the enabled NAFNet/Real-ESRGAN HD pipeline.",
+        }
+    else:
+        restored, metadata = restore_low_resolution(
+            context.current_image,
+            quality_at_stage,
+        )
     metadata["stage"] = "after_adaptive_denoise"
     metadata["quality_at_stage"] = quality_at_stage
     context.current_image = restored
@@ -656,6 +696,67 @@ def low_resolution_restoration_stage(context):
     # Guard B protects subsequent sharpening (and future restoration stages)
     # against this safe, resolution-normalized reference.
     context.final_guard_reference = restored.copy()
+    return context
+
+
+def hd_restoration_stage(context):
+    """Optionally deblur with NAFNet and create a 2x/4x HD display output."""
+    metadata = {
+        "enabled": bool(settings.HD_RESTORATION_ENABLED),
+        "requested": bool(settings.HD_RESTORATION_ENABLED),
+        "applied": False,
+        "deblur": {
+            "enabled": bool(settings.NAFNET_DEBLUR_ENABLED),
+            "requested": bool(settings.HD_RESTORATION_ENABLED and settings.NAFNET_DEBLUR_ENABLED),
+            "applied": False,
+        },
+        "super_resolution": {"requested": bool(settings.HD_RESTORATION_ENABLED), "applied": False},
+        "fallback_reason": "",
+        "recognition_policy": "display_output_only; recognition_uses_original",
+    }
+    if not settings.HD_RESTORATION_ENABLED:
+        metadata["fallback_reason"] = "HD restoration is disabled."
+        context.hd_restoration = metadata
+        return context
+    source_dimensions = [int(context.current_image.shape[1]), int(context.current_image.shape[0])]
+    working = context.current_image
+    if settings.NAFNET_DEBLUR_ENABLED:
+        try:
+            deblurred, deblur_metadata = deblur_with_nafnet(context.current_image)
+            metadata["deblur"].update(deblur_metadata)
+            metadata["deblur"]["applied"] = True
+            working = deblurred
+        except HDRestorationUnavailable as error:
+            metadata["deblur"]["fallback_reason"] = str(error)
+            context.warnings.append(str(error))
+    else:
+        metadata["deblur"]["fallback_reason"] = (
+            "NAFNet deblurring is disabled pending checkpoint visual QA."
+        )
+    try:
+        upscaled, upscale_metadata = upscale_with_realesrgan(working)
+        blend = min(max(float(settings.REALESRGAN_OUTPUT_BLEND), 0.0), 1.0)
+        reference_hd = cv2.resize(
+            working,
+            (upscaled.shape[1], upscaled.shape[0]),
+            interpolation=cv2.INTER_CUBIC,
+        )
+        upscaled = cv2.addWeighted(upscaled, blend, reference_hd, 1.0 - blend, 0)
+        metadata["super_resolution"].update(upscale_metadata)
+        metadata["super_resolution"]["applied"] = True
+        metadata["super_resolution"]["candidate_blend"] = blend
+        metadata["super_resolution"]["source_grid_protection"] = (
+            "bicubic_reference_blend"
+        )
+        metadata["applied"] = True
+        metadata["input_dimensions"] = source_dimensions
+        metadata["output_dimensions"] = [int(upscaled.shape[1]), int(upscaled.shape[0])]
+        context.current_image = upscaled
+        context.final_guard_reference = upscaled.copy()
+    except HDRestorationUnavailable as error:
+        metadata["fallback_reason"] = str(error)
+        context.warnings.append(str(error))
+    context.hd_restoration = metadata
     return context
 
 
@@ -730,17 +831,22 @@ def face_restoration_stage(context):
 
 
 def sharpen_stage(context):
-    """Apply only the bounded policy sharpening after optional restoration."""
+    """Apply only the bounded policy sharpening after optional restoration.
+
+    Sharpening is weighted by local gradient strength so it cannot
+    re-amplify the quantization steps left behind in regions the denoise
+    stage just smoothed (plain unsharp masking treats those steps as edges
+    and turns them back into visible speckle).
+    """
     strength = context.policy["sharpen"]
     if strength:
-        blurred = cv2.GaussianBlur(context.current_image, (0, 0), 1.0)
-        context.current_image = cv2.addWeighted(
-            context.current_image,
-            1.0 + strength,
-            blurred,
-            -strength,
-            0,
-        )
+        image = context.current_image
+        blurred = cv2.GaussianBlur(image, (0, 0), 1.0)
+        detail = image.astype(np.float32) - blurred.astype(np.float32)
+        edge_strength = _gradient_edge_strength(image)
+        edge_strength = cv2.merge([edge_strength] * 3).astype(np.float32)
+        sharpened = image.astype(np.float32) + detail * strength * edge_strength
+        context.current_image = np.clip(sharpened, 0, 255).astype(np.uint8)
     return context
 
 
@@ -772,6 +878,7 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
         ("measure_post_exposure_noise", measure_post_exposure_noise_stage),
         ("adaptive_denoise", adaptive_denoise_stage),
         ("low_resolution_restoration", low_resolution_restoration_stage),
+        ("hd_restoration", hd_restoration_stage),
         ("face_restoration", face_restoration_stage),
         ("sharpen", sharpen_stage),
         ("output_guard_b", output_guard_b_stage),
@@ -806,6 +913,10 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
     )
     if context.face_restoration["applied"]:
         algorithm = f"{algorithm}+private_gfpgan_v1_4"
+    if context.hd_restoration["applied"]:
+        if context.hd_restoration["deblur"]["applied"]:
+            algorithm = f"{algorithm}+nafnet_gopro"
+        algorithm = f"{algorithm}+realesrgan_x4plus"
 
     parameters = {
         **context.policy,
@@ -828,6 +939,7 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
         "post_exposure_noise": context.post_exposure_noise,
         "adaptive_denoise": context.adaptive_denoise,
         "restoration": context.restoration,
+        "hd_restoration": context.hd_restoration,
         "face_restoration": context.face_restoration,
         "zero_dce": context.zero_dce,
         "stage_order": context.stage_order,
@@ -836,6 +948,8 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
             "adaptive_denoise_enabled": settings.ADAPTIVE_DENOISE_ENABLED,
             "gfpgan_enabled": settings.GFPGAN_ENABLED,
             "gfpgan_queue_enabled": settings.GFPGAN_QUEUE_ENABLED,
+            "hd_restoration_enabled": settings.HD_RESTORATION_ENABLED,
+            "nafnet_deblur_enabled": settings.NAFNET_DEBLUR_ENABLED,
         },
         "warnings": context.warnings,
     }

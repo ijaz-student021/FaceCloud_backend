@@ -27,7 +27,7 @@ Status definitions:
 | Non-destructive photo gallery editor | Complete backend; frontend slider wiring remains |
 | Quality assessment, face validation, and final decisions | Complete backend baseline |
 | Duplicate image and face-region detection | Complete backend baseline |
-| Identity grouping and moderation | Planned |
+| Identity grouping and moderation | Complete backend; production threshold evaluation remains |
 | User dashboard statistics and My Images API | Complete backend; frontend integration remains |
 | Processing reports | Complete backend; frontend integration remains |
 | Secure image and batch downloads | Complete backend; frontend integration remains |
@@ -49,6 +49,7 @@ Status definitions:
 - [Features 14–16: Quality scoring and final decision workflow](features/14-16-quality-decision-workflow.md)
 - [Feature 17: Duplicate image and face-region detection](features/17-duplicate-image-and-face-detection.md)
 - [Feature 18: Face recognition and identity-grouping implementation plan](features/18-face-recognition-and-identity-grouping.md)
+- [Feature 19: Identity group management](features/19-identity-group-management.md)
 - [Feature 42: PostgreSQL data platform](features/42-postgresql-data-platform.md)
 - [Features 20–21: Background processing and live batch progress](features/20-21-live-batch-progress.md)
 - [Feature 22: Processing reports](features/22-processing-reports.md)
@@ -365,7 +366,7 @@ evidence only and are not biometric identity recognition.
 
 ## 7. Recognition and identity organization
 
-### Feature 18: Face recognition and identity grouping — Planned
+### Feature 18: Face recognition and identity grouping — Complete backend
 
 Automatically organizes accepted images by person.
 
@@ -377,7 +378,13 @@ Automatically organizes accepted images by person.
 - Uncertain-match moderation
 - Original and enhanced image association
 
-### Feature 19: Identity group management — Planned
+Implemented with verified local YuNet and SFace artifacts, five-landmark alignment,
+128-dimensional protected embeddings, owner-scoped grouping and review APIs,
+idempotent Celery processing, progress/dashboard/report integration, configuration
+checks, and regression tests. Candidate similarity thresholds must still be
+calibrated before customer production rollout.
+
+### Feature 19: Identity group management — Complete backend
 
 Allows users and moderators to correct automatic grouping decisions.
 
@@ -388,6 +395,10 @@ Allows users and moderators to correct automatic grouping decisions.
 - Set a profile image
 - Delete an invalid group
 - View confidence and change history
+
+Owner-scoped rename, merge, membership move/removal, profile selection, safe empty
+group deletion, confidence evidence, and immutable change-history APIs are
+implemented. Frontend controls can consume the `/api/identities/` contract.
 
 ## 8. Background processing and progress
 
@@ -432,7 +443,7 @@ versioned snapshot. Frontend Downloads-page integration remains.
 - Rejection or failure reason
 - Brightness, blur, sharpness, and quality scores
 - Face count and confidence
-- Explicit unavailable identity placeholder until Feature 18 is implemented
+- Real multi-person identity-group summaries when identity analysis is available
 - Duplicate result and enhancement level
 - Processing time and protected result links
 - CSV, PDF, and JSON formats
@@ -461,7 +472,7 @@ expiring batch-result packages. Frontend Downloads-page integration remains.
 - Download history for images, reports, and generated packages
 - Physical file cleanup on expiry and deletion
 
-### Feature 24: Identity-group ZIP export — Planned
+### Feature 24: Identity-group ZIP export - Backend complete; frontend integration planned
 
 Packages all images of one identity into a structured archive.
 
@@ -611,7 +622,7 @@ Account management is complete; operational image and processing controls remain
 - Moderator monitoring
 - System-wide audit views
 
-### Feature 34: System health page — Planned
+### Feature 34: System health page - Backend complete; frontend page planned
 
 Shows whether every production dependency is operating correctly.
 
@@ -622,6 +633,14 @@ Shows whether every production dependency is operating correctly.
 - Response and processing latency
 - Pending, active, and failed jobs
 - Available storage and application version
+
+Implemented backend evidence:
+
+- Administrator-only `GET /api/system/health/` endpoint
+- Sanitized dependency results with `healthy`, `degraded`, and `unavailable` states
+- HTTP 503 response when a required dependency is unavailable
+- Automated authorization, aggregation, response-contract, and failure tests
+- Implementation and API documentation in `docs/features/34-system-health.md`
 
 ## 12. Model evaluation and live camera scope
 
@@ -757,7 +776,7 @@ Maintains stable integration contracts and implementation documentation.
 
 Protects completed behavior from regression as the platform grows.
 
-- 140 authentication, upload, preprocessing, enhancement, validation, quality,
+- 172 authentication, upload, preprocessing, enhancement, validation, quality,
   duplicate-detection, dashboard, report, download, ownership, cleanup, and queue tests
   passing against PostgreSQL
 - Django system and migration-drift checks
