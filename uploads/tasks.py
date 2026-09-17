@@ -1,12 +1,26 @@
 from celery import shared_task
 from django.db import transaction
+from django.db.utils import InterfaceError, OperationalError
 from django.utils import timezone
 
 from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
 from .services import preprocess_image
 
+# Transient infrastructure failures only (dropped DB connections). Business
+# and validation errors are handled per-image and must never retry.
+TRANSIENT_INFRASTRUCTURE_ERRORS = (OperationalError, InterfaceError)
 
-@shared_task(bind=True, name="uploads.preprocess_batch", acks_late=True)
+
+@shared_task(
+    bind=True,
+    name="uploads.preprocess_batch",
+    acks_late=True,
+    autoretry_for=TRANSIENT_INFRASTRUCTURE_ERRORS,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    max_retries=3,
+)
 def preprocess_batch_task(self, batch_id):
     task_id = self.request.id or ""
     with transaction.atomic():

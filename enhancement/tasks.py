@@ -1,5 +1,6 @@
 from celery import shared_task
 from django.db import transaction
+from django.db.utils import InterfaceError, OperationalError
 from django.utils import timezone
 
 from .models import (
@@ -10,8 +11,21 @@ from .models import (
 )
 from .services import process_enhancement_result, process_image_edit
 
+# Transient infrastructure failures only (dropped DB connections). Business
+# and validation errors are handled per-result and must never retry.
+TRANSIENT_INFRASTRUCTURE_ERRORS = (OperationalError, InterfaceError)
 
-@shared_task(bind=True, name="enhancement.process_image", acks_late=True)
+
+@shared_task(
+    bind=True,
+    name="enhancement.process_image",
+    acks_late=True,
+    autoretry_for=TRANSIENT_INFRASTRUCTURE_ERRORS,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    max_retries=3,
+)
 def process_enhancement_image(self, result_id):
     task_id = self.request.id or ""
     with transaction.atomic():
@@ -55,7 +69,16 @@ def process_enhancement_image(self, result_id):
     return {"result_id": result_id, "status": result.status}
 
 
-@shared_task(bind=True, name="enhancement.process_batch", acks_late=True)
+@shared_task(
+    bind=True,
+    name="enhancement.process_batch",
+    acks_late=True,
+    autoretry_for=TRANSIENT_INFRASTRUCTURE_ERRORS,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    max_retries=3,
+)
 def process_enhancement_batch(self, job_id):
     task_id = self.request.id or ""
     with transaction.atomic():
@@ -120,7 +143,16 @@ def process_enhancement_batch(self, job_id):
     return {"job_id": job_id, "status": final_status, "successful": successful, "failed": failed}
 
 
-@shared_task(bind=True, name="enhancement.process_gallery_edit", acks_late=True)
+@shared_task(
+    bind=True,
+    name="enhancement.process_gallery_edit",
+    acks_late=True,
+    autoretry_for=TRANSIENT_INFRASTRUCTURE_ERRORS,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    max_retries=3,
+)
 def process_gallery_edit(self, edit_id):
     task_id = self.request.id or ""
     with transaction.atomic():

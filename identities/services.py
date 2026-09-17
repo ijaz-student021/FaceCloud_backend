@@ -11,7 +11,7 @@ from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from uploads.models import ImagePreprocessingResult
+from uploads.models import ImagePreprocessingResult, UploadBatch
 from validation.models import FaceValidationResult
 
 from .models import IdentityAnalysis, IdentityFace, IdentityGroup, IdentityMembership
@@ -73,6 +73,10 @@ def _choose_group(owner, provider, vector):
     return "review", best_group, best_score, second_score
 
 
+def _batch_cancellation_requested(batch_id):
+    return UploadBatch.objects.filter(pk=batch_id, cancellation_requested=True).exists()
+
+
 def process_identity_analysis(analysis_id):
     with transaction.atomic():
         analysis = IdentityAnalysis.objects.select_for_update().select_related("image__batch", "preprocessing_result", "face_validation").get(pk=analysis_id)
@@ -94,6 +98,13 @@ def process_identity_analysis(analysis_id):
         image = _read_image(analysis.preprocessing_result)
         prepared = []
         for index, face in enumerate(analysis.face_validation.faces):
+            if _batch_cancellation_requested(analysis.image.batch_id):
+                IdentityAnalysis.objects.filter(pk=analysis_id).update(
+                    status=IdentityAnalysis.Status.CANCELLED,
+                    processing_duration_ms=max(1, round((time.perf_counter() - started) * 1000)),
+                    finished_at=timezone.now(),
+                )
+                return IdentityAnalysis.objects.get(pk=analysis_id)
             box = face.get("standardized_box") or face
             landmarks = face.get("standardized_landmarks") or face.get("landmarks")
             crop = provider.prepare_face(image, box, landmarks)

@@ -3,6 +3,7 @@ import logging
 from celery import shared_task
 from django.core.files import File
 from django.db import transaction
+from django.db.utils import InterfaceError, OperationalError
 from django.utils import timezone
 
 from .export_services import (expire_due_identity_exports,
@@ -14,8 +15,21 @@ from .services import process_identity_analysis
 
 logger = logging.getLogger(__name__)
 
+# Transient infrastructure failures only (dropped DB connections). Business
+# and validation errors are handled per-record and must never retry.
+TRANSIENT_INFRASTRUCTURE_ERRORS = (OperationalError, InterfaceError)
 
-@shared_task(bind=True, name="identities.analyze_image", acks_late=True)
+
+@shared_task(
+    bind=True,
+    name="identities.analyze_image",
+    acks_late=True,
+    autoretry_for=TRANSIENT_INFRASTRUCTURE_ERRORS,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    max_retries=3,
+)
 def analyze_image_identity_task(self, analysis_id):
     analysis = IdentityAnalysis.objects.select_related("image__batch").get(pk=analysis_id)
     if analysis.task_id and self.request.id and analysis.task_id != self.request.id:
@@ -86,7 +100,16 @@ def process_identity_group_export(export_id, task_id=""):
             temporary_path.unlink(missing_ok=True)
 
 
-@shared_task(bind=True, name="identities.generate_group_export", acks_late=True)
+@shared_task(
+    bind=True,
+    name="identities.generate_group_export",
+    acks_late=True,
+    autoretry_for=TRANSIENT_INFRASTRUCTURE_ERRORS,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    max_retries=3,
+)
 def generate_identity_group_export_task(self, export_id):
     export = IdentityGroupExport.objects.filter(pk=export_id).first()
     if export is None:
@@ -100,6 +123,13 @@ def generate_identity_group_export_task(self, export_id):
     return {"export_id": export_id, "status": export.status if export else "deleted"}
 
 
-@shared_task(name="identities.cleanup_expired_exports")
+@shared_task(
+    name="identities.cleanup_expired_exports",
+    autoretry_for=TRANSIENT_INFRASTRUCTURE_ERRORS,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    max_retries=3,
+)
 def cleanup_expired_identity_exports():
     return {"expired_exports": expire_due_identity_exports()}

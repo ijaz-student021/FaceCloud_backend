@@ -5,11 +5,16 @@ from pathlib import Path
 from celery import shared_task
 from django.core.files.base import ContentFile
 from django.db import transaction
+from django.db.utils import InterfaceError, OperationalError
 from django.utils import timezone
 
 from .models import ProcessingReport
 from .renderers import render_report
 from .services import build_report_payload
+
+# Transient infrastructure failures only (dropped DB connections). Business
+# and rendering errors are handled per-record and must never retry.
+TRANSIENT_INFRASTRUCTURE_ERRORS = (OperationalError, InterfaceError)
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +80,16 @@ def process_processing_report(report_id, task_id=""):
             return failed
 
 
-@shared_task(bind=True, name="reports.generate", acks_late=True, max_retries=2)
+@shared_task(
+    bind=True,
+    name="reports.generate",
+    acks_late=True,
+    autoretry_for=TRANSIENT_INFRASTRUCTURE_ERRORS,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    max_retries=2,
+)
 def generate_processing_report_task(self, report_id):
     report = ProcessingReport.objects.filter(pk=report_id).first()
     if report is None:

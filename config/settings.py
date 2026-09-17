@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
+    "drf_spectacular",
     "corsheaders",
     "accounts",
     "uploads",
@@ -399,6 +400,14 @@ REST_FRAMEWORK = {
         "download_package": "30/hour",
         "notification_action": "300/hour",
     },
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "FaceCloud API",
+    "DESCRIPTION": "Authenticated facial-image upload, enhancement, validation, identity grouping, reports, and downloads.",
+    "VERSION": FACECLOUD_VERSION,
+    "SERVE_INCLUDE_SCHEMA": False,
 }
 
 SIMPLE_JWT = {
