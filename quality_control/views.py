@@ -1,4 +1,5 @@
 from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
@@ -14,12 +15,14 @@ from .services import enqueue_quality_analysis
 class ImageQualityView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(responses={200: ImageQualityDecisionSerializer})
     def get(self, request, image_id):
         result = get_object_or_404(
             ImageQualityDecision.objects.filter(owner=request.user), image_id=image_id,
         )
         return Response(ImageQualityDecisionSerializer(result).data)
 
+    @extend_schema(request=None, responses={202: ImageQualityDecisionSerializer})
     def post(self, request, image_id):
         image = get_object_or_404(
             ImageUpload.objects.filter(owner=request.user, status="uploaded"), pk=image_id,

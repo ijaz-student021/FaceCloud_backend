@@ -767,7 +767,7 @@ Moves production assets from local media storage to private object storage.
 - Storage quotas and analytics
 - Lifecycle and deletion policies
 
-### Feature 44: API documentation and developer support — Partial
+### Feature 44: API documentation and developer support — Complete OpenAPI baseline
 
 Maintains stable integration contracts and implementation documentation.
 
@@ -775,8 +775,18 @@ Maintains stable integration contracts and implementation documentation.
 - Per-feature implementation documents
 - Upload endpoint reference
 - PostgreSQL platform documentation
-- Planned Swagger/OpenAPI integration
-- Planned live/WebSocket documentation
+- `drf-spectacular` wired in with a registered auth extension for
+  `FaceCloudJWTAuthentication`; `GET /api/schema/`, `/api/docs/` (Swagger UI),
+  and `/api/redoc/` are live
+- Every raw `APIView` across the project (accounts, uploads, validation,
+  quality_control, duplicates, notifications, downloads, reports, identities,
+  enhancement — 55-56 views) has explicit `serializer_class` or
+  `@extend_schema` request/response typing; `manage.py spectacular --validate
+  --fail-on-warn` reports zero `Error`-level issues
+- Remaining polish (optional, non-blocking): a handful of
+  `SerializerMethodField` type hints and the `VerifyEmailView` path-parameter
+  type default to `string`
+- Planned live/WebSocket documentation (blocked on Features 36-40)
 
 ### Feature 45: Testing and quality assurance — Partial and continuous
 

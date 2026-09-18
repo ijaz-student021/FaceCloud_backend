@@ -4,6 +4,8 @@ from django.db import IntegrityError, transaction
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
@@ -36,6 +38,10 @@ from .tasks import (
 class ImageEnhanceView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=EnhancementRequestSerializer,
+        responses={202: ImageEnhancementResultSerializer},
+    )
     def post(self, request, image_id):
         image = get_object_or_404(
             ImageUpload.objects.filter(owner=request.user, status="uploaded").select_related("preprocessing_result"),
@@ -72,6 +78,10 @@ class ImageEnhanceView(APIView):
 class BatchEnhanceView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=EnhancementRequestSerializer,
+        responses={201: EnhancementBatchJobSerializer},
+    )
     def post(self, request, batch_id):
         batch = get_object_or_404(UploadBatch.objects.filter(owner=request.user), pk=batch_id)
         payload = EnhancementRequestSerializer(data=request.data)
@@ -152,6 +162,7 @@ class EnhancementJobDetailView(generics.RetrieveAPIView):
 class EnhancementDownloadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(responses={200: OpenApiTypes.BINARY, 404: OpenApiTypes.OBJECT})
     def get(self, request, pk):
         result = get_object_or_404(
             ImageEnhancementResult.objects.filter(owner=request.user, status=EnhancementStatus.COMPLETED),
@@ -190,6 +201,13 @@ class EnhancementComparisonView(APIView):
         except (OSError, ValueError):
             return False
 
+    @extend_schema(
+        responses={
+            200: ImageEnhancementComparisonSerializer,
+            409: OpenApiTypes.OBJECT,
+            410: OpenApiTypes.OBJECT,
+        },
+    )
     def get(self, request, pk):
         result = get_object_or_404(
             ImageEnhancementResult.objects.filter(owner=request.user).select_related(
@@ -234,6 +252,7 @@ class EnhancementComparisonView(APIView):
 class GalleryEditorConfigurationView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(responses={200: OpenApiTypes.OBJECT})
     def get(self, request):
         return Response(
             {
@@ -271,6 +290,7 @@ class GalleryEditListCreateView(APIView):
             pk=result_id,
         )
 
+    @extend_schema(responses={200: ImageEditVersionSerializer(many=True)})
     def get(self, request, result_id):
         result = self._result(request, result_id)
         edits = result.edit_versions.filter(owner=request.user)
@@ -280,6 +300,10 @@ class GalleryEditListCreateView(APIView):
             ).data
         )
 
+    @extend_schema(
+        request=GalleryEditRequestSerializer,
+        responses={202: ImageEditVersionSerializer, 410: OpenApiTypes.OBJECT},
+    )
     def post(self, request, result_id):
         result = self._result(request, result_id)
         if not result.enhanced_file:
@@ -331,12 +355,14 @@ class GalleryEditDetailView(APIView):
             ImageEditVersion.objects.filter(owner=request.user), pk=pk
         )
 
+    @extend_schema(responses={200: ImageEditVersionSerializer})
     def get(self, request, pk):
         edit = self._edit(request, pk)
         return Response(
             ImageEditVersionSerializer(edit, context={"request": request}).data
         )
 
+    @extend_schema(responses={204: None})
     def delete(self, request, pk):
         edit = self._edit(request, pk)
         result_id = edit.enhancement_result_id
@@ -357,6 +383,7 @@ class GalleryEditDetailView(APIView):
 class GalleryEditActivateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(request=None, responses={200: ImageEditVersionSerializer})
     def post(self, request, pk):
         edit = get_object_or_404(
             ImageEditVersion.objects.filter(
@@ -380,6 +407,7 @@ class GalleryEditActivateView(APIView):
 class GalleryEditDownloadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(responses={200: OpenApiTypes.BINARY, 404: OpenApiTypes.OBJECT})
     def get(self, request, pk):
         edit = get_object_or_404(
             ImageEditVersion.objects.filter(

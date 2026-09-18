@@ -1,5 +1,7 @@
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import APIException
 from rest_framework.response import Response
@@ -43,10 +45,15 @@ class IdentityExportExpired(APIException):
 class IdentityImageAnalysisView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(responses={200: IdentityAnalysisSerializer})
     def get(self, request, image_id):
         analysis = get_object_or_404(IdentityAnalysis.objects.filter(owner=request.user), image_id=image_id)
         return Response(IdentityAnalysisSerializer(analysis).data)
 
+    @extend_schema(
+        request=IdentityAnalyzeRequestSerializer,
+        responses={202: IdentityAnalysisSerializer},
+    )
     def post(self, request, image_id):
         image = get_object_or_404(ImageUpload.objects.filter(owner=request.user, status="uploaded"), pk=image_id)
         payload = IdentityAnalyzeRequestSerializer(data=request.data)
@@ -89,6 +96,10 @@ class IdentityReviewListView(generics.ListAPIView):
 class IdentityAssignmentReviewView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=IdentityReviewRequestSerializer,
+        responses={200: IdentityMembershipSerializer},
+    )
     def patch(self, request, pk):
         membership = get_object_or_404(IdentityMembership.objects.filter(owner=request.user), pk=pk)
         payload = IdentityReviewRequestSerializer(data=request.data)
@@ -100,6 +111,10 @@ class IdentityAssignmentReviewView(APIView):
 class IdentityGroupRenameView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=IdentityRenameSerializer,
+        responses={200: IdentityGroupSerializer},
+    )
     def patch(self, request, pk):
         group = get_object_or_404(IdentityGroup.objects.filter(owner=request.user), pk=pk)
         payload = IdentityRenameSerializer(data=request.data)
@@ -110,6 +125,10 @@ class IdentityGroupRenameView(APIView):
 class IdentityGroupMergeView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=IdentityMergeSerializer,
+        responses={200: OpenApiTypes.OBJECT},
+    )
     def post(self, request, pk):
         target = get_object_or_404(IdentityGroup.objects.filter(owner=request.user), pk=pk)
         payload = IdentityMergeSerializer(data=request.data)
@@ -122,6 +141,10 @@ class IdentityGroupMergeView(APIView):
 class IdentityMembershipMoveView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=IdentityMoveSerializer,
+        responses={200: IdentityMembershipSerializer},
+    )
     def patch(self, request, pk):
         membership = get_object_or_404(IdentityMembership.objects.filter(owner=request.user), pk=pk)
         payload = IdentityMoveSerializer(data=request.data)
@@ -133,6 +156,10 @@ class IdentityMembershipMoveView(APIView):
 class IdentityMembershipRemoveView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=IdentityReasonSerializer,
+        responses={200: IdentityMembershipSerializer},
+    )
     def patch(self, request, pk):
         membership = get_object_or_404(IdentityMembership.objects.filter(owner=request.user), pk=pk)
         payload = IdentityReasonSerializer(data=request.data)
@@ -143,6 +170,10 @@ class IdentityMembershipRemoveView(APIView):
 class IdentityGroupProfileView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=IdentityProfileSerializer,
+        responses={200: IdentityGroupSerializer},
+    )
     def patch(self, request, pk):
         group = get_object_or_404(IdentityGroup.objects.filter(owner=request.user), pk=pk)
         payload = IdentityProfileSerializer(data=request.data)
@@ -154,6 +185,10 @@ class IdentityGroupProfileView(APIView):
 class IdentityGroupDeleteView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=IdentityReasonSerializer,
+        responses={204: None},
+    )
     def delete(self, request, pk):
         group = get_object_or_404(IdentityGroup.objects.filter(owner=request.user), pk=pk)
         payload = IdentityReasonSerializer(data=request.data)
@@ -179,6 +214,7 @@ class IdentityGroupExportListCreateView(APIView):
             IdentityGroup.objects.filter(owner=request.user), pk=group_id
         )
 
+    @extend_schema(responses={200: IdentityGroupExportSerializer(many=True)})
     def get(self, request, group_id):
         group = self._group(request, group_id)
         expire_due_identity_exports(owner=request.user)
@@ -191,6 +227,10 @@ class IdentityGroupExportListCreateView(APIView):
             ).data
         )
 
+    @extend_schema(
+        request=IdentityGroupExportRequestSerializer,
+        responses={200: OpenApiTypes.OBJECT, 202: OpenApiTypes.OBJECT},
+    )
     def post(self, request, group_id):
         group = self._group(request, group_id)
         payload = IdentityGroupExportRequestSerializer(data=request.data)
@@ -234,6 +274,9 @@ class IdentityGroupExportDetailView(generics.RetrieveDestroyAPIView):
 class IdentityGroupExportDownloadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.BINARY, 409: OpenApiTypes.OBJECT, 410: OpenApiTypes.OBJECT},
+    )
     def get(self, request, pk):
         export = get_object_or_404(
             IdentityGroupExport.objects.filter(owner=request.user).select_related(
@@ -274,6 +317,10 @@ class IdentityGroupExportRegenerateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     throttle_scope = "download_package"
 
+    @extend_schema(
+        request=None,
+        responses={200: OpenApiTypes.OBJECT, 202: OpenApiTypes.OBJECT},
+    )
     def post(self, request, pk):
         export = get_object_or_404(
             IdentityGroupExport.objects.filter(owner=request.user).select_related(
