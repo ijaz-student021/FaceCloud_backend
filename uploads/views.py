@@ -4,6 +4,8 @@ from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.db.models import OuterRef, Prefetch, Q, Subquery
 from django.utils import timezone
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics, permissions, status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
@@ -40,6 +42,12 @@ class SingleImageUploadView(APIView):
     parser_classes = [MultiPartParser, FormParser]
     throttle_scope = "image_upload"
 
+    @extend_schema(
+        request={"multipart/form-data": {"type": "object", "properties": {
+            "file": {"type": "string", "format": "binary"},
+        }}},
+        responses={201: UploadBatchSerializer},
+    )
     def post(self, request):
         files = _all_request_files(request)
         if len(files) != 1:
@@ -53,6 +61,12 @@ class MultipleImageUploadView(APIView):
     parser_classes = [MultiPartParser, FormParser]
     throttle_scope = "image_upload"
 
+    @extend_schema(
+        request={"multipart/form-data": {"type": "object", "properties": {
+            "files": {"type": "array", "items": {"type": "string", "format": "binary"}},
+        }}},
+        responses={201: UploadBatchSerializer},
+    )
     def post(self, request):
         files = request.FILES.getlist("files")
         if len(files) < 2:
@@ -69,6 +83,12 @@ class ZipImageUploadView(APIView):
     parser_classes = [MultiPartParser, FormParser]
     throttle_scope = "zip_upload"
 
+    @extend_schema(
+        request={"multipart/form-data": {"type": "object", "properties": {
+            "file": {"type": "string", "format": "binary"},
+        }}},
+        responses={201: UploadBatchSerializer},
+    )
     def post(self, request):
         files = _all_request_files(request)
         if len(files) != 1:
@@ -107,6 +127,7 @@ class UploadBatchDetailView(generics.RetrieveUpdateDestroyAPIView):
 class UploadBatchProgressView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(responses={200: OpenApiTypes.OBJECT})
     def get(self, request, batch_id):
         batch = get_object_or_404(UploadBatch.objects.filter(owner=request.user), pk=batch_id)
         return Response(batch_progress_payload(batch))
@@ -115,6 +136,7 @@ class UploadBatchProgressView(APIView):
 class UploadBatchCancelView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(request=None, responses={200: OpenApiTypes.OBJECT})
     def post(self, request, batch_id):
         with transaction.atomic():
             batch = get_object_or_404(
@@ -136,6 +158,7 @@ class UploadBatchCancelView(APIView):
 class UploadBatchRetryView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(request=None, responses={202: OpenApiTypes.OBJECT})
     def post(self, request, batch_id):
         from enhancement.models import EnhancementStatus
         from enhancement.tasks import process_enhancement_image
@@ -321,6 +344,7 @@ class ImageUploadDetailView(generics.RetrieveDestroyAPIView):
 class ImageDownloadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(responses={200: OpenApiTypes.BINARY, 404: OpenApiTypes.OBJECT})
     def get(self, request, pk):
         image = get_object_or_404(
             ImageUpload.objects.filter(owner=request.user, status="uploaded"),
@@ -352,6 +376,7 @@ class ImagePreprocessView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     throttle_scope = "image_preprocess"
 
+    @extend_schema(request=PreprocessImageRequestSerializer, responses={200: ImagePreprocessingResultSerializer, 201: ImagePreprocessingResultSerializer})
     def post(self, request, pk):
         image = get_object_or_404(
             ImageUpload.objects.filter(owner=request.user, status="uploaded"),
@@ -375,6 +400,7 @@ class ImagePreprocessView(APIView):
 class ImagePreprocessingDetailView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(responses={200: ImagePreprocessingResultSerializer})
     def get(self, request, pk):
         result = get_object_or_404(
             ImagePreprocessingResult.objects.filter(owner=request.user).select_related("image"),
@@ -386,6 +412,7 @@ class ImagePreprocessingDetailView(APIView):
 class ImagePreprocessingDownloadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(responses={200: OpenApiTypes.BINARY, 404: OpenApiTypes.OBJECT})
     def get(self, request, pk):
         result = get_object_or_404(
             ImagePreprocessingResult.objects.filter(owner=request.user, status="completed"),
