@@ -227,6 +227,23 @@ ZERO_DCE_MAX_INFERENCE_EDGE = env.int("ZERO_DCE_MAX_INFERENCE_EDGE", default=102
 ZERO_DCE_FULL_RESOLUTION_TILE_EDGE = env.int(
     "ZERO_DCE_FULL_RESOLUTION_TILE_EDGE", default=1024
 )
+# Photos this dark cannot be safely brightened within the normal
+# per-level guard limits, and their residual sensor noise is out of
+# distribution for PureVision/PureScale (trained on compression artifacts,
+# not extreme low-light grain) -- those models hallucinate texture on
+# input this noisy instead of cleaning it. Below this threshold, the
+# exposure guard is allowed a much larger luminance gain, and PureVision/
+# PureScale are skipped entirely regardless of their own enabled flags.
+EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD = env.float(
+    "EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD", default=25.0
+)
+EXTREME_LOW_LIGHT_MAX_LUMINANCE_GAIN = env.float(
+    "EXTREME_LOW_LIGHT_MAX_LUMINANCE_GAIN", default=90.0
+)
+EXTREME_LOW_LIGHT_MODEL_STRENGTH = env.float(
+    "EXTREME_LOW_LIGHT_MODEL_STRENGTH", default=0.85
+)
+
 ADAPTIVE_DENOISE_ENABLED = env.bool("ADAPTIVE_DENOISE_ENABLED", default=False)
 ADAPTIVE_DENOISE_BREAKPOINTS = tuple(
     float(value)

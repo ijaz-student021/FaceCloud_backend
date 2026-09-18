@@ -78,6 +78,20 @@ class PureVisionPipelineTests(SimpleTestCase):
     @override_settings(
         PUREVISION_ENABLED=True, HD_RESTORATION_ENABLED=False,
         GFPGAN_ENABLED=False, AI_RESTORATION_ENABLED=False,
+        EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD=25.0,
+    )
+    @patch("enhancement.services.restore_with_purevision")
+    def test_extremely_dark_source_skips_purevision_even_when_enabled(self, provider):
+        source = np.full((64, 96, 3), 12, dtype=np.uint8)
+        output, _level, parameters = enhance_bgr(source, "auto")
+        self.assertEqual(output.shape, source.shape)
+        self.assertFalse(parameters["purevision"]["applied"])
+        self.assertIn("too dark", parameters["purevision"]["fallback_reason"])
+        provider.assert_not_called()
+
+    @override_settings(
+        PUREVISION_ENABLED=True, HD_RESTORATION_ENABLED=False,
+        GFPGAN_ENABLED=False, AI_RESTORATION_ENABLED=False,
     )
     @patch("enhancement.services.restore_with_purevision")
     def test_provider_failure_preserves_pipeline_output(self, provider):

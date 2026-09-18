@@ -54,6 +54,20 @@ Both stages are additive and independently gated in `enhancement/services.py`:
 Recognition continues to use the immutable original or conservative
 standardized image; these stages only affect display/download derivatives.
 
+## Extreme low-light eligibility gate
+
+Both models are trained on compression artifacts (JPEG/WEBP/etc.) on
+normally-exposed photos, not raw sensor noise from a near-black source.
+Real-world testing on a severely underexposed night photo (mean luminance
+~11.5/255) showed both models hallucinating a frost-like false texture
+instead of cleaning the noise, then PureScale upscaling that hallucinated
+texture 2x. Neither model runs when the *original* source's mean luminance
+is below `EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD` (default `25.0`),
+regardless of their own enabled flags — Zero-DCE and adaptive denoise are
+allowed a larger brightening budget for these sources instead (see
+`EXTREME_LOW_LIGHT_MAX_LUMINANCE_GAIN`, `EXTREME_LOW_LIGHT_MODEL_STRENGTH`
+in `enhancement/services.py`).
+
 ## Safety controls
 
 - SHA-256 verification occurs before checkpoint loading, before any

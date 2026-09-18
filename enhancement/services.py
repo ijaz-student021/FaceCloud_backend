@@ -371,7 +371,10 @@ def _adaptive_learned_strength(input_quality, level):
     scene_luminance = (mean * 0.6) + (median * 0.4)
     threshold = settings.ENHANCEMENT_MODEL_LUMINANCE_THRESHOLD
     target = max(settings.ENHANCEMENT_MODEL_LUMINANCE_TARGET, threshold + 0.01)
-    level_cap = OUTPUT_GUARD_POLICIES[level]["learned_model_strength"]
+    if input_quality["mean_luminance"] < settings.EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD:
+        level_cap = settings.EXTREME_LOW_LIGHT_MODEL_STRENGTH
+    else:
+        level_cap = OUTPUT_GUARD_POLICIES[level]["learned_model_strength"]
     if scene_luminance >= threshold:
         return 0.0, scene_luminance
     need = np.clip((target - scene_luminance) / target, 0.0, 1.0)
@@ -381,6 +384,8 @@ def _adaptive_learned_strength(input_quality, level):
 def _quality_guard(original, candidate, level, input_quality, learned_model=False):
     """Apply a measurable, adaptive blend when a candidate becomes destructive."""
     limits = OUTPUT_GUARD_POLICIES[level]
+    if input_quality["mean_luminance"] < settings.EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD:
+        limits = {**limits, "max_luminance_gain": settings.EXTREME_LOW_LIGHT_MAX_LUMINANCE_GAIN}
     raw_quality = analyze_image_quality(candidate)
     raw_luminance_delta = (
         raw_quality["mean_luminance"] - input_quality["mean_luminance"]
@@ -709,6 +714,14 @@ def purevision_restoration_stage(context):
         metadata["fallback_reason"] = "PureVision is disabled."
         context.purevision = metadata
         return context
+    if context.input_quality["mean_luminance"] < settings.EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD:
+        metadata["fallback_reason"] = (
+            "The source was too dark for PureVision; its residual sensor "
+            "noise is out of distribution for this model and produces "
+            "hallucinated texture instead of a clean result."
+        )
+        context.purevision = metadata
+        return context
     try:
         restored, provider_metadata = restore_with_purevision(context.current_image)
         metadata.update(provider_metadata)
@@ -832,6 +845,14 @@ def purescale_super_resolution_stage(context):
         return context
     if context.hd_restoration.get("applied"):
         metadata["fallback_reason"] = "HD restoration already produced a super-resolution candidate."
+        context.purescale = metadata
+        return context
+    if context.input_quality["mean_luminance"] < settings.EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD:
+        metadata["fallback_reason"] = (
+            "The source was too dark for PureScale; upscaling residual "
+            "sensor noise or PureVision artifacts would only make them "
+            "more visible."
+        )
         context.purescale = metadata
         return context
     source_dimensions = [int(context.current_image.shape[1]), int(context.current_image.shape[0])]

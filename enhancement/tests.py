@@ -383,6 +383,29 @@ class OpenCVPolicyTests(SimpleTestCase):
         self.assertGreater(float(np.mean(enhanced)), float(np.mean(source)))
         self.assertEqual(parameters["colour_policy"], "preserve_lab_chroma_channels")
 
+    @override_settings(
+        AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True,
+        EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD=25.0,
+        EXTREME_LOW_LIGHT_MAX_LUMINANCE_GAIN=90.0,
+        EXTREME_LOW_LIGHT_MODEL_STRENGTH=0.85,
+    )
+    @patch("enhancement.services.enhance_with_zero_dce")
+    def test_extremely_dark_source_gets_a_larger_brightening_allowance(self, zero_dce):
+        """A normal HIGH-level max_luminance_gain of 30 would cap a
+        luminance-12 source at ~42; the extreme-low-light allowance must
+        let it end up meaningfully brighter than that."""
+        source = np.full((80, 80, 3), 12, dtype=np.uint8)
+        zero_dce.return_value = (
+            np.full_like(source, 220),
+            {"provider": "official_zero_dce_onnx_opencv_dnn", "curve_iterations": 8},
+        )
+
+        enhanced, level, parameters = enhance_bgr(source, EnhancementLevel.AUTO)
+
+        self.assertEqual(level, EnhancementLevel.HIGH)
+        self.assertTrue(parameters["zero_dce"]["applied"])
+        self.assertGreater(float(enhanced.mean()), 60.0)
+
     @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True)
     @patch("enhancement.services.enhance_with_zero_dce")
     def test_dark_image_routes_through_genuine_zero_dce_provider(self, zero_dce):

@@ -96,6 +96,20 @@ class PureScalePipelineTests(SimpleTestCase):
     @override_settings(
         PURESCALE_ENABLED=True, HD_RESTORATION_ENABLED=False,
         GFPGAN_ENABLED=False, AI_RESTORATION_ENABLED=False,
+        EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD=25.0,
+    )
+    @patch("enhancement.services.upscale_with_purescale")
+    def test_extremely_dark_source_skips_purescale_even_when_enabled(self, provider):
+        source = np.full((64, 96, 3), 12, dtype=np.uint8)
+        output, _level, parameters = enhance_bgr(source, "auto")
+        self.assertEqual(output.shape, source.shape)
+        self.assertFalse(parameters["purescale"]["applied"])
+        self.assertIn("too dark", parameters["purescale"]["fallback_reason"])
+        provider.assert_not_called()
+
+    @override_settings(
+        PURESCALE_ENABLED=True, HD_RESTORATION_ENABLED=False,
+        GFPGAN_ENABLED=False, AI_RESTORATION_ENABLED=False,
     )
     @patch("enhancement.services.upscale_with_purescale")
     def test_provider_failure_preserves_pipeline_output(self, provider):
