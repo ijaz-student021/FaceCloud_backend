@@ -277,6 +277,17 @@ Uses deep learning to improve low-light images while preserving facial detail.
 The GFPGAN integration is implemented but remains disabled by default until the
 private worker environment completes consented photographic rollout QA.
 
+- PureScale (SAFMN) 2x super-resolution and PureVision (RRDBNet) same-resolution
+  artifact-removal adapters, both checksum-pinned to third-party checkpoints
+  from limitlesslab/AI-upscaling-models
+- Independently gated behind `PURESCALE_ENABLED` and `PUREVISION_ENABLED`
+  (both disabled by default); PureScale never stacks with the Real-ESRGAN
+  super-resolution stage
+- Fidelity guards mirroring the NAFNet luminance/chroma checks
+- CC BY-NC-SA 4.0 (non-commercial) licensed checkpoints — evaluation/FYP use
+  only until a commercial license is confirmed; see
+  [purescale-purevision.md](features/purescale-purevision.md)
+
 ### Feature 13: Before-and-after comparison — Complete backend
 
 Allows users to judge enhancement results visually and quantitatively.

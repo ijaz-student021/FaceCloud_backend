@@ -267,6 +267,44 @@ GFPGAN_MAX_FACES = env.int("GFPGAN_MAX_FACES", default=5)
 GFPGAN_MAX_INPUT_PIXELS = env.int(
     "GFPGAN_MAX_INPUT_PIXELS", default=12_000_000
 )
+# PureScale and PureVision are third-party, non-commercially licensed
+# (CC BY-NC-SA 4.0) checkpoints from limitlesslab/AI-upscaling-models. They
+# stay disabled by default until visual QA and a license review clear them
+# for the intended deployment (see docs/features/purescale-purevision.md).
+PURESCALE_ENABLED = env.bool("PURESCALE_ENABLED", default=False)
+PURESCALE_MODEL_PATH = env(
+    "PURESCALE_MODEL_PATH",
+    default=str(BASE_DIR / ".runtime" / "models" / "PureScale_2x.pth"),
+)
+PURESCALE_MODEL_SHA256 = env(
+    "PURESCALE_MODEL_SHA256",
+    default="c8fb698766f502be6409cf3cee1a69d63381c6eebf3ff5de7df6ed87f6c9a5cb",
+)
+PURESCALE_DEVICE = env("PURESCALE_DEVICE", default="auto")
+PURESCALE_TILE_SIZE = env.int("PURESCALE_TILE_SIZE", default=256)
+PURESCALE_TILE_OVERLAP = env.int("PURESCALE_TILE_OVERLAP", default=24)
+PURESCALE_MAX_OUTPUT_PIXELS = env.int(
+    "PURESCALE_MAX_OUTPUT_PIXELS", default=20_000_000
+)
+
+PUREVISION_ENABLED = env.bool("PUREVISION_ENABLED", default=False)
+PUREVISION_MODEL_PATH = env(
+    "PUREVISION_MODEL_PATH",
+    default=str(BASE_DIR / ".runtime" / "models" / "PureVision_1x.pth"),
+)
+PUREVISION_MODEL_SHA256 = env(
+    "PUREVISION_MODEL_SHA256",
+    default="3c3bec2111d0f7c3926f3171f37ce28e72502b744e084c566d8960c06a6a06a3",
+)
+PUREVISION_DEVICE = env("PUREVISION_DEVICE", default="auto")
+PUREVISION_TILE_SIZE = env.int("PUREVISION_TILE_SIZE", default=256)
+PUREVISION_TILE_OVERLAP = env.int("PUREVISION_TILE_OVERLAP", default=24)
+PUREVISION_MAX_MEAN_CHROMA_SHIFT = env.float(
+    "PUREVISION_MAX_MEAN_CHROMA_SHIFT", default=8.0
+)
+PUREVISION_MAX_MEAN_LUMINANCE_SHIFT = env.float(
+    "PUREVISION_MAX_MEAN_LUMINANCE_SHIFT", default=30.0
+)
 PER_FACE_METRICS_ENABLED = env.bool("PER_FACE_METRICS_ENABLED", default=False)
 IDENTITY_EMBEDDING_ENABLED = env.bool("IDENTITY_EMBEDDING_ENABLED", default=False)
 FACE_DETECTOR_PROVIDER = env("FACE_DETECTOR_PROVIDER", default="haar_v1")

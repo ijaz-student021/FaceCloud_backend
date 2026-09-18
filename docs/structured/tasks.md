@@ -21,6 +21,7 @@
 | Feature 44 OpenAPI schema mounted | Done (2026-09-18) | `/api/schema/`, `/api/docs/`, `/api/redoc/` |
 | Feature 44 all raw APIViews typed | Done (2026-09-18) | 55-56 views across 10 apps; `spectacular --validate --fail-on-warn` reports zero errors |
 | Feature 28 unified activity timeline | Done (2026-09-18) | `activity` app, `GET /api/user/activity/`, `activity/tests.py`, 11 tests |
+| PureScale/PureVision restoration adapters | Done (2026-09-18) | `enhancement/purescale.py`, `enhancement/purevision.py`, checksum-verified real checkpoints, disabled by default; `features/purescale-purevision.md` |
 | Verify NAFNet and Real-ESRGAN files | Done | Restricted loads, tensor validation and hashes |
 | Implement optional HD restoration adapter | Done | Checksums, tiling, fallbacks and enhancement tests |
 | Add HD-restoration documentation | Done | `features/hd-deblur-super-resolution-pipeline.md` |

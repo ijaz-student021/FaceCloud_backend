@@ -38,6 +38,8 @@ from .hd_restoration import (
     deblur_with_nafnet,
     upscale_with_realesrgan,
 )
+from .purescale import PureScaleUnavailable, upscale_with_purescale
+from .purevision import PureVisionUnavailable, restore_with_purevision
 from .zero_dce import ZeroDCEUnavailable, enhance_with_zero_dce
 
 
@@ -107,6 +109,8 @@ class EnhancementPipelineContext:
     output_quality: dict = field(default_factory=dict)
     restoration: dict = field(default_factory=dict)
     hd_restoration: dict = field(default_factory=dict)
+    purevision: dict = field(default_factory=dict)
+    purescale: dict = field(default_factory=dict)
     face_restoration: dict = field(default_factory=dict)
     zero_dce: dict = field(default_factory=dict)
     quality_guards: dict = field(default_factory=dict)
@@ -672,6 +676,37 @@ def adaptive_denoise_stage(context):
     return context
 
 
+def purevision_restoration_stage(context):
+    """Optionally remove compression artifacts with PureVision (1x, no resize).
+
+    PureVision never changes the pixel grid, so it is safe to run ahead of
+    the resolution-changing stages below. It is an independently gated,
+    third-party (CC BY-NC-SA 4.0) alternative to NAFNet and defaults to
+    disabled until visual QA and a license review clear it for the intended
+    deployment.
+    """
+    metadata = {
+        "enabled": bool(settings.PUREVISION_ENABLED),
+        "requested": bool(settings.PUREVISION_ENABLED),
+        "applied": False,
+        "fallback_reason": "",
+    }
+    if not settings.PUREVISION_ENABLED:
+        metadata["fallback_reason"] = "PureVision is disabled."
+        context.purevision = metadata
+        return context
+    try:
+        restored, provider_metadata = restore_with_purevision(context.current_image)
+        metadata.update(provider_metadata)
+        metadata["applied"] = True
+        context.current_image = restored
+    except PureVisionUnavailable as error:
+        metadata["fallback_reason"] = str(error)
+        context.warnings.append(str(error))
+    context.purevision = metadata
+    return context
+
+
 def low_resolution_restoration_stage(context):
     """Run EDSR only after denoise and only if resolution is still low."""
     quality_at_stage = analyze_image_quality(context.current_image)
@@ -757,6 +792,47 @@ def hd_restoration_stage(context):
         metadata["fallback_reason"] = str(error)
         context.warnings.append(str(error))
     context.hd_restoration = metadata
+    return context
+
+
+def purescale_super_resolution_stage(context):
+    """Optionally upscale 2x with PureScale as a Real-ESRGAN alternative.
+
+    PureScale must not stack with ``hd_restoration_stage``'s Real-ESRGAN
+    pass, since two independent upscalers would compound scale factors and
+    could exceed the output-pixel safety limit. It only runs when HD
+    restoration did not already produce a super-resolution candidate. It is
+    an independently gated, third-party (CC BY-NC-SA 4.0) checkpoint and
+    defaults to disabled until visual QA and a license review clear it for
+    the intended deployment.
+    """
+    metadata = {
+        "enabled": bool(settings.PURESCALE_ENABLED),
+        "requested": bool(settings.PURESCALE_ENABLED and not context.hd_restoration.get("applied")),
+        "applied": False,
+        "fallback_reason": "",
+    }
+    if not settings.PURESCALE_ENABLED:
+        metadata["fallback_reason"] = "PureScale is disabled."
+        context.purescale = metadata
+        return context
+    if context.hd_restoration.get("applied"):
+        metadata["fallback_reason"] = "HD restoration already produced a super-resolution candidate."
+        context.purescale = metadata
+        return context
+    source_dimensions = [int(context.current_image.shape[1]), int(context.current_image.shape[0])]
+    try:
+        upscaled, provider_metadata = upscale_with_purescale(context.current_image)
+        metadata.update(provider_metadata)
+        metadata["applied"] = True
+        metadata["input_dimensions"] = source_dimensions
+        metadata["output_dimensions"] = [int(upscaled.shape[1]), int(upscaled.shape[0])]
+        context.current_image = upscaled
+        context.final_guard_reference = upscaled.copy()
+    except PureScaleUnavailable as error:
+        metadata["fallback_reason"] = str(error)
+        context.warnings.append(str(error))
+    context.purescale = metadata
     return context
 
 
@@ -877,8 +953,10 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
         ("output_guard_a", output_guard_a_stage),
         ("measure_post_exposure_noise", measure_post_exposure_noise_stage),
         ("adaptive_denoise", adaptive_denoise_stage),
+        ("purevision_restoration", purevision_restoration_stage),
         ("low_resolution_restoration", low_resolution_restoration_stage),
         ("hd_restoration", hd_restoration_stage),
+        ("purescale_super_resolution", purescale_super_resolution_stage),
         ("face_restoration", face_restoration_stage),
         ("sharpen", sharpen_stage),
         ("output_guard_b", output_guard_b_stage),
@@ -913,10 +991,14 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
     )
     if context.face_restoration["applied"]:
         algorithm = f"{algorithm}+private_gfpgan_v1_4"
+    if context.purevision["applied"]:
+        algorithm = f"{algorithm}+purevision_rrdb_1x"
     if context.hd_restoration["applied"]:
         if context.hd_restoration["deblur"]["applied"]:
             algorithm = f"{algorithm}+nafnet_gopro"
         algorithm = f"{algorithm}+realesrgan_x4plus"
+    if context.purescale["applied"]:
+        algorithm = f"{algorithm}+purescale_safmn_2x"
 
     parameters = {
         **context.policy,
@@ -940,6 +1022,8 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
         "adaptive_denoise": context.adaptive_denoise,
         "restoration": context.restoration,
         "hd_restoration": context.hd_restoration,
+        "purevision": context.purevision,
+        "purescale": context.purescale,
         "face_restoration": context.face_restoration,
         "zero_dce": context.zero_dce,
         "stage_order": context.stage_order,
@@ -950,6 +1034,8 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
             "gfpgan_queue_enabled": settings.GFPGAN_QUEUE_ENABLED,
             "hd_restoration_enabled": settings.HD_RESTORATION_ENABLED,
             "nafnet_deblur_enabled": settings.NAFNET_DEBLUR_ENABLED,
+            "purevision_enabled": settings.PUREVISION_ENABLED,
+            "purescale_enabled": settings.PURESCALE_ENABLED,
         },
         "warnings": context.warnings,
     }

@@ -143,6 +143,8 @@ class OpenCVPolicyTests(SimpleTestCase):
                 "gfpgan_queue_enabled": False,
                 "hd_restoration_enabled": False,
                 "nafnet_deblur_enabled": False,
+                "purevision_enabled": False,
+                "purescale_enabled": False,
             },
         )
         self.assertFalse(parameters["adaptive_denoise"]["enabled"])
@@ -167,8 +169,10 @@ class OpenCVPolicyTests(SimpleTestCase):
             "output_guard_a",
             "measure_post_exposure_noise",
             "adaptive_denoise",
+            "purevision_restoration",
             "low_resolution_restoration",
             "hd_restoration",
+            "purescale_super_resolution",
             "face_restoration",
             "sharpen",
             "output_guard_b",
