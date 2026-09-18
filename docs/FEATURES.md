@@ -287,6 +287,13 @@ private worker environment completes consented photographic rollout QA.
 - CC BY-NC-SA 4.0 (non-commercial) licensed checkpoints — evaluation/FYP use
   only until a commercial license is confirmed; see
   [purescale-purevision.md](features/purescale-purevision.md)
+- Automatic black-and-white colorization (SIGGRAPH17, BSD-2-Clause,
+  permissive), gated behind `COLORIZATION_ENABLED` and an automatic
+  near-grayscale detector so colour photos are left untouched
+- Runs as the final pipeline stage with a dedicated luminance-fidelity guard
+  (Lab-space gamut clipping can otherwise distort the BT.601 luma this
+  codebase measures elsewhere); see
+  [colorization.md](features/colorization.md)
 
 ### Feature 13: Before-and-after comparison — Complete backend
 

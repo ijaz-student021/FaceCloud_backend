@@ -145,6 +145,7 @@ class OpenCVPolicyTests(SimpleTestCase):
                 "nafnet_deblur_enabled": False,
                 "purevision_enabled": False,
                 "purescale_enabled": False,
+                "colorization_enabled": False,
             },
         )
         self.assertFalse(parameters["adaptive_denoise"]["enabled"])
@@ -176,6 +177,7 @@ class OpenCVPolicyTests(SimpleTestCase):
             "face_restoration",
             "sharpen",
             "output_guard_b",
+            "colorization",
         ]
         self.assertEqual(parameters["stage_order"], expected_order)
         self.assertEqual(

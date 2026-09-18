@@ -32,6 +32,7 @@ from .models import (
     ImageEditVersion,
     ImageEnhancementResult,
 )
+from .colorization import ColorizationUnavailable, colorize_with_siggraph17
 from .gfpgan import GFPGANUnavailable, restore_faces
 from .hd_restoration import (
     HDRestorationUnavailable,
@@ -112,6 +113,7 @@ class EnhancementPipelineContext:
     purevision: dict = field(default_factory=dict)
     purescale: dict = field(default_factory=dict)
     face_restoration: dict = field(default_factory=dict)
+    colorization: dict = field(default_factory=dict)
     zero_dce: dict = field(default_factory=dict)
     quality_guards: dict = field(default_factory=dict)
     post_exposure_noise: dict = field(default_factory=dict)
@@ -489,6 +491,13 @@ def _quality_guard(original, candidate, level, input_quality, learned_model=Fals
     }
 
 
+def _is_near_grayscale(image):
+    """Detect monochrome/near-monochrome source images for auto-colorization."""
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB).astype(np.float32)
+    chroma = np.abs(lab[:, :, 1] - 128.0) + np.abs(lab[:, :, 2] - 128.0)
+    return float(np.mean(chroma)) <= settings.COLORIZATION_GRAYSCALE_CHROMA_THRESHOLD
+
+
 def analyze_original_stage(context):
     """Validate the source, measure it once, and select the policy."""
     image = context.source_image
@@ -514,6 +523,11 @@ def analyze_original_stage(context):
             defect in context.input_quality["defects"]
             for defect in ("low_light", "severe_low_light")
         ),
+        "applied": False,
+        "fallback_reason": "",
+    }
+    context.colorization = {
+        "requested": _is_near_grayscale(image),
         "applied": False,
         "fallback_reason": "",
     }
@@ -944,6 +958,41 @@ def output_guard_b_stage(context):
     return context
 
 
+def colorization_stage(context):
+    """Optionally colorize a detected grayscale source, as the final stage.
+
+    Colorization deliberately introduces large chroma changes, which would
+    be undone by every earlier chroma-preservation/chroma-shift guard in
+    this pipeline (they exist to keep hue close to the source). Running this
+    last, after output_guard_b_stage, means no downstream guard ever sees
+    or fights the new colour.
+    """
+    metadata = {
+        "enabled": bool(settings.COLORIZATION_ENABLED),
+        "requested": context.colorization["requested"],
+        "applied": False,
+        "fallback_reason": "",
+    }
+    if not settings.COLORIZATION_ENABLED:
+        metadata["fallback_reason"] = "Colorization is disabled."
+        context.colorization = metadata
+        return context
+    if not context.colorization["requested"]:
+        metadata["fallback_reason"] = "The source image already has colour."
+        context.colorization = metadata
+        return context
+    try:
+        colorized, provider_metadata = colorize_with_siggraph17(context.current_image)
+        metadata.update(provider_metadata)
+        metadata["applied"] = True
+        context.current_image = colorized
+    except ColorizationUnavailable as error:
+        metadata["fallback_reason"] = str(error)
+        context.warnings.append(str(error))
+    context.colorization = metadata
+    return context
+
+
 def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
     """Return an enhanced BGR image, applied level, and auditable parameters."""
     context = EnhancementPipelineContext(image, requested_level)
@@ -960,6 +1009,7 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
         ("face_restoration", face_restoration_stage),
         ("sharpen", sharpen_stage),
         ("output_guard_b", output_guard_b_stage),
+        ("colorization", colorization_stage),
     )
     for stage_name, stage_function in stages:
         with _timed_pipeline_stage(context, stage_name):
@@ -999,6 +1049,8 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
         algorithm = f"{algorithm}+realesrgan_x4plus"
     if context.purescale["applied"]:
         algorithm = f"{algorithm}+purescale_safmn_2x"
+    if context.colorization["applied"]:
+        algorithm = f"{algorithm}+colorization_siggraph17"
 
     parameters = {
         **context.policy,
@@ -1025,6 +1077,7 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
         "purevision": context.purevision,
         "purescale": context.purescale,
         "face_restoration": context.face_restoration,
+        "colorization": context.colorization,
         "zero_dce": context.zero_dce,
         "stage_order": context.stage_order,
         "stage_timings_ms": context.stage_timings_ms,
@@ -1036,6 +1089,7 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
             "nafnet_deblur_enabled": settings.NAFNET_DEBLUR_ENABLED,
             "purevision_enabled": settings.PUREVISION_ENABLED,
             "purescale_enabled": settings.PURESCALE_ENABLED,
+            "colorization_enabled": settings.COLORIZATION_ENABLED,
         },
         "warnings": context.warnings,
     }

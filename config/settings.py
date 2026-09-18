@@ -305,6 +305,31 @@ PUREVISION_MAX_MEAN_CHROMA_SHIFT = env.float(
 PUREVISION_MAX_MEAN_LUMINANCE_SHIFT = env.float(
     "PUREVISION_MAX_MEAN_LUMINANCE_SHIFT", default=30.0
 )
+
+# Automatic colorization (richzhang/colorization SIGGRAPH17, BSD-2-Clause).
+# Only ever predicts colour (ab) channels; the source luminance channel is
+# always preserved exactly. Disabled by default pending rollout QA, and only
+# runs automatically when the source image is detected as near-grayscale.
+COLORIZATION_ENABLED = env.bool("COLORIZATION_ENABLED", default=False)
+COLORIZATION_MODEL_PATH = env(
+    "COLORIZATION_MODEL_PATH",
+    default=str(BASE_DIR / ".runtime" / "models" / "colorization_siggraph17.pth"),
+)
+COLORIZATION_MODEL_SHA256 = env(
+    "COLORIZATION_MODEL_SHA256",
+    default="df00044c0a4d7c3edcecf6f75437ce346a66e7a42612d9b968e1a7e17dbc6f66",
+)
+COLORIZATION_DEVICE = env("COLORIZATION_DEVICE", default="auto")
+COLORIZATION_MAX_INFERENCE_EDGE = env.int("COLORIZATION_MAX_INFERENCE_EDGE", default=768)
+COLORIZATION_MAX_INPUT_PIXELS = env.int(
+    "COLORIZATION_MAX_INPUT_PIXELS", default=30_000_000
+)
+COLORIZATION_GRAYSCALE_CHROMA_THRESHOLD = env.float(
+    "COLORIZATION_GRAYSCALE_CHROMA_THRESHOLD", default=3.0
+)
+COLORIZATION_MAX_MEAN_LUMINANCE_SHIFT = env.float(
+    "COLORIZATION_MAX_MEAN_LUMINANCE_SHIFT", default=6.0
+)
 PER_FACE_METRICS_ENABLED = env.bool("PER_FACE_METRICS_ENABLED", default=False)
 IDENTITY_EMBEDDING_ENABLED = env.bool("IDENTITY_EMBEDDING_ENABLED", default=False)
 FACE_DETECTOR_PROVIDER = env("FACE_DETECTOR_PROVIDER", default="haar_v1")
