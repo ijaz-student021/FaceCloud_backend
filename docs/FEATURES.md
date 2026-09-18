@@ -295,6 +295,11 @@ private worker environment completes consented photographic rollout QA.
   codebase measures elsewhere); see
   [colorization.md](features/colorization.md)
 
+- Google Photos-style slider controls: `natural`/`dynamic`/`ai_max` style
+  presets at enhancement time, plus a `warmth` (colour balance) tone
+  control and a continuous 0-100% `intensity` blend slider in the gallery
+  editor; see [slider-enhancement-controls.md](features/slider-enhancement-controls.md)
+
 ### Feature 13: Before-and-after comparison — Complete backend
 
 Allows users to judge enhancement results visually and quantitatively.

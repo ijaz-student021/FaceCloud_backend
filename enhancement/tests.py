@@ -17,6 +17,7 @@ from .models import (
     EditMode,
     EnhancementBatchJob,
     EnhancementLevel,
+    EnhancementStyle,
     ImageEditVersion,
     ImageEnhancementResult,
 )
@@ -375,6 +376,47 @@ class OpenCVPolicyTests(SimpleTestCase):
         np.testing.assert_array_equal(output, source)
 
     @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=False)
+    def test_style_natural_is_the_default_and_unchanged(self):
+        source = np.full((80, 80, 3), 120, dtype=np.uint8)
+        _enhanced, _level, parameters = enhance_bgr(source, EnhancementLevel.AUTO)
+        self.assertEqual(parameters["style"], EnhancementStyle.NATURAL)
+        self.assertFalse(parameters["dynamic_style"]["applied"])
+
+    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=False)
+    def test_style_dynamic_applies_a_bounded_vivid_boost(self):
+        source = np.zeros((80, 80, 3), dtype=np.uint8)
+        source[:, :40] = (60, 90, 120)
+        source[:, 40:] = (180, 160, 140)
+
+        natural, _level, natural_params = enhance_bgr(
+            source, EnhancementLevel.AUTO, style=EnhancementStyle.NATURAL,
+        )
+        vivid, _level, vivid_params = enhance_bgr(
+            source, EnhancementLevel.AUTO, style=EnhancementStyle.DYNAMIC,
+        )
+
+        self.assertTrue(vivid_params["dynamic_style"]["applied"])
+        self.assertIn("dynamic_vivid_boost", vivid_params["algorithm"])
+        self.assertEqual(vivid.shape, natural.shape)
+        natural_saturation = cv2.cvtColor(natural, cv2.COLOR_BGR2HSV)[:, :, 1].mean()
+        vivid_saturation = cv2.cvtColor(vivid, cv2.COLOR_BGR2HSV)[:, :, 1].mean()
+        self.assertGreater(vivid_saturation, natural_saturation)
+
+    @override_settings(
+        AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=False,
+        ADAPTIVE_DENOISE_ENABLED=False,
+    )
+    def test_style_ai_max_forces_high_level_and_adaptive_denoise(self):
+        source = np.full((80, 80, 3), 120, dtype=np.uint8)
+
+        _enhanced, level, parameters = enhance_bgr(
+            source, EnhancementLevel.LOW, style=EnhancementStyle.AI_MAX,
+        )
+
+        self.assertEqual(level, EnhancementLevel.HIGH)
+        self.assertTrue(parameters["adaptive_denoise"]["enabled"])
+
+    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=False)
     def test_auto_selects_high_for_dark_image_and_improves_luminance(self):
         source = np.full((80, 80, 3), 35, dtype=np.uint8)
         enhanced, level, parameters = enhance_bgr(source, EnhancementLevel.AUTO)
@@ -545,6 +587,39 @@ class OpenCVPolicyTests(SimpleTestCase):
                 metadata["quality_before"]["highlight_clipping_percent"] + 2.0,
             ),
         )
+
+    def test_gallery_warmth_shifts_the_blue_yellow_axis(self):
+        source = np.full((80, 80, 3), 128, dtype=np.uint8)
+
+        warmer, _metadata = apply_gallery_adjustments(source, EditMode.MANUAL, {"warmth": 80})
+        cooler, _metadata = apply_gallery_adjustments(source, EditMode.MANUAL, {"warmth": -80})
+
+        warmer_b = cv2.cvtColor(warmer, cv2.COLOR_BGR2LAB)[:, :, 2].mean()
+        cooler_b = cv2.cvtColor(cooler, cv2.COLOR_BGR2LAB)[:, :, 2].mean()
+        source_b = cv2.cvtColor(source, cv2.COLOR_BGR2LAB)[:, :, 2].mean()
+        self.assertGreater(warmer_b, source_b)
+        self.assertLess(cooler_b, source_b)
+
+    def test_gallery_intensity_blends_toward_the_preprocessed_original(self):
+        baseline = np.full((80, 80, 3), 60, dtype=np.uint8)
+        source = np.full((80, 80, 3), 200, dtype=np.uint8)
+
+        full, full_metadata = apply_gallery_adjustments(
+            source, EditMode.MANUAL, {"intensity": 100}, baseline=baseline,
+        )
+        half, half_metadata = apply_gallery_adjustments(
+            source, EditMode.MANUAL, {"intensity": 50}, baseline=baseline,
+        )
+        zero, zero_metadata = apply_gallery_adjustments(
+            source, EditMode.MANUAL, {"intensity": 0}, baseline=baseline,
+        )
+
+        self.assertFalse(full_metadata["intensity"]["applied"])
+        self.assertTrue(half_metadata["intensity"]["applied"])
+        self.assertTrue(zero_metadata["intensity"]["applied"])
+        self.assertAlmostEqual(float(full.mean()), 200.0, delta=1.0)
+        self.assertAlmostEqual(float(zero.mean()), 60.0, delta=1.0)
+        self.assertAlmostEqual(float(half.mean()), 130.0, delta=2.0)
 
     def test_gallery_auto_mode_is_scene_aware_and_conservative(self):
         source = np.full((100, 100, 3), 210, dtype=np.uint8)
@@ -828,7 +903,7 @@ class EnhancementProcessingAndAPITests(TestCase):
             404,
         )
 
-    def test_editor_configuration_exposes_auto_and_five_manual_controls(self):
+    def test_editor_configuration_exposes_auto_and_manual_controls(self):
         response = self.client.get(reverse("enhancement:editor-configuration"))
 
         self.assertEqual(response.status_code, 200)
@@ -836,8 +911,12 @@ class EnhancementProcessingAndAPITests(TestCase):
         self.assertEqual(response.data["modes"], ["auto", "manual"])
         self.assertEqual(
             set(response.data["controls"]),
-            {"brightness", "contrast", "shadows", "saturation", "highlights"},
+            {
+                "brightness", "contrast", "shadows", "saturation", "highlights",
+                "warmth", "intensity",
+            },
         )
+        self.assertEqual(response.data["controls"]["intensity"]["default"], 100)
 
     def test_comparison_is_private_and_requires_authentication(self):
         result = ImageEnhancementResult.objects.create(

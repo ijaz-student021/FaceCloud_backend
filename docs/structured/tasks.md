@@ -23,6 +23,7 @@
 | Feature 28 unified activity timeline | Done (2026-09-18) | `activity` app, `GET /api/user/activity/`, `activity/tests.py`, 11 tests |
 | PureScale/PureVision restoration adapters | Done (2026-09-18) | `enhancement/purescale.py`, `enhancement/purevision.py`, checksum-verified real checkpoints, disabled by default; `features/purescale-purevision.md` |
 | Automatic B&W colorization (SIGGRAPH17) | Done (2026-09-18) | `enhancement/colorization.py`, final pipeline stage, luminance-fidelity guard, disabled by default; `features/colorization.md` |
+| Slider enhancement controls (style presets, warmth, intensity blend) | Done (2026-09-18) | `natural`/`dynamic`/`ai_max` style field, `warmth`/`intensity` editor controls; `features/slider-enhancement-controls.md` |
 | Verify NAFNet and Real-ESRGAN files | Done | Restricted loads, tensor validation and hashes |
 | Implement optional HD restoration adapter | Done | Checksums, tiling, fallbacks and enhancement tests |
 | Add HD-restoration documentation | Done | `features/hd-deblur-super-resolution-pipeline.md` |

@@ -29,6 +29,7 @@ from .models import (
     EditMode,
     EnhancementLevel,
     EnhancementStatus,
+    EnhancementStyle,
     ImageEditVersion,
     ImageEnhancementResult,
 )
@@ -102,6 +103,7 @@ class EnhancementPipelineContext:
 
     source_image: np.ndarray
     requested_level: str
+    style: str = EnhancementStyle.NATURAL
     input_quality: dict = field(default_factory=dict)
     applied_level: str = ""
     policy: dict = field(default_factory=dict)
@@ -655,7 +657,7 @@ def _edge_aware_denoise(image, strength):
 
 def adaptive_denoise_stage(context):
     """Denoise measured output noise without inventing facial detail."""
-    enabled = bool(settings.ADAPTIVE_DENOISE_ENABLED)
+    enabled = bool(settings.ADAPTIVE_DENOISE_ENABLED) or context.style == EnhancementStyle.AI_MAX
     noise_score = context.post_exposure_noise["estimated_noise"]
     strength = 0
     reason = "not_required"
@@ -1014,9 +1016,21 @@ def colorization_stage(context):
     return context
 
 
-def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
-    """Return an enhanced BGR image, applied level, and auditable parameters."""
-    context = EnhancementPipelineContext(image, requested_level)
+def enhance_bgr(image, requested_level=EnhancementLevel.AUTO, style=EnhancementStyle.NATURAL):
+    """Return an enhanced BGR image, applied level, and auditable parameters.
+
+    ``style`` is a separate axis from ``requested_level`` (which controls
+    exposure-correction strength): "natural" is the default pipeline
+    unchanged, "dynamic" adds a bounded, guarded vivid contrast/saturation
+    boost as a final step, and "ai_max" forces HIGH level and enables
+    adaptive denoise for this call regardless of the platform default (it
+    does not bypass the separate PURESCALE_ENABLED/PUREVISION_ENABLED/
+    GFPGAN_ENABLED license-gated flags -- those stay under the platform
+    operator's control either way).
+    """
+    if style == EnhancementStyle.AI_MAX:
+        requested_level = EnhancementLevel.HIGH
+    context = EnhancementPipelineContext(image, requested_level, style=style)
     stages = (
         ("analyze_original", analyze_original_stage),
         ("exposure_enhancement", exposure_enhancement_stage),
@@ -1035,6 +1049,21 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
     for stage_name, stage_function in stages:
         with _timed_pipeline_stage(context, stage_name):
             stage_function(context)
+
+    dynamic_style = {"applied": False}
+    if context.style == EnhancementStyle.DYNAMIC:
+        with _timed_pipeline_stage(context, "dynamic_style"):
+            vivid, vivid_metadata = apply_gallery_adjustments(
+                context.current_image,
+                EditMode.MANUAL,
+                {"contrast": 18, "saturation": 24, "warmth": 4},
+            )
+            context.current_image = vivid
+            dynamic_style = {
+                "applied": True,
+                "policy": "bounded_vivid_preset",
+                "details": vivid_metadata,
+            }
 
     normalized_comparison = compare_image_quality(
         context.source_image,
@@ -1072,9 +1101,13 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO):
         algorithm = f"{algorithm}+purescale_safmn_2x"
     if context.colorization["applied"]:
         algorithm = f"{algorithm}+colorization_siggraph17"
+    if dynamic_style["applied"]:
+        algorithm = f"{algorithm}+dynamic_vivid_boost"
 
     parameters = {
         **context.policy,
+        "style": context.style,
+        "dynamic_style": dynamic_style,
         "mean_input_luminance": context.input_quality["mean_luminance"],
         "algorithm": algorithm,
         "pipeline_version": "staged_natural_enhancement_v2",
@@ -1196,7 +1229,10 @@ def _encode_output(image, preprocessing):
     return encoded.tobytes(), extension, output_format
 
 
-def create_enhancement_result(image, requested_level=EnhancementLevel.AUTO, batch_job=None):
+def create_enhancement_result(
+    image, requested_level=EnhancementLevel.AUTO, batch_job=None,
+    requested_style=EnhancementStyle.NATURAL,
+):
     if image.owner_id != (batch_job.owner_id if batch_job else image.owner_id):
         raise ValidationError("The enhancement owner does not match the image owner.")
     try:
@@ -1211,6 +1247,7 @@ def create_enhancement_result(image, requested_level=EnhancementLevel.AUTO, batc
         preprocessing_result=preprocessing,
         batch_job=batch_job,
         requested_level=requested_level,
+        requested_style=requested_style,
         status=EnhancementStatus.PENDING,
     )
 
@@ -1237,7 +1274,9 @@ def process_enhancement_result(result):
     stored_name = None
     try:
         source, source_strategy = _read_enhancement_source(result)
-        enhanced, applied_level, parameters = enhance_bgr(source, result.requested_level)
+        enhanced, applied_level, parameters = enhance_bgr(
+            source, result.requested_level, style=result.requested_style,
+        )
         parameters["source_resolution_strategy"] = source_strategy
         parameters["source_dimensions"] = [
             int(source.shape[1]), int(source.shape[0])
@@ -1301,6 +1340,7 @@ EDITOR_CONTROL_NAMES = (
     "shadows",
     "saturation",
     "highlights",
+    "warmth",
 )
 
 
@@ -1317,6 +1357,7 @@ def _auto_editor_adjustments(quality):
         "shadows": round(float(shadows), 2),
         "saturation": 0.0,
         "highlights": round(float(highlights), 2),
+        "warmth": 0.0,
     }
 
 
@@ -1343,6 +1384,8 @@ def _render_editor_controls(source, controls, strength=1.0):
     saturation_factor = 1.0 + (effective["saturation"] * 0.004)
     channel_a = 128.0 + ((channel_a - 128.0) * saturation_factor)
     channel_b = 128.0 + ((channel_b - 128.0) * saturation_factor)
+    # Warmth shifts the blue-yellow axis: positive is warmer (more yellow).
+    channel_b += effective["warmth"] * 0.30
     rendered_lab = cv2.merge(
         (
             np.clip(luminance, 0, 255).astype(np.uint8),
@@ -1353,8 +1396,15 @@ def _render_editor_controls(source, controls, strength=1.0):
     return cv2.cvtColor(rendered_lab, cv2.COLOR_LAB2BGR), effective
 
 
-def apply_gallery_adjustments(source, mode, requested_adjustments=None):
-    """Render one non-destructive Auto or Manual gallery edit."""
+def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline=None):
+    """Render one non-destructive Auto or Manual gallery edit.
+
+    ``baseline`` is the pre-AI-enhancement image (the preprocessed original).
+    When provided and ``intensity`` < 100, the final render is blended back
+    toward it -- this is the "how much AI enhancement" slider: 100 is the
+    full enhanced result (the default, matching prior behaviour), 0 is the
+    unenhanced original.
+    """
     if source is None or source.size == 0:
         raise ValidationError("The enhanced image cannot be edited safely.")
     if mode not in EditMode.values:
@@ -1363,12 +1413,14 @@ def apply_gallery_adjustments(source, mode, requested_adjustments=None):
     before = analyze_image_quality(source)
     if mode == EditMode.AUTO:
         controls = _auto_editor_adjustments(before)
+        intensity = 100.0
     else:
         requested_adjustments = requested_adjustments or {}
         controls = {
             name: float(requested_adjustments.get(name, 0.0))
             for name in EDITOR_CONTROL_NAMES
         }
+        intensity = float(np.clip(requested_adjustments.get("intensity", 100.0), 0.0, 100.0))
 
     strength = 1.0
     clipping_limit = max(
@@ -1396,6 +1448,20 @@ def apply_gallery_adjustments(source, mode, requested_adjustments=None):
                 reasons.append("contrast_loss_limited")
         strength *= 0.78
 
+    intensity_applied = False
+    if baseline is not None and intensity < 100.0:
+        baseline_reference = baseline
+        if baseline_reference.shape[:2] != rendered.shape[:2]:
+            baseline_reference = cv2.resize(
+                baseline_reference,
+                (rendered.shape[1], rendered.shape[0]),
+                interpolation=cv2.INTER_CUBIC,
+            )
+        blend = intensity / 100.0
+        rendered = cv2.addWeighted(rendered, blend, baseline_reference, 1.0 - blend, 0)
+        after = analyze_image_quality(rendered)
+        intensity_applied = True
+
     return rendered, {
         "mode": mode,
         "policy": "non_destructive_gallery_editor_v1",
@@ -1406,6 +1472,11 @@ def apply_gallery_adjustments(source, mode, requested_adjustments=None):
         "quality_before": before,
         "quality_after": after,
         "dimensions_preserved": source.shape[:2] == rendered.shape[:2],
+        "intensity": {
+            "requested": round(intensity, 2),
+            "applied": intensity_applied,
+            "policy": "blend_toward_preprocessed_original",
+        },
     }
 
 
@@ -1422,6 +1493,18 @@ def _read_edited_source(edit):
     if decoded is None:
         raise ValidationError("The enhanced image cannot be decoded safely.")
     return decoded
+
+
+def _read_preprocessed_baseline(preprocessing):
+    """Decode the pre-AI-enhancement image, for the intensity blend slider."""
+    if not preprocessing.processed_file:
+        return None
+    preprocessing.processed_file.open("rb")
+    try:
+        payload = preprocessing.processed_file.read()
+    finally:
+        preprocessing.processed_file.close()
+    return cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_COLOR)
 
 
 def process_image_edit(edit):
@@ -1447,12 +1530,14 @@ def process_image_edit(edit):
     stored_name = None
     try:
         source = _read_edited_source(edit)
+        preprocessing = edit.enhancement_result.preprocessing_result
+        baseline = _read_preprocessed_baseline(preprocessing)
         rendered, metadata = apply_gallery_adjustments(
             source,
             edit.mode,
             edit.requested_adjustments,
+            baseline=baseline,
         )
-        preprocessing = edit.enhancement_result.preprocessing_result
         payload, extension, output_format = _encode_output(rendered, preprocessing)
         source_stem = Path(edit.enhancement_result.output_name).stem
         output_name = f"{source_stem}_edit_{edit.pk}{extension}"

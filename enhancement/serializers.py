@@ -5,6 +5,7 @@ from .models import (
     EnhancementBatchJob,
     EnhancementLevel,
     EnhancementStatus,
+    EnhancementStyle,
     ImageEditVersion,
     ImageEnhancementResult,
 )
@@ -12,6 +13,7 @@ from .models import (
 
 class EnhancementRequestSerializer(serializers.Serializer):
     level = serializers.ChoiceField(choices=EnhancementLevel.choices, default=EnhancementLevel.AUTO)
+    style = serializers.ChoiceField(choices=EnhancementStyle.choices, default=EnhancementStyle.NATURAL)
 
 
 class GalleryAdjustmentSerializer(serializers.Serializer):
@@ -20,6 +22,8 @@ class GalleryAdjustmentSerializer(serializers.Serializer):
     shadows = serializers.FloatField(min_value=-100, max_value=100, default=0)
     saturation = serializers.FloatField(min_value=-100, max_value=100, default=0)
     highlights = serializers.FloatField(min_value=-100, max_value=100, default=0)
+    warmth = serializers.FloatField(min_value=-100, max_value=100, default=0)
+    intensity = serializers.FloatField(min_value=0, max_value=100, default=100)
 
 
 class GalleryEditRequestSerializer(serializers.Serializer):
@@ -64,7 +68,8 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
     class Meta:
         model = ImageEnhancementResult
         fields = [
-            "id", "image", "batch_job", "requested_level", "applied_level", "status",
+            "id", "image", "batch_job", "requested_level", "applied_level",
+            "requested_style", "status",
             "output_name", "output_format", "output_width", "output_height",
             "output_file_size", "processing_duration_ms", "task_id", "applied_parameters",
             "failure_reason", "original_download_url", "standardized_download_url",
@@ -205,7 +210,7 @@ class EnhancementBatchJobSerializer(serializers.ModelSerializer):
     class Meta:
         model = EnhancementBatchJob
         fields = [
-            "id", "source_batch", "requested_level", "status", "total_images",
+            "id", "source_batch", "requested_level", "requested_style", "status", "total_images",
             "processed_images", "successful_images", "failed_images",
             "progress_percentage", "failure_reason", "started_at", "finished_at",
             "created_at", "updated_at", "results",

@@ -27,6 +27,12 @@ class EnhancementLevel(models.TextChoices):
     AUTO = "auto", "Automatic"
 
 
+class EnhancementStyle(models.TextChoices):
+    NATURAL = "natural", "Natural"
+    DYNAMIC = "dynamic", "Dynamic"
+    AI_MAX = "ai_max", "AI Enhance"
+
+
 class EnhancementStatus(models.TextChoices):
     PENDING = "pending", "Pending"
     QUEUED = "queued", "Queued"
@@ -52,6 +58,11 @@ class EnhancementBatchJob(models.Model):
         max_length=8,
         choices=EnhancementLevel.choices,
         default=EnhancementLevel.AUTO,
+    )
+    requested_style = models.CharField(
+        max_length=8,
+        choices=EnhancementStyle.choices,
+        default=EnhancementStyle.NATURAL,
     )
     status = models.CharField(
         max_length=12,
@@ -115,6 +126,11 @@ class ImageEnhancementResult(models.Model):
         max_length=8,
         choices=EnhancementLevel.choices,
         blank=True,
+    )
+    requested_style = models.CharField(
+        max_length=8,
+        choices=EnhancementStyle.choices,
+        default=EnhancementStyle.NATURAL,
     )
     status = models.CharField(
         max_length=12,

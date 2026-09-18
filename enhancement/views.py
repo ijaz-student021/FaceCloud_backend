@@ -50,7 +50,10 @@ class ImageEnhanceView(APIView):
         payload = EnhancementRequestSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         try:
-            result = create_enhancement_result(image, payload.validated_data["level"])
+            result = create_enhancement_result(
+                image, payload.validated_data["level"],
+                requested_style=payload.validated_data["style"],
+            )
         except IntegrityError as error:
             raise ValidationError("This image already has an active enhancement operation.") from error
         task_id = uuid.uuid4().hex
@@ -96,12 +99,16 @@ class BatchEnhanceView(APIView):
             owner=request.user,
             source_batch=batch,
             requested_level=payload.validated_data["level"],
+            requested_style=payload.validated_data["style"],
             status=EnhancementStatus.PENDING,
             total_images=len(images),
         )
         try:
             for image in images:
-                create_enhancement_result(image, job.requested_level, batch_job=job)
+                create_enhancement_result(
+                    image, job.requested_level, batch_job=job,
+                    requested_style=job.requested_style,
+                )
         except Exception:
             job.delete()
             raise ValidationError("One or more images already have an active enhancement operation.")
@@ -261,18 +268,33 @@ class GalleryEditorConfigurationView(APIView):
                 "non_destructive": True,
                 "preview_strategy": "client_side_preview_then_server_render",
                 "controls": {
-                    name: {
-                        "minimum": -100,
+                    **{
+                        name: {
+                            "minimum": -100,
+                            "maximum": 100,
+                            "step": 1,
+                            "default": 0,
+                            "recommended_minimum": -50,
+                            "recommended_maximum": 50,
+                        }
+                        for name in (
+                            "brightness", "contrast", "shadows", "saturation",
+                            "highlights", "warmth",
+                        )
+                    },
+                    "intensity": {
+                        "minimum": 0,
                         "maximum": 100,
                         "step": 1,
-                        "default": 0,
-                        "recommended_minimum": -50,
-                        "recommended_maximum": 50,
-                    }
-                    for name in (
-                        "brightness", "contrast", "shadows", "saturation",
-                        "highlights",
-                    )
+                        "default": 100,
+                        "recommended_minimum": 0,
+                        "recommended_maximum": 100,
+                        "description": (
+                            "How much of the AI enhancement to apply: 100 is "
+                            "the full enhanced result, 0 is the original "
+                            "unenhanced photo. Blends between the two."
+                        ),
+                    },
                 },
             }
         )
