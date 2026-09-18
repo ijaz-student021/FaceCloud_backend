@@ -1184,14 +1184,6 @@ def create_enhancement_result(image, requested_level=EnhancementLevel.AUTO, batc
         raise ValidationError("The image must finish preprocessing before enhancement.") from error
     if preprocessing.status != "completed" or not preprocessing.processed_file:
         raise ValidationError("The image must finish preprocessing before enhancement.")
-    try:
-        quality = image.quality_decision
-    except ImageQualityDecision.DoesNotExist:
-        quality = None
-    if quality and quality.status == "completed" and quality.decision != "accepted":
-        raise ValidationError(
-            "This image must be accepted by the quality workflow before enhancement."
-        )
     return ImageEnhancementResult.objects.create(
         owner=image.owner,
         image=image,
@@ -1229,6 +1221,21 @@ def process_enhancement_result(result):
         parameters["source_dimensions"] = [
             int(source.shape[1]), int(source.shape[0])
         ]
+        try:
+            quality = result.image.quality_decision
+        except ImageQualityDecision.DoesNotExist:
+            quality = None
+        quality_gate = {"decision": quality.decision if quality else None, "bypassed": False}
+        if quality and quality.status == "completed" and quality.decision != "accepted":
+            quality_gate["bypassed"] = True
+            quality_gate["defects"] = quality.defects
+            quality_gate["rejection_reasons"] = quality.rejection_reasons
+            parameters["warnings"].append(
+                "The source image failed quality checks "
+                f"({', '.join(quality.rejection_reasons or quality.defects or ['unspecified'])}); "
+                "enhancement was still attempted and may not fully correct the source defects."
+            )
+        parameters["quality_gate"] = quality_gate
         payload, extension, output_format = _encode_output(enhanced, result.preprocessing_result)
         source_stem = Path(result.preprocessing_result.output_name or result.image.original_name).stem
         output_name = f"{source_stem}_enhanced_{applied_level}{extension}"

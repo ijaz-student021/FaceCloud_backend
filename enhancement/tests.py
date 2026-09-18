@@ -626,6 +626,30 @@ class EnhancementProcessingAndAPITests(TestCase):
         self.assertNotEqual(result.enhanced_file.name, self.preprocessing.processed_file.name)
         self.assertGreater(result.output_file_size, 0)
 
+    def test_quality_rejected_image_is_still_enhanced_with_a_warning(self):
+        from quality_control.models import ImageQualityDecision
+
+        ImageQualityDecision.objects.create(
+            owner=self.user, image=self.image, preprocessing_result=self.preprocessing,
+            status=ImageQualityDecision.Status.COMPLETED,
+            decision=ImageQualityDecision.Decision.REJECTED,
+            defects=["severe_low_light"],
+            rejection_reasons=["severe_underexposure"],
+        )
+        result = ImageEnhancementResult.objects.create(
+            owner=self.user, image=self.image, preprocessing_result=self.preprocessing,
+            requested_level=EnhancementLevel.AUTO,
+        )
+        result = process_enhancement_result(result)
+
+        self.assertEqual(result.status, "completed")
+        self.assertTrue(result.enhanced_file.name)
+        self.assertTrue(result.applied_parameters["quality_gate"]["bypassed"])
+        self.assertEqual(result.applied_parameters["quality_gate"]["decision"], "rejected")
+        self.assertTrue(
+            any("quality checks" in warning for warning in result.applied_parameters["warnings"])
+        )
+
     def test_enhancement_uses_original_pixel_grid_instead_of_small_proxy(self):
         success, full = cv2.imencode(
             ".jpg", np.full((96, 160, 3), 90, dtype=np.uint8)
