@@ -100,6 +100,11 @@ def generate_processing_report_task(self, report_id):
     if report is not None:
         from notifications.events import notify_report_result
         notify_report_result(report)
+        from activity.services import record_activity_event
+        record_activity_event(
+            report.owner, "download", f"report_{report.status}",
+            object_type="ProcessingReport", object_id=report.pk,
+        )
     return {
         "report_id": report_id,
         "status": report.status if report is not None else "deleted",

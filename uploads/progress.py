@@ -135,6 +135,12 @@ def recompute_batch_progress(batch_id):
     if processing_status in {"completed", "partial", "failed", "cancelled"}:
         from notifications.events import notify_batch_completed
         notify_batch_completed(batch_id, counts)
+        from activity.services import record_activity_event
+        record_activity_event(
+            batch.owner, "processing", f"batch_{processing_status}",
+            object_type="UploadBatch", object_id=batch_id,
+            details={"counts": counts},
+        )
     return {"total": total, "counts": counts, "percentage": percentage, "stage": stage, "status": processing_status}
 
 

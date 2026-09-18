@@ -120,6 +120,11 @@ def generate_identity_group_export_task(self, export_id):
     if export is not None:
         from notifications.events import notify_identity_export_result
         notify_identity_export_result(export)
+        from activity.services import record_activity_event
+        record_activity_event(
+            export.owner, "download", f"identity_export_{export.status}",
+            object_type="IdentityGroupExport", object_id=export.pk,
+        )
     return {"export_id": export_id, "status": export.status if export else "deleted"}
 
 

@@ -96,6 +96,11 @@ def generate_download_package_task(self, package_id):
     if package is not None:
         from notifications.events import notify_download_result
         notify_download_result(package)
+        from activity.services import record_activity_event
+        record_activity_event(
+            package.owner, "download", f"package_{package.status}",
+            object_type="DownloadPackage", object_id=package.pk,
+        )
     return {
         "package_id": package_id,
         "status": package.status if package is not None else "deleted",

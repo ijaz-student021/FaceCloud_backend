@@ -74,6 +74,14 @@ def create_image_batch(owner, upload_type, files):
     transaction.on_commit(
         lambda batch_id=batch.pk: notify_upload_received(batch_id)
     )
+    from activity.services import record_activity_event
+    transaction.on_commit(
+        lambda: record_activity_event(
+            owner, "upload", "upload_received",
+            object_type="UploadBatch", object_id=batch.pk,
+            details={"upload_type": upload_type},
+        )
+    )
     for uploaded_file in files:
         try:
             saved_image = _save_valid_image(batch, owner, uploaded_file)
@@ -119,6 +127,14 @@ def create_zip_batch(owner, uploaded_zip):
 
     transaction.on_commit(
         lambda batch_id=batch.pk: notify_upload_received(batch_id)
+    )
+    from activity.services import record_activity_event
+    transaction.on_commit(
+        lambda: record_activity_event(
+            owner, "upload", "upload_received",
+            object_type="UploadBatch", object_id=batch.pk,
+            details={"upload_type": "zip"},
+        )
     )
     uploaded_zip.seek(0)
     with zipfile.ZipFile(uploaded_zip) as archive:

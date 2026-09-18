@@ -7,7 +7,14 @@ from .services import _confirmed_states, _refresh_group
 
 
 def _record(owner, actor, action, *, group=None, membership=None, before=None, after=None, reason=""):
-    return IdentityChange.objects.create(owner=owner, actor=actor, action=action, group=group, membership=membership, before=before or {}, after=after or {}, reason=reason)
+    change = IdentityChange.objects.create(owner=owner, actor=actor, action=action, group=group, membership=membership, before=before or {}, after=after or {}, reason=reason)
+    from activity.services import record_activity_event
+    record_activity_event(
+        owner, "group", f"group_{action}",
+        object_type="IdentityGroup", object_id=group.pk if group else "",
+        details={"actor_id": actor.pk if actor else None, "reason": reason},
+    )
+    return change
 
 
 @transaction.atomic

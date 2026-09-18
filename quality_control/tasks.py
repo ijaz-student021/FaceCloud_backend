@@ -32,5 +32,10 @@ def analyze_image_quality_task(self, decision_id):
     from notifications.events import notify_quality_result
     from uploads.progress import sync_image_progress
     notify_quality_result(result)
+    from activity.services import record_activity_event
+    record_activity_event(
+        result.owner, "processing", f"quality_{result.decision or result.status}",
+        object_type="ImageUpload", object_id=result.image_id,
+    )
     sync_image_progress(result.image_id)
     return {"decision_id": decision_id, "status": result.status, "decision": result.decision}

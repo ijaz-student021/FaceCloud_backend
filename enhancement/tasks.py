@@ -60,11 +60,21 @@ def process_enhancement_image(self, result_id):
         from notifications.events import notify_enhancement_result
         from uploads.progress import sync_image_progress
         notify_enhancement_result(result)
+        from activity.services import record_activity_event
+        record_activity_event(
+            result.owner, "processing", f"enhancement_{result.status}",
+            object_type="ImageEnhancementResult", object_id=result.pk,
+        )
         sync_image_progress(result.image_id)
         return {"result_id": result_id, "status": result.status}
     from notifications.events import notify_enhancement_result
     from uploads.progress import sync_image_progress
     notify_enhancement_result(result)
+    from activity.services import record_activity_event
+    record_activity_event(
+        result.owner, "processing", f"enhancement_{result.status}",
+        object_type="ImageEnhancementResult", object_id=result.pk,
+    )
     sync_image_progress(result.image_id)
     return {"result_id": result_id, "status": result.status}
 
@@ -115,6 +125,11 @@ def process_enhancement_batch(self, job_id):
         from notifications.events import notify_enhancement_result
         from uploads.progress import sync_image_progress
         notify_enhancement_result(result)
+        from activity.services import record_activity_event
+        record_activity_event(
+            result.owner, "processing", f"enhancement_{result.status}",
+            object_type="ImageEnhancementResult", object_id=result.pk,
+        )
         sync_image_progress(result.image_id)
         successful = job.results.filter(status=EnhancementStatus.COMPLETED).count()
         failed = job.results.filter(status=EnhancementStatus.FAILED).count()

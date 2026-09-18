@@ -50,6 +50,7 @@ Status definitions:
 - [Feature 17: Duplicate image and face-region detection](features/17-duplicate-image-and-face-detection.md)
 - [Feature 18: Face recognition and identity-grouping implementation plan](features/18-face-recognition-and-identity-grouping.md)
 - [Feature 19: Identity group management](features/19-identity-group-management.md)
+- [Feature 28: Complete user activity timeline](features/28-user-activity-timeline.md)
 - [Feature 42: PostgreSQL data platform](features/42-postgresql-data-platform.md)
 - [Features 20–21: Background processing and live batch progress](features/20-21-live-batch-progress.md)
 - [Feature 22: Processing reports](features/22-processing-reports.md)
@@ -153,7 +154,7 @@ Stores files separately from database metadata while enforcing user ownership.
 - Original filename retained only as metadata
 - Authenticated listing and downloads
 - Owner-only details and deletion
-- Physical cleanup after image, batch, admin, cascade, or account deletion
+- Physical cleanup after image, batch, admin, cascade, or account deletions
 - Django storage abstraction for future private S3 storage
 
 ### Feature 08: Upload batch management — Complete
@@ -535,17 +536,22 @@ member management and the operational review workflow remain.
 - Duplicate-group merging
 - Immutable membership and moderator audit history
 
-### Feature 28: Complete user activity timeline — Partial
+### Feature 28: Complete user activity timeline — Complete backend
 
-Authentication events exist; processing and content events will extend the timeline.
+Merges the existing authentication audit trail with a new cross-app activity
+feed into one owner-scoped, paginated timeline. See
+[Feature 28: Complete user activity timeline](features/28-user-activity-timeline.md).
 
-- Upload and batch events
-- Processing results
-- Moderator decisions
-- Downloads and exports
-- Group changes
-- Share-link activity
-- Administrative actions
+- Upload and batch events — implemented
+- Processing results (quality, enhancement, batch completion) — implemented
+- Downloads and exports (reports, packages, identity-group exports) — implemented
+- Group changes (rename, merge, move, remove) — implemented
+- Moderator decisions — reserved category; no events until Feature 27 exists
+- Share-link activity — reserved category; no events until Feature 26 exists
+- Administrative actions — covered today via the existing `AuthEvent`
+  role-change/suspension events merged into the same timeline
+
+Frontend integration remains: `GET /api/user/activity/`.
 
 ### Feature 29: In-app and email notifications — Complete backend baseline
 

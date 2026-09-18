@@ -65,6 +65,7 @@ INSTALLED_APPS = [
     "downloads",
     "notifications",
     "operations",
+    "activity",
 ]
 
 MIDDLEWARE = [

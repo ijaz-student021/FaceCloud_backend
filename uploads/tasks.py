@@ -42,6 +42,11 @@ def preprocess_batch_task(self, batch_id):
 
     from notifications.events import notify_processing_started
     notify_processing_started(batch_id)
+    from activity.services import record_activity_event
+    record_activity_event(
+        batch.owner, "processing", "processing_started",
+        object_type="UploadBatch", object_id=batch_id,
+    )
 
     image_ids = list(
         ImageUpload.objects.filter(batch_id=batch_id, status="uploaded")

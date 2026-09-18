@@ -11,12 +11,10 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from .models import AuthEvent
 from .dashboard import build_user_dashboard
 from .permissions import IsAdminRole
 from .serializers import (
     AdminUserSerializer,
-    AuthEventSerializer,
     ChangePasswordSerializer,
     DeleteAccountSerializer,
     FaceCloudTokenObtainPairSerializer,
@@ -209,28 +207,6 @@ class DeleteAccountView(APIView):
         user.delete()
         event.refresh_from_db()
         return Response(status=status.HTTP_204_NO_CONTENT)
-
-
-class AuthEventListView(generics.ListAPIView):
-    serializer_class = AuthEventSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get_queryset(self):
-        return AuthEvent.objects.filter(user=self.request.user)
-
-    def list(self, request, *args, **kwargs):
-        events = self.get_queryset()[:100]
-        data = [
-            {
-                "event": item.event,
-                "identifier": item.identifier,
-                "ip_address": item.ip_address,
-                "details": item.details,
-                "created_at": item.created_at,
-            }
-            for item in events
-        ]
-        return Response(data)
 
 
 class UserDashboardView(APIView):
