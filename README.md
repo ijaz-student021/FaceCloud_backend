@@ -48,6 +48,21 @@ python manage.py runserver
 
 Update `.env` with local PostgreSQL credentials before running migrations. Never commit `.env`, local databases, media, backups, or the virtual environment.
 
+## Background worker
+
+Enhancement, identity analysis, quality checks, reports, downloads, and
+export jobs run as Celery tasks and do nothing until a worker is running.
+Start Redis once, then the worker in its own terminal:
+
+```powershell
+.\scripts\run_worker.ps1
+```
+
+This starts (or reuses) the local `facecloud-redis` Docker container and
+runs the worker in the foreground. See
+[`docs/MANUAL_TESTING_COMMANDS.md`](docs/MANUAL_TESTING_COMMANDS.md) for the
+full manual end-to-end verification flow.
+
 ## Verification
 
 ```powershell
