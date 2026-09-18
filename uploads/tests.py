@@ -530,6 +530,21 @@ class ImageUploadTests(APITestCase):
         self.assertNotEqual(result.processed_file.path, old_path)
         self.assertFalse(os.path.exists(old_path))
 
+    @override_settings(IDENTITY_AUTO_ANALYZE=True)
+    @patch("identities.services.enqueue_identity_analysis")
+    def test_identity_ineligibility_does_not_roll_back_preprocessing(self, enqueue_identity):
+        """An optional auto-triggered identity analysis being ineligible
+        (e.g. face validation rejected the image) must not discard the
+        preprocessing result that already succeeded."""
+        enqueue_identity.side_effect = ValidationError("The image is not eligible for identity analysis.")
+        image = self.upload_image(make_image())
+        response = self.preprocess(image, output_format="jpeg")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        result = ImagePreprocessingResult.objects.get(image=image)
+        self.assertEqual(result.status, "completed")
+        self.assertTrue(result.processed_file)
+        self.assertTrue(result.processed_file.storage.exists(result.processed_file.name))
+
     def test_preprocessing_status_download_and_cross_user_access(self):
         image = self.upload_image(make_image())
         self.preprocess(image, output_format="png", output_name="download")

@@ -243,7 +243,10 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
             enqueue_duplicate_analysis(image_upload)
         if settings.IDENTITY_AUTO_ANALYZE and not hasattr(image_upload, "identity_analysis"):
             from identities.services import enqueue_identity_analysis
-            enqueue_identity_analysis(image_upload)
+            try:
+                enqueue_identity_analysis(image_upload)
+            except ValidationError:
+                pass
         if not hasattr(image_upload, "quality_decision"):
             from quality_control.services import enqueue_quality_analysis
             enqueue_quality_analysis(image_upload)
@@ -311,7 +314,16 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
             enqueue_duplicate_analysis(image_upload, force=force)
         if settings.IDENTITY_AUTO_ANALYZE:
             from identities.services import enqueue_identity_analysis
-            enqueue_identity_analysis(image_upload, force=force)
+            try:
+                enqueue_identity_analysis(image_upload, force=force)
+            except ValidationError:
+                # Not being eligible yet (e.g. face validation rejected the
+                # image) is an expected outcome for this best-effort auto
+                # trigger, not a preprocessing failure. Letting it propagate
+                # would roll back this whole @transaction.atomic function,
+                # discarding the preprocessing result and face-validation
+                # result that had already succeeded.
+                pass
         from quality_control.services import enqueue_quality_analysis
         enqueue_quality_analysis(image_upload)
         if old_file_name and old_file_name != result.processed_file.name:
