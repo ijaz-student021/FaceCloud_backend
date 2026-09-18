@@ -13,7 +13,12 @@
 | Task | Status | Evidence |
 |---|---|---|
 | Feature 18 recognition baseline | Done | YuNet/SFace adapters, models, services and tests |
+| Feature 18 deterministic grouping unit tests | Done (2026-09-18) | `ChooseGroupDecisionTests`, `RefreshGroupCentroidTests`, `identities/tests.py` |
 | Feature 19 group management backend | Done | Identity-group and membership APIs/tests |
+| Feature 19 endpoint acceptance tests | Done (2026-09-18) | `IdentityGroupManagementApiTests`, 14 tests, `identities/tests.py` |
+| Feature 20 bounded Celery auto-retry | Done (2026-09-18) | `autoretry_for` on transient DB errors, all 8 task files |
+| Feature 20 per-face cancellation | Done (2026-09-18) | `identities/services.py:76,101` + test |
+| Feature 44 OpenAPI schema mounted | Done (2026-09-18) | `/api/schema/`, `/api/docs/`, `/api/redoc/` |
 | Verify NAFNet and Real-ESRGAN files | Done | Restricted loads, tensor validation and hashes |
 | Implement optional HD restoration adapter | Done | Checksums, tiling, fallbacks and enhancement tests |
 | Add HD-restoration documentation | Done | `features/hd-deblur-super-resolution-pipeline.md` |
@@ -22,7 +27,9 @@
 
 ### T-001 — Complete Feature 18 production calibration
 
-- **Status:** Next
+- **Status:** Blocked — needs a consented evaluation photo set (deterministic
+  decision-logic unit tests are done; this task covers the real-photo
+  calibration step specifically)
 - Build a consented, tenant-safe evaluation dataset.
 - Measure false matches, missed matches, ambiguity, and demographic performance.
 - Select production SFace thresholds and document the evaluation.
@@ -30,7 +37,8 @@
 
 ### T-002 — Complete Feature 19 frontend integration
 
-- **Status:** Next
+- **Status:** Blocked — no frontend repository present in this workspace.
+  Backend/endpoint work for this task is done (see T-034 register note).
 - Connect the Person Folders page to identity-group APIs.
 - Add rename, merge, split, confirm, reject, remove, and undo interactions.
 - Display confidence and review states without exposing raw embeddings.
@@ -53,7 +61,9 @@
 
 ### T-005 — Finish background recognition jobs
 
-- **Status:** Next
+- **Status:** In progress — bounded retry policy (transient DB errors) and
+  per-face cancellation done 2026-09-18. Resource/concurrency controls and
+  idempotency tests still open.
 - Add retry policy, cancellation, resource controls, and idempotency tests.
 - Ensure progress accurately distinguishes enhancement, validation, and identity work.
 
@@ -105,9 +115,9 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 |---:|---|---|---|
 | 10–13 | Enhancement controls, comparison and frontend wiring | Next | T-010 |
 | 14–17 | Quality, face-validation and duplicate decision UI | Next | T-011 |
-| 18 | SFace threshold calibration and production enablement | Next | T-001 |
-| 19 | Person Folders frontend and correction workflow | Next | T-002 |
-| 20 | Recognition retries, cancellation, concurrency and monitoring | Next | T-005 |
+| 18 | SFace threshold calibration and production enablement | Blocked (dataset) | T-001 |
+| 19 | Person Folders frontend and correction workflow | Blocked (no frontend repo) | T-002 |
+| 20 | Recognition concurrency and dead-job/queue monitoring | Next (retries/cancellation done) | T-005 |
 | 21 | Batch-progress frontend integration | Next | T-012 |
 | 22 | JSON/CSV/PDF report frontend integration | Next | T-013 |
 | 23 | Image and batch package frontend integration | Next | T-014 |
@@ -126,7 +136,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 36–40 | Complete live-camera release | Backlog | T-026–T-030 |
 | 41 | Consent, retention, encryption, export and erasure | Next | T-006 |
 | 43 | Private cloud/object storage | Backlog | T-031 |
-| 44 | OpenAPI and developer documentation | Backlog | T-032 |
+| 44 | Annotate ~30 raw APIViews with serializer_class for full schema coverage | Next (schema mounted 2026-09-18) | T-032 |
 | 45 | Load, performance, camera and integration QA | Continuous | T-033 |
 | 46 | Organization and tenant management | Backlog | T-008 |
 | 47 | Gallery-editor frontend integration | Next | T-034 |

@@ -2,11 +2,14 @@
 
 ## Headline finding
 
-**Features 18 and 19 are real backend implementations in the current repository,
-but neither meets the strict “fully complete” evidence standard: Feature 18 lacks
-same-person/different-person end-to-end grouping tests and calibrated production
-threshold evidence, while Feature 19 lacks endpoint-level tests for each management
-operation.**
+**Updated 2026-09-18.** Feature 19 now has endpoint-level tests for every
+management operation and no longer fails the "fully complete" evidence
+standard on that basis; its remaining gap is frontend integration, which is
+blocked by the absence of a frontend repository in this workspace, not by
+missing backend evidence. Feature 18 now has deterministic unit tests for its
+grouping decision logic, but still lacks same-person/different-person
+end-to-end grouping tests against real photos and a calibrated production
+threshold — that work remains blocked on a consented evaluation photo set.
 
 ## 1. Audit rules and verification result
 
@@ -14,13 +17,17 @@ This report uses executable source, migrations, URL routes and named automated t
 as evidence. Settings, comments and planning documents are not accepted alone as
 proof. Missing evidence is written as **NOT FOUND**.
 
-Verification executed on 17 September 2026:
+Verification executed on 17 September 2026, re-verified 18 September 2026:
 
 ```powershell
 .\venv\Scripts\python.exe manage.py test identities validation enhancement.test_hd_restoration --keepdb --verbosity 1
 ```
 
-Result: **25 tests passed** in 40.253 seconds. Django checks reported no issues.
+Result: **25 tests passed** on 17 September; **53 tests passed** in 87.427 seconds
+on 18 September after adding Feature 19 endpoint tests and Feature 18
+deterministic `_choose_group`/`_refresh_group` unit tests. Django checks
+reported no issues. Full project suite (`manage.py test`, all apps):
+**209 tests passed**, up from 187 before the 18 September changes.
 
 ## 2. Priority 1 — Feature 18
 
@@ -89,12 +96,37 @@ Owner isolation evidence:
   `test_group_list_is_owner_scoped_and_hides_private_fields`
 - `identities/tests.py:104` — `test_other_owner_group_identifier_returns_404`
 
-### Required same-person/different-person grouping test
+### Deterministic `_choose_group` decision-boundary tests (added 2026-09-18)
 
-**NOT FOUND.**
+**FOUND.** `ChooseGroupDecisionTests`, `identities/tests.py:283-339`, using
+synthetic unit-circle vectors with known exact cosine similarities (no dataset
+required):
 
-No test processes two different people and asserts separate groups, then processes
-the same person twice and asserts one shared group.
+- `test_new_decision_when_no_candidate_groups_exist` and
+  `test_new_decision_when_best_candidate_is_below_new_group_threshold`
+- `test_match_decision_for_a_clearly_closest_candidate`
+- `test_review_decision_when_two_candidates_are_close_and_above_threshold`
+  (ambiguity boundary)
+- `test_candidates_are_scoped_to_owner`
+
+`RefreshGroupCentroidTests`, `identities/tests.py:342-370`, covers
+`_refresh_group`'s normalized-centroid computation and the empty-group
+(no confirmed members) clearing behavior.
+
+This satisfies the 12-Day Completion Plan's Day 2 deliverable (deterministic
+grouping tests for match/new-group/ambiguity/centroid-refresh/empty-group). It
+does **not** satisfy Day 3 — see below.
+
+### Required same-person/different-person grouping test (real photos)
+
+**NOT FOUND — still blocked.**
+
+No test processes two different real people through the full YuNet → SFace →
+grouping pipeline and asserts separate groups, then processes the same person
+twice and asserts one shared group. This is Day 3 of the 12-Day Completion
+Plan and requires a small consented evaluation photo set, which does not yet
+exist in this repository. The deterministic tests above cover the decision
+*logic*; they do not calibrate production thresholds against real embeddings.
 
 Related but insufficient evidence:
 
@@ -106,10 +138,12 @@ Related but insufficient evidence:
 
 ### Feature 18 verdict
 
-**Backend implemented; not fully acceptance-verified.** The claim that no group
-model, embedding extraction or similarity logic exists is contradicted by current
-executable code. Production completion still requires real same/different-person
-tests and calibrated thresholds.
+**Backend implemented and decision-logic unit-tested; real-photo acceptance
+still blocked on a consented dataset.** The claim that no group model,
+embedding extraction, similarity logic, or deterministic test coverage exists
+is contradicted by current executable code. Production completion still
+requires real same/different-person tests and calibrated thresholds once a
+consented photo set is available.
 
 ## 3. Priority 1 — Feature 19
 
@@ -117,22 +151,26 @@ Routes are mounted under `/api/identities/` by `config/urls.py:29`.
 
 | Operation | Route | View | Service | Automated evidence |
 |---|---|---|---|---|
-| Rename | `identities/urls.py:15` | `IdentityGroupRenameView`, `identities/views.py:77` | `rename_group`, `identities/management.py:14` | Service-level coverage in `test_rename_move_profile_remove_and_delete_are_audited`, `identities/tests.py:128`; endpoint test **NOT FOUND** |
-| Merge | `identities/urls.py:16` | `IdentityGroupMergeView`, `identities/views.py:87` | `merge_groups`, `identities/management.py:29` | `test_merge_moves_members_and_marks_source`, `identities/tests.py:138`; endpoint test **NOT FOUND** |
-| Move | `identities/urls.py:21` | `IdentityMembershipMoveView`, `identities/views.py:99` | `move_membership`, `identities/management.py:55` | Service coverage at `identities/tests.py:128`; endpoint test **NOT FOUND** |
-| Remove | `identities/urls.py:22` | `IdentityMembershipRemoveView`, `identities/views.py:110` | `remove_membership`, `identities/management.py:80` | Service coverage at `identities/tests.py:128`; endpoint test **NOT FOUND** |
-| Set profile | `identities/urls.py:17` | `IdentityGroupProfileView`, `identities/views.py:120` | `set_profile_membership`, `identities/management.py:100` | Service coverage at `identities/tests.py:128`; endpoint test **NOT FOUND** |
-| Delete | `identities/urls.py:18` | `IdentityGroupDeleteView`, `identities/views.py:131` | `delete_empty_group`, `identities/management.py:111` | `identities/tests.py:128` and `test_nonempty_group_cannot_be_deleted`, line 147; endpoint test **NOT FOUND** |
+| Rename | `identities/urls.py:15` | `IdentityGroupRenameView`, `identities/views.py:77` | `rename_group`, `identities/management.py:14` | Service: `test_rename_move_profile_remove_and_delete_are_audited`, `identities/tests.py:128`. Endpoint (added 2026-09-18): `test_rename_endpoint_updates_display_name_and_audits`, `test_rename_endpoint_rejects_other_owner`, `test_rename_endpoint_rejects_invalid_payload`, `identities/tests.py:189-205` |
+| Merge | `identities/urls.py:16` | `IdentityGroupMergeView`, `identities/views.py:87` | `merge_groups`, `identities/management.py:29` | Service: `test_merge_moves_members_and_marks_source`, `identities/tests.py:138`. Endpoint: `test_merge_endpoint_moves_membership_into_target`, `test_merge_endpoint_rejects_other_owner_target`, `identities/tests.py:207-218` |
+| Move | `identities/urls.py:21` | `IdentityMembershipMoveView`, `identities/views.py:99` | `move_membership`, `identities/management.py:55` | Service coverage at `identities/tests.py:128`. Endpoint: `test_move_endpoint_moves_membership_to_target_group`, `test_move_endpoint_rejects_other_owner`, `identities/tests.py:220-231` |
+| Remove | `identities/urls.py:22` | `IdentityMembershipRemoveView`, `identities/views.py:110` | `remove_membership`, `identities/management.py:80` | Service coverage at `identities/tests.py:128`. Endpoint: `test_remove_endpoint_marks_membership_removed`, `test_remove_endpoint_rejects_other_owner`, `identities/tests.py:233-244` |
+| Set profile | `identities/urls.py:17` | `IdentityGroupProfileView`, `identities/views.py:120` | `set_profile_membership`, `identities/management.py:100` | Service coverage at `identities/tests.py:128`. Endpoint: `test_set_profile_endpoint_updates_group_profile`, `test_set_profile_endpoint_rejects_other_owner`, `identities/tests.py:246-257` |
+| Delete | `identities/urls.py:18` | `IdentityGroupDeleteView`, `identities/views.py:131` | `delete_empty_group`, `identities/management.py:111` | Service: `identities/tests.py:128` and `test_nonempty_group_cannot_be_deleted`, line 147. Endpoint: `test_delete_endpoint_removes_empty_group`, `test_delete_endpoint_rejects_nonempty_group`, `test_delete_endpoint_rejects_other_owner`, `identities/tests.py:259-275` |
 
 Cross-owner service protection is tested by
 `test_cross_owner_management_is_rejected` at `identities/tests.py:151`.
-Write-endpoint owner-scope tests for every operation are **NOT FOUND**.
+Write-endpoint owner-scope tests for every operation were added 2026-09-18 in
+`IdentityGroupManagementApiTests`, `identities/tests.py:160-276` (14 tests: one
+success case, one cross-owner-404 case, plus invalid-payload and
+non-empty-delete edge cases).
 
 ### Feature 19 verdict
 
-**Routes and domain services implemented; endpoint acceptance suite incomplete.**
-It should not be marked fully complete until authenticated API tests cover every
-operation, invalid input, cross-owner access and audit output.
+**Routes, domain services and endpoint acceptance tests are implemented.** The
+remaining gap for full completion is the Person Folders frontend integration —
+no frontend repository is present in this workspace, so that work is blocked
+externally, not by missing backend evidence.
 
 ## 4. Priority 2 — Feature 15 face detection
 
@@ -206,17 +244,29 @@ guarded and disabled; the visual-failure diagnosis is operational evidence.
   - `uploads/tests.py:583` —
     `test_batch_reports_queue_unavailable_without_losing_originals`
 
+### Found (added 2026-09-18)
+
+- Bounded auto-retry for transient DB connection failures (`OperationalError`,
+  `InterfaceError` only — validation/business errors are excluded and still fail
+  fast): `uploads/tasks.py:18`, `enhancement/tasks.py:23,76,150`,
+  `identities/tasks.py:27,107,128`, `quality_control/tasks.py:16`,
+  `duplicates/tasks.py:16`, `downloads/tasks.py:83,107`, `reports/tasks.py:87`,
+  `notifications/tasks.py:111`. `notifications.send_email` already had a
+  hand-rolled bounded retry (`notifications/tasks.py:75-90`) and was left as-is.
+- Cancellation checked between every face in identity inference, not only once
+  before the loop starts: `identities/services.py:76` (`_batch_cancellation_requested`),
+  called at `identities/services.py:101`.
+- Test: `identities/tests.py` —
+  `test_cancellation_requested_between_faces_stops_before_the_next_embed_call`.
+
 ### Not found
 
-- Automatic bounded Celery retries on preprocessing, enhancement and identity
-  tasks: **NOT FOUND** (`autoretry_for`/`max_retries` absent).
-- Cancellation checks between every face in identity inference: **NOT FOUND**.
 - Dedicated CPU/GPU concurrency enforcement: **NOT FOUND**.
 - Queue monitoring and dead-job recovery: **NOT FOUND**.
 - End-to-end stale identity-task overwrite test: **NOT FOUND**.
 
-Verdict: **Partial.** Several reliability controls exist, but the complete claim is
-unsupported.
+Verdict: **Partial.** Retry and per-face cancellation gaps closed 2026-09-18;
+concurrency enforcement and queue/dead-job monitoring remain unsupported.
 
 ## 7. Priority 2 — Feature 41 privacy and biometric protection
 
@@ -253,14 +303,14 @@ Feature 18 is already a real backend implementation. Closing its missing evidenc
 and production gates realistically requires **4–6 focused engineering days**, if a
 consented dataset and license record are immediately available.
 
-| Day | Work |
-|---:|---|
-| 1 | Deterministic grouping tests for match, new group and ambiguity |
-| 2 | Real same-person/different-person end-to-end fixtures and assertions |
-| 3 | Threshold evaluation and false-match/false-new-group documentation |
-| 4 | Complete API ownership tests and background stale/cancel tests |
-| 5 | Consent gate, retention behavior and deletion verification |
-| 6 | Operational run, regression suite, documentation and rollout decision |
+| Day | Work | Status |
+|---:|---|---|
+| 1 | Deterministic grouping tests for match, new group and ambiguity | **Done 2026-09-18** — `ChooseGroupDecisionTests`, `identities/tests.py:283` |
+| 2 | Real same-person/different-person end-to-end fixtures and assertions | Blocked — needs a consented evaluation photo set |
+| 3 | Threshold evaluation and false-match/false-new-group documentation | Blocked on Day 2 |
+| 4 | Complete API ownership tests and background stale/cancel tests | **Done 2026-09-18** for Feature 19 write endpoints; background stale/cancel tests still open |
+| 5 | Consent gate, retention behavior and deletion verification | Not started |
+| 6 | Operational run, regression suite, documentation and rollout decision | Not started |
 
 Without a consented dataset or license evidence, production completion is blocked
 regardless of engineering time. Reserve the remaining four days for Person Folders
@@ -270,12 +320,13 @@ frontend integration and defect correction rather than expanding scope.
 
 | Feature | Evidence-based status |
 |---:|---|
-| 18 | Backend implemented; end-to-end grouping acceptance and calibration incomplete |
-| 19 | Routes/services implemented; per-endpoint API tests and frontend incomplete |
+| 18 | Backend implemented; deterministic decision-logic tests added 2026-09-18; end-to-end real-photo grouping acceptance and calibration still blocked on a consented dataset |
+| 19 | Routes/services/endpoint tests implemented as of 2026-09-18; only frontend remains, blocked by the absence of a frontend repository |
 | 15 | YuNet implemented and locally active; Haar is the configuration default |
 | 12 | Restoration adapters exist behind disabled flags; full-model regression QA incomplete |
-| 20 | Partial controls; automatic retries and full resource/monitoring controls missing |
+| 20 | Bounded transient-DB-error retries and per-face cancellation added 2026-09-18; concurrency enforcement and queue/dead-job monitoring still missing |
 | 41 | Owner isolation and protected embeddings exist; consent/retention/export/erasure incomplete |
+| 44 | OpenAPI schema mounted at `/api/schema/`, `/api/docs/`, `/api/redoc/` as of 2026-09-18 (`config/settings.py`, `config/urls.py`); ~30 raw `APIView`s still lack a `serializer_class` and render under-documented |
 
 ## 10. Complete 47-feature list
 
@@ -302,9 +353,9 @@ still require the stated frontend or production acceptance work.
 | 15 | Face detection and validation | Baseline complete; deployment-dependent | Detect multiple faces and determine processing suitability |
 | 16 | Processing status and quality decisions | Foundation complete | Route images to accepted, rejected or review outcomes |
 | 17 | Duplicate image and face-region detection | Backend baseline complete | Detect repeated files and visually similar owner-scoped content |
-| 18 | Face recognition and identity grouping | Backend implemented; acceptance incomplete | Extract SFace embeddings and group recurring people |
-| 19 | Identity group management | Backend implemented; endpoint/frontend incomplete | Rename, merge, move, remove and manage person folders |
-| 20 | Background batch processing | Partial | Run processing reliably through Celery outside HTTP requests |
+| 18 | Face recognition and identity grouping | Backend implemented; decision-logic unit-tested; real-photo acceptance blocked on dataset | Extract SFace embeddings and group recurring people |
+| 19 | Identity group management | Backend and endpoint tests complete; frontend blocked (no frontend repo) | Rename, merge, move, remove and manage person folders |
+| 20 | Background batch processing | Partial (retries and per-face cancellation added 2026-09-18) | Run processing reliably through Celery outside HTTP requests |
 | 21 | Live batch progress tracker | Backend complete | Report real processing stages and batch outcomes |
 | 22 | Processing reports | Backend complete | Generate owner-scoped JSON, CSV and PDF reports |
 | 23 | Secure image and batch downloads | Backend complete | Deliver protected files and generated ZIP packages |
@@ -328,7 +379,7 @@ still require the stated frontend or production acceptance work.
 | 41 | Privacy and facial-data security | Partial | Protect biometric data through consent, retention and erasure controls |
 | 42 | PostgreSQL data platform | Complete | Provide transactional authoritative application storage |
 | 43 | Private cloud storage | Planned | Store private media in protected object storage |
-| 44 | API documentation and developer support | Partial | Supply complete OpenAPI contracts, examples and deployment guidance |
+| 44 | API documentation and developer support | Partial (OpenAPI schema/docs mounted 2026-09-18; ~30 views still need `serializer_class`) | Supply complete OpenAPI contracts, examples and deployment guidance |
 | 45 | Testing and quality assurance | Partial and continuous | Validate functionality, security, performance and model quality |
 | 46 | Organization and tenant management | Planned | Isolate memberships, moderators, data and policies by tenant |
 | 47 | Non-destructive photo gallery editor | Backend complete | Edit through versioned derivatives without overwriting originals |

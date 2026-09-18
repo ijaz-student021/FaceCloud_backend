@@ -78,6 +78,13 @@ Exit criteria:
 
 ### Day 2 - Feature 18 deterministic grouping tests
 
+**Mostly done 2026-09-18.** `identities/tests.py`: `ChooseGroupDecisionTests`
+(new/match/review/owner-isolation) and `RefreshGroupCentroidTests` (centroid
+refresh, empty-group clearing). `ProcessIdentityAnalysisCancellationTests`
+covers mid-loop cancellation between faces. Still open: a dedicated stale
+identity-task-ID test (the guard itself exists at `identities/tasks.py:21`,
+but no test exercises it directly).
+
 Deliverables:
 
 - Unit tests for `_choose_group`: new group, confident match and ambiguity.
@@ -110,6 +117,14 @@ If a consented dataset is unavailable, use synthetic deterministic service tests
 mark real-world calibration blocked and do not claim production accuracy.
 
 ### Day 4 - Feature 19 endpoint acceptance
+
+**Done 2026-09-18** except OpenAPI request/response examples (tracked under
+Feature 44 instead). `identities/tests.py`: `IdentityGroupManagementApiTests`
+covers rename, merge, move, remove, set-profile and delete via authenticated
+HTTP requests, each with a success case and a cross-owner-404 case, plus
+invalid-payload and non-empty-delete edge cases (14 tests). List/detail
+endpoint tests already existed in `IdentityPrivacyApiTests`. Change-history
+assertions are covered via the rename test's `IdentityChange` check.
 
 Deliverables:
 
