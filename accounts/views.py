@@ -3,6 +3,8 @@ from django.contrib.auth.tokens import default_token_generator
 from django.db import transaction
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -14,6 +16,7 @@ from .dashboard import build_user_dashboard
 from .permissions import IsAdminRole
 from .serializers import (
     AdminUserSerializer,
+    AuthEventSerializer,
     ChangePasswordSerializer,
     DeleteAccountSerializer,
     FaceCloudTokenObtainPairSerializer,
@@ -59,6 +62,7 @@ class VerifyEmailView(APIView):
     permission_classes = [permissions.AllowAny]
     throttle_scope = "verification"
 
+    @extend_schema(responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT})
     def get(self, request, uidb64, token):
         try:
             uid = force_str(urlsafe_base64_decode(uidb64))
@@ -82,6 +86,7 @@ class ResendVerificationView(APIView):
     permission_classes = [permissions.AllowAny]
     throttle_scope = "verification"
 
+    @extend_schema(request=OpenApiTypes.OBJECT, responses={200: OpenApiTypes.OBJECT})
     def post(self, request):
         email = request.data.get("email", "").strip().lower()
         user = User.objects.filter(email__iexact=email, is_email_verified=False).first()
@@ -117,6 +122,7 @@ class ChangePasswordView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     throttle_scope = "password_change"
 
+    @extend_schema(request=ChangePasswordSerializer, responses={200: OpenApiTypes.OBJECT})
     def post(self, request):
         serializer = ChangePasswordSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
@@ -132,6 +138,7 @@ class PasswordResetRequestView(APIView):
     permission_classes = [permissions.AllowAny]
     throttle_scope = "password_reset"
 
+    @extend_schema(request=PasswordResetRequestSerializer, responses={200: OpenApiTypes.OBJECT})
     def post(self, request):
         serializer = PasswordResetRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -149,6 +156,7 @@ class PasswordResetConfirmView(APIView):
     permission_classes = [permissions.AllowAny]
     throttle_scope = "password_reset"
 
+    @extend_schema(request=PasswordResetConfirmSerializer, responses={200: OpenApiTypes.OBJECT})
     def post(self, request):
         serializer = PasswordResetConfirmSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -163,6 +171,7 @@ class PasswordResetConfirmView(APIView):
 class LogoutView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(request=LogoutSerializer, responses={204: None, 400: OpenApiTypes.OBJECT})
     def post(self, request):
         serializer = LogoutSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -177,6 +186,7 @@ class LogoutView(APIView):
 class LogoutAllView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(request=None, responses={200: OpenApiTypes.OBJECT})
     def post(self, request):
         user = request.user
         user.token_version += 1
@@ -188,6 +198,7 @@ class LogoutAllView(APIView):
 class DeleteAccountView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(request=DeleteAccountSerializer, responses={204: None})
     @transaction.atomic
     def delete(self, request):
         serializer = DeleteAccountSerializer(data=request.data, context={"request": request})
@@ -201,6 +212,7 @@ class DeleteAccountView(APIView):
 
 
 class AuthEventListView(generics.ListAPIView):
+    serializer_class = AuthEventSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
@@ -224,6 +236,7 @@ class AuthEventListView(generics.ListAPIView):
 class UserDashboardView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(responses={200: OpenApiTypes.OBJECT})
     def get(self, request):
         return Response(build_user_dashboard(request.user))
 

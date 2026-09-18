@@ -186,6 +186,16 @@ class DeleteAccountSerializer(serializers.Serializer):
         return value
 
 
+class AuthEventSerializer(serializers.Serializer):
+    """Documents the response shape of AuthEventListView.list(); read-only."""
+
+    event = serializers.CharField()
+    identifier = serializers.CharField()
+    ip_address = serializers.CharField(allow_null=True)
+    details = serializers.JSONField()
+    created_at = serializers.DateTimeField()
+
+
 class AdminUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
