@@ -1,77 +1,121 @@
 # FaceCloud Backend
 
-FaceCloud is an AI-powered facial image enhancement, validation, organization, and secure storage platform. This repository contains the Django REST Framework backend for authentication, role-based authorization, secure image ingestion, processing workflows, identity management, moderation, analytics, and protected storage.
+FaceCloud is a facial-image platform: users upload photos, the backend judges
+their quality, enhances them (low-light recovery, denoising, upscaling, face
+restoration, colorization, style presets), groups the faces it finds by
+identity, and keeps everything private to the owner. This repository is the
+Django REST Framework API and the Celery workers behind it.
 
-## Current implementation
+It is the backend of a final-year project. Every feature has a document under
+[`docs/features`](docs/features) that records what was built, how it was
+verified, and what its known limits are.
 
-- Secure registration, email verification, and password recovery
-- JWT login with access/refresh rotation and token revocation
-- User, moderator, and administrator authorization
-- Profile, logout, account deletion, suspension, and audit events
-- Single, multiple, and ZIP image uploads
-- Content-based JPG, JPEG, and PNG validation
-- ZIP-slip, ZIP-bomb, nested archive, and encrypted-entry protection
-- Owner-only image listing, downloads, and deletion
-- Secure UUID storage paths and physical cleanup
-- PostgreSQL 18 development database
-- OpenCV, private curve-model, EDSR, and guarded optional GFPGAN enhancement
-- Celery and Redis background processing with an isolated GFPGAN queue option
-- Automated authentication, ownership, upload, storage, enhancement, quality,
-  progress, reporting, notification, duplicate, and identity tests
+## What it does
 
-## Planned capabilities
+| Area | Summary |
+|---|---|
+| Accounts | Registration, email verification, JWT login with refresh rotation, password reset, logout from all devices, admin / moderator / user roles, suspension, audit trail |
+| Uploads | Single, multiple and ZIP upload; content-based JPG/PNG validation; ZIP-slip and ZIP-bomb protection; UUID storage paths; owner-only access |
+| Quality control | Sharpness, exposure, contrast, noise and resolution scoring with explainable accept / review / reject decisions |
+| Enhancement | Adaptive pipeline: Zero-DCE exposure, adaptive denoise, EDSR / NAFNet / Real-ESRGAN / PureScale / PureVision restoration, GFPGAN face restoration, sharpening, colorization, style presets and sliders |
+| Identity | YuNet face detection, SFace embeddings, identity grouping, a guard that rejects enhancements that change who a face looks like, ZIP export per identity |
+| Privacy | Biometric consent history, verified erasure, retention purge, data export, AES-256-GCM embedding encryption with key rotation, temporary-file cleanup |
+| Operations | Duplicate detection, processing reports (PDF), live batch progress, notifications, activity timeline, system health |
 
-- Moderator review and reporting
-- Live camera face detection and enhancement comparison
-- Private cloud storage and production deployment
+Feature status lives in [`docs/FEATURES.md`](docs/FEATURES.md).
 
-## Technology
+## Layout
 
-- Python and Django
-- Django REST Framework
-- PostgreSQL
-- Simple JWT
-- Pillow and OpenCV
-- Celery and Redis processing
-- Planned AWS S3 storage
+```
+config/            settings, URL routing, Celery app
+accounts/          users, JWT authentication, roles, audit events
+uploads/           ingestion, storage, preprocessing
+validation/        face detection and validation
+quality_control/   quality scoring and decisions
+enhancement/       enhancement pipeline, model adapters, identity guard
+duplicates/        perceptual-hash duplicate detection
+identities/        face embeddings, identity groups, encrypted storage
+privacy/           consent, erasure, retention, export, cleanup
+reports/  downloads/  notifications/  activity/  operations/
+scripts/           worker launcher, dataset audit, model training and export
+notebooks/         model training notebooks
+docs/              feature docs, architecture, decisions, testing guide
+```
 
-## Local setup
+## Getting started
+
+Requirements: Python 3.12+, PostgreSQL, Redis (Docker is the easiest way).
 
 ```powershell
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-Copy-Item .env.example .env
+Copy-Item .env.example .env      # then edit database credentials and secrets
 python manage.py migrate
 python manage.py runserver
 ```
 
-Update `.env` with local PostgreSQL credentials before running migrations. Never commit `.env`, local databases, media, backups, or the virtual environment.
+API documentation is served by drf-spectacular once the server is running.
 
-## Background worker
+### Background worker
 
-Enhancement, identity analysis, quality checks, reports, downloads, and
-export jobs run as Celery tasks and do nothing until a worker is running.
-Start Redis once, then the worker in its own terminal:
+Enhancement, identity analysis, reports and download packages run as Celery
+tasks and do nothing until a worker is up:
 
 ```powershell
 .\scripts\run_worker.ps1
 ```
 
-This starts (or reuses) the local `facecloud-redis` Docker container and
-runs the worker in the foreground. See
-[`docs/MANUAL_TESTING_COMMANDS.md`](docs/MANUAL_TESTING_COMMANDS.md) for the
-full manual end-to-end verification flow.
+This starts (or reuses) a local Redis container and runs the worker in the
+foreground. The end-to-end manual flow is in
+[`docs/MANUAL_TESTING_COMMANDS.md`](docs/MANUAL_TESTING_COMMANDS.md).
 
-## Verification
+### Model files
+
+Model weights are not committed. Place them under `.runtime/models/` (paths
+and SHA-256 pins are in `.env.example`). Each adapter refuses to load a file
+whose checksum does not match, and each feature stays off until its flag is
+enabled. Licences matter here: PureScale and PureVision are
+CC BY-NC-SA 4.0 (non-commercial), colorization is BSD-2-Clause. See the
+licence notes in [`docs/features`](docs/features) and
+[`docs/model-licenses`](docs/model-licenses).
+
+## Testing
 
 ```powershell
-python manage.py test accounts uploads --verbosity 2
+python manage.py test                        # full suite
+python manage.py test accounts privacy       # a subset
 python manage.py check
 python manage.py makemigrations --check --dry-run
+python manage.py check --deploy              # production configuration audit
 ```
+
+## Security posture
+
+- Every endpoint requires authentication unless it is explicitly public
+  (registration, login, token refresh, email verification, password reset).
+  Only the `accounts` app declares public endpoints.
+- Access tokens last 15 minutes; refresh tokens rotate and are blacklisted.
+  Password change, reset, email change, suspension and role change bump a
+  per-user `token_version` that revokes every outstanding token at once.
+- Unverified, suspended and revoked accounts are rejected on every request,
+  not just at login.
+- Sensitive routes are rate limited per scope. `TRUSTED_PROXY_COUNT` must match
+  the number of reverse proxies in front of Django, otherwise `X-Forwarded-For`
+  is ignored so it cannot be used to dodge throttling.
+- Changing an account's email requires the current password.
+- With `DJANGO_DEBUG=False` the app refuses to start on the built-in
+  development secret key; CORS is open only when `DEBUG` is on.
+- Face embeddings are encrypted at rest (AES-256-GCM, rotatable keys).
+  Run `manage.py check --deploy` before going live; the `privacy.*` checks
+  cover consent, retention and key configuration.
+
+Scheduled jobs (`purge_expired_facial_data`, `cleanup_temporary_files`) are
+management commands and need a scheduler in deployment.
 
 ## Documentation
 
-The authoritative feature catalogue is [`docs/FEATURES.md`](docs/FEATURES.md).
-Detailed documentation for implemented or materially designed features is maintained in [`docs/features`](docs/features).
+- [`docs/FEATURES.md`](docs/FEATURES.md): feature catalogue and status
+- [`docs/features`](docs/features): per-feature design, verification and limits
+- [`docs/structured`](docs/structured): architecture, decisions, tasks
+- [`docs/12_DAY_COMPLETION_PLAN.md`](docs/12_DAY_COMPLETION_PLAN.md): delivery plan

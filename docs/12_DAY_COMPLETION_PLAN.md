@@ -66,7 +66,7 @@ Deliverables:
 - Create a release branch and preserve the current working tree.
 - Run Django checks, migration checks and the full automated suite.
 - Record failed tests, test duration and current environment configuration.
-- Reconcile `FEATURES.md`, `features_working.md` and this plan.
+- Reconcile `FEATURES.md` and this plan.
 - Freeze API/schema changes except those required by must-finish scope.
 - Create one release checklist with an owner and state for every task.
 

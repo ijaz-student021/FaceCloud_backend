@@ -28,6 +28,17 @@ media/
 staticfiles/
 downloaded-image.*
 
+# Personal face photos and reference media must never be committed
+People/
+*.mp4
+*.mov
+*.avi
+*.mkv
+
+# Local tooling state
+.claude/
+.ipynb_checkpoints/
+
 # Editors and operating systems
 .vscode/
 .idea/
