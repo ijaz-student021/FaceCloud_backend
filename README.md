@@ -125,6 +125,8 @@ python manage.py test                        # everything, before a commit
 - Sensitive routes are rate limited per scope. `TRUSTED_PROXY_COUNT` must match
   the number of reverse proxies in front of Django, otherwise `X-Forwarded-For`
   is ignored so it cannot be used to dodge throttling.
+- Repeated wrong passwords lock the account with an increasing delay (30 s up to
+  15 min), for unknown accounts too, so it cannot be used to find real ones.
 - Changing an account's email requires the current password.
 - With `DJANGO_DEBUG=False` the app refuses to start on the built-in
   development secret key; CORS is open only when `DEBUG` is on.

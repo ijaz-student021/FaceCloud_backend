@@ -572,6 +572,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "enhancement.cleanup_comparisons",
         "schedule": crontab(minute=30, hour=4),
     },
+    "purge-login-attempts": {
+        "task": "accounts.cleanup_login_attempts",
+        "schedule": crontab(minute=50, hour=3),
+    },
     "expire-share-links": {
         "task": "sharing.cleanup_expired",
         "schedule": crontab(minute=0, hour=4),
@@ -672,6 +676,14 @@ SIMPLE_JWT = {
     "BLACKLIST_AFTER_ROTATION": True,
     "UPDATE_LAST_LOGIN": True,
 }
+
+# Per-account login backoff (accounts/lockout.py): after this many consecutive
+# failures the account is locked for BASE seconds, doubling with each further
+# failure up to MAX. Failures older than WINDOW no longer count.
+LOGIN_LOCK_THRESHOLD = env.int("LOGIN_LOCK_THRESHOLD", default=5)
+LOGIN_LOCK_BASE_SECONDS = env.int("LOGIN_LOCK_BASE_SECONDS", default=30)
+LOGIN_LOCK_MAX_SECONDS = env.int("LOGIN_LOCK_MAX_SECONDS", default=900)
+LOGIN_FAILURE_WINDOW_SECONDS = env.int("LOGIN_FAILURE_WINDOW_SECONDS", default=900)
 
 PUBLIC_BACKEND_URL = os.environ.get("PUBLIC_BACKEND_URL", "http://127.0.0.1:8000")
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://127.0.0.1:3000")

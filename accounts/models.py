@@ -18,6 +18,7 @@ class AuthEvent(models.Model):
         ("email_verified", "Email verified"),
         ("login", "Login"),
         ("login_failed", "Login failed"),
+        ("login_locked", "Login temporarily locked"),
         ("logout", "Logout"),
         ("logout_all", "Logout from all devices"),
         ("password_changed", "Password changed"),
@@ -43,3 +44,17 @@ class AuthEvent(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+
+
+class LoginAttempt(models.Model):
+    """Failed-login counter used for per-account backoff (see accounts/lockout.py).
+
+    Keyed by a keyed hash of the account (or, for an identifier that matches no
+    account, of the identifier), so the table neither stores emails nor treats
+    unknown identifiers differently from real ones.
+    """
+
+    key_hash = models.CharField(max_length=64, unique=True)
+    failures = models.PositiveIntegerField(default=0)
+    last_failure_at = models.DateTimeField(null=True, blank=True)
+    locked_until = models.DateTimeField(null=True, blank=True)

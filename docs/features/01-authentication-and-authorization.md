@@ -246,10 +246,7 @@ throttling and the security-relevant settings defaults.
 
 **Known limits, not changed**
 
-- Throttles are per address and scope; there is no per-account lockout, so a
-  distributed guessing attack is slowed by password validators and the audit
-  trail, not blocked. Add `django-axes` or a per-identifier throttle if the
-  threat model needs it.
+- ~~No per-account lockout~~ Added 2026-09-19, see "Login backoff" below.
 - Logout revokes the refresh token; the access token stays valid until it expires
   (at most 15 minutes). "Log out everywhere" revokes both immediately.
 - Verification and password-reset links share one token generator, so a link of
@@ -259,6 +256,30 @@ throttling and the security-relevant settings defaults.
 
 Frontend impact: `PATCH /api/user/profile/` must send `current_password` when it
 changes `email`; other profile edits are unchanged.
+
+## 12b. Login backoff (2026-09-19)
+
+The per-address throttle limits one client but not a guesser spread over many
+addresses. `accounts/lockout.py` slows guessing against a single account:
+
+- After `LOGIN_LOCK_THRESHOLD` (5) consecutive wrong passwords the account locks
+  for `LOGIN_LOCK_BASE_SECONDS` (30), doubling with every further failure up to
+  `LOGIN_LOCK_MAX_SECONDS` (15 minutes). Failures older than
+  `LOGIN_FAILURE_WINDOW_SECONDS` stop counting.
+- While locked, login returns **429** with a `Retry-After` header, **even for the
+  correct password**. The check happens before the password is verified.
+- Username and email of one account share one counter.
+- An identifier that matches no account is tracked identically, so neither the
+  lock nor its timing reveals which accounts exist.
+- The table stores only HMACs of the account, never an email or username.
+- A successful login, a password reset or a password change clears the counter.
+  The first lock in a run is written to the audit trail as `login_locked`;
+  refused attempts are `login_failed` with reason `locked`.
+- Idle counters are deleted daily (`accounts.cleanup_login_attempts`).
+
+Trade-off: anyone who knows a victim's email can keep them locked out, but only
+for at most 15 minutes at a time, the per-address throttle limits how fast one
+machine can do it, and a password reset clears the lock immediately.
 
 ## 13. Completion checklist
 

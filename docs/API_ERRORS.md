@@ -47,6 +47,9 @@ Two independent mechanisms return 429:
   reports, and so on) plus overall anonymous and per-user ceilings. The response
   carries a `Retry-After` header in seconds. The rates are in
   `REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]`.
+- **Login backoff.** After repeated wrong passwords the account is refused with
+  `429` and `Retry-After` for a while, even with the right password. Show the
+  message and offer "reset your password".
 - **Job limits.** `POST /api/enhancements/images/{id}/` and
   `POST /api/enhancements/batches/{id}/` refuse new work while the user already
   has `MAX_ACTIVE_ENHANCEMENTS_PER_USER` single-image or

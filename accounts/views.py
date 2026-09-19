@@ -17,6 +17,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
+from . import lockout
 from .dashboard import build_user_dashboard
 from .permissions import IsAdminRole
 from .serializers import (
@@ -191,6 +192,7 @@ class ChangePasswordView(APIView):
         user.set_password(serializer.validated_data["new_password"])
         user.token_version += 1
         user.save(update_fields=["password", "token_version"])
+        lockout.clear_for_user(user)
         record_auth_event("password_changed", request, user, user.email)
         return Response({"detail": "Password changed. Please log in again."})
 
@@ -225,6 +227,8 @@ class PasswordResetConfirmView(APIView):
         user.set_password(serializer.validated_data["new_password"])
         user.token_version += 1
         user.save(update_fields=["password", "token_version"])
+        # Resetting the password is the legitimate owner's way back in.
+        lockout.clear_for_user(user)
         record_auth_event("password_reset", request, user, user.email)
         return Response({"detail": "Password reset successfully. Please log in."})
 
