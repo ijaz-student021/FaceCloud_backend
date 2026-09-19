@@ -443,6 +443,32 @@ IDENTITY_POLICY_VERSION = env("IDENTITY_POLICY_VERSION", default="identity_polic
 # A blank value (as in .env.example) must not become an empty key, which would
 # encrypt every embedding with the public SHA-256 of nothing.
 IDENTITY_EMBEDDING_KEY = env("IDENTITY_EMBEDDING_KEY", default="").strip() or SECRET_KEY
+# Key rotation: new records use IDENTITY_EMBEDDING_KEY under this id (1-255);
+# records written under retired keys stay readable through the previous-keys
+# list ("id:secret,id:secret") until `manage.py reencrypt_identity_embeddings`
+# upgrades them.
+IDENTITY_EMBEDDING_KEY_ID = env.int("IDENTITY_EMBEDDING_KEY_ID", default=1)
+
+
+def _parse_previous_embedding_keys(raw):
+    keys = {}
+    for entry in (part.strip() for part in raw.split(",")):
+        if not entry:
+            continue
+        key_id, separator, secret = entry.partition(":")
+        if not separator or not key_id.strip().isdigit() or not secret.strip():
+            from django.core.exceptions import ImproperlyConfigured
+
+            raise ImproperlyConfigured(
+                "IDENTITY_EMBEDDING_PREVIOUS_KEYS must look like 'id:secret,id:secret'."
+            )
+        keys[int(key_id)] = secret.strip()
+    return keys
+
+
+IDENTITY_EMBEDDING_PREVIOUS_KEYS = _parse_previous_embedding_keys(
+    env("IDENTITY_EMBEDDING_PREVIOUS_KEYS", default="")
+)
 
 # Biometric privacy controls (Feature 41). Consent is recorded either way;
 # enforcement is opt-in so existing deployments keep working, and

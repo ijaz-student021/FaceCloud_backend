@@ -13,7 +13,7 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
-from django.core.management import call_command
+from django.core.management import CommandError, call_command
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -30,7 +30,8 @@ from identities.models import (
     IdentityGroupExport, IdentityMembership,
 )
 from identities.services import enqueue_identity_analysis, process_identity_analysis
-from identities.storage import protect_embedding, reveal_embedding
+from identities.storage import is_current_payload, payload_format, protect_embedding, reveal_embedding
+from identities.test_embedding_crypto import LEGACY_KEY, LEGACY_PAYLOAD
 from uploads.models import ImagePreprocessingResult, ImageUpload, UploadBatch
 from validation.models import FaceValidationResult
 
@@ -38,7 +39,8 @@ from .checks import privacy_configuration_check, privacy_deployment_check
 from .models import BiometricConsent, ConsentPurpose, PrivacyRequest
 from .services import (
     audit_report, biometric_processing_allowed, build_privacy_export, erase_facial_data,
-    facial_data_counts, has_active_consent, purge_expired_facial_data, record_consent,
+    embedding_encryption_status, facial_data_counts, has_active_consent, purge_expired_facial_data,
+    record_consent, reencrypt_identity_embeddings,
 )
 from .tasks import purge_expired_facial_data_task
 
@@ -372,6 +374,142 @@ class RetentionTests(MediaIsolatedTestCase):
         self.assertEqual(purge_expired_facial_data_task()["users_affected"], 0)
 
 
+ROTATED = dict(
+    IDENTITY_EMBEDDING_KEY="the-rotated-secret-value-0123456789", IDENTITY_EMBEDDING_KEY_ID=2,
+    IDENTITY_EMBEDDING_PREVIOUS_KEYS={1: "the-retired-secret-value-0123456789", 9: LEGACY_KEY},
+)
+
+
+class ReencryptionTests(MediaIsolatedTestCase):
+    """Rows in every state a real database can hold after years of use."""
+
+    def setUp(self):
+        super().setUp()
+        self._rotated = override_settings(**ROTATED)
+        self._rotated.enable()
+        self.user = make_user("rotator")
+        _image, _analysis, faces = seed_identity_data(
+            self.user, "rot", vectors=((1.0, 0.0, 0.0),) * 4,
+        )
+        self.faces = faces
+        self.vector = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        with override_settings(IDENTITY_EMBEDDING_KEY="the-retired-secret-value-0123456789",
+                               IDENTITY_EMBEDDING_KEY_ID=1, IDENTITY_EMBEDDING_PREVIOUS_KEYS={}):
+            retired = protect_embedding(self.vector)
+        self._set_face(0, LEGACY_PAYLOAD)  # legacy FCID1, readable via the previous-keys list
+        self._set_face(1, retired)  # AES under the retired key id
+        self._set_face(2, protect_embedding(self.vector))  # already current
+        self._set_face(3, b"garbage-that-is-not-a-payload")  # unreadable
+        self.group = make_group(self.user, "Rotated", [])
+        IdentityGroup.objects.filter(pk=self.group.pk).update(protected_centroid=retired)
+        self.blank_group = make_group(self.user, "Blank", [])
+        IdentityGroup.objects.filter(pk=self.blank_group.pk).update(protected_centroid=b"")
+
+    def tearDown(self):
+        self._rotated.disable()
+        super().tearDown()
+
+    def _set_face(self, index, payload):
+        IdentityFace.objects.filter(pk=self.faces[index].pk).update(protected_embedding=payload)
+
+    def _payload(self, index):
+        return bytes(IdentityFace.objects.get(pk=self.faces[index].pk).protected_embedding)
+
+    def _drop_unreadable_face(self):
+        IdentityFace.objects.filter(pk=self.faces[3].pk).delete()
+
+    def test_a_dry_run_reports_the_work_and_changes_nothing(self):
+        before = [self._payload(i) for i in range(4)]
+        stats = reencrypt_identity_embeddings(dry_run=True)
+        self.assertEqual(stats["faces"], {"total": 4, "already_current": 1, "upgraded": 2, "failed": 1, "empty": 0})
+        self.assertEqual(stats["groups"], {"total": 1, "already_current": 0, "upgraded": 1, "failed": 0, "empty": 1})
+        self.assertEqual([self._payload(i) for i in range(4)], before)
+        self.assertFalse(PrivacyRequest.objects.filter(kind="key_rotation").exists())
+
+    def test_rotation_upgrades_every_readable_record_and_preserves_the_vectors(self):
+        untouched_current = self._payload(2)
+        untouched_garbage = self._payload(3)
+        face_updated_at = IdentityFace.objects.get(pk=self.faces[0].pk).updated_at
+        group_updated_at = IdentityGroup.objects.get(pk=self.group.pk).updated_at
+
+        stats = reencrypt_identity_embeddings()
+
+        self.assertEqual(stats["faces"]["upgraded"], 2)
+        self.assertEqual(stats["groups"]["upgraded"], 1)
+        legacy_vector = np.array([0.25, -0.5, 0.75], dtype=np.float32)  # what LEGACY_PAYLOAD encodes
+        for index, expected in ((0, legacy_vector), (1, self.vector), (2, self.vector)):
+            payload = self._payload(index)
+            self.assertTrue(is_current_payload(payload), index)
+            np.testing.assert_array_equal(reveal_embedding(payload, 3), expected)
+        centroid = bytes(IdentityGroup.objects.get(pk=self.group.pk).protected_centroid)
+        self.assertEqual(payload_format(centroid), ("v2", 2))
+        np.testing.assert_array_equal(reveal_embedding(centroid, 3), self.vector)
+        # Untouched: the already-current record and the unreadable one.
+        self.assertEqual(self._payload(2), untouched_current)
+        self.assertEqual(self._payload(3), untouched_garbage)
+        self.assertEqual(bytes(IdentityGroup.objects.get(pk=self.blank_group.pk).protected_centroid), b"")
+        # Rotation must not reorder identity groups (candidates are ordered by updated_at).
+        self.assertEqual(IdentityFace.objects.get(pk=self.faces[0].pk).updated_at, face_updated_at)
+        self.assertEqual(IdentityGroup.objects.get(pk=self.group.pk).updated_at, group_updated_at)
+
+    def test_a_failure_is_recorded_for_audit_and_the_run_is_idempotent(self):
+        first = reencrypt_identity_embeddings()
+        self.assertEqual(first["failed"], 1)
+        record = PrivacyRequest.objects.get(kind="key_rotation")
+        self.assertEqual(record.status, "failed")
+        self.assertFalse(record.verified)
+        self.assertIsNone(record.user)
+        second = reencrypt_identity_embeddings()
+        self.assertEqual(second["faces"]["upgraded"], 0)
+        self.assertEqual(second["groups"]["upgraded"], 0)
+        self.assertEqual(PrivacyRequest.objects.filter(kind="key_rotation").count(), 2)
+
+    def test_batching_gives_the_same_result(self):
+        stats = reencrypt_identity_embeddings(batch_size=1)
+        self.assertEqual(stats["faces"]["upgraded"], 2)
+        self.assertEqual(stats["faces"]["total"], 4)
+        self.assertEqual(stats["groups"]["upgraded"], 1)
+
+    def test_a_clean_database_completes_and_the_audit_report_shows_it(self):
+        self._drop_unreadable_face()
+        before = embedding_encryption_status()
+        self.assertTrue(before["rotation_needed"])
+        self.assertEqual((before["legacy_v1"], before["older_key"]), (1, 2))
+
+        stats = reencrypt_identity_embeddings()
+
+        self.assertEqual(stats["failed"], 0)
+        record = PrivacyRequest.objects.get(kind="key_rotation")
+        self.assertEqual((record.status, record.verified), ("completed", True))
+        after = embedding_encryption_status()
+        self.assertFalse(after["rotation_needed"])
+        self.assertEqual(after["current_key"], 4)
+        encryption = audit_report()["encryption"]
+        self.assertEqual(encryption["current_key_id"], 2)
+        self.assertEqual(encryption["previous_keys_configured"], 2)
+        self.assertFalse(encryption["stored_records"]["rotation_needed"])
+
+    def test_a_second_run_on_a_clean_database_writes_nothing(self):
+        self._drop_unreadable_face()
+        reencrypt_identity_embeddings()
+        reencrypt_identity_embeddings()
+        self.assertEqual(PrivacyRequest.objects.filter(kind="key_rotation").count(), 1)
+
+    def test_the_command_reports_and_fails_loudly_on_unreadable_records(self):
+        out = StringIO()
+        with self.assertRaisesMessage(CommandError, "could not be decrypted"):
+            call_command("reencrypt_identity_embeddings", "--dry-run", stdout=out)
+        self.assertIn("2 would be upgraded", out.getvalue())
+        self._drop_unreadable_face()
+        clean = StringIO()
+        call_command("reencrypt_identity_embeddings", stdout=clean)
+        self.assertIn("All stored embeddings use the current key.", clean.getvalue())
+
+    def test_the_command_rejects_a_bad_batch_size(self):
+        with self.assertRaises(CommandError):
+            call_command("reencrypt_identity_embeddings", "--batch-size=0")
+
+
 class ExportTests(MediaIsolatedTestCase):
     def setUp(self):
         super().setUp()
@@ -532,6 +670,22 @@ class PrivacyApiTests(APITestCase):
 
 
 class PrivacyChecksTests(SimpleTestCase):
+    @override_settings(IDENTITY_EMBEDDING_KEY_ID=0)
+    def test_the_key_id_must_fit_in_one_byte(self):
+        self.assertIn("privacy.E006", [issue.id for issue in privacy_configuration_check(None)])
+
+    @override_settings(IDENTITY_EMBEDDING_KEY="a" * 40, IDENTITY_EMBEDDING_KEY_ID=1,
+                       IDENTITY_EMBEDDING_PREVIOUS_KEYS={1: "b" * 40})
+    def test_a_previous_key_cannot_reuse_the_current_id_for_another_secret(self):
+        self.assertIn("privacy.E007", [issue.id for issue in privacy_configuration_check(None)])
+
+    @override_settings(SECRET_KEY="s" * 40, IDENTITY_EMBEDDING_KEY="k" * 40, IDENTITY_EMBEDDING_KEY_ID=2,
+                       IDENTITY_EMBEDDING_PREVIOUS_KEYS={1: "old" * 12}, BIOMETRIC_CONSENT_REQUIRED=True,
+                       FACIAL_DATA_RETENTION_DAYS=30)
+    def test_leftover_retired_keys_are_flagged_at_deployment(self):
+        self.assertEqual([issue.id for issue in privacy_deployment_check(None)], ["privacy.W005"])
+        self.assertEqual(privacy_configuration_check(None), [])
+
     @override_settings(SECRET_KEY="s" * 40, IDENTITY_EMBEDDING_KEY="s" * 40)
     def test_embedding_key_must_not_fall_back_to_the_django_secret(self):
         self.assertIn("privacy.E001", [issue.id for issue in privacy_deployment_check(None)])

@@ -11,6 +11,17 @@ def privacy_configuration_check(app_configs, **kwargs):
         issues.append(Error("BIOMETRIC_CONSENT_POLICY_VERSION cannot be empty.", id="privacy.E003"))
     if settings.PRIVACY_EXPORT_MAX_ROWS <= 0:
         issues.append(Error("PRIVACY_EXPORT_MAX_ROWS must be positive.", id="privacy.E004"))
+    key_id = settings.IDENTITY_EMBEDDING_KEY_ID
+    if not 1 <= key_id <= 255:
+        issues.append(Error("IDENTITY_EMBEDDING_KEY_ID must be between 1 and 255.", id="privacy.E006"))
+    elif settings.IDENTITY_EMBEDDING_PREVIOUS_KEYS.get(key_id, settings.IDENTITY_EMBEDDING_KEY) != settings.IDENTITY_EMBEDDING_KEY:
+        issues.append(
+            Error(
+                "IDENTITY_EMBEDDING_PREVIOUS_KEYS reuses the current key id for a different secret; "
+                "every key needs its own id.",
+                id="privacy.E007",
+            )
+        )
     return issues
 
 
@@ -37,6 +48,14 @@ def privacy_deployment_check(app_configs, **kwargs):
         )
     elif len(key) < 32:
         issues.append(Warning("IDENTITY_EMBEDDING_KEY should be at least 32 characters.", id="privacy.W001"))
+    if settings.IDENTITY_EMBEDDING_PREVIOUS_KEYS:
+        issues.append(
+            Warning(
+                "IDENTITY_EMBEDDING_PREVIOUS_KEYS is set. After `manage.py reencrypt_identity_embeddings` "
+                "finishes with no failures, remove the retired keys.",
+                id="privacy.W005",
+            )
+        )
     if not settings.BIOMETRIC_CONSENT_REQUIRED:
         issues.append(
             Warning(

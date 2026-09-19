@@ -78,10 +78,11 @@
 
 ### T-006 — Biometric consent and retention
 
-- **Status:** In progress — backend done 2026-09-19 (`privacy` app, 36 tests):
-  consent records, retention purge, erasure with verification, export, audit
-  report, deploy checks. Open: temporary-processing cleanup, embedding cipher
-  review and key rotation, tenant-level export, frontend screens.
+- **Status:** In progress — backend done 2026-09-19 (`privacy` app, 47 tests,
+  plus 17 cipher tests): consent records, retention purge, erasure with
+  verification, export, audit report, deploy checks, AES-256-GCM embedding
+  encryption with key ids and a re-encryption command. Open: temporary-
+  processing cleanup, tenant-level export, frontend screens.
 - Record consent purpose and timestamp. — Done
 - Add configurable embedding retention and deletion. — Done
 - Add account export and deletion verification. — Done (tenant export waits on T-008)
@@ -144,7 +145,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 34 | Connect completed system health API to an admin page | Next | T-024 |
 | 35 | Uploaded-image model comparison page | Backlog | T-025 |
 | 36–40 | Complete live-camera release | Backlog | T-026–T-030 |
-| 41 | Consent, retention, encryption, export and erasure | Backend done (2026-09-19); cipher review, temp cleanup and frontend remain | T-006 |
+| 41 | Consent, retention, encryption, export and erasure | Backend done (2026-09-19), incl. AES-GCM and key rotation; temp cleanup and frontend remain | T-006 |
 | 43 | Private cloud/object storage | Backlog | T-031 |
 | 44 | OpenAPI schema for every APIView | Done (2026-09-18): zero schema errors; examples and error catalogue remain | T-032 |
 | 45 | Load, performance, camera and integration QA | Continuous | T-033 |

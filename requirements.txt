@@ -19,3 +19,4 @@ gunicorn
 whitenoise
 pytest
 pytest-django
+cryptography>=46

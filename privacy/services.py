@@ -346,6 +346,99 @@ def record_export_request(user):
     return request
 
 
+def _embedding_fields():
+    from identities.models import IdentityFace, IdentityGroup
+
+    return (
+        ("faces", IdentityFace, "protected_embedding"),
+        ("groups", IdentityGroup, "protected_centroid"),
+    )
+
+
+def embedding_encryption_status():
+    """How stored biometric templates are protected, by key. Never decrypts."""
+    from identities.storage import current_key_id, payload_format
+
+    current = current_key_id()
+    counts = Counter()
+    for _label, model, field in _embedding_fields():
+        stored = model.objects.exclude(**{field: b""}).values_list(field, flat=True)
+        for payload in stored.iterator(chunk_size=1000):
+            kind, key_id = payload_format(payload)
+            if kind == "v2" and key_id == current:
+                counts["current_key"] += 1
+            elif kind == "v2":
+                counts["older_key"] += 1
+            elif kind == "v1":
+                counts["legacy_v1"] += 1
+            else:
+                counts["unrecognized"] += 1
+    counts = {name: counts.get(name, 0) for name in ("current_key", "older_key", "legacy_v1", "unrecognized")}
+    counts["rotation_needed"] = bool(counts["older_key"] or counts["legacy_v1"])
+    return counts
+
+
+def reencrypt_identity_embeddings(*, dry_run=False, batch_size=500, record=True):
+    """Re-protect every stored template under the current key and format.
+
+    Idempotent and safe to interrupt: each batch commits on its own, rows are
+    locked while rewritten, and ``.update()`` is used so ``updated_at`` (which
+    orders identity-group candidates) is not disturbed. A record that cannot be
+    decrypted is counted and left exactly as it is.
+    """
+    from identities.storage import is_current_payload, protect_embedding, reveal_embedding
+
+    stats = {"dry_run": dry_run}
+    for label, model, field in _embedding_fields():
+        section = Counter()
+        last_pk = 0
+        while True:
+            with transaction.atomic():
+                rows = list(
+                    model.objects.select_for_update()
+                    .filter(pk__gt=last_pk)
+                    .order_by("pk")[:batch_size]
+                )
+                for row in rows:
+                    last_pk = row.pk
+                    payload = bytes(getattr(row, field))
+                    if not payload:
+                        section["empty"] += 1
+                        continue
+                    section["total"] += 1
+                    if is_current_payload(payload):
+                        section["already_current"] += 1
+                        continue
+                    try:
+                        vector = reveal_embedding(payload, row.embedding_dimension)
+                    except ValidationError:
+                        section["failed"] += 1
+                        logger.error("Could not decrypt %s pk=%s during re-encryption.", label, row.pk)
+                        continue
+                    section["upgraded"] += 1
+                    if not dry_run:
+                        model.objects.filter(pk=row.pk).update(**{field: protect_embedding(vector)})
+            if not rows:
+                break
+        stats[label] = {
+            name: section.get(name, 0)
+            for name in ("total", "already_current", "upgraded", "failed", "empty")
+        }
+    failed = sum(stats[label]["failed"] for label in ("faces", "groups"))
+    upgraded = sum(stats[label]["upgraded"] for label in ("faces", "groups"))
+    stats["failed"] = failed
+    if record and not dry_run and (upgraded or failed):
+        PrivacyRequest.objects.create(
+            user=None,
+            kind=PrivacyRequest.Kind.KEY_ROTATION,
+            trigger=PrivacyRequest.Trigger.OPERATOR,
+            status=PrivacyRequest.Status.FAILED if failed else PrivacyRequest.Status.COMPLETED,
+            summary=stats,
+            verified=failed == 0,
+        )
+    return stats
+
+
 def audit_report(now=None):
     """Aggregate, non-personal privacy posture for administrators."""
     now = now or timezone.now()
@@ -390,8 +483,11 @@ def audit_report(now=None):
             "last_purge": last_purge,
         },
         "encryption": {
-            "identity_embeddings": "protected at rest (keyed BLAKE2s stream with HMAC-SHA256 tag)",
+            "identity_embeddings": "AES-256-GCM with HKDF-derived keys and key ids (legacy FCID1 records are read and upgraded)",
+            "current_key_id": settings.IDENTITY_EMBEDDING_KEY_ID,
+            "previous_keys_configured": len(settings.IDENTITY_EMBEDDING_PREVIOUS_KEYS),
             "dedicated_embedding_key_configured": settings.IDENTITY_EMBEDDING_KEY != settings.SECRET_KEY,
+            "stored_records": embedding_encryption_status(),
             "uploaded_images_encrypted_at_rest": False,
         },
     }

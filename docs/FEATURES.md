@@ -770,7 +770,7 @@ Account and upload controls exist; advanced facial-data controls remain.
 - Facial-data erasure with verification (database recount and file check), also on consent withdrawal — Complete backend
 - Privacy export (own data as JSON; embeddings never exported) — Complete backend
 - Security audit reporting: administrator aggregate report and `check --deploy` findings — Complete backend
-- Encryption-at-rest configuration: embeddings are already protected; blank-key bug fixed and deploy checks added; cipher review, key rotation and image encryption remain
+- Encryption-at-rest configuration: embeddings use AES-256-GCM with key ids and a re-encryption command for rotation (legacy records stay readable); blank-key bug fixed and deploy checks added — Complete backend; image encryption remains (Feature 43)
 - Temporary-processing cleanup
 - Frontend consent, erasure and export screens
 

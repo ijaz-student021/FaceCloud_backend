@@ -34,6 +34,7 @@ class PrivacyRequest(models.Model):
         EXPORT = "export", "Data export"
         FACIAL_ERASURE = "facial_erasure", "Facial-data erasure"
         RETENTION_PURGE = "retention_purge", "Retention purge"
+        KEY_ROTATION = "key_rotation", "Embedding key rotation"
 
     class Status(models.TextChoices):
         COMPLETED = "completed", "Completed"
@@ -43,6 +44,7 @@ class PrivacyRequest(models.Model):
         USER = "user", "User request"
         CONSENT_WITHDRAWAL = "consent_withdrawal", "Consent withdrawal"
         RETENTION = "retention", "Retention policy"
+        OPERATOR = "operator", "Operator command"
 
     # SET_NULL so the audit trail survives account deletion without keeping identity.
     user = models.ForeignKey(

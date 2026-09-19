@@ -3,10 +3,10 @@
 ## Status
 
 Backend complete for consent, erasure with verification, retention, export,
-audit reporting and deployment checks (`privacy` app). Still open: temporary
-processing-file cleanup, a review of the embedding cipher and key rotation,
-encryption of stored images (Feature 43), and the consent screens in the
-frontend. Details under "Open items".
+audit reporting, deployment checks, and embedding encryption with key
+rotation (`privacy` app and `identities/storage.py`). Still open: temporary
+processing-file cleanup, encryption of stored images (Feature 43), and the
+consent screens in the frontend. Details under "Open items".
 
 ## What counts as facial data
 
@@ -80,12 +80,47 @@ be used to recognise the person. Each collection is capped at
 ## Encryption at rest - what is actually implemented
 
 Face embeddings and group centroids are stored as `protected_*` binary
-fields (`identities/storage.py`): a keyed BLAKE2s keystream XOR-ed over the
-float vector, with an HMAC-SHA256 tag (encrypt-then-MAC, random 16-byte
-nonce, `FCID1` format marker). The key is derived from
-`IDENTITY_EMBEDDING_KEY`.
+fields (`identities/storage.py`) in **AES-256-GCM**:
 
-Findings from this review:
+```text
+b"FCID2" | key id (1 byte) | nonce (12) | ciphertext | GCM tag (16)
+```
+
+The header (format marker and key id) is authenticated as associated data,
+so it cannot be edited or relabelled. The AES key is derived from the
+configured secret with HKDF-SHA256 bound to the key id. `cryptography` is now
+a dependency (`requirements.txt`).
+
+The earlier format (`FCID1`, a hand-built keyed-BLAKE2s stream with an
+HMAC tag) is **read-only**: nothing writes it any more, and it is verified
+against a real payload the old code produced (a pinned test fixture), so
+upgrading cannot strand existing data. Its tag identifies which configured
+key protected it.
+
+### Key rotation runbook
+
+1. Generate a new secret (32+ random characters).
+2. Set `IDENTITY_EMBEDDING_KEY_ID` to the next unused id (1-255), set
+   `IDENTITY_EMBEDDING_KEY` to the new secret, and list the retired key(s) as
+   `IDENTITY_EMBEDDING_PREVIOUS_KEYS="1:oldsecret"` (`id:secret`, comma
+   separated; secrets must not contain commas). The old key that protected
+   `FCID1` records goes in this list too, under any unused id. A malformed
+   list stops startup rather than being ignored.
+3. Restart. Everything stays readable: new records use the new key, old ones
+   are found through the previous-keys list.
+4. `python manage.py reencrypt_identity_embeddings --dry-run`, then run it
+   without `--dry-run`. It rewrites every face embedding and group centroid
+   in batches, is idempotent and safe to interrupt, leaves `updated_at`
+   untouched (it orders identity-group candidates), leaves unreadable records
+   exactly as they were, and exits with an error if any could not be
+   decrypted. Non-dry runs are recorded as a `key_rotation` privacy request.
+5. The admin audit report (`encryption.stored_records`) shows
+   `rotation_needed: false` once no record uses an older key or format.
+   Remove `IDENTITY_EMBEDDING_PREVIOUS_KEYS` (`check --deploy` warns with
+   `privacy.W005` until you do). Retiring a key too early makes its records
+   unreadable, which is rejected rather than returning wrong data.
+
+### Findings from this review
 
 1. **Fixed: a blank key.** `.env.example` ships `IDENTITY_EMBEDDING_KEY=`
    blank and the README says to copy it to `.env`. That parsed as an empty
@@ -97,15 +132,13 @@ Findings from this review:
    `SECRET_KEY`. Rotating the Django secret would otherwise make every
    embedding undecryptable, and a leaked Django secret would expose them.
    Set a dedicated key of 32+ characters (`privacy.W001`).
-3. **Not fixed, recommended:** the cipher is a hand-built construction. It is
-   not obviously broken, but a standard AEAD (AES-GCM through the
-   `cryptography` package) with key versioning would be preferable, together
-   with a re-encryption command for key rotation. That means a data
-   migration of every stored embedding, so it is left as a deliberate
-   follow-up rather than changed silently.
-4. **Not encrypted at rest:** uploaded/enhanced images on disk (Feature 43),
-   and face boxes/landmarks in the database. Use disk- or database-level
-   encryption in production.
+3. **Fixed: hand-built cipher and no rotation.** Replaced by AES-GCM with
+   key ids and the re-encryption command above.
+4. **Still not encrypted at rest:** uploaded/enhanced images on disk
+   (Feature 43), and face boxes/landmarks in the database. Use disk- or
+   database-level encryption in production.
+5. **Limit:** the key is derived from a configured secret, so it is only as
+   strong as that secret. Keep it in a secret manager, not in the repository.
 
 ## Endpoints
 
@@ -128,6 +161,7 @@ Findings from this review:
 ## Open items
 
 - Temporary-processing cleanup (orphaned temp files from failed builds).
-- Embedding cipher review and key rotation (finding 3 above).
 - Frontend: consent screen, "delete my face data", export download.
 - Schedule the retention purge in the deployment.
+- In production, set a dedicated `IDENTITY_EMBEDDING_KEY`, then run
+  `reencrypt_identity_embeddings` once so any legacy records are upgraded.
