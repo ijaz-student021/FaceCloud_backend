@@ -66,6 +66,7 @@ INSTALLED_APPS = [
     "notifications",
     "operations",
     "activity",
+    "privacy",
 ]
 
 MIDDLEWARE = [
@@ -439,7 +440,19 @@ IDENTITY_NEW_GROUP_THRESHOLD = env.float("IDENTITY_NEW_GROUP_THRESHOLD", default
 IDENTITY_AMBIGUITY_MARGIN = env.float("IDENTITY_AMBIGUITY_MARGIN", default=0.06)
 IDENTITY_MAX_CANDIDATE_GROUPS = env.int("IDENTITY_MAX_CANDIDATE_GROUPS", default=1000)
 IDENTITY_POLICY_VERSION = env("IDENTITY_POLICY_VERSION", default="identity_policy_v1")
-IDENTITY_EMBEDDING_KEY = env("IDENTITY_EMBEDDING_KEY", default=SECRET_KEY)
+# A blank value (as in .env.example) must not become an empty key, which would
+# encrypt every embedding with the public SHA-256 of nothing.
+IDENTITY_EMBEDDING_KEY = env("IDENTITY_EMBEDDING_KEY", default="").strip() or SECRET_KEY
+
+# Biometric privacy controls (Feature 41). Consent is recorded either way;
+# enforcement is opt-in so existing deployments keep working, and
+# `manage.py check --deploy` warns until it is switched on.
+BIOMETRIC_CONSENT_REQUIRED = env.bool("BIOMETRIC_CONSENT_REQUIRED", default=False)
+BIOMETRIC_CONSENT_POLICY_VERSION = env("BIOMETRIC_CONSENT_POLICY_VERSION", default="2026-09-v1")
+# Face embeddings, identity groups and their exports older than this are purged
+# by the scheduled purge. 0 keeps them until the user deletes them.
+FACIAL_DATA_RETENTION_DAYS = env.int("FACIAL_DATA_RETENTION_DAYS", default=0)
+PRIVACY_EXPORT_MAX_ROWS = env.int("PRIVACY_EXPORT_MAX_ROWS", default=2000)
 
 CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="redis://127.0.0.1:6379/0")
 CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default="redis://127.0.0.1:6379/1")
@@ -504,6 +517,9 @@ REST_FRAMEWORK = {
         "report_generation": "60/hour",
         "download_package": "30/hour",
         "notification_action": "300/hour",
+        "privacy_consent": "60/hour",
+        "privacy_export": "10/hour",
+        "privacy_erasure": "10/hour",
     },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }

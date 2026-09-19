@@ -38,5 +38,6 @@ urlpatterns = [
     path("api/reports/", include("reports.urls")),
     path("api/downloads/", include("downloads.urls")),
     path("api/notifications/", include("notifications.urls")),
+    path("api/privacy/", include("privacy.urls")),
     path("api/system/", include("operations.urls")),
 ]

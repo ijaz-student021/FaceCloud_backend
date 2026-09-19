@@ -105,6 +105,7 @@ class EnhancementPipelineContext:
     source_image: np.ndarray
     requested_level: str
     style: str = EnhancementStyle.NATURAL
+    allow_biometric_processing: bool = True
     input_quality: dict = field(default_factory=dict)
     applied_level: str = ""
     policy: dict = field(default_factory=dict)
@@ -1054,6 +1055,11 @@ def identity_guard_stage(context):
         metadata["fallback_reason"] = "The identity guard is disabled."
         context.identity_guard = metadata
         return context
+    if not context.allow_biometric_processing:
+        metadata["status"] = "skipped"
+        metadata["fallback_reason"] = "Biometric consent has not been granted."
+        context.identity_guard = metadata
+        return context
     try:
         guarded, guard_metadata = apply_identity_guard(
             context.source_image, context.current_image
@@ -1076,7 +1082,10 @@ def identity_guard_stage(context):
     return context
 
 
-def enhance_bgr(image, requested_level=EnhancementLevel.AUTO, style=EnhancementStyle.NATURAL):
+def enhance_bgr(
+    image, requested_level=EnhancementLevel.AUTO, style=EnhancementStyle.NATURAL,
+    allow_biometric_processing=True,
+):
     """Return an enhanced BGR image, applied level, and auditable parameters.
 
     ``style`` is a separate axis from ``requested_level`` (which controls
@@ -1090,7 +1099,10 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO, style=EnhancementS
     """
     if style == EnhancementStyle.AI_MAX:
         requested_level = EnhancementLevel.HIGH
-    context = EnhancementPipelineContext(image, requested_level, style=style)
+    context = EnhancementPipelineContext(
+        image, requested_level, style=style,
+        allow_biometric_processing=allow_biometric_processing,
+    )
     stages = (
         ("analyze_original", analyze_original_stage),
         ("exposure_enhancement", exposure_enhancement_stage),
@@ -1325,8 +1337,10 @@ def process_enhancement_result(result):
     stored_name = None
     try:
         source, source_strategy = _read_enhancement_source(result)
+        from privacy.services import biometric_processing_allowed
         enhanced, applied_level, parameters = enhance_bgr(
             source, result.requested_level, style=result.requested_style,
+            allow_biometric_processing=biometric_processing_allowed(result.owner),
         )
         parameters["source_resolution_strategy"] = source_strategy
         parameters["source_dimensions"] = [

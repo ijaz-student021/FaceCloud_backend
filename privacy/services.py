@@ -1,0 +1,397 @@
+"""Biometric consent, facial-data erasure with verification, retention and export.
+
+"Facial data" here means the biometric identity data FaceCloud derives from
+photos: face embeddings, the identity groups built from them, the records of
+edits made to those groups, and ZIP exports of a group. Uploaded photos and
+enhancement results are the user's own content and are handled by the normal
+image deletion flow; face-detection boxes and duplicate-image hashes identify
+images, not people, and are left in place.
+"""
+
+import logging
+from collections import Counter
+from datetime import timedelta
+
+from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.core.files.storage import default_storage
+from django.db import transaction
+from django.utils import timezone
+from rest_framework.exceptions import ValidationError
+
+from .models import BiometricConsent, ConsentPurpose, PrivacyRequest
+
+logger = logging.getLogger(__name__)
+
+EXPORT_FORMAT_VERSION = 1
+
+
+def current_policy_version():
+    return settings.BIOMETRIC_CONSENT_POLICY_VERSION
+
+
+def _latest_consent(user, purpose):
+    return BiometricConsent.objects.filter(user=user, purpose=purpose).first()
+
+
+def has_active_consent(user, purpose=ConsentPurpose.FACE_IDENTITY):
+    """Consent counts only if granted against the current policy version."""
+    latest = _latest_consent(user, purpose)
+    return bool(latest and latest.granted and latest.policy_version == current_policy_version())
+
+
+def biometric_processing_allowed(user):
+    return (not settings.BIOMETRIC_CONSENT_REQUIRED) or has_active_consent(user)
+
+
+def consent_status(user):
+    purposes = []
+    for purpose, label in ConsentPurpose.choices:
+        latest = _latest_consent(user, purpose)
+        purposes.append(
+            {
+                "purpose": purpose,
+                "label": label,
+                "granted": bool(latest and latest.granted),
+                "active": has_active_consent(user, purpose),
+                "policy_version": latest.policy_version if latest else None,
+                "updated_at": latest.created_at if latest else None,
+            }
+        )
+    return {
+        "required": bool(settings.BIOMETRIC_CONSENT_REQUIRED),
+        "current_policy_version": current_policy_version(),
+        "purposes": purposes,
+    }
+
+
+@transaction.atomic
+def record_consent(user, purpose, granted, policy_version):
+    """Append a consent change; unchanged state is not duplicated."""
+    from activity.services import record_activity_event
+
+    if purpose not in ConsentPurpose.values:
+        raise ValidationError({"purpose": "Choose a supported consent purpose."})
+    version = current_policy_version()
+    if granted and policy_version != version:
+        raise ValidationError(
+            {"policy_version": f"Consent must reference the current policy version ({version})."}
+        )
+    latest = _latest_consent(user, purpose)
+    if latest and latest.granted == granted and latest.policy_version == version:
+        return latest, False
+    row = BiometricConsent.objects.create(
+        user=user, purpose=purpose, granted=granted, policy_version=version
+    )
+    record_activity_event(
+        user,
+        "privacy",
+        "consent_granted" if granted else "consent_withdrawn",
+        object_type="BiometricConsent",
+        object_id=row.pk,
+        details={"purpose": purpose, "policy_version": version},
+    )
+    return row, True
+
+
+def _analyses(user, older_than):
+    from identities.models import IdentityAnalysis
+
+    queryset = IdentityAnalysis.objects.filter(owner=user)
+    return queryset.filter(created_at__lt=older_than) if older_than else queryset
+
+
+def facial_data_counts(user, *, older_than=None):
+    """Counts of stored biometric data; scoped to old analyses for retention."""
+    from identities.models import (
+        IdentityChange, IdentityFace, IdentityGroup, IdentityGroupExport, IdentityMembership,
+    )
+
+    analyses = _analyses(user, older_than)
+    counts = {
+        "analyses": analyses.count(),
+        "faces": IdentityFace.objects.filter(analysis__in=analyses).count(),
+        "memberships": IdentityMembership.objects.filter(identity_face__analysis__in=analyses).count(),
+    }
+    if older_than is None:
+        counts["groups"] = IdentityGroup.objects.filter(owner=user).count()
+        counts["changes"] = IdentityChange.objects.filter(owner=user).count()
+        counts["exports"] = IdentityGroupExport.objects.filter(owner=user).count()
+    return counts
+
+
+def _stored_export_files(user):
+    """Group-export ZIPs still on disk for this user (they contain face photos)."""
+    try:
+        _directories, files = default_storage.listdir(f"users/{user.pk}/identity-exports")
+    except (FileNotFoundError, OSError):
+        return []
+    return files
+
+
+def erase_facial_data(user, *, older_than=None, trigger=PrivacyRequest.Trigger.USER, record=True):
+    """Delete biometric data, then prove it is gone.
+
+    ``older_than=None`` erases everything for the user (identity groups and
+    their edit history and exports included). With a cutoff, only analyses
+    created before it are removed; groups are recomputed, or removed if they
+    lose every member.
+    """
+    from activity.services import record_activity_event
+    from identities.models import IdentityChange, IdentityGroup, IdentityMembership
+    from identities.services import _refresh_group
+
+    with transaction.atomic():
+        deleted = facial_data_counts(user, older_than=older_than)
+        analyses = _analyses(user, older_than)
+        affected_group_ids = set(
+            IdentityMembership.objects.filter(
+                identity_face__analysis__in=analyses, identity_group__isnull=False
+            ).values_list("identity_group_id", flat=True)
+        )
+        analyses.delete()
+        groups_removed = 0
+        if older_than is None:
+            IdentityChange.objects.filter(owner=user).delete()
+            groups_removed = IdentityGroup.objects.filter(owner=user).count()
+            IdentityGroup.objects.filter(owner=user).delete()
+        else:
+            for group in IdentityGroup.objects.filter(pk__in=affected_group_ids):
+                if group.memberships.exists():
+                    _refresh_group(group)
+                else:
+                    IdentityChange.objects.filter(group=group).delete()
+                    group.delete()
+                    groups_removed += 1
+
+    remaining = facial_data_counts(user, older_than=older_than)
+    leftover_files = _stored_export_files(user) if older_than is None else []
+    verified = all(value == 0 for value in remaining.values()) and not leftover_files
+    result = {
+        "scope": "all" if older_than is None else "older_than",
+        "deleted": deleted,
+        "groups_removed": groups_removed,
+        "remaining": remaining,
+        "leftover_export_files": len(leftover_files),
+        "verified": verified,
+    }
+    if record:
+        request = PrivacyRequest.objects.create(
+            user=user,
+            kind=PrivacyRequest.Kind.FACIAL_ERASURE,
+            trigger=trigger,
+            status=PrivacyRequest.Status.COMPLETED if verified else PrivacyRequest.Status.FAILED,
+            summary=result,
+            verified=verified,
+        )
+        result["request_id"] = request.pk
+        record_activity_event(
+            user, "privacy", "facial_data_erased", object_type="PrivacyRequest",
+            object_id=request.pk, details={"verified": verified, "trigger": trigger},
+        )
+    if not verified:
+        logger.error("Facial-data erasure for user_id=%s could not be verified.", user.pk)
+    return result
+
+
+def purge_expired_facial_data(now=None):
+    """Apply FACIAL_DATA_RETENTION_DAYS across all users; one audit record per run."""
+    from identities.models import IdentityAnalysis
+
+    days = settings.FACIAL_DATA_RETENTION_DAYS
+    if days <= 0:
+        return {"enabled": False, "retention_days": days}
+    cutoff = (now or timezone.now()) - timedelta(days=days)
+    owner_ids = list(
+        IdentityAnalysis.objects.filter(created_at__lt=cutoff)
+        .values_list("owner_id", flat=True)
+        .distinct()
+    )
+    totals = Counter()
+    unverified = 0
+    for user in get_user_model().objects.filter(pk__in=owner_ids):
+        result = erase_facial_data(
+            user, older_than=cutoff, trigger=PrivacyRequest.Trigger.RETENTION, record=False
+        )
+        totals.update(result["deleted"])
+        totals["groups_removed"] += result["groups_removed"]
+        unverified += 0 if result["verified"] else 1
+    summary = {
+        "enabled": True,
+        "retention_days": days,
+        "cutoff": cutoff.isoformat(),
+        "users_affected": len(owner_ids),
+        "deleted": dict(totals),
+        "unverified_users": unverified,
+    }
+    if owner_ids:
+        PrivacyRequest.objects.create(
+            user=None,
+            kind=PrivacyRequest.Kind.RETENTION_PURGE,
+            trigger=PrivacyRequest.Trigger.RETENTION,
+            status=PrivacyRequest.Status.COMPLETED if not unverified else PrivacyRequest.Status.FAILED,
+            summary=summary,
+            verified=unverified == 0,
+        )
+    return summary
+
+
+def _capped(queryset, fields, limit):
+    total = queryset.count()
+    rows = list(queryset.values(*fields)[:limit])
+    return rows, total > limit
+
+
+def build_privacy_export(user):
+    """The user's own data as JSON-serialisable dicts.
+
+    Face embeddings and identity centroids are biometric templates: they are
+    reported as counts, never exported, so a stolen export cannot be used to
+    recognise the person.
+    """
+    from accounts.models import AuthEvent
+    from activity.models import ActivityEvent
+    from enhancement.models import ImageEnhancementResult
+    from identities.models import IdentityFace, IdentityGroup
+    from uploads.models import ImageUpload
+
+    limit = settings.PRIVACY_EXPORT_MAX_ROWS
+    truncated = {}
+
+    def collect(name, queryset, fields):
+        rows, was_truncated = _capped(queryset, fields, limit)
+        truncated[name] = was_truncated
+        return rows
+
+    images = collect(
+        "images",
+        ImageUpload.objects.filter(owner=user).order_by("-created_at"),
+        ("id", "original_name", "file_size", "width", "height", "status", "created_at"),
+    )
+    enhancement_rows = collect(
+        "enhancements",
+        ImageEnhancementResult.objects.filter(owner=user).order_by("-created_at"),
+        ("id", "image_id", "requested_level", "requested_style", "applied_level", "status", "created_at"),
+    )
+    groups = collect(
+        "identity_groups",
+        IdentityGroup.objects.filter(owner=user).order_by("display_name"),
+        ("id", "display_name", "state", "member_count", "created_at"),
+    )
+    auth_events = collect(
+        "auth_events",
+        AuthEvent.objects.filter(user=user).order_by("-created_at"),
+        ("event", "identifier", "ip_address", "created_at"),
+    )
+    activity = collect(
+        "activity_events",
+        ActivityEvent.objects.filter(user=user).order_by("-created_at"),
+        ("category", "event", "object_type", "object_id", "created_at"),
+    )
+    consents = collect(
+        "consents",
+        BiometricConsent.objects.filter(user=user),
+        ("purpose", "granted", "policy_version", "created_at"),
+    )
+    requests = collect(
+        "privacy_requests",
+        PrivacyRequest.objects.filter(user=user),
+        ("kind", "trigger", "status", "verified", "created_at"),
+    )
+    return {
+        "format_version": EXPORT_FORMAT_VERSION,
+        "generated_at": timezone.now(),
+        "account": {
+            "id": user.pk,
+            "username": user.username,
+            "email": user.email,
+            "role": user.role,
+            "email_verified": user.is_email_verified,
+            "date_joined": user.date_joined,
+            "last_login": user.last_login,
+        },
+        "consents": consents,
+        "images": images,
+        "enhancements": enhancement_rows,
+        "identity": {
+            "groups": groups,
+            "face_records": IdentityFace.objects.filter(owner=user).count(),
+            "note": (
+                "Face embeddings and group centroids are biometric templates and "
+                "are not included in exports."
+            ),
+        },
+        "auth_events": auth_events,
+        "activity_events": activity,
+        "privacy_requests": requests,
+        "truncated": truncated,
+        "row_limit": limit,
+    }
+
+
+def record_export_request(user):
+    request = PrivacyRequest.objects.create(
+        user=user,
+        kind=PrivacyRequest.Kind.EXPORT,
+        trigger=PrivacyRequest.Trigger.USER,
+        status=PrivacyRequest.Status.COMPLETED,
+        summary={"format_version": EXPORT_FORMAT_VERSION},
+        verified=True,
+    )
+    from activity.services import record_activity_event
+
+    record_activity_event(
+        user, "privacy", "data_exported", object_type="PrivacyRequest", object_id=request.pk
+    )
+    return request
+
+
+def audit_report(now=None):
+    """Aggregate, non-personal privacy posture for administrators."""
+    now = now or timezone.now()
+    since = now - timedelta(days=30)
+    latest_by_user = {}
+    for row in BiometricConsent.objects.order_by("user_id", "purpose", "-created_at", "-id").values(
+        "user_id", "purpose", "granted", "policy_version"
+    ):
+        latest_by_user.setdefault((row["user_id"], row["purpose"]), row)
+    current = current_policy_version()
+    recent = PrivacyRequest.objects.filter(created_at__gte=since)
+    by_kind = {}
+    for row in recent.values("kind", "status"):
+        bucket = by_kind.setdefault(row["kind"], {"completed": 0, "failed": 0})
+        bucket[row["status"]] = bucket.get(row["status"], 0) + 1
+    last_purge = (
+        PrivacyRequest.objects.filter(kind=PrivacyRequest.Kind.RETENTION_PURGE)
+        .values("created_at", "verified", "summary")
+        .first()
+    )
+    return {
+        "generated_at": now,
+        "consent": {
+            "required": bool(settings.BIOMETRIC_CONSENT_REQUIRED),
+            "current_policy_version": current,
+            "users_with_active_consent": sum(
+                1 for row in latest_by_user.values() if row["granted"] and row["policy_version"] == current
+            ),
+            "users_with_withdrawn_consent": sum(1 for row in latest_by_user.values() if not row["granted"]),
+            "users_needing_reconsent": sum(
+                1 for row in latest_by_user.values() if row["granted"] and row["policy_version"] != current
+            ),
+        },
+        "requests_last_30_days": by_kind,
+        "unverified_erasures_total": PrivacyRequest.objects.filter(
+            kind__in=[PrivacyRequest.Kind.FACIAL_ERASURE, PrivacyRequest.Kind.RETENTION_PURGE],
+            verified=False,
+        ).count(),
+        "retention": {
+            "days": settings.FACIAL_DATA_RETENTION_DAYS,
+            "enabled": settings.FACIAL_DATA_RETENTION_DAYS > 0,
+            "last_purge": last_purge,
+        },
+        "encryption": {
+            "identity_embeddings": "protected at rest (keyed BLAKE2s stream with HMAC-SHA256 tag)",
+            "dedicated_embedding_key_configured": settings.IDENTITY_EMBEDDING_KEY != settings.SECRET_KEY,
+            "uploaded_images_encrypted_at_rest": False,
+        },
+    }

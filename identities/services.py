@@ -87,6 +87,14 @@ def process_identity_analysis(analysis_id):
             analysis.finished_at = timezone.now()
             analysis.save(update_fields=["status", "finished_at", "updated_at"])
             return analysis
+        from privacy.services import biometric_processing_allowed
+        if not biometric_processing_allowed(analysis.owner):
+            # Consent can be withdrawn between queueing and processing.
+            analysis.status = IdentityAnalysis.Status.FAILED
+            analysis.failure_reason = "Biometric consent is not active."
+            analysis.finished_at = timezone.now()
+            analysis.save(update_fields=["status", "failure_reason", "finished_at", "updated_at"])
+            return analysis
         analysis.status = IdentityAnalysis.Status.PROCESSING
         analysis.started_at = analysis.started_at or timezone.now()
         analysis.failure_reason = ""
@@ -183,7 +191,10 @@ def create_or_reset_identity_analysis(image, force=False):
 
 
 def enqueue_identity_analysis(image, force=False):
+    from privacy.services import biometric_processing_allowed
     from .tasks import analyze_image_identity_task
+    if not biometric_processing_allowed(image.owner):
+        raise ValidationError("Biometric consent is required before identity analysis.")
     provider = get_identity_provider()
     provider.healthcheck()
     analysis, should_queue = create_or_reset_identity_analysis(image, force)

@@ -765,12 +765,16 @@ Account and upload controls exist; advanced facial-data controls remain.
 - Organization moderators restricted to their active organization and authorized content scopes
 - No moderator or administrator access to passwords, tokens, or live-camera feeds
 - Non-disclosing authorization failures to reduce user and resource enumeration
-- Facial-data retention policy
-- Consent records
-- Encryption-at-rest configuration
-- Privacy export
+- Facial-data retention policy: `FACIAL_DATA_RETENTION_DAYS` with a purge command and Celery task — Complete backend
+- Consent records: append-only, policy-versioned, enforced on identity analysis and the identity guard when `BIOMETRIC_CONSENT_REQUIRED` is on — Complete backend
+- Facial-data erasure with verification (database recount and file check), also on consent withdrawal — Complete backend
+- Privacy export (own data as JSON; embeddings never exported) — Complete backend
+- Security audit reporting: administrator aggregate report and `check --deploy` findings — Complete backend
+- Encryption-at-rest configuration: embeddings are already protected; blank-key bug fixed and deploy checks added; cipher review, key rotation and image encryption remain
 - Temporary-processing cleanup
-- Security audit reporting
+- Frontend consent, erasure and export screens
+
+Details: [41-privacy-and-facial-data.md](features/41-privacy-and-facial-data.md)
 
 ### Feature 42: PostgreSQL data platform — Complete
 

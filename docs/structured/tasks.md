@@ -23,6 +23,7 @@
 | Feature 28 unified activity timeline | Done (2026-09-18) | `activity` app, `GET /api/user/activity/`, `activity/tests.py`, 11 tests |
 | PureScale/PureVision restoration adapters | Done (2026-09-18) | `enhancement/purescale.py`, `enhancement/purevision.py`, checksum-verified real checkpoints, disabled by default; `features/purescale-purevision.md` |
 | Automatic B&W colorization (SIGGRAPH17) | Done (2026-09-18) | `enhancement/colorization.py`, final pipeline stage, luminance-fidelity guard, disabled by default; `features/colorization.md` |
+| Feature 41 privacy backend (consent, erasure + verification, retention, export, audit) | Done (2026-09-19) | `privacy` app, 36 tests; `features/41-privacy-and-facial-data.md` |
 | Identity-preserving enhancement (identity guard) | Done (2026-09-19) | `enhancement/identity_guard.py`, 16 tests, measured on real photos; `features/identity-preserving-enhancement.md` |
 | Slider enhancement controls (style presets, warmth, intensity blend) | Done (2026-09-18) | `natural`/`dynamic`/`ai_max` style field, `warmth`/`intensity` editor controls; `features/slider-enhancement-controls.md` |
 | Verify NAFNet and Real-ESRGAN files | Done | Restricted loads, tensor validation and hashes |
@@ -77,11 +78,14 @@
 
 ### T-006 — Biometric consent and retention
 
-- **Status:** Next
-- Record consent purpose and timestamp.
-- Add configurable embedding retention and deletion.
-- Add account/tenant export and deletion verification.
-- Document encryption-at-rest requirements.
+- **Status:** In progress — backend done 2026-09-19 (`privacy` app, 36 tests):
+  consent records, retention purge, erasure with verification, export, audit
+  report, deploy checks. Open: temporary-processing cleanup, embedding cipher
+  review and key rotation, tenant-level export, frontend screens.
+- Record consent purpose and timestamp. — Done
+- Add configurable embedding retention and deletion. — Done
+- Add account export and deletion verification. — Done (tenant export waits on T-008)
+- Document encryption-at-rest requirements. — Done; see `features/41-privacy-and-facial-data.md`
 
 ### T-007 — Moderator workflow completion
 
@@ -140,7 +144,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 34 | Connect completed system health API to an admin page | Next | T-024 |
 | 35 | Uploaded-image model comparison page | Backlog | T-025 |
 | 36–40 | Complete live-camera release | Backlog | T-026–T-030 |
-| 41 | Consent, retention, encryption, export and erasure | Next | T-006 |
+| 41 | Consent, retention, encryption, export and erasure | Backend done (2026-09-19); cipher review, temp cleanup and frontend remain | T-006 |
 | 43 | Private cloud/object storage | Backlog | T-031 |
 | 44 | OpenAPI schema for every APIView | Done (2026-09-18): zero schema errors; examples and error catalogue remain | T-032 |
 | 45 | Load, performance, camera and integration QA | Continuous | T-033 |

@@ -11,6 +11,7 @@ class ActivityEvent(models.Model):
         GROUP = "group", "Identity group"
         SHARE = "share", "Share"
         ADMIN = "admin", "Administration"
+        PRIVACY = "privacy", "Privacy"
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
