@@ -770,7 +770,7 @@ Account and upload controls exist; advanced facial-data controls remain.
 - Facial-data erasure with verification (database recount and file check), also on consent withdrawal — Complete backend
 - Privacy export (own data as JSON; embeddings never exported) — Complete backend
 - Security audit reporting: administrator aggregate report and `check --deploy` findings — Complete backend
-- Encryption-at-rest configuration: embeddings use AES-256-GCM with key ids and a re-encryption command for rotation (legacy records stay readable); blank-key bug fixed and deploy checks added — Complete backend; image encryption remains (Feature 43)
+- Encryption-at-rest configuration: embeddings use AES-256-GCM with key ids and a re-encryption command for rotation (legacy records stay readable); blank-key bug fixed and deploy checks added; stored images are now encrypted at rest too — Complete backend
 - Temporary-processing cleanup: stale ZIP build files and orphaned media, orphans report-only unless enabled — Complete backend
 - Frontend consent, erasure and export screens
 
@@ -788,7 +788,11 @@ Provides the final relational database foundation for concurrent processing and 
 - PostgreSQL test-database support
 - Preserved rollback backup
 
-### Feature 43: Private cloud storage — Planned
+### Feature 43: Private cloud storage — Partial (encryption at rest done)
+
+Stored images are already encrypted at rest on local storage (AES-256-GCM, key ids and
+rotation, conversion command): [stored-image-encryption.md](features/stored-image-encryption.md).
+Moving media to a private object store, signed URLs and quotas remain.
 
 Moves production assets from local media storage to private object storage.
 

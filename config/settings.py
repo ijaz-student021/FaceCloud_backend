@@ -459,7 +459,7 @@ IDENTITY_EMBEDDING_KEY = env("IDENTITY_EMBEDDING_KEY", default="").strip() or SE
 IDENTITY_EMBEDDING_KEY_ID = env.int("IDENTITY_EMBEDDING_KEY_ID", default=1)
 
 
-def _parse_previous_embedding_keys(raw):
+def _parse_previous_embedding_keys(raw, setting_name="IDENTITY_EMBEDDING_PREVIOUS_KEYS"):
     keys = {}
     for entry in (part.strip() for part in raw.split(",")):
         if not entry:
@@ -469,7 +469,7 @@ def _parse_previous_embedding_keys(raw):
             from django.core.exceptions import ImproperlyConfigured
 
             raise ImproperlyConfigured(
-                "IDENTITY_EMBEDDING_PREVIOUS_KEYS must look like 'id:secret,id:secret'."
+                f"{setting_name} must look like 'id:secret,id:secret'."
             )
         keys[int(key_id)] = secret.strip()
     return keys
@@ -478,6 +478,28 @@ def _parse_previous_embedding_keys(raw):
 IDENTITY_EMBEDDING_PREVIOUS_KEYS = _parse_previous_embedding_keys(
     env("IDENTITY_EMBEDDING_PREVIOUS_KEYS", default="")
 )
+
+# Stored images (originals, enhanced results, previews, reports, packages) can be
+# encrypted at rest with AES-256-GCM (config/storage.py). Existing plaintext files
+# stay readable until `manage.py encrypt_stored_media` converts them. Unlike the
+# embedding key there is no fallback to SECRET_KEY: enabling encryption without
+# its own key stops startup. Ids and previous keys work as for the embedding key.
+IMAGE_ENCRYPTION_ENABLED = env.bool("IMAGE_ENCRYPTION_ENABLED", default=False)
+IMAGE_ENCRYPTION_KEY = env("IMAGE_ENCRYPTION_KEY", default="").strip()
+IMAGE_ENCRYPTION_KEY_ID = env.int("IMAGE_ENCRYPTION_KEY_ID", default=1)
+IMAGE_ENCRYPTION_PREVIOUS_KEYS = _parse_previous_embedding_keys(
+    env("IMAGE_ENCRYPTION_PREVIOUS_KEYS", default=""), "IMAGE_ENCRYPTION_PREVIOUS_KEYS",
+)
+if IMAGE_ENCRYPTION_ENABLED and len(IMAGE_ENCRYPTION_KEY) < 32:
+    raise ImproperlyConfigured(
+        "IMAGE_ENCRYPTION_ENABLED needs its own IMAGE_ENCRYPTION_KEY of at least 32 characters."
+    )
+if not 1 <= IMAGE_ENCRYPTION_KEY_ID <= 255:
+    raise ImproperlyConfigured("IMAGE_ENCRYPTION_KEY_ID must be between 1 and 255.")
+STORAGES = {
+    "default": {"BACKEND": "config.storage.EncryptedFileSystemStorage"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+}
 
 # Biometric privacy controls (Feature 41). Consent is recorded either way;
 # enforcement is opt-in so existing deployments keep working, and

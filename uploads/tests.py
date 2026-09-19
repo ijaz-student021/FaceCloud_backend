@@ -454,7 +454,7 @@ class ImageUploadTests(APITestCase):
         self.assertEqual(response.data["output_format"], "jpeg")
         self.assertEqual(response.data["output_name"], "Profile Photo.jpg")
         result = ImagePreprocessingResult.objects.get(image=image)
-        with Image.open(result.processed_file.path) as processed:
+        with result.processed_file.open("rb") as stored, Image.open(stored) as processed:
             self.assertEqual(processed.format, "JPEG")
         image.refresh_from_db()
         self.assertEqual(image.checksum_sha256, original_checksum)
@@ -489,7 +489,7 @@ class ImageUploadTests(APITestCase):
         response = self.preprocess(image, output_format="jpeg")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         result = ImagePreprocessingResult.objects.get(image=image)
-        with Image.open(result.processed_file.path) as processed:
+        with result.processed_file.open("rb") as stored, Image.open(stored) as processed:
             pixel = processed.convert("RGB").getpixel((4, 4))
             self.assertTrue(all(channel > 240 for channel in pixel))
 

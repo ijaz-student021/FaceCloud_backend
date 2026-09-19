@@ -21,6 +21,7 @@ class FaceCloudTestRunner(DiscoverRunner):
     """Make test runs fast and safe.
 
     * A fast password hasher (see ``FastPasswordHasher``).
+    * Image encryption switched on with a test key, for every test.
     * A throwaway media folder. Tests that save files (uploads, enhanced images,
       previews) would otherwise write into the real MEDIA_ROOT, mixing debris into
       a developer's actual user files and colliding with real user ids. Suites that
@@ -33,6 +34,12 @@ class FaceCloudTestRunner(DiscoverRunner):
         self._media_override = override_settings(
             MEDIA_ROOT=self._media_root,
             PASSWORD_HASHERS=["config.test_runner.FastPasswordHasher"],
+            # Every test that saves or reads a file goes through the encrypting
+            # storage, so any code that mishandles ciphertext fails loudly.
+            IMAGE_ENCRYPTION_ENABLED=True,
+            IMAGE_ENCRYPTION_KEY="test-only-image-encryption-key-0123456789",
+            IMAGE_ENCRYPTION_KEY_ID=1,
+            IMAGE_ENCRYPTION_PREVIOUS_KEYS={},
         )
         self._media_override.enable()
 

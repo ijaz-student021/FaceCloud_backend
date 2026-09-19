@@ -19,7 +19,7 @@ verified, and what its known limits are.
 | Quality control | Sharpness, exposure, contrast, noise and resolution scoring with explainable accept / review / reject decisions |
 | Enhancement | Adaptive pipeline: Zero-DCE exposure, adaptive denoise, EDSR / NAFNet / Real-ESRGAN / PureScale / PureVision restoration, GFPGAN face restoration, sharpening, colorization, style presets and sliders |
 | Identity | YuNet face detection, SFace embeddings, identity grouping, a guard that rejects enhancements that change who a face looks like, ZIP export per identity |
-| Privacy | Biometric consent history, verified erasure, retention purge, data export, AES-256-GCM embedding encryption with key rotation, temporary-file cleanup |
+| Privacy | Biometric consent history, verified erasure, retention purge, data export, AES-256-GCM encryption of embeddings and stored images with key rotation, temporary-file cleanup |
 | Model comparison | One image through several enhancement profiles side by side, with metrics, timing, previews, an explainable recommendation and a CSV report |
 | Sharing | Expiring, revocable public links to a result, optionally watermarked, with view counts and no viewer identity stored |
 | Operations | Duplicate detection, processing reports (PDF), live batch progress, notifications, activity timeline, system health |
@@ -130,7 +130,9 @@ python manage.py test                        # everything, before a commit
 - Changing an account's email requires the current password.
 - With `DJANGO_DEBUG=False` the app refuses to start on the built-in
   development secret key; CORS is open only when `DEBUG` is on.
-- Face embeddings are encrypted at rest (AES-256-GCM, rotatable keys).
+- Stored images (originals, results, previews, reports, packages) and face
+  embeddings are encrypted at rest (AES-256-GCM, rotatable keys); see
+  [`docs/features/stored-image-encryption.md`](docs/features/stored-image-encryption.md).
   Run `manage.py check --deploy` before going live; the `privacy.*` checks
   cover consent, retention and key configuration.
 
