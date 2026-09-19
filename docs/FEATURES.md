@@ -512,7 +512,7 @@ Packages all images of one identity into a structured archive.
 - Secure generated archive
 - Download audit event
 
-### Feature 25: Watermark options — Planned
+### Feature 25: Watermark options — Complete (backend)
 
 Adds optional branding to enhanced output copies.
 

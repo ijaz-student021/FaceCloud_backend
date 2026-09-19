@@ -117,7 +117,7 @@
 | System health frontend page | Next |
 | Model comparison page | Backlog |
 | Secure expiring share links | Backlog |
-| Watermark options | Backlog |
+| Watermark options | Done (backend, 2026-09-19); frontend controls remain |
 | Private cloud storage | Backlog |
 | Live camera detection and enhancement | Backlog |
 
@@ -137,7 +137,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 22 | JSON/CSV/PDF report frontend integration | Next | T-013 |
 | 23 | Image and batch package frontend integration | Next | T-014 |
 | 24 | Connect completed identity-group ZIP API to Person Folders | Next | T-015 |
-| 25 | Export watermark options | Backlog | T-016 |
+| 25 | Export watermark options | Done backend (2026-09-19, `docs/features/25-watermark-options.md`); frontend controls remain | T-016 |
 | 26 | Secure expiring share links | Backlog | T-017 |
 | 27 | Organization-scoped moderator review | Backlog | T-007 |
 | 28 | Complete owner activity timeline | Done backend (2026-09-18); frontend remains | T-018 |

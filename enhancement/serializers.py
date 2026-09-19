@@ -1,6 +1,7 @@
 from drf_spectacular.utils import extend_schema_field, inline_serializer
 from rest_framework import serializers
 
+from . import watermark as wm
 from .models import (
     EditMode,
     EnhancementBatchJob,
@@ -15,6 +16,34 @@ from .models import (
 class EnhancementRequestSerializer(serializers.Serializer):
     level = serializers.ChoiceField(choices=EnhancementLevel.choices, default=EnhancementLevel.AUTO)
     style = serializers.ChoiceField(choices=EnhancementStyle.choices, default=EnhancementStyle.NATURAL)
+
+
+class WatermarkOptionsSerializer(serializers.Serializer):
+    """Query parameters shared by the download and preview endpoints."""
+
+    watermark = serializers.ChoiceField(
+        choices=wm.MODES, default="none",
+        help_text="none, small (small FaceCloud mark), facecloud, username or custom.",
+    )
+    watermark_position = serializers.ChoiceField(choices=wm.POSITIONS, default="bottom_right")
+    watermark_opacity = serializers.FloatField(
+        min_value=wm.MIN_OPACITY, max_value=wm.MAX_OPACITY,
+        default=wm.DEFAULT_OPACITY,
+    )
+    watermark_text = serializers.CharField(
+        required=False, allow_blank=True, max_length=wm.MAX_CUSTOM_LENGTH,
+        help_text="Only used when watermark=custom.",
+    )
+
+    def validate(self, attrs):
+        try:
+            attrs["spec"] = wm.validate_spec(
+                mode=attrs["watermark"], position=attrs["watermark_position"],
+                opacity=attrs["watermark_opacity"], text=attrs.get("watermark_text", ""),
+            )
+        except wm.WatermarkError as error:
+            raise serializers.ValidationError({error.field: [str(error)]}) from error
+        return attrs
 
 
 class GalleryAdjustmentSerializer(serializers.Serializer):

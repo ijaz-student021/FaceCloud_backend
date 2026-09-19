@@ -1,11 +1,12 @@
+import io
 import uuid
 
 from django.db import IntegrityError, transaction
-from django.http import FileResponse
+from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import OpenApiExample, extend_schema
+from drf_spectacular.utils import OpenApiExample, OpenApiParameter, extend_schema
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
@@ -26,13 +27,44 @@ from .serializers import (
     ImageEditVersionSerializer,
     ImageEnhancementComparisonSerializer,
     ImageEnhancementResultSerializer,
+    WatermarkOptionsSerializer,
 )
 from .services import create_enhancement_result, ensure_enhancement_capacity
+from .watermark import WatermarkError, render_watermarked
 from .tasks import (
     process_enhancement_batch,
     process_enhancement_image,
     process_gallery_edit,
 )
+
+
+PREVIEW_MAX_EDGE = 1024
+WATERMARK_PARAMETERS = [
+    OpenApiParameter("watermark", OpenApiTypes.STR, description="none (default), small, facecloud, username or custom."),
+    OpenApiParameter("watermark_position", OpenApiTypes.STR, description="bottom_right (default), bottom_left, top_right, top_left, center or tile."),
+    OpenApiParameter("watermark_opacity", OpenApiTypes.FLOAT, description="0.1 to 1.0, default 0.5."),
+    OpenApiParameter("watermark_text", OpenApiTypes.STR, description="Text for watermark=custom (40 Latin characters at most)."),
+]
+
+
+def _watermark_spec(request):
+    options = WatermarkOptionsSerializer(data=request.query_params)
+    options.is_valid(raise_exception=True)
+    return options.validated_data["spec"]
+
+
+def _watermarked_file(file_field, output_format, spec, user, max_edge=None):
+    try:
+        return render_watermarked(file_field, output_format, spec, user, max_edge=max_edge)
+    except WatermarkError as error:
+        raise ValidationError({"watermark": [str(error)]}) from error
+    except OSError as error:
+        raise ValidationError({"watermark": ["The image could not be watermarked."]}) from error
+
+
+def _watermarked_name(name):
+    stem, dot, extension = name.rpartition(".")
+    return f"{stem}_watermarked.{extension}" if dot else f"{name}_watermarked"
 
 
 class ImageEnhanceView(APIView):
@@ -202,7 +234,10 @@ class EnhancementJobDetailView(generics.RetrieveAPIView):
 class EnhancementDownloadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
-    @extend_schema(responses={200: OpenApiTypes.BINARY, 404: OpenApiTypes.OBJECT})
+    @extend_schema(
+        parameters=WATERMARK_PARAMETERS,
+        responses={200: OpenApiTypes.BINARY, 400: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT},
+    )
     def get(self, request, pk):
         result = get_object_or_404(
             ImageEnhancementResult.objects.filter(owner=request.user, status=EnhancementStatus.COMPLETED),
@@ -210,7 +245,14 @@ class EnhancementDownloadView(APIView):
         )
         if not result.enhanced_file:
             return Response({"detail": "The enhanced image is unavailable."}, status=status.HTTP_404_NOT_FOUND)
+        spec = _watermark_spec(request)
         content_type = "image/png" if result.output_format == "png" else "image/jpeg"
+        filename, file_size, stream = result.output_name, result.output_file_size, None
+        if spec.active:
+            payload, content_type = _watermarked_file(
+                result.enhanced_file, result.output_format, spec, request.user,
+            )
+            filename, file_size, stream = _watermarked_name(filename), len(payload), io.BytesIO(payload)
         from downloads.models import DownloadEvent
         from downloads.services import record_download
         record_download(
@@ -219,14 +261,42 @@ class EnhancementDownloadView(APIView):
             resource_id=result.pk,
             batch_id=result.image.batch_id,
             image_id=result.image_id,
-            filename=result.output_name,
-            file_size=result.output_file_size,
+            filename=filename,
+            file_size=file_size,
             content_type=content_type,
         )
         return FileResponse(
-            result.enhanced_file.open("rb"), as_attachment=True,
-            filename=result.output_name, content_type=content_type,
+            stream or result.enhanced_file.open("rb"), as_attachment=True,
+            filename=filename, content_type=content_type,
         )
+
+
+class EnhancementWatermarkPreviewView(APIView):
+    """Downscaled inline preview of a watermark, so it can be checked before export."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        parameters=WATERMARK_PARAMETERS,
+        responses={200: OpenApiTypes.BINARY, 400: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT},
+    )
+    def get(self, request, pk):
+        result = get_object_or_404(
+            ImageEnhancementResult.objects.filter(owner=request.user, status=EnhancementStatus.COMPLETED),
+            pk=pk,
+        )
+        if not result.enhanced_file:
+            return Response({"detail": "The enhanced image is unavailable."}, status=status.HTTP_404_NOT_FOUND)
+        spec = _watermark_spec(request)
+        if not spec.active:
+            raise ValidationError({"watermark": ["Choose a watermark mode to preview."]})
+        payload, content_type = _watermarked_file(
+            result.enhanced_file, result.output_format, spec, request.user,
+            max_edge=PREVIEW_MAX_EDGE,
+        )
+        response = HttpResponse(payload, content_type=content_type)
+        response["Cache-Control"] = "private, no-store"
+        return response
 
 
 class EnhancementComparisonView(APIView):
@@ -462,7 +532,10 @@ class GalleryEditActivateView(APIView):
 class GalleryEditDownloadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
-    @extend_schema(responses={200: OpenApiTypes.BINARY, 404: OpenApiTypes.OBJECT})
+    @extend_schema(
+        parameters=WATERMARK_PARAMETERS,
+        responses={200: OpenApiTypes.BINARY, 400: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT},
+    )
     def get(self, request, pk):
         edit = get_object_or_404(
             ImageEditVersion.objects.filter(
@@ -476,7 +549,14 @@ class GalleryEditDownloadView(APIView):
                 {"detail": "The edited image is unavailable."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        spec = _watermark_spec(request)
         content_type = "image/png" if edit.output_format == "png" else "image/jpeg"
+        filename, file_size, stream = edit.output_name, edit.output_file_size, None
+        if spec.active:
+            payload, content_type = _watermarked_file(
+                edit.edited_file, edit.output_format, spec, request.user,
+            )
+            filename, file_size, stream = _watermarked_name(filename), len(payload), io.BytesIO(payload)
         from downloads.models import DownloadEvent
         from downloads.services import record_download
         record_download(
@@ -485,13 +565,13 @@ class GalleryEditDownloadView(APIView):
             resource_id=edit.pk,
             batch_id=edit.enhancement_result.image.batch_id,
             image_id=edit.enhancement_result.image_id,
-            filename=edit.output_name,
-            file_size=edit.output_file_size,
+            filename=filename,
+            file_size=file_size,
             content_type=content_type,
         )
         return FileResponse(
-            edit.edited_file.open("rb"),
+            stream or edit.edited_file.open("rb"),
             as_attachment=True,
-            filename=edit.output_name,
+            filename=filename,
             content_type=content_type,
         )
