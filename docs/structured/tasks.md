@@ -19,7 +19,9 @@
 | Feature 20 bounded Celery auto-retry | Done (2026-09-18) | `autoretry_for` on transient DB errors, all 8 task files |
 | Feature 20 per-face cancellation | Done (2026-09-18) | `identities/services.py:76,101` + test |
 | Feature 44 OpenAPI schema mounted | Done (2026-09-18) | `/api/schema/`, `/api/docs/`, `/api/redoc/` |
-| Feature 44 all raw APIViews typed | Done (2026-09-18) | 55-56 views across 10 apps; `spectacular --validate --fail-on-warn` reports zero errors |
+| Feature 44 all raw APIViews typed | Done (2026-09-18) | 55-56 views across 10 apps |
+| Feature 44 schema warnings | Done (2026-09-19) | 43 warnings fixed (untyped method fields, enum name clashes, path params); `spectacular --validate --fail-on-warn` is now a test |
+| Feature 44 error catalogue and examples | Done (2026-09-19) | `docs/API_ERRORS.md`, shared 401/429 responses, examples for register, login and enhancement |
 | Feature 28 unified activity timeline | Done (2026-09-18) | `activity` app, `GET /api/user/activity/`, `activity/tests.py`, 11 tests |
 | PureScale/PureVision restoration adapters | Done (2026-09-18) | `enhancement/purescale.py`, `enhancement/purevision.py`, checksum-verified real checkpoints, disabled by default; `features/purescale-purevision.md` |
 | Automatic B&W colorization (SIGGRAPH17) | Done (2026-09-18) | `enhancement/colorization.py`, final pipeline stage, luminance-fidelity guard, disabled by default; `features/colorization.md` |
@@ -149,7 +151,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 36–40 | Complete live-camera release | Backlog | T-026–T-030 |
 | 41 | Consent, retention, encryption, export and erasure | Backend done (2026-09-19), incl. AES-GCM key rotation, temp/orphan cleanup and beat scheduling; frontend remains | T-006 |
 | 43 | Private cloud/object storage | Backlog | T-031 |
-| 44 | OpenAPI schema for every APIView | Done (2026-09-18): zero schema errors; examples and error catalogue remain | T-032 |
+| 44 | OpenAPI schema for every APIView | Done (2026-09-19): zero schema warnings (enforced by a test), examples on the core flows, `docs/API_ERRORS.md` | T-032 |
 | 45 | Load, performance, camera and integration QA | Continuous | T-033 |
 | 46 | Organization and tenant management | Backlog | T-008 |
 | 47 | Gallery-editor frontend integration | Next | T-034 |

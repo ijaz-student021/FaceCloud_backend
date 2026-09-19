@@ -616,6 +616,24 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "Authenticated facial-image upload, enhancement, validation, identity grouping, reports, and downloads.",
     "VERSION": FACECLOUD_VERSION,
     "SERVE_INCLUDE_SCHEMA": False,
+    "POSTPROCESSING_HOOKS": [
+        "drf_spectacular.hooks.postprocess_schema_enums",
+        "config.schema_hooks.add_standard_error_responses",
+    ],
+    # Several models share field names ("status", "report_format", ...) with
+    # different choice sets; name each set explicitly so the schema is stable.
+    "ENUM_NAME_OVERRIDES": {
+        "ProcessingStatusEnum": "enhancement.models.EnhancementStatus",
+        "EnhancementLevelEnum": "enhancement.models.EnhancementLevel",
+        "EnhancementStyleEnum": "enhancement.models.EnhancementStyle",
+        "PackageStatusEnum": "downloads.models.DownloadPackage.Status",
+        "ProcessingReportStatusEnum": "reports.models.ProcessingReport.Status",
+        "IdentityAnalysisStatusEnum": "identities.models.IdentityAnalysis.Status",
+        "ExportReportFormatEnum": "identities.models.IdentityGroupExport.ReportFormat",
+        "UserRoleEnum": "accounts.models.User.ROLE_CHOICES",
+        "ProcessingReportFormatEnum": "reports.models.ProcessingReport.Format",
+        "ImageUploadStatusEnum": "uploads.models.ImageUpload.STATUS_CHOICES",
+    },
 }
 
 SIMPLE_JWT = {

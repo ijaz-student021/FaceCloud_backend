@@ -1,0 +1,17 @@
+import tempfile
+from pathlib import Path
+
+from django.core.management import call_command
+from django.test import SimpleTestCase
+
+
+class OpenAPISchemaTests(SimpleTestCase):
+    def test_schema_generates_with_no_warnings(self):
+        """A new untyped field or enum name clash fails here instead of silently
+        degrading the contract the frontend generates its types from."""
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "schema.yml"
+            call_command("spectacular", "--file", str(target), "--validate", "--fail-on-warn")
+            text = target.read_text(encoding="utf-8")
+        self.assertIn("ErrorDetail", text)
+        self.assertIn("/api/system/queue/", text)

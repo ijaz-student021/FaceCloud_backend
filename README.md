@@ -126,6 +126,7 @@ schedule, so a beat process must be running in deployment.
 ## Documentation
 
 - [`docs/FEATURES.md`](docs/FEATURES.md): feature catalogue and status
+- [`docs/API_ERRORS.md`](docs/API_ERRORS.md): error shapes the frontend can rely on
 - [`docs/features`](docs/features): per-feature design, verification and limits
 - [`docs/structured`](docs/structured): architecture, decisions, tasks
 - [`docs/12_DAY_COMPLETION_PLAN.md`](docs/12_DAY_COMPLETION_PLAN.md): delivery plan

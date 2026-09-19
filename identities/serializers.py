@@ -21,7 +21,7 @@ class IdentityGroupSerializer(serializers.ModelSerializer):
         model = IdentityGroup
         fields = ("id", "display_name", "state", "member_count", "preview_image", "created_at", "updated_at")
 
-    def get_preview_image(self, obj):
+    def get_preview_image(self, obj) -> int | None:
         membership = obj.memberships.exclude(state__in=[IdentityMembership.State.REJECTED, IdentityMembership.State.REMOVED]).select_related("identity_face").first()
         return membership.identity_face.image_id if membership else None
 
@@ -109,7 +109,7 @@ class IdentityGroupExportSerializer(serializers.ModelSerializer):
         )
         read_only_fields = fields
 
-    def get_download_url(self, obj):
+    def get_download_url(self, obj) -> str | None:
         if obj.status != IdentityGroupExport.Status.READY or not obj.export_file:
             return None
         request = self.context.get("request")

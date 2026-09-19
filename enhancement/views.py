@@ -5,7 +5,7 @@ from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiExample, extend_schema
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
@@ -39,8 +39,26 @@ class ImageEnhanceView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     @extend_schema(
+        summary="Enhance one image",
+        description=(
+            "Queues an enhancement. `style` picks the look (natural, dynamic, ai_max); "
+            "`level` the strength. Returns 202 immediately; poll the result for progress."
+        ),
         request=EnhancementRequestSerializer,
-        responses={202: ImageEnhancementResultSerializer},
+        responses={
+            202: ImageEnhancementResultSerializer,
+            400: OpenApiTypes.OBJECT,
+            429: OpenApiTypes.OBJECT,
+        },
+        examples=[
+            OpenApiExample("Natural, automatic strength", value={"level": "auto", "style": "natural"}, request_only=True),
+            OpenApiExample("Full AI enhance", value={"level": "high", "style": "ai_max"}, request_only=True),
+            OpenApiExample(
+                "Too many enhancements in progress",
+                value={"detail": "You already have 10 image enhancements in progress (limit 10). Wait for some to finish, then try again."},
+                response_only=True, status_codes=["429"],
+            ),
+        ],
     )
     def post(self, request, image_id):
         image = get_object_or_404(
@@ -83,8 +101,21 @@ class BatchEnhanceView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     @extend_schema(
+        summary="Enhance every ready image in a batch",
         request=EnhancementRequestSerializer,
-        responses={201: EnhancementBatchJobSerializer},
+        responses={
+            201: EnhancementBatchJobSerializer,
+            400: OpenApiTypes.OBJECT,
+            429: OpenApiTypes.OBJECT,
+        },
+        examples=[
+            OpenApiExample("Dynamic look", value={"level": "medium", "style": "dynamic"}, request_only=True),
+            OpenApiExample(
+                "Too many batch jobs in progress",
+                value={"detail": "You already have 2 batch enhancement jobs in progress (limit 2). Wait for some to finish, then try again."},
+                response_only=True, status_codes=["429"],
+            ),
+        ],
     )
     def post(self, request, batch_id):
         batch = get_object_or_404(UploadBatch.objects.filter(owner=request.user), pk=batch_id)

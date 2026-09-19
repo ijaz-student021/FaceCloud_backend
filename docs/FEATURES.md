@@ -799,11 +799,13 @@ Moves production assets from local media storage to private object storage.
 - Storage quotas and analytics
 - Lifecycle and deletion policies
 
-### Feature 44: API documentation and developer support — Complete OpenAPI baseline
+### Feature 44: API documentation and developer support — Complete
 
 Maintains stable integration contracts and implementation documentation.
 
 - Root project README
+- [`docs/API_ERRORS.md`](API_ERRORS.md): error shapes and what each 4xx means, checked by tests
+- Schema generates with zero warnings (enforced by `config/test_openapi_schema.py`); 401 and 429 documented on every operation; request and error examples on register, login and enhancement
 - Per-feature implementation documents
 - Upload endpoint reference
 - PostgreSQL platform documentation

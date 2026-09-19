@@ -4,8 +4,14 @@ from django.db import transaction
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import extend_schema
-from rest_framework import generics, permissions, status
+from drf_spectacular.utils import (
+    OpenApiExample,
+    OpenApiParameter,
+    extend_schema,
+    extend_schema_view,
+    inline_serializer,
+)
+from rest_framework import generics, permissions, serializers, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
@@ -35,6 +41,35 @@ from .services import (
 User = get_user_model()
 
 
+LoginResponseSerializer = inline_serializer("LoginResponse", {
+    "access": serializers.CharField(help_text="Short-lived (15 min) access token."),
+    "refresh": serializers.CharField(help_text="Rotating refresh token (7 days)."),
+    "role": serializers.ChoiceField(choices=User.ROLE_CHOICES),
+    "dashboard": serializers.CharField(
+        help_text="Which dashboard the frontend should route to: user, moderator or admin.",
+    ),
+    "user": UserSerializer(),
+})
+
+
+@extend_schema_view(
+    post=extend_schema(
+        summary="Create an account",
+        description="Sends a verification email. The account cannot log in until it is verified.",
+        examples=[
+            OpenApiExample(
+                "New account",
+                value={"username": "alice", "email": "alice@example.com", "password": "A-long-unique-passphrase-7"},
+                request_only=True,
+            ),
+            OpenApiExample(
+                "Email already used",
+                value={"email": ["A user with this email already exists."]},
+                response_only=True, status_codes=["400"],
+            ),
+        ],
+    )
+)
 class RegisterView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
     permission_classes = [permissions.AllowAny]
@@ -47,6 +82,25 @@ class RegisterView(generics.CreateAPIView):
         record_auth_event("registered", self.request, user, user.email)
 
 
+@extend_schema_view(
+    post=extend_schema(
+        summary="Log in",
+        description="Provide exactly one of identifier, username or email, plus the password.",
+        request=FaceCloudTokenObtainPairSerializer,
+        responses={200: LoginResponseSerializer, 400: OpenApiTypes.OBJECT},
+        examples=[
+            OpenApiExample(
+                "Log in with an email", value={"email": "alice@example.com", "password": "A-long-unique-passphrase-7"},
+                request_only=True,
+            ),
+            OpenApiExample(
+                "Wrong credentials, unverified, suspended or inactive account",
+                value={"detail": ["Invalid username/email or password."]},
+                response_only=True, status_codes=["400"],
+            ),
+        ],
+    )
+)
 class FaceCloudTokenObtainPairView(TokenObtainPairView):
     serializer_class = FaceCloudTokenObtainPairSerializer
     throttle_scope = "login"
@@ -61,7 +115,15 @@ class VerifyEmailView(APIView):
     permission_classes = [permissions.AllowAny]
     throttle_scope = "verification"
 
-    @extend_schema(responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT})
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("uidb64", OpenApiTypes.STR, OpenApiParameter.PATH,
+                             description="URL-safe base64 user id from the verification email."),
+            OpenApiParameter("token", OpenApiTypes.STR, OpenApiParameter.PATH,
+                             description="Signed verification token from the verification email."),
+        ],
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+    )
     def get(self, request, uidb64, token):
         try:
             uid = force_str(urlsafe_base64_decode(uidb64))
