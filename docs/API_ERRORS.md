@@ -15,6 +15,7 @@ and 429 responses are added to every operation in the OpenAPI schema
 | 401 | `{"detail": "...", "code": "token_not_valid", "messages": [...]}` | The token is malformed, expired or blacklisted. |
 | 403 | `{"detail": "message"}` | Authenticated, but the role is not allowed. |
 | 404 | `{"detail": "message"}` | The record does not exist **or belongs to someone else**. |
+| 410 | `{"detail": "message"}` | A public share link that has expired, been revoked, or whose owner is no longer active. |
 | 429 | `{"detail": "message"}` | Rate limit or job limit reached. |
 
 Treat `detail` as either a string or a one-element list and show it as is; the

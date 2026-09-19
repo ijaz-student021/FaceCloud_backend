@@ -74,6 +74,7 @@ INSTALLED_APPS = [
     "operations",
     "activity",
     "privacy",
+    "sharing",
 ]
 
 MIDDLEWARE = [
@@ -528,6 +529,13 @@ JOB_QUEUED_STALE_HOURS = env.int("JOB_QUEUED_STALE_HOURS", default=6)
 MAX_ACTIVE_ENHANCEMENTS_PER_USER = env.int("MAX_ACTIVE_ENHANCEMENTS_PER_USER", default=10)
 MAX_ACTIVE_BATCH_ENHANCEMENTS_PER_USER = env.int("MAX_ACTIVE_BATCH_ENHANCEMENTS_PER_USER", default=2)
 
+# Share links (Feature 26): default and maximum lifetime, how many one user may
+# keep active, and how long ended links are kept before the daily cleanup.
+SHARE_LINK_DEFAULT_TTL_HOURS = env.int("SHARE_LINK_DEFAULT_TTL_HOURS", default=24)
+SHARE_LINK_MAX_TTL_HOURS = env.int("SHARE_LINK_MAX_TTL_HOURS", default=24 * 30)
+SHARE_LINK_MAX_ACTIVE_PER_USER = env.int("SHARE_LINK_MAX_ACTIVE_PER_USER", default=50)
+SHARE_LINK_RETENTION_DAYS = env.int("SHARE_LINK_RETENTION_DAYS", default=30)
+
 # Periodic maintenance. Nothing runs these unless a beat process is started
 # (scripts/run_beat.ps1 or `celery -A config beat`). Every entry is safe to run
 # repeatedly and does nothing when the feature it serves is switched off.
@@ -552,6 +560,10 @@ CELERY_BEAT_SCHEDULE = {
     "purge-expired-facial-data": {
         "task": "privacy.purge_expired_facial_data",
         "schedule": crontab(minute=15, hour=3),
+    },
+    "expire-share-links": {
+        "task": "sharing.cleanup_expired",
+        "schedule": crontab(minute=0, hour=4),
     },
     "expire-notifications": {
         "task": "notifications.cleanup_expired",
@@ -607,6 +619,8 @@ REST_FRAMEWORK = {
         "privacy_consent": "60/hour",
         "privacy_export": "10/hour",
         "privacy_erasure": "10/hour",
+        "share_create": "60/hour",
+        "share_public": "120/hour",
     },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }

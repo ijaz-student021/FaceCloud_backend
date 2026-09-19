@@ -524,7 +524,7 @@ Adds optional branding to enhanced output copies.
 - Preview before export
 - Original enhanced asset remains unmodified
 
-### Feature 26: Secure share links — Planned
+### Feature 26: Secure share links — Complete (backend)
 
 Allows controlled external viewing without exposing a user account.
 
@@ -575,7 +575,7 @@ feed into one owner-scoped, paginated timeline. See
 - Downloads and exports (reports, packages, identity-group exports) — implemented
 - Group changes (rename, merge, move, remove) — implemented
 - Moderator decisions — reserved category; no events until Feature 27 exists
-- Share-link activity — reserved category; no events until Feature 26 exists
+- Share-link activity — `share_link_created` and `share_link_revoked` events (never containing the token)
 - Administrative actions — covered today via the existing `AuthEvent`
   role-change/suspension events merged into the same timeline
 

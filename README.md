@@ -20,6 +20,7 @@ verified, and what its known limits are.
 | Enhancement | Adaptive pipeline: Zero-DCE exposure, adaptive denoise, EDSR / NAFNet / Real-ESRGAN / PureScale / PureVision restoration, GFPGAN face restoration, sharpening, colorization, style presets and sliders |
 | Identity | YuNet face detection, SFace embeddings, identity grouping, a guard that rejects enhancements that change who a face looks like, ZIP export per identity |
 | Privacy | Biometric consent history, verified erasure, retention purge, data export, AES-256-GCM embedding encryption with key rotation, temporary-file cleanup |
+| Sharing | Expiring, revocable public links to a result, optionally watermarked, with view counts and no viewer identity stored |
 | Operations | Duplicate detection, processing reports (PDF), live batch progress, notifications, activity timeline, system health |
 
 Feature status lives in [`docs/FEATURES.md`](docs/FEATURES.md).
@@ -36,6 +37,7 @@ enhancement/       enhancement pipeline, model adapters, identity guard
 duplicates/        perceptual-hash duplicate detection
 identities/        face embeddings, identity groups, encrypted storage
 privacy/           consent, erasure, retention, export, cleanup
+sharing/           expiring, revocable share links
 reports/  downloads/  notifications/  activity/  operations/
 scripts/           worker launcher, dataset audit, model training and export
 notebooks/         model training notebooks
