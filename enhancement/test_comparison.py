@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
-from django.test import SimpleTestCase, TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings, tag
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -159,6 +159,7 @@ class ComparisonProcessingTests(ComparisonFixtureMixin, TestCase):
             profiles=profiles or ["opencv_baseline", "natural"],
         )
 
+    @tag("slow")
     def test_every_requested_profile_and_the_original_get_metrics_and_previews(self):
         comparison = process_model_comparison(self.comparison())
 
@@ -178,6 +179,7 @@ class ComparisonProcessingTests(ComparisonFixtureMixin, TestCase):
         # Adjusted scores are stored next to the raw ones for transparency.
         self.assertIn("adjusted_score", outputs["natural"].scores)
 
+    @tag("slow")
     def test_the_baseline_profile_switches_the_learned_model_off(self):
         with patch("enhancement.services.enhance_with_zero_dce") as zero_dce:
             comparison = process_model_comparison(self.comparison(["opencv_baseline"]))

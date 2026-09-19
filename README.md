@@ -103,8 +103,14 @@ python manage.py makemigrations --check --dry-run
 python manage.py check --deploy              # production configuration audit
 ```
 
-Tests run against a throwaway database and a throwaway media folder (see
-`config/test_runner.py`), so they never touch your real users' files.
+Tests run against a throwaway database and media folder, with a fast password
+hasher (see `config/test_runner.py`), so they never touch your real users' files.
+The few tests that run the real enhancement pipeline are tagged `slow`:
+
+```powershell
+python manage.py test --exclude-tag slow     # quick loop
+python manage.py test                        # everything, before a commit
+```
 
 ## Security posture
 
@@ -128,6 +134,35 @@ Tests run against a throwaway database and a throwaway media folder (see
 
 The retention purge and temporary-file cleanup run from the Celery beat
 schedule, so a beat process must be running in deployment.
+
+## Before deploying
+
+`python manage.py check --deploy` must report no errors. The ones that will stop
+a deployment on the development defaults:
+
+1. **`privacy.E001`: set a dedicated `IDENTITY_EMBEDDING_KEY`.** Without one,
+   face embeddings are encrypted with `DJANGO_SECRET_KEY`, so rotating the Django
+   secret would make every stored embedding unreadable. Generate one and keep it
+   in your secret store, separate from the Django secret:
+
+   ```powershell
+   python -c "import secrets; print(secrets.token_urlsafe(48))"
+   ```
+
+   Set it **before** the first embedding is created. Changing it later is done
+   with a new `IDENTITY_EMBEDDING_KEY_ID` plus `IDENTITY_EMBEDDING_PREVIOUS_KEYS`
+   and `manage.py reencrypt_identity_embeddings`; the runbook is in
+   [`docs/features/41-privacy-and-facial-data.md`](docs/features/41-privacy-and-facial-data.md).
+2. Set `DJANGO_SECRET_KEY` to a private value (the app refuses to start on the
+   built-in one when `DJANGO_DEBUG=False`) and `DJANGO_DEBUG=False`.
+3. Set `DJANGO_ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `PUBLIC_BACKEND_URL` and
+   `FRONTEND_URL`, and `TRUSTED_PROXY_COUNT` to the number of reverse proxies in
+   front of Django.
+4. Turn on HTTPS settings (`SECURE_SSL_REDIRECT`, secure cookies, HSTS) as in
+   `.env.example`.
+5. Decide the privacy policy: `BIOMETRIC_CONSENT_REQUIRED` and
+   `FACIAL_DATA_RETENTION_DAYS` (the checks warn while they are off).
+6. Run the worker and exactly one beat process.
 
 ## Documentation
 

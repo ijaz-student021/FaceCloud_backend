@@ -4,7 +4,7 @@ from pathlib import Path
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
-from django.test import TestCase
+from django.test import TestCase, tag
 from unittest import skipUnless
 
 from uploads.models import ImagePreprocessingResult, ImageUpload, UploadBatch
@@ -17,6 +17,7 @@ SAMPLE = Path(settings.BASE_DIR) / ".runtime" / "dataset_review" / "image" / "30
 ZERO_DCE_MODEL = Path(settings.BASE_DIR) / settings.ZERO_DCE_MODEL_PATH
 
 
+@tag("slow")
 @skipUnless(SAMPLE.exists() and settings.ZERO_DCE_ENABLED and ZERO_DCE_MODEL.exists(), "sample photograph or Zero-DCE model not available")
 class RealPhotoComparisonTests(TestCase):
     def test_a_dark_street_photo_is_improved_by_at_least_one_profile(self):
