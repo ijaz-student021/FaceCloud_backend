@@ -80,6 +80,9 @@ class FaceCloudTokenObtainPairSerializer(serializers.Serializer):
         user = User.objects.filter(
             Q(username__iexact=identifier) | Q(email__iexact=identifier)
         ).first()
+        if not user:
+            # Hash anyway so an unknown account takes as long as a wrong password.
+            User().set_password(attrs["password"])
         if not user or not user.check_password(attrs["password"]):
             record_auth_event("login_failed", request, user, identifier, {"reason": "invalid_credentials"})
             raise serializers.ValidationError({"detail": "Invalid username/email or password."})
@@ -135,6 +138,29 @@ class UserSerializer(serializers.ModelSerializer):
 
     def validate_email(self, value):
         return validate_unique_email(value, self.instance)
+
+
+class ProfileUpdateSerializer(UserSerializer):
+    """Profile edits. Changing the email re-routes password recovery to a new
+    mailbox, so it needs proof of the current password: a stolen access token
+    alone must not be enough to take over an account."""
+
+    current_password = serializers.CharField(
+        write_only=True, required=False, trim_whitespace=False
+    )
+
+    class Meta(UserSerializer.Meta):
+        fields = UserSerializer.Meta.fields + ["current_password"]
+
+    def validate(self, attrs):
+        password = attrs.pop("current_password", None)
+        new_email = attrs.get("email")
+        if new_email and new_email != self.instance.email:
+            if not password or not self.instance.check_password(password):
+                raise serializers.ValidationError(
+                    {"current_password": "Current password is required to change the email."}
+                )
+        return attrs
 
 
 class ChangePasswordSerializer(serializers.Serializer):

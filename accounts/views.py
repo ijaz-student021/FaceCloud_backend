@@ -22,6 +22,7 @@ from .serializers import (
     LogoutSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
+    ProfileUpdateSerializer,
     RegisterSerializer,
     UserSerializer,
 )
@@ -94,7 +95,7 @@ class ResendVerificationView(APIView):
 
 
 class ProfileView(generics.RetrieveUpdateAPIView):
-    serializer_class = UserSerializer
+    serializer_class = ProfileUpdateSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_object(self):
@@ -174,7 +175,10 @@ class LogoutView(APIView):
         serializer = LogoutSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            RefreshToken(serializer.validated_data["refresh"]).blacklist()
+            token = RefreshToken(serializer.validated_data["refresh"])
+            if str(token.get("user_id")) != str(request.user.pk):
+                raise TokenError("Token belongs to another account.")
+            token.blacklist()
         except TokenError:
             return Response({"detail": "Invalid refresh token."}, status=status.HTTP_400_BAD_REQUEST)
         record_auth_event("logout", request, request.user, request.user.email)

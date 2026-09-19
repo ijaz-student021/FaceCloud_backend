@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.core import mail
@@ -179,13 +180,82 @@ class AuthenticationTests(APITestCase):
     def test_email_change_requires_reverification_and_revokes_token(self):
         user = self.create_user()
         self.authenticate(user)
-        response = self.client.patch(reverse("profile"), {"email": "new@example.com"}, format="json")
+        response = self.client.patch(
+            reverse("profile"),
+            {"email": "new@example.com", "current_password": self.password},
+            format="json",
+        )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         user.refresh_from_db()
         self.assertFalse(user.is_email_verified)
         self.assertEqual(user.token_version, 1)
         self.assertEqual(len(mail.outbox), 1)
         self.assertEqual(self.client.get(reverse("profile")).status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_email_change_needs_the_current_password(self):
+        user = self.create_user()
+        self.authenticate(user)
+        for payload in ({"email": "new@example.com"}, {"email": "new@example.com", "current_password": "wrong"}):
+            response = self.client.patch(reverse("profile"), payload, format="json")
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+            self.assertIn("current_password", response.data)
+        user.refresh_from_db()
+        self.assertEqual(user.email, "alice@example.com")
+        self.assertTrue(user.is_email_verified)
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_current_password_is_never_echoed_or_required_for_other_edits(self):
+        user = self.create_user()
+        self.authenticate(user)
+        response = self.client.patch(
+            reverse("profile"), {"username": "alice3", "current_password": self.password}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertNotIn("current_password", response.data)
+
+    def test_logout_rejects_a_refresh_token_owned_by_someone_else(self):
+        alice = self.create_user()
+        bob = self.create_user(username="bob", email="bob@example.com")
+        bobs_refresh = str(RefreshToken.for_user(bob))
+        self.authenticate(alice)
+        response = self.client.post(reverse("logout"), {"refresh": bobs_refresh}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        # Bob's token still works.
+        self.client.credentials()
+        refreshed = self.client.post(reverse("refresh"), {"refresh": bobs_refresh}, format="json")
+        self.assertEqual(refreshed.status_code, status.HTTP_200_OK)
+
+    def test_spoofed_forwarded_for_header_does_not_choose_the_recorded_ip(self):
+        user = self.create_user()
+        self.client.post(
+            reverse("login"),
+            {"username": user.username, "password": self.password},
+            format="json",
+            HTTP_X_FORWARDED_FOR="203.0.113.9",
+            REMOTE_ADDR="198.51.100.4",
+        )
+        self.assertEqual(AuthEvent.objects.get(event="login").ip_address, "198.51.100.4")
+
+    def test_forwarded_for_is_honoured_only_for_configured_proxies(self):
+        user = self.create_user()
+        with override_settings(REST_FRAMEWORK={**settings.REST_FRAMEWORK, "NUM_PROXIES": 1}):
+            self.client.post(
+                reverse("login"),
+                {"username": user.username, "password": self.password},
+                format="json",
+                HTTP_X_FORWARDED_FOR="203.0.113.9, 192.0.2.7",
+                REMOTE_ADDR="198.51.100.4",
+            )
+        self.assertEqual(AuthEvent.objects.get(event="login").ip_address, "192.0.2.7")
+
+    def test_unknown_account_and_wrong_password_look_identical(self):
+        user = self.create_user()
+        unknown = self.client.post(
+            reverse("login"), {"username": "nobody", "password": "Whatever!1234"}, format="json"
+        )
+        wrong = self.login(user, "Whatever!1234")
+        self.assertEqual(unknown.status_code, wrong.status_code)
+        self.assertEqual(unknown.data, wrong.data)
 
     def test_change_password_checks_current_password_and_revokes_tokens(self):
         user = self.create_user()

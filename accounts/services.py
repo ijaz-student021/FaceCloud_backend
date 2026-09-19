@@ -6,15 +6,19 @@ from django.core.mail import send_mail
 from django.urls import reverse
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
+from rest_framework.throttling import BaseThrottle
 
 from .models import AuthEvent
 
 
 def get_client_ip(request):
-    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR", "")
-    if forwarded_for:
-        return forwarded_for.split(",", 1)[0].strip()
-    return request.META.get("REMOTE_ADDR")
+    """Client address as seen by the rate limiter.
+
+    X-Forwarded-For is client-controlled, so it is only honoured for the
+    number of trusted proxies in REST_FRAMEWORK["NUM_PROXIES"]; otherwise the
+    audit log and the throttles would both be spoofable with one header.
+    """
+    return BaseThrottle().get_ident(request)
 
 
 def record_auth_event(event, request=None, user=None, identifier="", details=None):
