@@ -1,4 +1,5 @@
 import hashlib
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -120,11 +121,19 @@ def get_identity_provider():
 
 
 # Successful verifications, keyed by the file's identity on disk. Hashing a 38 MB
-# model on every call cost a full read per face; a file that has not changed since
-# it last verified cannot have a different hash, and any change to its size or
-# modification time misses this cache and forces a fresh hash. Failures are never
-# cached.
+# model on every call cost a full read per face, so a result is reused, with two
+# limits that keep the check honest:
+#
+# * A file modified less than RACY_SECONDS ago is never cached. File timestamps
+#   are coarse (a same-size rewrite in the same tick keeps the same mtime), so only
+#   a file old enough that any later change must show a different mtime is trusted.
+# * A cached result expires after RECHECK_SECONDS, so even a forged size and mtime
+#   is caught within that time.
+#
+# Failures are never cached, and a change to the path, size or mtime is a miss.
 _VERIFIED_MODELS = {}
+RACY_SECONDS = 2
+RECHECK_SECONDS = 600
 
 
 def verify_model_checksum(path, expected):
@@ -132,8 +141,8 @@ def verify_model_checksum(path, expected):
     stat = model_path.stat()
     key = (str(model_path.resolve()), stat.st_size, stat.st_mtime_ns, (expected or "").lower())
     cached = _VERIFIED_MODELS.get(key)
-    if cached is not None:
-        return cached
+    if cached is not None and time.monotonic() - cached[1] < RECHECK_SECONDS:
+        return cached[0]
     hasher = hashlib.sha256()
     with model_path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
@@ -141,5 +150,6 @@ def verify_model_checksum(path, expected):
     digest = hasher.hexdigest()
     if not expected or digest.lower() != expected.lower():
         raise ValidationError("The configured identity model failed integrity verification.")
-    _VERIFIED_MODELS[key] = digest
+    if time.time_ns() - stat.st_mtime_ns > RACY_SECONDS * 1_000_000_000:
+        _VERIFIED_MODELS[key] = (digest, time.monotonic())
     return digest
