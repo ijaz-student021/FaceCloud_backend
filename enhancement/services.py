@@ -35,6 +35,7 @@ from .models import (
 )
 from .colorization import ColorizationUnavailable, colorize_with_siggraph17
 from .gfpgan import GFPGANUnavailable, restore_faces
+from .identity_guard import IdentityGuardUnavailable, apply_identity_guard
 from .hd_restoration import (
     HDRestorationUnavailable,
     deblur_with_nafnet,
@@ -116,6 +117,8 @@ class EnhancementPipelineContext:
     purescale: dict = field(default_factory=dict)
     face_restoration: dict = field(default_factory=dict)
     colorization: dict = field(default_factory=dict)
+    dynamic_style: dict = field(default_factory=dict)
+    identity_guard: dict = field(default_factory=dict)
     zero_dce: dict = field(default_factory=dict)
     quality_guards: dict = field(default_factory=dict)
     post_exposure_noise: dict = field(default_factory=dict)
@@ -1016,6 +1019,63 @@ def colorization_stage(context):
     return context
 
 
+def dynamic_style_stage(context):
+    """Apply the bounded vivid preset when the "dynamic" style was requested."""
+    if context.style != EnhancementStyle.DYNAMIC:
+        context.dynamic_style = {"applied": False}
+        return context
+    vivid, vivid_metadata = apply_gallery_adjustments(
+        context.current_image,
+        EditMode.MANUAL,
+        {"contrast": 18, "saturation": 24, "warmth": 4},
+    )
+    context.current_image = vivid
+    context.dynamic_style = {
+        "applied": True,
+        "policy": "bounded_vivid_preset",
+        "details": vivid_metadata,
+    }
+    return context
+
+
+def identity_guard_stage(context):
+    """Blend back toward the source when enhancement changed who a face looks like.
+
+    Runs last so it judges the final image, whichever stages produced it.
+    """
+    metadata = {
+        "enabled": bool(settings.IDENTITY_GUARD_ENABLED),
+        "requested": False,
+        "applied": False,
+        "status": "disabled",
+        "fallback_reason": "",
+    }
+    if not settings.IDENTITY_GUARD_ENABLED:
+        metadata["fallback_reason"] = "The identity guard is disabled."
+        context.identity_guard = metadata
+        return context
+    try:
+        guarded, guard_metadata = apply_identity_guard(
+            context.source_image, context.current_image
+        )
+        metadata.update(guard_metadata)
+        context.current_image = guarded
+        if guard_metadata["status"] == "unresolved":
+            context.warnings.append(
+                "Enhancement changed a face more than the identity guard allows "
+                "even at the most conservative strength."
+            )
+    except IdentityGuardUnavailable as error:
+        metadata["status"] = "skipped"
+        metadata["fallback_reason"] = str(error)
+    except (cv2.error, ValueError, TypeError):
+        logger.exception("The identity guard failed safely.")
+        metadata["status"] = "skipped"
+        metadata["fallback_reason"] = "The identity guard failed safely."
+    context.identity_guard = metadata
+    return context
+
+
 def enhance_bgr(image, requested_level=EnhancementLevel.AUTO, style=EnhancementStyle.NATURAL):
     """Return an enhanced BGR image, applied level, and auditable parameters.
 
@@ -1045,25 +1105,12 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO, style=EnhancementS
         ("sharpen", sharpen_stage),
         ("output_guard_b", output_guard_b_stage),
         ("colorization", colorization_stage),
+        ("dynamic_style", dynamic_style_stage),
+        ("identity_guard", identity_guard_stage),
     )
     for stage_name, stage_function in stages:
         with _timed_pipeline_stage(context, stage_name):
             stage_function(context)
-
-    dynamic_style = {"applied": False}
-    if context.style == EnhancementStyle.DYNAMIC:
-        with _timed_pipeline_stage(context, "dynamic_style"):
-            vivid, vivid_metadata = apply_gallery_adjustments(
-                context.current_image,
-                EditMode.MANUAL,
-                {"contrast": 18, "saturation": 24, "warmth": 4},
-            )
-            context.current_image = vivid
-            dynamic_style = {
-                "applied": True,
-                "policy": "bounded_vivid_preset",
-                "details": vivid_metadata,
-            }
 
     normalized_comparison = compare_image_quality(
         context.source_image,
@@ -1101,13 +1148,16 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO, style=EnhancementS
         algorithm = f"{algorithm}+purescale_safmn_2x"
     if context.colorization["applied"]:
         algorithm = f"{algorithm}+colorization_siggraph17"
-    if dynamic_style["applied"]:
+    if context.dynamic_style["applied"]:
         algorithm = f"{algorithm}+dynamic_vivid_boost"
+    if context.identity_guard.get("applied"):
+        algorithm = f"{algorithm}+identity_guard"
 
     parameters = {
         **context.policy,
         "style": context.style,
-        "dynamic_style": dynamic_style,
+        "dynamic_style": context.dynamic_style,
+        "identity_guard": context.identity_guard,
         "mean_input_luminance": context.input_quality["mean_luminance"],
         "algorithm": algorithm,
         "pipeline_version": "staged_natural_enhancement_v2",
@@ -1144,6 +1194,7 @@ def enhance_bgr(image, requested_level=EnhancementLevel.AUTO, style=EnhancementS
             "purevision_enabled": settings.PUREVISION_ENABLED,
             "purescale_enabled": settings.PURESCALE_ENABLED,
             "colorization_enabled": settings.COLORIZATION_ENABLED,
+            "identity_guard_enabled": settings.IDENTITY_GUARD_ENABLED,
         },
         "warnings": context.warnings,
     }

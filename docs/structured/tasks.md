@@ -23,6 +23,7 @@
 | Feature 28 unified activity timeline | Done (2026-09-18) | `activity` app, `GET /api/user/activity/`, `activity/tests.py`, 11 tests |
 | PureScale/PureVision restoration adapters | Done (2026-09-18) | `enhancement/purescale.py`, `enhancement/purevision.py`, checksum-verified real checkpoints, disabled by default; `features/purescale-purevision.md` |
 | Automatic B&W colorization (SIGGRAPH17) | Done (2026-09-18) | `enhancement/colorization.py`, final pipeline stage, luminance-fidelity guard, disabled by default; `features/colorization.md` |
+| Identity-preserving enhancement (identity guard) | Done (2026-09-19) | `enhancement/identity_guard.py`, 16 tests, measured on real photos; `features/identity-preserving-enhancement.md` |
 | Slider enhancement controls (style presets, warmth, intensity blend) | Done (2026-09-18) | `natural`/`dynamic`/`ai_max` style field, `warmth`/`intensity` editor controls; `features/slider-enhancement-controls.md` |
 | Verify NAFNet and Real-ESRGAN files | Done | Restricted loads, tensor validation and hashes |
 | Implement optional HD restoration adapter | Done | Checksums, tiling, fallbacks and enhancement tests |
@@ -130,7 +131,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 25 | Export watermark options | Backlog | T-016 |
 | 26 | Secure expiring share links | Backlog | T-017 |
 | 27 | Organization-scoped moderator review | Backlog | T-007 |
-| 28 | Complete owner activity timeline | Backlog | T-018 |
+| 28 | Complete owner activity timeline | Done backend (2026-09-18); frontend remains | T-018 |
 | 29 | Notification panel and preferences UI | Next | T-019 |
 | 30 | User dashboard and My Images integration | Next | T-020 |
 | 31 | Moderator dashboard frontend | Backlog | T-021 |
@@ -141,7 +142,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 36–40 | Complete live-camera release | Backlog | T-026–T-030 |
 | 41 | Consent, retention, encryption, export and erasure | Next | T-006 |
 | 43 | Private cloud/object storage | Backlog | T-031 |
-| 44 | Annotate ~30 raw APIViews with serializer_class for full schema coverage | Next (schema mounted 2026-09-18) | T-032 |
+| 44 | OpenAPI schema for every APIView | Done (2026-09-18): zero schema errors; examples and error catalogue remain | T-032 |
 | 45 | Load, performance, camera and integration QA | Continuous | T-033 |
 | 46 | Organization and tenant management | Backlog | T-008 |
 | 47 | Gallery-editor frontend integration | Next | T-034 |

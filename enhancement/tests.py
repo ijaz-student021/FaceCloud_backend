@@ -127,6 +127,7 @@ class OpenCVPolicyTests(SimpleTestCase):
         GFPGAN_QUEUE_ENABLED=False,
         HD_RESTORATION_ENABLED=False,
         NAFNET_DEBLUR_ENABLED=False,
+        IDENTITY_GUARD_ENABLED=False,
     )
     def test_rollout_flags_default_to_safe_disabled_pipeline(self):
         source = np.full((96, 96, 3), 135, dtype=np.uint8)
@@ -147,6 +148,7 @@ class OpenCVPolicyTests(SimpleTestCase):
                 "purevision_enabled": False,
                 "purescale_enabled": False,
                 "colorization_enabled": False,
+                "identity_guard_enabled": False,
             },
         )
         self.assertFalse(parameters["adaptive_denoise"]["enabled"])
@@ -156,6 +158,7 @@ class OpenCVPolicyTests(SimpleTestCase):
         AI_RESTORATION_ENABLED=False,
         ZERO_DCE_ENABLED=False,
         ADAPTIVE_DENOISE_ENABLED=False,
+        IDENTITY_GUARD_ENABLED=False,
     )
     def test_pipeline_exposes_stable_stage_order_and_timings(self):
         source = np.full((96, 96, 3), 75, dtype=np.uint8)
@@ -179,6 +182,8 @@ class OpenCVPolicyTests(SimpleTestCase):
             "sharpen",
             "output_guard_b",
             "colorization",
+            "dynamic_style",
+            "identity_guard",
         ]
         self.assertEqual(parameters["stage_order"], expected_order)
         self.assertEqual(

@@ -287,6 +287,11 @@ private worker environment completes consented photographic rollout QA.
 - CC BY-NC-SA 4.0 (non-commercial) licensed checkpoints — evaluation/FYP use
   only until a commercial license is confirmed; see
   [purescale-purevision.md](features/purescale-purevision.md)
+- Identity-preserving enhancement: the final image's faces are compared with
+  the source's using the identity-grouping SFace embeddings, and the result is
+  blended back toward the source when a face drifts; dark or undetectable
+  faces are skipped, not penalised; see
+  [identity-preserving-enhancement.md](features/identity-preserving-enhancement.md)
 - Automatic black-and-white colorization (SIGGRAPH17, BSD-2-Clause,
   permissive), gated behind `COLORIZATION_ENABLED` and an automatic
   near-grayscale detector so colour photos are left untouched

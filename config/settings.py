@@ -244,6 +244,30 @@ EXTREME_LOW_LIGHT_MODEL_STRENGTH = env.float(
     "EXTREME_LOW_LIGHT_MODEL_STRENGTH", default=0.85
 )
 
+# Identity-preserving enhancement: after the pipeline, the final image's faces
+# are compared to the source's faces with the same SFace embeddings used for
+# identity grouping. If similarity falls below the minimum, the result is
+# blended back toward the source along the strength ladder until identity is
+# preserved. It only ever reduces enhancement strength on detected faces, and
+# it skips silently when no face or identity model is available.
+IDENTITY_GUARD_ENABLED = env.bool("IDENTITY_GUARD_ENABLED", default=True)
+IDENTITY_GUARD_MIN_SIMILARITY = env.float("IDENTITY_GUARD_MIN_SIMILARITY", default=0.80)
+# SFace embeddings of very dark faces are unreliable (faithful brightening of
+# frames with a face luminance of 6-22/255 measured 0.45-0.87 similarity, and
+# grain often stops the detector re-finding the face at all), so faces below
+# this mean grey level are not judged rather than penalising correct
+# enhancement.
+IDENTITY_GUARD_MIN_FACE_LUMINANCE = env.float("IDENTITY_GUARD_MIN_FACE_LUMINANCE", default=45.0)
+IDENTITY_GUARD_STRENGTHS = tuple(
+    float(value)
+    for value in env.list(
+        "IDENTITY_GUARD_STRENGTHS", default=["1.0", "0.85", "0.7", "0.55", "0.4"]
+    )
+)
+IDENTITY_GUARD_MAX_FACES = env.int("IDENTITY_GUARD_MAX_FACES", default=5)
+IDENTITY_GUARD_MAX_EDGE = env.int("IDENTITY_GUARD_MAX_EDGE", default=1024)
+IDENTITY_GUARD_MIN_FACE_EDGE = env.int("IDENTITY_GUARD_MIN_FACE_EDGE", default=40)
+
 ADAPTIVE_DENOISE_ENABLED = env.bool("ADAPTIVE_DENOISE_ENABLED", default=False)
 ADAPTIVE_DENOISE_BREAKPOINTS = tuple(
     float(value)
