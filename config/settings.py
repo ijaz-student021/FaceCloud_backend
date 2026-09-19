@@ -529,6 +529,13 @@ JOB_QUEUED_STALE_HOURS = env.int("JOB_QUEUED_STALE_HOURS", default=6)
 MAX_ACTIVE_ENHANCEMENTS_PER_USER = env.int("MAX_ACTIVE_ENHANCEMENTS_PER_USER", default=10)
 MAX_ACTIVE_BATCH_ENHANCEMENTS_PER_USER = env.int("MAX_ACTIVE_BATCH_ENHANCEMENTS_PER_USER", default=2)
 
+# Model comparison (Feature 35): profiles run on a copy no larger than this edge,
+# a user may have this many running at once, and finished comparisons (which keep
+# preview copies of the user's photo) are deleted after the retention period.
+COMPARISON_MAX_EDGE = env.int("COMPARISON_MAX_EDGE", default=1280)
+MAX_ACTIVE_COMPARISONS_PER_USER = env.int("MAX_ACTIVE_COMPARISONS_PER_USER", default=2)
+COMPARISON_RETENTION_DAYS = env.int("COMPARISON_RETENTION_DAYS", default=7)
+
 # Share links (Feature 26): default and maximum lifetime, how many one user may
 # keep active, and how long ended links are kept before the daily cleanup.
 SHARE_LINK_DEFAULT_TTL_HOURS = env.int("SHARE_LINK_DEFAULT_TTL_HOURS", default=24)
@@ -560,6 +567,10 @@ CELERY_BEAT_SCHEDULE = {
     "purge-expired-facial-data": {
         "task": "privacy.purge_expired_facial_data",
         "schedule": crontab(minute=15, hour=3),
+    },
+    "expire-model-comparisons": {
+        "task": "enhancement.cleanup_comparisons",
+        "schedule": crontab(minute=30, hour=4),
     },
     "expire-share-links": {
         "task": "sharing.cleanup_expired",
@@ -620,6 +631,7 @@ REST_FRAMEWORK = {
         "privacy_export": "10/hour",
         "privacy_erasure": "10/hour",
         "share_create": "60/hour",
+        "model_comparison": "30/hour",
         "share_public": "120/hour",
     },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
@@ -649,6 +661,9 @@ SPECTACULAR_SETTINGS = {
         "ImageUploadStatusEnum": "uploads.models.ImageUpload.STATUS_CHOICES",
     },
 }
+
+# Runs tests against a throwaway media folder instead of the real one.
+TEST_RUNNER = "config.test_runner.FaceCloudTestRunner"
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),

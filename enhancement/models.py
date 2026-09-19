@@ -235,3 +235,89 @@ class ImageEditVersion(models.Model):
 def delete_edited_image(sender, instance, **kwargs):
     if instance.edited_file:
         instance.edited_file.storage.delete(instance.edited_file.name)
+
+
+def comparison_upload_path(instance, filename):
+    extension = Path(filename).suffix.lower()
+    return f"users/{instance.comparison.owner_id}/comparisons/{uuid.uuid4().hex}{extension}"
+
+
+class ModelComparison(models.Model):
+    """One image run through several enhancement profiles, side by side (Feature 35)."""
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="model_comparisons",
+    )
+    image = models.ForeignKey(
+        ImageUpload,
+        on_delete=models.CASCADE,
+        related_name="model_comparisons",
+    )
+    requested_level = models.CharField(
+        max_length=8,
+        choices=EnhancementLevel.choices,
+        default=EnhancementLevel.AUTO,
+    )
+    profiles = models.JSONField(default=list)
+    status = models.CharField(
+        max_length=12,
+        choices=EnhancementStatus.choices,
+        default=EnhancementStatus.PENDING,
+    )
+    reference_dimensions = models.JSONField(default=list, blank=True)
+    recommended_profile = models.CharField(max_length=24, blank=True)
+    recommendation_reason = models.TextField(blank=True)
+    total_duration_ms = models.PositiveIntegerField(default=0)
+    task_id = models.CharField(max_length=255, blank=True, db_index=True)
+    failure_reason = models.TextField(blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["owner", "-created_at"])]
+
+
+class ModelComparisonOutput(models.Model):
+    """The result of one profile (or the untouched source, profile ``original``)."""
+
+    class Outcome(models.TextChoices):
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    comparison = models.ForeignKey(
+        ModelComparison,
+        on_delete=models.CASCADE,
+        related_name="outputs",
+    )
+    profile = models.CharField(max_length=24)
+    outcome = models.CharField(max_length=12, choices=Outcome.choices)
+    preview_file = models.FileField(upload_to=comparison_upload_path, blank=True)
+    algorithm = models.CharField(max_length=200, blank=True)
+    metrics = models.JSONField(default=dict, blank=True)
+    scores = models.JSONField(default=dict, blank=True)
+    overall_score = models.FloatField(null=True, blank=True)
+    faces_detected = models.PositiveSmallIntegerField(null=True, blank=True)
+    identity_guard = models.JSONField(default=dict, blank=True)
+    warnings = models.JSONField(default=list, blank=True)
+    processing_duration_ms = models.PositiveIntegerField(default=0)
+    failure_reason = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["comparison", "profile"], name="comparison_one_output_per_profile",
+            )
+        ]
+
+
+@receiver(post_delete, sender=ModelComparisonOutput)
+def delete_comparison_preview(sender, instance, **kwargs):
+    if instance.preview_file:
+        instance.preview_file.storage.delete(instance.preview_file.name)

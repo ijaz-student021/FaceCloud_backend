@@ -115,7 +115,7 @@
 | Complete editor slider integration | Next |
 | Admin analytics dashboard | Backlog |
 | System health frontend page | Next |
-| Model comparison page | Backlog |
+| Model comparison page | Done (backend, 2026-09-19); frontend page remains |
 | Secure expiring share links | Done (backend, 2026-09-19); frontend remains |
 | Watermark options | Done (backend, 2026-09-19); frontend controls remain |
 | Private cloud storage | Backlog |
@@ -147,7 +147,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 32 | Admin analytics dashboard | Backlog | T-022 |
 | 33 | Platform-wide administrative controls | Backlog | T-023 |
 | 34 | Connect completed system health API to an admin page | Next | T-024 |
-| 35 | Uploaded-image model comparison page | Backlog | T-025 |
+| 35 | Uploaded-image model comparison page | Done backend (2026-09-19, `docs/features/35-model-comparison.md`); frontend page remains | T-025 |
 | 36–40 | Complete live-camera release | Backlog | T-026–T-030 |
 | 41 | Consent, retention, encryption, export and erasure | Backend done (2026-09-19), incl. AES-GCM key rotation, temp/orphan cleanup and beat scheduling; frontend remains | T-006 |
 | 43 | Private cloud/object storage | Backlog | T-031 |

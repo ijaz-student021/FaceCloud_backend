@@ -33,6 +33,8 @@ process next to the worker: `.\scripts\run_beat.ps1`.
 | expire-identity-exports | `identities.cleanup_expired_exports` | hourly, minute 10 |
 | cleanup-temporary-files | `privacy.cleanup_temporary_files` | every 2 hours |
 | purge-expired-facial-data | `privacy.purge_expired_facial_data` | daily 03:15 |
+| expire-share-links | `sharing.cleanup_expired` | daily 04:00 |
+| expire-model-comparisons | `enhancement.cleanup_comparisons` | daily 04:30 |
 | expire-notifications | `notifications.cleanup_expired` | daily 03:45 |
 
 Every entry is safe to repeat and does nothing when its feature is off (the
@@ -46,7 +48,7 @@ Beat keeps its state in `.runtime/celerybeat-schedule`, which is git-ignored.
 ## Stuck-job recovery
 
 `operations/jobs.py` defines the job kinds it watches: enhancement results,
-enhancement batch jobs, gallery edits, identity analyses, preprocessing results,
+enhancement batch jobs, model comparisons, gallery edits, identity analyses, preprocessing results,
 upload batches, download packages, processing reports and identity exports.
 
 A row is stale when it has not changed for:

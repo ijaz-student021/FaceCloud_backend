@@ -249,6 +249,17 @@ class OrphanMediaTests(TestCase):
         self.assertFalse(report["temporary_files"]["orphan_media_deletion_enabled"])
 
 
+def sample_instance(model):
+    """An unsaved instance whose owner is 1, for computing its upload path."""
+    try:
+        return model(owner_id=1)
+    except TypeError:
+        # Models that reach their owner through a parent (comparison outputs).
+        from enhancement.models import ModelComparison
+
+        return model(comparison=ModelComparison(owner_id=1))
+
+
 class MediaLayoutCoverageTests(SimpleTestCase):
     """Guards the orphan scanner against a new upload path it does not know about."""
 
@@ -259,7 +270,7 @@ class MediaLayoutCoverageTests(SimpleTestCase):
                 if not isinstance(field, models.FileField):
                     continue
                 checked += 1
-                name = field.generate_filename(model(owner_id=1), "example.jpg").replace("\\", "/")
+                name = field.generate_filename(sample_instance(model), "example.jpg").replace("\\", "/")
                 parts = name.split("/")
                 with self.subTest(field=f"{model.__name__}.{field.name}"):
                     self.assertEqual(parts[0], "users", name)
@@ -276,7 +287,7 @@ class MediaLayoutCoverageTests(SimpleTestCase):
         for model in apps.get_models():
             for field in model._meta.get_fields():
                 if isinstance(field, models.FileField):
-                    used.add(field.generate_filename(model(owner_id=1), "x.jpg").replace("\\", "/").split("/")[2])
+                    used.add(field.generate_filename(sample_instance(model), "x.jpg").replace("\\", "/").split("/")[2])
         self.assertEqual(used, set(MEDIA_SUBDIRECTORIES))
 
 

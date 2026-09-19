@@ -19,6 +19,14 @@ from .models import (
     EnhancementStatus,
     ImageEditVersion,
     ImageEnhancementResult,
+    ModelComparison,
+    ModelComparisonOutput,
+)
+from .comparison import (
+    PROFILES as COMPARISON_PROFILES,
+    build_report_csv,
+    ensure_comparison_capacity,
+    validate_profiles,
 )
 from .serializers import (
     EnhancementBatchJobSerializer,
@@ -27,6 +35,9 @@ from .serializers import (
     ImageEditVersionSerializer,
     ImageEnhancementComparisonSerializer,
     ImageEnhancementResultSerializer,
+    ModelComparisonRequestSerializer,
+    ModelComparisonSerializer,
+    ModelComparisonSummarySerializer,
     WatermarkOptionsSerializer,
 )
 from .services import create_enhancement_result, ensure_enhancement_capacity
@@ -35,6 +46,7 @@ from .tasks import (
     process_enhancement_batch,
     process_enhancement_image,
     process_gallery_edit,
+    run_model_comparison,
 )
 
 
@@ -575,3 +587,112 @@ class GalleryEditDownloadView(APIView):
             filename=filename,
             content_type=content_type,
         )
+
+
+class ImageCompareView(APIView):
+    """Start a side-by-side comparison of enhancement profiles on one image."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "model_comparison"
+
+    @extend_schema(
+        summary="Compare enhancement profiles on one image",
+        description=(
+            "Runs the chosen profiles on a downscaled copy and returns 202 immediately. "
+            "Poll the comparison for metrics, previews and a recommendation."
+        ),
+        request=ModelComparisonRequestSerializer,
+        responses={
+            202: ModelComparisonSerializer, 400: OpenApiTypes.OBJECT, 429: OpenApiTypes.OBJECT,
+        },
+        examples=[
+            OpenApiExample("All profiles", value={"level": "auto"}, request_only=True),
+            OpenApiExample(
+                "Two profiles", value={"level": "auto", "profiles": ["opencv_baseline", "natural"]},
+                request_only=True,
+            ),
+        ],
+    )
+    def post(self, request, image_id):
+        image = get_object_or_404(
+            ImageUpload.objects.filter(owner=request.user, status="uploaded")
+            .select_related("preprocessing_result"),
+            pk=image_id,
+        )
+        payload = ModelComparisonRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        preprocessing = getattr(image, "preprocessing_result", None)
+        if preprocessing is None or preprocessing.status != "completed":
+            raise ValidationError("The image must finish preprocessing before it can be compared.")
+        profiles = validate_profiles(payload.validated_data.get("profiles"))
+        ensure_comparison_capacity(request.user)
+        task_id = uuid.uuid4().hex
+        comparison = ModelComparison.objects.create(
+            owner=request.user, image=image, profiles=profiles,
+            requested_level=payload.validated_data["level"],
+            status=EnhancementStatus.QUEUED, task_id=task_id,
+        )
+        try:
+            run_model_comparison.apply_async(args=[comparison.pk], task_id=task_id)
+        except Exception:
+            comparison.status = EnhancementStatus.FAILED
+            comparison.failure_reason = "The background queue is unavailable."
+            comparison.finished_at = timezone.now()
+            comparison.save(update_fields=["status", "failure_reason", "finished_at", "updated_at"])
+        return Response(
+            ModelComparisonSerializer(comparison, context={"request": request}).data,
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class ModelComparisonListView(generics.ListAPIView):
+    serializer_class = ModelComparisonSummarySerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return ModelComparison.objects.filter(owner=self.request.user)
+
+
+class ModelComparisonDetailView(generics.RetrieveDestroyAPIView):
+    serializer_class = ModelComparisonSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return ModelComparison.objects.filter(owner=self.request.user).prefetch_related("outputs")
+
+
+class ModelComparisonPreviewView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(responses={200: OpenApiTypes.BINARY, 404: OpenApiTypes.OBJECT})
+    def get(self, request, pk, profile):
+        output = get_object_or_404(
+            ModelComparisonOutput.objects.filter(
+                comparison__owner=request.user, comparison_id=pk,
+                outcome=ModelComparisonOutput.Outcome.COMPLETED,
+            ),
+            profile=profile,
+        )
+        if not output.preview_file:
+            return Response({"detail": "The preview is unavailable."}, status=status.HTTP_404_NOT_FOUND)
+        response = FileResponse(output.preview_file.open("rb"), content_type="image/jpeg")
+        response["Cache-Control"] = "private, no-store"
+        return response
+
+
+class ModelComparisonReportView(APIView):
+    """CSV evaluation report: one row per profile plus the untouched original."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(responses={200: OpenApiTypes.STR, 404: OpenApiTypes.OBJECT})
+    def get(self, request, pk):
+        comparison = get_object_or_404(
+            ModelComparison.objects.filter(
+                owner=request.user, status=EnhancementStatus.COMPLETED,
+            ).prefetch_related("outputs"),
+            pk=pk,
+        )
+        response = HttpResponse(build_report_csv(comparison), content_type="text/csv; charset=utf-8")
+        response["Content-Disposition"] = f'attachment; filename="model-comparison-{comparison.pk}.csv"'
+        return response

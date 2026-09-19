@@ -108,6 +108,7 @@ class EnhancementPipelineContext:
     requested_level: str
     style: str = EnhancementStyle.NATURAL
     allow_biometric_processing: bool = True
+    use_zero_dce: bool = True
     input_quality: dict = field(default_factory=dict)
     applied_level: str = ""
     policy: dict = field(default_factory=dict)
@@ -551,7 +552,7 @@ def exposure_enhancement_stage(context):
     """Apply learned exposure curves or the auditable OpenCV fallback."""
     source = context.source_image
     working = source
-    if context.zero_dce["requested"] and settings.ZERO_DCE_ENABLED:
+    if context.zero_dce["requested"] and settings.ZERO_DCE_ENABLED and context.use_zero_dce:
         try:
             working, zero_metadata = enhance_with_zero_dce(source)
             context.zero_dce.update(zero_metadata)
@@ -559,7 +560,10 @@ def exposure_enhancement_stage(context):
         except ZeroDCEUnavailable as error:
             context.zero_dce["fallback_reason"] = str(error)
     elif context.zero_dce["requested"]:
-        context.zero_dce["fallback_reason"] = "Zero-DCE is disabled."
+        context.zero_dce["fallback_reason"] = (
+            "Zero-DCE is disabled." if not settings.ZERO_DCE_ENABLED
+            else "Zero-DCE was switched off for this run."
+        )
 
     if context.zero_dce["applied"]:
         context.current_image = _preserve_source_chroma(source, working)
@@ -1086,7 +1090,7 @@ def identity_guard_stage(context):
 
 def enhance_bgr(
     image, requested_level=EnhancementLevel.AUTO, style=EnhancementStyle.NATURAL,
-    allow_biometric_processing=True,
+    allow_biometric_processing=True, use_zero_dce=True,
 ):
     """Return an enhanced BGR image, applied level, and auditable parameters.
 
@@ -1104,6 +1108,7 @@ def enhance_bgr(
     context = EnhancementPipelineContext(
         image, requested_level, style=style,
         allow_biometric_processing=allow_biometric_processing,
+        use_zero_dce=use_zero_dce,
     )
     stages = (
         ("analyze_original", analyze_original_stage),

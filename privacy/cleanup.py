@@ -40,7 +40,7 @@ TEMP_ARCHIVE_PATTERNS = ("facecloud-package-*.zip", "facecloud-identity-export-*
 # so a new upload path cannot silently be treated as orphaned.
 MEDIA_SUBDIRECTORIES = (
     "originals", "preprocessed", "enhanced", "edited",
-    "download-packages", "identity-exports", "reports",
+    "download-packages", "identity-exports", "reports", "comparisons",
 )
 
 

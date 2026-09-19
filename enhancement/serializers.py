@@ -1,6 +1,7 @@
 from drf_spectacular.utils import extend_schema_field, inline_serializer
 from rest_framework import serializers
 
+from . import comparison as comparison_engine
 from . import watermark as wm
 from .models import (
     EditMode,
@@ -10,6 +11,8 @@ from .models import (
     EnhancementStyle,
     ImageEditVersion,
     ImageEnhancementResult,
+    ModelComparison,
+    ModelComparisonOutput,
 )
 
 
@@ -290,3 +293,76 @@ class EnhancementBatchJobSerializer(serializers.ModelSerializer):
             "progress_percentage", "failure_reason", "started_at", "finished_at",
             "created_at", "updated_at", "results",
         ]
+
+
+class ModelComparisonRequestSerializer(serializers.Serializer):
+    level = serializers.ChoiceField(choices=EnhancementLevel.choices, default=EnhancementLevel.AUTO)
+    profiles = serializers.ListField(
+        child=serializers.ChoiceField(choices=list(comparison_engine.PROFILES)),
+        required=False, allow_empty=True,
+        help_text="Profiles to compare; omit for all: " + ", ".join(comparison_engine.PROFILES) + ".",
+    )
+
+
+class ModelComparisonOutputSerializer(serializers.ModelSerializer):
+    label = serializers.SerializerMethodField()
+    description = serializers.SerializerMethodField()
+    preview_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ModelComparisonOutput
+        fields = [
+            "profile", "label", "description", "outcome", "preview_url", "algorithm",
+            "overall_score", "scores", "metrics", "faces_detected", "identity_guard",
+            "warnings", "processing_duration_ms", "failure_reason",
+        ]
+        read_only_fields = fields
+
+    def _profile(self, obj):
+        return comparison_engine.PROFILES.get(obj.profile)
+
+    def get_label(self, obj) -> str:
+        profile = self._profile(obj)
+        if profile:
+            return profile.label
+        return "Original (untouched)" if obj.profile == comparison_engine.ORIGINAL else obj.profile
+
+    def get_description(self, obj) -> str:
+        profile = self._profile(obj)
+        return profile.description if profile else "The source image at the comparison size."
+
+    def get_preview_url(self, obj) -> str | None:
+        if not obj.preview_file:
+            return None
+        path = f"/api/enhancements/comparisons/{obj.comparison_id}/outputs/{obj.profile}/preview/"
+        request = self.context.get("request")
+        return request.build_absolute_uri(path) if request else path
+
+
+class ModelComparisonSummarySerializer(serializers.ModelSerializer):
+    image = serializers.IntegerField(source="image_id", read_only=True)
+
+    class Meta:
+        model = ModelComparison
+        fields = [
+            "id", "image", "requested_level", "profiles", "status", "reference_dimensions",
+            "recommended_profile", "recommendation_reason", "total_duration_ms",
+            "failure_reason", "started_at", "finished_at", "created_at",
+        ]
+        read_only_fields = fields
+
+
+class ModelComparisonSerializer(ModelComparisonSummarySerializer):
+    outputs = ModelComparisonOutputSerializer(many=True, read_only=True)
+    report_url = serializers.SerializerMethodField()
+
+    class Meta(ModelComparisonSummarySerializer.Meta):
+        fields = ModelComparisonSummarySerializer.Meta.fields + ["outputs", "report_url"]
+        read_only_fields = fields
+
+    def get_report_url(self, obj) -> str | None:
+        if obj.status != EnhancementStatus.COMPLETED:
+            return None
+        path = f"/api/enhancements/comparisons/{obj.pk}/report/"
+        request = self.context.get("request")
+        return request.build_absolute_uri(path) if request else path

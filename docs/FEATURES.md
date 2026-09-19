@@ -678,7 +678,7 @@ Implemented backend evidence:
 
 ## 12. Model evaluation and live camera scope
 
-### Feature 35: Uploaded-image model comparison page — Planned
+### Feature 35: Uploaded-image model comparison page — Complete (backend)
 
 Supports FYP and company evaluation of enhancement approaches.
 

@@ -62,6 +62,10 @@ JOB_KINDS = (
         queued=("pending", "queued"), processing=("processing",), failed="failed",
     ),
     JobKind(
+        "model_comparison", "enhancement.ModelComparison",
+        queued=("pending", "queued"), processing=("processing",), failed="failed",
+    ),
+    JobKind(
         "gallery_edit", "enhancement.ImageEditVersion",
         queued=("pending", "queued"), processing=("processing",), failed="failed",
     ),

@@ -3,12 +3,18 @@ from django.db import transaction
 from django.db.utils import InterfaceError, OperationalError
 from django.utils import timezone
 
+from datetime import timedelta
+
+from django.conf import settings
+
 from .models import (
     EnhancementBatchJob,
     EnhancementStatus,
     ImageEditVersion,
     ImageEnhancementResult,
+    ModelComparison,
 )
+from .comparison import process_model_comparison
 from .services import process_enhancement_result, process_image_edit
 
 # Transient infrastructure failures only (dropped DB connections). Business
@@ -197,3 +203,42 @@ def process_gallery_edit(self, edit_id):
                 ]
             )
     return {"edit_id": edit_id, "status": edit.status}
+
+
+@shared_task(
+    bind=True,
+    name="enhancement.run_model_comparison",
+    acks_late=True,
+    autoretry_for=TRANSIENT_INFRASTRUCTURE_ERRORS,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    max_retries=3,
+)
+def run_model_comparison(self, comparison_id):
+    task_id = self.request.id or ""
+    comparison = ModelComparison.objects.filter(pk=comparison_id).first()
+    if comparison is None:
+        return {"comparison_id": comparison_id, "status": "deleted"}
+    if comparison.task_id and task_id and comparison.task_id != task_id:
+        return {"comparison_id": comparison_id, "status": "superseded"}
+    comparison = process_model_comparison(comparison)
+    return {"comparison_id": comparison_id, "status": comparison.status}
+
+
+@shared_task(
+    name="enhancement.cleanup_comparisons",
+    autoretry_for=TRANSIENT_INFRASTRUCTURE_ERRORS,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    max_retries=3,
+)
+def cleanup_old_comparisons():
+    """Delete finished comparisons (and their preview images) past the retention period."""
+    cutoff = timezone.now() - timedelta(days=settings.COMPARISON_RETENTION_DAYS)
+    finished = (EnhancementStatus.COMPLETED, EnhancementStatus.FAILED, EnhancementStatus.CANCELLED)
+    _, per_model = ModelComparison.objects.filter(
+        status__in=finished, created_at__lt=cutoff,
+    ).delete()
+    return {"deleted_comparisons": per_model.get("enhancement.ModelComparison", 0)}
