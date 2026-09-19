@@ -52,6 +52,16 @@ file's path, size and modification time, so an unchanged file is hashed once and
 a cached check costs about 0.4 ms instead of 180 ms. A modified file misses the
 cache and is re-hashed; failures are never cached (tests cover both).
 
+The image-quality measurement (run about eight times per image, and the whole
+cost of both output guards) hashed and sorted every pixel repeatedly. It is now
+derived from 256-bin histograms, with the same arithmetic as NumPy, so the values
+are **identical** and the guards decide exactly as before. `enhancement/test_quality_analysis.py`
+keeps the old implementation as a reference and demands exact equality on random,
+structured, degenerate and real images. At 12 megapixels the measurement went
+from 721 ms to 177 ms and a full enhancement from 20.2 s to 13.9 s (guards 2.4 s
+and 3.4 s down to 1.0 s and 1.2 s). Running the guards on a downscaled copy was
+rejected because it would slightly change their decisions.
+
 The test suite dropped from about 610 s to about 66 s for the everyday run by
 using a low-iteration password hasher in tests only (see `config/test_runner.py`).
 
