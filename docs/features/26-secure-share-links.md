@@ -87,9 +87,18 @@ with their view records. Settings are listed in `.env.example`.
 
 ## Things to know when deploying
 
-- The token is part of the URL path, so **web-server access logs will contain
-  it**. Treat those logs as sensitive, or strip the path segment after
-  `/api/shares/public/` when shipping them.
+- The token is part of the URL path, so it could leak through logs. Two layers
+  now redact it (`/api/shares/public/[redacted]/`):
+  - **Application logs** (Django request errors, the development server, anything
+    else using Python logging): `config/log_redaction.py` wraps the log-record
+    factory, so it applies whatever the logging configuration.
+  - **Gunicorn's access log**: run with `gunicorn config.wsgi -c gunicorn.conf.py`
+    so its `RedactingLogger` is used.
+  Not covered, because they are outside the application: a reverse proxy's own
+  access log (nginx and similar), and Django's `AdminEmailHandler` if `ADMINS` is
+  set, which mails the request path with a 500 error. Configure the proxy to log
+  a redacted path or exclude `/api/shares/public/`, and leave `ADMINS` empty
+  (or use an error tracker with scrubbing rules).
 - Set `PUBLIC_BACKEND_URL` correctly; it builds the `public_url` shown to the
   owner.
 - A frontend page at your own route can call the `info` endpoint for the
