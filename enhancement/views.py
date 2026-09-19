@@ -27,7 +27,7 @@ from .serializers import (
     ImageEnhancementComparisonSerializer,
     ImageEnhancementResultSerializer,
 )
-from .services import create_enhancement_result
+from .services import create_enhancement_result, ensure_enhancement_capacity
 from .tasks import (
     process_enhancement_batch,
     process_enhancement_image,
@@ -49,6 +49,7 @@ class ImageEnhanceView(APIView):
         )
         payload = EnhancementRequestSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
+        ensure_enhancement_capacity(request.user, batch=False)
         try:
             result = create_enhancement_result(
                 image, payload.validated_data["level"],
@@ -89,6 +90,7 @@ class BatchEnhanceView(APIView):
         batch = get_object_or_404(UploadBatch.objects.filter(owner=request.user), pk=batch_id)
         payload = EnhancementRequestSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
+        ensure_enhancement_capacity(request.user, batch=True)
         images = list(
             batch.images.filter(status="uploaded", preprocessing_result__status="completed")
             .select_related("preprocessing_result", "owner")

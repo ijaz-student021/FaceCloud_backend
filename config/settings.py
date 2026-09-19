@@ -15,6 +15,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import environ
+from celery.schedules import crontab
 from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -515,6 +516,48 @@ if GFPGAN_QUEUE_ENABLED:
         "enhancement.process_image": {"queue": GFPGAN_QUEUE_NAME},
         "enhancement.process_batch": {"queue": GFPGAN_QUEUE_NAME},
     }
+# A "processing" job that has not changed for the task time limit plus this
+# grace has lost its worker; "queued" jobs may legitimately wait much longer.
+# See operations/jobs.py.
+JOB_PROCESSING_STALE_SECONDS = env.int(
+    "JOB_PROCESSING_STALE_SECONDS", default=CELERY_TASK_TIME_LIMIT + 600,
+)
+JOB_QUEUED_STALE_HOURS = env.int("JOB_QUEUED_STALE_HOURS", default=6)
+# Fair use: how much work one user may have in flight at once. Excess requests
+# get HTTP 429 rather than queueing behind (and starving) everyone else.
+MAX_ACTIVE_ENHANCEMENTS_PER_USER = env.int("MAX_ACTIVE_ENHANCEMENTS_PER_USER", default=10)
+MAX_ACTIVE_BATCH_ENHANCEMENTS_PER_USER = env.int("MAX_ACTIVE_BATCH_ENHANCEMENTS_PER_USER", default=2)
+
+# Periodic maintenance. Nothing runs these unless a beat process is started
+# (scripts/run_beat.ps1 or `celery -A config beat`). Every entry is safe to run
+# repeatedly and does nothing when the feature it serves is switched off.
+CELERY_BEAT_SCHEDULE = {
+    "reap-stuck-jobs": {
+        "task": "operations.reap_stuck_jobs",
+        "schedule": crontab(minute="*/5"),
+    },
+    "expire-download-packages": {
+        "task": "downloads.cleanup_expired",
+        "schedule": crontab(minute=5),
+    },
+    "expire-identity-exports": {
+        "task": "identities.cleanup_expired_exports",
+        "schedule": crontab(minute=10),
+    },
+    # Must run more often than TEMP_FILE_MAX_AGE_HOURS.
+    "cleanup-temporary-files": {
+        "task": "privacy.cleanup_temporary_files",
+        "schedule": crontab(minute=20, hour="*/2"),
+    },
+    "purge-expired-facial-data": {
+        "task": "privacy.purge_expired_facial_data",
+        "schedule": crontab(minute=15, hour=3),
+    },
+    "expire-notifications": {
+        "task": "notifications.cleanup_expired",
+        "schedule": crontab(minute=45, hour=3),
+    },
+}
 BATCH_PROGRESS_MAX_RETRIES = env.int("BATCH_PROGRESS_MAX_RETRIES", default=3)
 DOWNLOAD_PACKAGE_TTL_HOURS = env.int("DOWNLOAD_PACKAGE_TTL_HOURS", default=24)
 DOWNLOAD_PACKAGE_MAX_FILES = env.int("DOWNLOAD_PACKAGE_MAX_FILES", default=500)

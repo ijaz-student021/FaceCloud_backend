@@ -69,8 +69,9 @@
 ### T-005 — Finish background recognition jobs
 
 - **Status:** In progress — bounded retry policy (transient DB errors) and
-  per-face cancellation done 2026-09-18. Resource/concurrency controls and
-  idempotency tests still open.
+  per-face cancellation done 2026-09-18; stuck-job recovery, per-user
+  concurrency limits and queue monitoring done 2026-09-19. Idempotency tests
+  still open.
 - Add retry policy, cancellation, resource controls, and idempotency tests.
 - Ensure progress accurately distinguishes enhancement, validation, and identity work.
 
@@ -82,8 +83,8 @@
   plus 17 cipher tests): consent records, retention purge, erasure with
   verification, export, audit report, deploy checks, AES-256-GCM embedding
   encryption with key ids and a re-encryption command, and stale-temp-file /
-  orphaned-media cleanup. Open: scheduling the jobs, tenant-level export,
-  frontend screens.
+  orphaned-media cleanup; both periodic jobs are on the beat schedule since
+  2026-09-19. Open: tenant-level export, frontend screens.
 - Record consent purpose and timestamp. — Done
 - Add configurable embedding retention and deletion. — Done
 - Add account export and deletion verification. — Done (tenant export waits on T-008)
@@ -146,7 +147,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 34 | Connect completed system health API to an admin page | Next | T-024 |
 | 35 | Uploaded-image model comparison page | Backlog | T-025 |
 | 36–40 | Complete live-camera release | Backlog | T-026–T-030 |
-| 41 | Consent, retention, encryption, export and erasure | Backend done (2026-09-19), incl. AES-GCM key rotation and temp/orphan cleanup; frontend and scheduling remain | T-006 |
+| 41 | Consent, retention, encryption, export and erasure | Backend done (2026-09-19), incl. AES-GCM key rotation, temp/orphan cleanup and beat scheduling; frontend remains | T-006 |
 | 43 | Private cloud/object storage | Backlog | T-031 |
 | 44 | OpenAPI schema for every APIView | Done (2026-09-18): zero schema errors; examples and error catalogue remain | T-032 |
 | 45 | Load, performance, camera and integration QA | Continuous | T-033 |

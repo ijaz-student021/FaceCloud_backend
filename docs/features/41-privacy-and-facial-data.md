@@ -6,8 +6,8 @@ Backend complete for consent, erasure with verification, retention, export,
 audit reporting, deployment checks, embedding encryption with key rotation,
 and temporary-file and orphaned-media cleanup (`privacy` app and
 `identities/storage.py`). Still open: encryption of stored images
-(Feature 43), scheduling the two jobs in the deployment, and the consent
-screens in the frontend. Details under "Open items".
+(Feature 43) and the consent screens in the frontend. Both jobs are on the Celery
+beat schedule (see [Feature 20 operations](20-background-job-operations.md)). Details under "Open items".
 
 ## What counts as facial data
 
@@ -58,13 +58,13 @@ account deletion with the user set to null.
 centroid of each affected group, and deletes groups left with no members. It
 writes one audit record per run that purged something.
 
-Run it from cron (this repo has no Celery beat schedule):
+It runs daily at 03:15 from the Celery beat schedule. To run it by hand:
 
 ```powershell
 python manage.py purge_expired_facial_data
 ```
 
-or schedule the Celery task `privacy.purge_expired_facial_data`. Note that
+Note that
 with consent enforcement **off**, preprocessing an existing image can create
 embeddings again after a purge; retention is only meaningful together with
 `BIOMETRIC_CONSENT_REQUIRED=True`.
@@ -105,7 +105,8 @@ how many stale archives currently exist.
 On this project's real media folder the scanner saw 51 files on disk and 51
 database references, an exact match, so it reported no orphans.
 
-Schedule it like the retention purge (cron or Celery), for example daily:
+It runs every two hours from the beat schedule (it must run more often than
+`TEMP_FILE_MAX_AGE_HOURS`). To run it by hand:
 
 ```powershell
 python manage.py cleanup_temporary_files
@@ -204,8 +205,6 @@ key protected it.
 ## Open items
 
 - Frontend: consent screen, "delete my face data", export download.
-- Schedule the retention purge and `cleanup_temporary_files` in the deployment
-  (this repo has no Celery beat schedule).
 - Decide whether to enable `ORPHAN_MEDIA_CLEANUP_ENABLED` after reviewing a
   few `--dry-run` reports.
 - In production, set a dedicated `IDENTITY_EMBEDDING_KEY`, then run

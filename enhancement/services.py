@@ -19,7 +19,8 @@ from django.conf import settings
 from django.core.files.base import ContentFile
 from django.db import transaction
 from django.utils import timezone
-from rest_framework.exceptions import ValidationError
+from rest_framework import status as http_status
+from rest_framework.exceptions import APIException, ValidationError
 from PIL import Image, ImageColor, ImageOps, UnidentifiedImageError
 
 from uploads.models import ImagePreprocessingResult
@@ -27,6 +28,7 @@ from quality_control.models import ImageQualityDecision
 
 from .models import (
     EditMode,
+    EnhancementBatchJob,
     EnhancementLevel,
     EnhancementStatus,
     EnhancementStyle,
@@ -1290,6 +1292,43 @@ def _encode_output(image, preprocessing):
     if not success:
         raise ValidationError("The enhanced image could not be encoded safely.")
     return encoded.tobytes(), extension, output_format
+
+
+class TooManyActiveJobs(APIException):
+    status_code = http_status.HTTP_429_TOO_MANY_REQUESTS
+    default_code = "too_many_active_jobs"
+    default_detail = "Too many enhancements are already in progress. Wait for some to finish."
+
+
+ACTIVE_STATUSES = (
+    EnhancementStatus.PENDING, EnhancementStatus.QUEUED, EnhancementStatus.PROCESSING,
+)
+
+
+def ensure_enhancement_capacity(owner, *, batch):
+    """Refuse new work once the owner has too much in flight (fair use).
+
+    Single-image requests and batch jobs are limited separately: a batch fans out
+    into one result per image, so counting those against the single-image limit
+    would make every batch of more than a handful of images impossible.
+    """
+    if batch:
+        limit = settings.MAX_ACTIVE_BATCH_ENHANCEMENTS_PER_USER
+        active = EnhancementBatchJob.objects.filter(
+            owner=owner, status__in=ACTIVE_STATUSES,
+        ).count()
+        noun = "batch enhancement jobs"
+    else:
+        limit = settings.MAX_ACTIVE_ENHANCEMENTS_PER_USER
+        active = ImageEnhancementResult.objects.filter(
+            owner=owner, batch_job__isnull=True, status__in=ACTIVE_STATUSES,
+        ).count()
+        noun = "image enhancements"
+    if limit and active >= limit:
+        raise TooManyActiveJobs(
+            f"You already have {active} {noun} in progress (limit {limit}). "
+            "Wait for some to finish, then try again."
+        )
 
 
 def create_enhancement_result(

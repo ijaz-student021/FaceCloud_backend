@@ -439,7 +439,7 @@ workflows remain.
 
 - Celery preprocessing worker and Redis configuration — Complete
 - Per-image and per-batch enhancement jobs — Complete
-- Controlled concurrency
+- Controlled concurrency — Complete (per-user limits)
 - Retry and timeout policies
 - Preprocessing and enhancement failure isolation and batch counters — Complete
 - Cancellation where safe

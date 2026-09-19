@@ -6,6 +6,7 @@ from rest_framework.views import APIView
 
 from accounts.permissions import IsAdminRole
 
+from .jobs import queue_status
 from .services import UNAVAILABLE, build_system_health
 
 
@@ -22,3 +23,12 @@ class SystemHealthView(APIView):
         )
         return Response(health, status=response_status)
 
+
+class QueueStatusView(APIView):
+    """Active and stale background work per job type, for administrators."""
+
+    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
+
+    @extend_schema(responses={200: OpenApiTypes.OBJECT})
+    def get(self, request):
+        return Response(queue_status())

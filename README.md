@@ -67,7 +67,17 @@ tasks and do nothing until a worker is up:
 ```
 
 This starts (or reuses) a local Redis container and runs the worker in the
-foreground. The end-to-end manual flow is in
+foreground. Periodic maintenance (expiring downloads, retention, temp-file
+cleanup, stuck-job recovery) runs from a separate scheduler; start exactly one
+in its own terminal:
+
+```powershell
+.\scripts\run_beat.ps1
+```
+
+What runs, and how stuck jobs are recovered, is described in
+[docs/features/20-background-job-operations.md](docs/features/20-background-job-operations.md).
+The end-to-end manual flow is in
 [`docs/MANUAL_TESTING_COMMANDS.md`](docs/MANUAL_TESTING_COMMANDS.md).
 
 ### Model files
@@ -110,8 +120,8 @@ python manage.py check --deploy              # production configuration audit
   Run `manage.py check --deploy` before going live; the `privacy.*` checks
   cover consent, retention and key configuration.
 
-Scheduled jobs (`purge_expired_facial_data`, `cleanup_temporary_files`) are
-management commands and need a scheduler in deployment.
+The retention purge and temporary-file cleanup run from the Celery beat
+schedule, so a beat process must be running in deployment.
 
 ## Documentation
 
