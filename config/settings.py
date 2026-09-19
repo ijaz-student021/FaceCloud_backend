@@ -39,10 +39,8 @@ SECRET_KEY = os.environ.get(
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DJANGO_DEBUG", "True").lower() == "true"
 
-if not DEBUG and SECRET_KEY.startswith("django-insecure-"):
-    raise ImproperlyConfigured(
-        "DJANGO_SECRET_KEY must be set to a private value when DJANGO_DEBUG is false."
-    )
+# (An unsafe SECRET_KEY with DEBUG off is refused by config/production_guard.py at
+# the end of this file, together with every other production problem.)
 
 ALLOWED_HOSTS = [host.strip() for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost,testserver").split(",") if host.strip()]
 
@@ -490,7 +488,9 @@ IMAGE_ENCRYPTION_KEY_ID = env.int("IMAGE_ENCRYPTION_KEY_ID", default=1)
 IMAGE_ENCRYPTION_PREVIOUS_KEYS = _parse_previous_embedding_keys(
     env("IMAGE_ENCRYPTION_PREVIOUS_KEYS", default=""), "IMAGE_ENCRYPTION_PREVIOUS_KEYS",
 )
-if IMAGE_ENCRYPTION_ENABLED and len(IMAGE_ENCRYPTION_KEY) < 32:
+# In production the key's strength is judged by config/production_guard.py; in
+# development a too-short key still stops startup rather than failing on the first upload.
+if DEBUG and IMAGE_ENCRYPTION_ENABLED and len(IMAGE_ENCRYPTION_KEY) < 32:
     raise ImproperlyConfigured(
         "IMAGE_ENCRYPTION_ENABLED needs its own IMAGE_ENCRYPTION_KEY of at least 32 characters."
     )
@@ -720,6 +720,11 @@ EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True").lower() == "true"
 SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "False").lower() == "true"
 SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "False").lower() == "true"
 CSRF_COOKIE_SECURE = os.environ.get("CSRF_COOKIE_SECURE", "False").lower() == "true"
+# Set when a reverse proxy terminates TLS and forwards X-Forwarded-Proto, so Django
+# knows the original request was HTTPS. Only enable it behind a proxy that
+# overwrites that header.
+if os.environ.get("TRUST_PROXY_SSL_HEADER", "False").lower() == "true":
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_HSTS_SECONDS = int(os.environ.get("SECURE_HSTS_SECONDS", "0"))
 SECURE_HSTS_INCLUDE_SUBDOMAINS = os.environ.get("SECURE_HSTS_INCLUDE_SUBDOMAINS", "False").lower() == "true"
 SECURE_HSTS_PRELOAD = os.environ.get("SECURE_HSTS_PRELOAD", "False").lower() == "true"
@@ -728,3 +733,12 @@ SECURE_HSTS_PRELOAD = os.environ.get("SECURE_HSTS_PRELOAD", "False").lower() == 
 from config.log_redaction import install as install_log_redaction  # noqa: E402
 
 install_log_redaction()
+
+# In production, refuse to start on an unsafe configuration. Kept last so every
+# setting above is final; see config/production_guard.py for the rules.
+if not DEBUG:
+    from config.production_guard import format_problems, production_problems
+
+    _production_problems = production_problems(globals())
+    if _production_problems:
+        raise ImproperlyConfigured(format_problems(_production_problems))

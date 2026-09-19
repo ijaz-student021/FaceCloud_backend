@@ -49,8 +49,11 @@ the fallback path.
 Identity-model verification hashed the whole 38 MB SFace file on every call, and
 a face triggers several calls. Successful verification is now cached against the
 file's path, size and modification time, so an unchanged file is hashed once and
-a cached check costs about 0.4 ms instead of 180 ms. A modified file misses the
-cache and is re-hashed; failures are never cached (tests cover both).
+a cached check costs about 0.4 ms instead of 180 ms. The cache has three limits,
+added after a flaky test exposed that file timestamps are coarse (a same-size
+rewrite in the same tick keeps the same modification time): a file modified less
+than 2 seconds ago is never cached, every cached result expires after 10 minutes
+so even a forged size and timestamp is caught, and failures are never cached.
 
 The image-quality measurement (run about eight times per image, and the whole
 cost of both output guards) hashed and sorted every pixel repeatedly. It is now
@@ -65,13 +68,24 @@ rejected because it would slightly change their decisions.
 The test suite dropped from about 610 s to about 66 s for the everyday run by
 using a low-iteration password hasher in tests only (see `config/test_runner.py`).
 
+## Hardening added afterwards (same day)
+
+| Item | Where |
+|---|---|
+| Per-account login backoff (30 s doubling to 15 min, uniform for unknown accounts) | `accounts/lockout.py`, authentication doc |
+| Share-link tokens redacted from application logs and gunicorn's access log | `config/log_redaction.py`, `gunicorn.conf.py` |
+| Stored images encrypted at rest (AES-256-GCM, rotatable) | `docs/features/stored-image-encryption.md` |
+| Production start refused on any unsafe setting, all problems listed together | `config/production_guard.py`, README "Before deploying" |
+
 ## Left as is, on purpose
 
 - Django 6.1 and DRF 3.18: newer minor lines, deferred.
-- Per-account login lockout (see the authentication review in
-  `docs/features/01-authentication-and-authorization.md`).
 - Tokens are signed with `SECRET_KEY` (HS256).
-- Web-server access logs contain share-link tokens (see the share-link doc).
+- Reverse-proxy access logs and `ADMINS` error emails can still contain share-link
+  tokens; they are outside the application (see the share-link doc).
+- No two-factor authentication and no malware scanning of uploads.
+- No penetration test or fuzzing has been done; only static analysis, a
+  dependency audit and functional tests.
 
 ## How to repeat this
 

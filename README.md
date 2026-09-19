@@ -141,32 +141,40 @@ schedule, so a beat process must be running in deployment.
 
 ## Before deploying
 
-`python manage.py check --deploy` must report no errors. The ones that will stop
-a deployment on the development defaults:
+With `DJANGO_DEBUG=False` the application **refuses to start** unless the
+configuration is production-safe, and lists every problem at once
+([`config/production_guard.py`](config/production_guard.py)). It requires:
 
-1. **`privacy.E001`: set a dedicated `IDENTITY_EMBEDDING_KEY`.** Without one,
-   face embeddings are encrypted with `DJANGO_SECRET_KEY`, so rotating the Django
-   secret would make every stored embedding unreadable. Generate one and keep it
-   in your secret store, separate from the Django secret:
+1. **Secrets.** A random `DJANGO_SECRET_KEY` (50+ characters), and separate
+   random `IDENTITY_EMBEDDING_KEY` and `IMAGE_ENCRYPTION_KEY` (32+ characters
+   each, all three different). Generate each with:
 
    ```powershell
    python -c "import secrets; print(secrets.token_urlsafe(48))"
    ```
 
-   Set it **before** the first embedding is created. Changing it later is done
-   with a new `IDENTITY_EMBEDDING_KEY_ID` plus `IDENTITY_EMBEDDING_PREVIOUS_KEYS`
-   and `manage.py reencrypt_identity_embeddings`; the runbook is in
-   [`docs/features/41-privacy-and-facial-data.md`](docs/features/41-privacy-and-facial-data.md).
-2. Set `DJANGO_SECRET_KEY` to a private value (the app refuses to start on the
-   built-in one when `DJANGO_DEBUG=False`) and `DJANGO_DEBUG=False`.
-3. Set `DJANGO_ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `PUBLIC_BACKEND_URL` and
-   `FRONTEND_URL`, and `TRUSTED_PROXY_COUNT` to the number of reverse proxies in
-   front of Django.
-4. Turn on HTTPS settings (`SECURE_SSL_REDIRECT`, secure cookies, HSTS) as in
-   `.env.example`.
-5. Decide the privacy policy: `BIOMETRIC_CONSENT_REQUIRED` and
-   `FACIAL_DATA_RETENTION_DAYS` (the checks warn while they are off).
-6. Run the worker and exactly one beat process.
+   Set the embedding and image keys **before** the first data is stored. Changing
+   one later is done with a new key id, the previous-keys list and the conversion
+   commands: [embeddings](docs/features/41-privacy-and-facial-data.md),
+   [images](docs/features/stored-image-encryption.md).
+2. **Encryption at rest on:** `IMAGE_ENCRYPTION_ENABLED=True`. If you already have
+   stored images, run `python manage.py encrypt_stored_media` once.
+3. **Real hosts:** `DJANGO_ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS` (https, no
+   wildcard, `CORS_ALLOW_ALL_ORIGINS=False`), `PUBLIC_BACKEND_URL` and
+   `FRONTEND_URL` (https). Placeholders such as `example.com` are rejected.
+4. **HTTPS:** `SECURE_SSL_REDIRECT=True` (or `TRUST_PROXY_SSL_HEADER=True` behind a
+   proxy that terminates TLS), secure session and CSRF cookies, and
+   `SECURE_HSTS_SECONDS` of at least one year. Set `TRUSTED_PROXY_COUNT` to the
+   number of proxies in front of Django.
+5. **Infrastructure:** PostgreSQL with a real password, an SMTP `EMAIL_BACKEND`
+   and `EMAIL_HOST`, and `CELERY_TASK_ALWAYS_EAGER=False`.
+6. **Privacy policy:** `BIOMETRIC_CONSENT_REQUIRED=True`. Also choose
+   `FACIAL_DATA_RETENTION_DAYS`; `check --deploy` warns while it is 0.
+7. Run the worker and exactly one beat process, and serve with
+   `gunicorn config.wsgi -c gunicorn.conf.py` so share-link tokens are redacted
+   from its access log.
+
+Then run `python manage.py check --deploy` for Django's own checks.
 
 ## Documentation
 
