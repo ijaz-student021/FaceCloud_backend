@@ -112,6 +112,20 @@ python manage.py test --exclude-tag slow     # quick loop
 python manage.py test                        # everything, before a commit
 ```
 
+### Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull
+request, and weekly (to catch vulnerabilities published later):
+
+| Job | Checks |
+|---|---|
+| Tests and schema | `check`, no missing migrations, OpenAPI schema with zero warnings, the test suite (without the `slow` tests) against PostgreSQL |
+| Dependency audit and static analysis | `pip-audit` on `requirements.txt`; `bandit` failing on medium or high findings |
+| Production configuration | The app refuses an unsafe production environment, and starts and passes `check --deploy` with a correct one |
+
+[`.github/dependabot.yml`](.github/dependabot.yml) opens weekly update pull
+requests. The jobs need no model files or secrets, and a clean checkout passes.
+
 ## Security posture
 
 - Every endpoint requires authentication unless it is explicitly public

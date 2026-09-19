@@ -75,6 +75,12 @@ class FaceValidationTests(APITestCase):
 
     @override_settings(FACE_DETECTOR_PROVIDER="yunet_v1")
     def test_installed_yunet_model_supports_dynamic_input_and_contract(self):
+        from pathlib import Path
+
+        from django.conf import settings
+
+        if not Path(settings.YUNET_MODEL_PATH).is_file():
+            self.skipTest("The YuNet model is not installed here.")
         detector = OpenCVYuNetFaceDetector()
         for width, height in ((320, 320), (640, 480)):
             result = detector.detect(

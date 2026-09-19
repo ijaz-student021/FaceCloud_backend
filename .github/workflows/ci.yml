@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # A weekly run catches vulnerabilities published after the last change.
+    - cron: "17 5 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.14"
+
+jobs:
+  test:
+    name: Tests and schema
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: facecloud
+          POSTGRES_PASSWORD: facecloud
+          POSTGRES_DB: facecloud
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U facecloud"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DJANGO_DEBUG: "True"
+      DB_ENGINE: django.db.backends.postgresql
+      DB_NAME: facecloud
+      DB_USER: facecloud
+      DB_PASSWORD: facecloud
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: pip check
+      - name: Django system check
+        run: python manage.py check
+      - name: No missing migrations
+        run: python manage.py makemigrations --check --dry-run
+      - name: OpenAPI schema has no warnings
+        run: python manage.py spectacular --file /tmp/schema.yml --validate --fail-on-warn
+      - name: Tests
+        # The few tests that run the real enhancement pipeline are tagged "slow"
+        # and need model files that are not in the repository.
+        run: python manage.py test --exclude-tag slow --noinput
+
+  security:
+    name: Dependency audit and static analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install pip-audit bandit
+      - name: Known vulnerabilities in dependencies
+        run: pip-audit -r requirements.txt --progress-spinner off
+      - name: Static analysis (medium and high severity)
+        run: >-
+          bandit -r accounts uploads enhancement validation quality_control duplicates
+          identities reports downloads notifications operations activity privacy sharing
+          config scripts -x "*/tests.py,*/test_*.py,*/migrations" -ll
+
+  production-config:
+    name: Production configuration starts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The application must start, and pass Django's deployment checks, with a
+    # correct production environment. Values are throwaway; nothing connects.
+    env:
+      DJANGO_DEBUG: "False"
+      DJANGO_ALLOWED_HOSTS: api.facecloud-app.net
+      CORS_ALLOW_ALL_ORIGINS: "False"
+      CORS_ALLOWED_ORIGINS: https://app.facecloud-app.net
+      PUBLIC_BACKEND_URL: https://api.facecloud-app.net
+      FRONTEND_URL: https://app.facecloud-app.net
+      SECURE_SSL_REDIRECT: "True"
+      SESSION_COOKIE_SECURE: "True"
+      CSRF_COOKIE_SECURE: "True"
+      SECURE_HSTS_SECONDS: "31536000"
+      SECURE_HSTS_INCLUDE_SUBDOMAINS: "True"
+      SECURE_HSTS_PRELOAD: "True"
+      DB_ENGINE: django.db.backends.postgresql
+      DB_NAME: facecloud
+      DB_USER: facecloud
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      EMAIL_BACKEND: django.core.mail.backends.smtp.EmailBackend
+      EMAIL_HOST: smtp.mailer-service.net
+      CELERY_TASK_ALWAYS_EAGER: "False"
+      BIOMETRIC_CONSENT_REQUIRED: "True"
+      FACIAL_DATA_RETENTION_DAYS: "365"
+      IMAGE_ENCRYPTION_ENABLED: "True"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Generate throwaway secrets
+        run: |
+          for name in DJANGO_SECRET_KEY IDENTITY_EMBEDDING_KEY IMAGE_ENCRYPTION_KEY DB_PASSWORD; do
+            value=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
+            echo "::add-mask::$value"
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done
+      - name: Refuses an unsafe production configuration
+        run: |
+          if DJANGO_SECRET_KEY=django-insecure-x CORS_ALLOW_ALL_ORIGINS=True python manage.py check; then
+            echo "The production guard accepted an unsafe configuration"; exit 1
+          fi
+      - name: Starts and passes deployment checks with a correct configuration
+        # identities.W001 (no approved face model configured) is expected here: the
+        # model files are not in the repository. Any other finding fails the job.
+        run: |
+          python manage.py check --deploy --fail-level ERROR > /tmp/check.txt 2>&1 || { cat /tmp/check.txt; exit 1; }
+          cat /tmp/check.txt
+          if grep -E '^\?: \(' /tmp/check.txt | grep -v 'identities.W001'; then
+            echo "Unexpected deployment warnings"; exit 1
+          fi

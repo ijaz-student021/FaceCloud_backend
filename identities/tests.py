@@ -65,8 +65,13 @@ class ProviderContractTests(TestCase):
 
 class InstalledSFaceProviderTests(TestCase):
     def test_verified_model_extracts_normalized_feature_from_yunet_geometry(self):
+        from pathlib import Path
+
         from django.conf import settings
 
+        if not (Path(settings.IDENTITY_MODEL_PATH).is_file() and settings.IDENTITY_LICENSE_RECORD_PATH
+                and Path(settings.IDENTITY_LICENSE_RECORD_PATH).is_file()):
+            self.skipTest("The SFace model and its licence record are not installed here.")
         provider = SFaceOnnxProvider()
         self.assertTrue(provider.healthcheck())
         image = np.full((320, 320, 3), 127, dtype=np.uint8)

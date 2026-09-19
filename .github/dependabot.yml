@@ -1,0 +1,16 @@
+# Weekly dependency update pull requests. Security advisories are raised
+# separately by GitHub as soon as they are published.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      django-stack:
+        patterns: ["django", "djangorestframework*", "drf-spectacular", "django-cors-headers", "django-environ"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

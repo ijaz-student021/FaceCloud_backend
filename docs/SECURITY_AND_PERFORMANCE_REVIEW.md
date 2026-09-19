@@ -87,7 +87,17 @@ using a low-iteration password hasher in tests only (see `config/test_runner.py`
 - No penetration test or fuzzing has been done; only static analysis, a
   dependency audit and functional tests.
 
-## How to repeat this
+## Automated from now on
+
+The dependency audit, the static scan (medium and high severity), the deployment
+check and the test suite run in CI on every change and weekly
+(`.github/workflows/ci.yml`), so this review no longer depends on remembering to
+repeat it. The pipeline was verified by running each job's commands against a
+clean export of the repository (no `.env`, models or data); that surfaced two
+tests that erred instead of skipping when the model files were absent, now fixed.
+The workflow itself has not yet run on GitHub.
+
+## How to repeat this by hand
 
 ```powershell
 python -m venv .runtime\audit-tools
