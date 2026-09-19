@@ -11,6 +11,21 @@ def privacy_configuration_check(app_configs, **kwargs):
         issues.append(Error("BIOMETRIC_CONSENT_POLICY_VERSION cannot be empty.", id="privacy.E003"))
     if settings.PRIVACY_EXPORT_MAX_ROWS <= 0:
         issues.append(Error("PRIVACY_EXPORT_MAX_ROWS must be positive.", id="privacy.E004"))
+    if settings.TEMP_FILE_MAX_AGE_HOURS <= 0 or settings.ORPHAN_MEDIA_GRACE_HOURS <= 0:
+        issues.append(
+            Error(
+                "TEMP_FILE_MAX_AGE_HOURS and ORPHAN_MEDIA_GRACE_HOURS must be positive.",
+                id="privacy.E008",
+            )
+        )
+    elif settings.TEMP_FILE_MAX_AGE_HOURS * 3600 <= settings.CELERY_TASK_TIME_LIMIT:
+        issues.append(
+            Error(
+                "TEMP_FILE_MAX_AGE_HOURS must be longer than CELERY_TASK_TIME_LIMIT, or the cleanup "
+                "could delete an archive that is still being built.",
+                id="privacy.E009",
+            )
+        )
     key_id = settings.IDENTITY_EMBEDDING_KEY_ID
     if not 1 <= key_id <= 255:
         issues.append(Error("IDENTITY_EMBEDDING_KEY_ID must be between 1 and 255.", id="privacy.E006"))

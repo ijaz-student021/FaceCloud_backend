@@ -19,6 +19,7 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
+from .cleanup import stale_temp_archives
 from .models import BiometricConsent, ConsentPurpose, PrivacyRequest
 
 logger = logging.getLogger(__name__)
@@ -477,6 +478,11 @@ def audit_report(now=None):
             kind__in=[PrivacyRequest.Kind.FACIAL_ERASURE, PrivacyRequest.Kind.RETENTION_PURGE],
             verified=False,
         ).count(),
+        "temporary_files": {
+            "stale_temp_archives": len(stale_temp_archives()),
+            "max_age_hours": settings.TEMP_FILE_MAX_AGE_HOURS,
+            "orphan_media_deletion_enabled": settings.ORPHAN_MEDIA_CLEANUP_ENABLED,
+        },
         "retention": {
             "days": settings.FACIAL_DATA_RETENTION_DAYS,
             "enabled": settings.FACIAL_DATA_RETENTION_DAYS > 0,

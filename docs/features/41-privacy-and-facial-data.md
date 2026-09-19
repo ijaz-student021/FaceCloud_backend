@@ -3,10 +3,11 @@
 ## Status
 
 Backend complete for consent, erasure with verification, retention, export,
-audit reporting, deployment checks, and embedding encryption with key
-rotation (`privacy` app and `identities/storage.py`). Still open: temporary
-processing-file cleanup, encryption of stored images (Feature 43), and the
-consent screens in the frontend. Details under "Open items".
+audit reporting, deployment checks, embedding encryption with key rotation,
+and temporary-file and orphaned-media cleanup (`privacy` app and
+`identities/storage.py`). Still open: encryption of stored images
+(Feature 43), scheduling the two jobs in the deployment, and the consent
+screens in the frontend. Details under "Open items".
 
 ## What counts as facial data
 
@@ -67,6 +68,48 @@ or schedule the Celery task `privacy.purge_expired_facial_data`. Note that
 with consent enforcement **off**, preprocessing an existing image can create
 embeddings again after a purge; retention is only meaningful together with
 `BIOMETRIC_CONSENT_REQUIRED=True`.
+
+## Temporary files and orphaned media
+
+Two kinds of leftovers can hold face photos long after the request that made
+them (`privacy/cleanup.py`, `manage.py cleanup_temporary_files`, Celery task
+`privacy.cleanup_temporary_files`):
+
+1. **Stale temp archives.** The package and identity-export builders write a
+   ZIP into the system temp directory (`delete=False`) and delete it in a
+   `finally` block. A worker killed mid-build (out of memory, the hard task
+   time limit, a crash) never reaches it, so a ZIP of users' photos, possibly
+   gigabytes, stays forever. Files named `facecloud-package-*.zip` or
+   `facecloud-identity-export-*.zip` older than `TEMP_FILE_MAX_AGE_HOURS`
+   (default 6) are deleted. Nothing else in the temp directory is touched, and
+   directories and symlinks are skipped. A startup check (`privacy.E009`)
+   requires the limit to exceed `CELERY_TASK_TIME_LIMIT`, so a build still in
+   progress can never be deleted.
+2. **Orphaned media.** A file saved to storage whose database row was never
+   committed is referenced by nothing, so neither the delete signals nor
+   account deletion will ever remove it; it would quietly break the "no data
+   remains" guarantee. The scanner discovers every file field in the project
+   dynamically, lists `users/<id>/<folder>/` for the seven known folders
+   through the storage API (so it works with S3 later), and treats a file as an
+   orphan only if no row references it **and** it is older than
+   `ORPHAN_MEDIA_GRACE_HOURS` (default 24). A test ties the folder list to every
+   file field, so a new upload path cannot silently be treated as orphaned.
+
+**Orphans are reported, not deleted, by default.** Removing user files on a
+heuristic must never be a surprise: deletion needs
+`ORPHAN_MEDIA_CLEANUP_ENABLED=True` or `--delete-orphans`, and `--dry-run`
+overrides both. Runs that delete something are recorded as a `temp_cleanup`
+privacy request (counts only, never file names). The admin audit report shows
+how many stale archives currently exist.
+
+On this project's real media folder the scanner saw 51 files on disk and 51
+database references, an exact match, so it reported no orphans.
+
+Schedule it like the retention purge (cron or Celery), for example daily:
+
+```powershell
+python manage.py cleanup_temporary_files
+```
 
 ## Export
 
@@ -160,8 +203,10 @@ key protected it.
 
 ## Open items
 
-- Temporary-processing cleanup (orphaned temp files from failed builds).
 - Frontend: consent screen, "delete my face data", export download.
-- Schedule the retention purge in the deployment.
+- Schedule the retention purge and `cleanup_temporary_files` in the deployment
+  (this repo has no Celery beat schedule).
+- Decide whether to enable `ORPHAN_MEDIA_CLEANUP_ENABLED` after reviewing a
+  few `--dry-run` reports.
 - In production, set a dedicated `IDENTITY_EMBEDDING_KEY`, then run
   `reencrypt_identity_embeddings` once so any legacy records are upgraded.

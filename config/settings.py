@@ -479,6 +479,14 @@ BIOMETRIC_CONSENT_POLICY_VERSION = env("BIOMETRIC_CONSENT_POLICY_VERSION", defau
 # by the scheduled purge. 0 keeps them until the user deletes them.
 FACIAL_DATA_RETENTION_DAYS = env.int("FACIAL_DATA_RETENTION_DAYS", default=0)
 PRIVACY_EXPORT_MAX_ROWS = env.int("PRIVACY_EXPORT_MAX_ROWS", default=2000)
+# Leftover ZIP build files in the system temp directory older than this are
+# removed. Must exceed CELERY_TASK_TIME_LIMIT or a build in progress could be
+# deleted (checked at startup).
+TEMP_FILE_MAX_AGE_HOURS = env.int("TEMP_FILE_MAX_AGE_HOURS", default=6)
+# Files in a user's media folders that no database row references are reported
+# once older than this; they are only deleted when the cleanup is enabled.
+ORPHAN_MEDIA_GRACE_HOURS = env.int("ORPHAN_MEDIA_GRACE_HOURS", default=24)
+ORPHAN_MEDIA_CLEANUP_ENABLED = env.bool("ORPHAN_MEDIA_CLEANUP_ENABLED", default=False)
 
 CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="redis://127.0.0.1:6379/0")
 CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default="redis://127.0.0.1:6379/1")

@@ -35,6 +35,7 @@ class PrivacyRequest(models.Model):
         FACIAL_ERASURE = "facial_erasure", "Facial-data erasure"
         RETENTION_PURGE = "retention_purge", "Retention purge"
         KEY_ROTATION = "key_rotation", "Embedding key rotation"
+        TEMP_CLEANUP = "temp_cleanup", "Temporary file cleanup"
 
     class Status(models.TextChoices):
         COMPLETED = "completed", "Completed"
