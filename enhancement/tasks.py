@@ -1,3 +1,5 @@
+import logging
+
 from celery import shared_task
 from django.db import transaction
 from django.db.utils import InterfaceError, OperationalError
@@ -16,6 +18,8 @@ from .models import (
 )
 from .comparison import process_model_comparison
 from .services import process_enhancement_result, process_image_edit
+
+logger = logging.getLogger(__name__)
 
 # Transient infrastructure failures only (dropped DB connections). Business
 # and validation errors are handled per-result and must never retry.
@@ -126,8 +130,17 @@ def process_enhancement_batch(self, job_id):
         try:
             process_enhancement_result(result)
         except Exception:
-            pass
+            # One bad image must not stop the batch, but it must leave a trace and
+            # must not be left looking "in progress".
+            logger.exception("Enhancement of result %s failed inside batch job %s.", result_id, job_id)
         result.refresh_from_db()
+        if result.status not in (
+            EnhancementStatus.COMPLETED, EnhancementStatus.FAILED, EnhancementStatus.CANCELLED,
+        ):
+            result.status = EnhancementStatus.FAILED
+            result.failure_reason = "The background enhancement task failed safely."
+            result.finished_at = timezone.now()
+            result.save(update_fields=["status", "failure_reason", "finished_at", "updated_at"])
         from notifications.events import notify_enhancement_result
         from uploads.progress import sync_image_progress
         notify_enhancement_result(result)

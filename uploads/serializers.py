@@ -140,7 +140,18 @@ class MyImageSerializer(ImageUploadSerializer):
 
     @extend_schema_field(IDENTITY_GROUP_REFERENCES)
     def get_identity_groups(self, obj):
-        memberships = obj.identity_faces.filter(memberships__state__in=["auto_matched", "new_group", "confirmed"]).values("memberships__identity_group_id", "memberships__identity_group__display_name").distinct()
+        faces = getattr(obj, "prefetched_identity_faces", None)
+        if faces is not None:
+            # Prefetched by MyImageListView: no query per image.
+            groups = {}
+            for face in faces:
+                for membership in face.active_memberships:
+                    group = membership.identity_group
+                    if group is not None:
+                        groups.setdefault(group.pk, {"id": group.pk, "display_name": group.display_name})
+            return list(groups.values())
+        # order_by() clears the model ordering, which would otherwise leak into DISTINCT.
+        memberships = obj.identity_faces.filter(memberships__state__in=["auto_matched", "new_group", "confirmed"]).order_by().values("memberships__identity_group_id", "memberships__identity_group__display_name").distinct()
         return [{"id": row["memberships__identity_group_id"], "display_name": row["memberships__identity_group__display_name"]} for row in memberships if row["memberships__identity_group_id"]]
 
     def get_display_status(self, obj) -> str:

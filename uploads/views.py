@@ -14,6 +14,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
 
 from enhancement.models import ImageEnhancementResult
+from identities.models import IdentityFace, IdentityMembership
 
 from .models import BatchImageProgress, ImagePreprocessingResult, ImageUpload, UploadBatch
 from .progress import batch_progress_payload, sync_image_progress
@@ -225,6 +226,9 @@ class MyImagesPagination(PageNumberPagination):
     max_page_size = 100
 
 
+ACTIVE_IDENTITY_STATES = ("auto_matched", "new_group", "confirmed")
+
+
 class MyImageListView(generics.ListAPIView):
     serializer_class = MyImageSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -251,11 +255,28 @@ class MyImageListView(generics.ListAPIView):
                 "quality_decision", "duplicate_analysis",
                 "identity_analysis",
             )
-            .prefetch_related(Prefetch(
-                "enhancement_results",
-                queryset=enhancement_results,
-                to_attr="ordered_enhancement_results",
-            ))
+            .prefetch_related(
+                Prefetch(
+                    "enhancement_results",
+                    queryset=enhancement_results.prefetch_related("edit_versions"),
+                    to_attr="ordered_enhancement_results",
+                ),
+                # Identity groups per image in two queries total, not one per image.
+                # Only ids are needed, so the encrypted embedding is not loaded.
+                Prefetch(
+                    "identity_faces",
+                    queryset=IdentityFace.objects.only("id", "image").prefetch_related(
+                        Prefetch(
+                            "memberships",
+                            queryset=IdentityMembership.objects.filter(
+                                state__in=ACTIVE_IDENTITY_STATES,
+                            ).select_related("identity_group"),
+                            to_attr="active_memberships",
+                        )
+                    ),
+                    to_attr="prefetched_identity_faces",
+                ),
+            )
             .annotate(latest_enhancement_status=Subquery(latest.values("status")[:1]))
         )
 

@@ -119,8 +119,27 @@ def get_identity_provider():
     return DisabledIdentityProvider()
 
 
+# Successful verifications, keyed by the file's identity on disk. Hashing a 38 MB
+# model on every call cost a full read per face; a file that has not changed since
+# it last verified cannot have a different hash, and any change to its size or
+# modification time misses this cache and forces a fresh hash. Failures are never
+# cached.
+_VERIFIED_MODELS = {}
+
+
 def verify_model_checksum(path, expected):
-    digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    model_path = Path(path)
+    stat = model_path.stat()
+    key = (str(model_path.resolve()), stat.st_size, stat.st_mtime_ns, (expected or "").lower())
+    cached = _VERIFIED_MODELS.get(key)
+    if cached is not None:
+        return cached
+    hasher = hashlib.sha256()
+    with model_path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    digest = hasher.hexdigest()
     if not expected or digest.lower() != expected.lower():
         raise ValidationError("The configured identity model failed integrity verification.")
+    _VERIFIED_MODELS[key] = digest
     return digest
