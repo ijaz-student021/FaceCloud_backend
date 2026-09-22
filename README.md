@@ -1,5 +1,7 @@
 # FaceCloud Backend
 
+[![CI](https://github.com/ijaz-student021/FaceCloud_backend/actions/workflows/ci.yml/badge.svg)](https://github.com/ijaz-student021/FaceCloud_backend/actions/workflows/ci.yml)
+
 FaceCloud is a facial-image platform: users upload photos, the backend judges
 their quality, enhances them (low-light recovery, denoising, upscaling, face
 restoration, colorization, style presets), groups the faces it finds by
@@ -220,6 +222,22 @@ request, and weekly (to catch vulnerabilities published later):
 
 [`.github/dependabot.yml`](.github/dependabot.yml) opens weekly update pull
 requests. The jobs need no model files or secrets, and a clean checkout passes.
+
+### Contributing
+
+`main` is branch-protected: all three CI checks above must pass, and direct
+pushes (including from admins) are refused. The workflow is:
+
+```powershell
+git checkout main && git pull
+git checkout -b your-branch-name
+# make changes, commit
+git push -u origin your-branch-name
+gh pr create --base main
+```
+
+Open the PR, wait for CI to go green, then merge. Merged branches are deleted
+automatically.
 
 ## Security posture
 
