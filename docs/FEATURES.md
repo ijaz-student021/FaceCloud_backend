@@ -31,7 +31,7 @@ Status definitions:
 | User dashboard statistics and My Images API | Complete backend; frontend integration remains |
 | Processing reports | Complete backend; frontend integration remains |
 | Secure image and batch downloads | Complete backend; frontend integration remains |
-| Analytics | Planned |
+| Admin analytics and administrative management | Complete backend; frontend dashboards remain |
 | In-app and email notifications | Complete backend baseline; frontend integration remains |
 | Live camera detection and enhancement | Planned |
 | Frontend dashboards | Planned for frontend integration |
@@ -913,8 +913,8 @@ The following items remain outside the required core until the preceding feature
 3. Identity management and organization-scoped moderator review
 4. Identity-group ZIP downloads
 5. Notifications and full activity timeline
-6. Admin analytics and system health
-7. Uploaded-image model comparison
+6. ~~Admin analytics and system health~~ — done (Features 32, 33, 34 backends complete)
+7. ~~Uploaded-image model comparison~~ — done (Feature 35 backend complete)
 8. Live camera detection
 9. Real-time enhancement and communication
 10. Live comparison page
