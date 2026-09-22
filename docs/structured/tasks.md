@@ -114,14 +114,26 @@
   restricted to moderator/member), member role/status management with
   last-owner and moderator-cannot-manage-owner-or-moderator protection,
   immutable audit trail, 32 tests including cross-org isolation returning 404
-  (not 403) for an invisible organization. Open: Phase B (organization FK and
-  queryset re-scoping across uploads/identities/duplicates/quality_control and
-  the rest of the owner-scoped apps) and T-007's moderator review workflow,
-  which depends on Phase B.
+  (not 403) for an invisible organization. Phase B done 2026-09-22, scoped down
+  from the original plan: rather than an `organization` column on every
+  owner-scoped model, only `UploadBatch` and `IdentityGroup` got one (the two
+  models with no single parent to derive it from); every other content model
+  will reach its organization transitively through its existing FK to one of
+  those two when T-007's moderator queries need it, avoiding ~15 denormalized
+  columns nothing queries directly. New batches/groups are tagged with the
+  owner's personal organization at creation
+  (`organizations.services.get_default_organization`); existing rows were
+  backfilled. Owner-scoped access is unchanged everywhere -- org membership
+  still does not grant access to a member's personal content, per the spec.
+  Open: T-007's moderator review workflow (Phase C), the first real consumer
+  of these two fields.
 - Tenant membership and moderator assignment — Done (Phase A)
-- Tenant-scoped queries, storage, reports, embeddings, and policies — Open (Phase B)
+- Tenant-scoped queries, storage, reports, embeddings, and policies — Partial
+  (Phase B tags new/backfilled batches and identity groups with an
+  organization; the org-scoped query surface itself is T-007/Phase C)
 - Automated cross-tenant isolation tests — Done for organization/membership APIs
-  (Phase A); content-level isolation tests are Phase B
+  (Phase A); content-level isolation tests land with Phase C's org-scoped
+  queries, since Phase B added no new query surface to isolate yet
 
 ## 4. Platform and frontend tasks
 
@@ -170,7 +182,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 43 | Private cloud/object storage | Backlog | T-031 |
 | 44 | OpenAPI schema for every APIView | Done (2026-09-19): zero schema warnings (enforced by a test), examples on the core flows, `docs/API_ERRORS.md` | T-032 |
 | 45 | Load, performance, camera and integration QA | Continuous | T-033 |
-| 46 | Organization and tenant management | In progress (Phase A done 2026-09-22) | T-008 |
+| 46 | Organization and tenant management | In progress (Phases A+B done 2026-09-22) | T-008 |
 | 47 | Gallery-editor frontend integration | Next | T-034 |
 
 ### Register workstreams

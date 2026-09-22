@@ -10,10 +10,14 @@ organization's resources or global infrastructure settings.
 
 Current implementation status: **In progress**. T-008 Phase A (organization
 core: models, personal-organization backfill, membership/invitation APIs,
-audit trail, cross-org isolation tests) is done as of 2026-09-22 — see
-`organizations/` and the completion checklist in section 15. Phase B
-(organization-scoping the rest of the app's content) and T-007's moderator
-review workflow (Phase C) are not yet started.
+audit trail, cross-org isolation tests) and Phase B (organization-scoping
+content) are done as of 2026-09-22 — see `organizations/` and the completion
+checklist in section 15. Phase B was scoped down from adding an `organization`
+column to every owner-scoped model: only `UploadBatch` and `IdentityGroup`
+carry one (the two models with no single parent to derive it from
+transitively), tagged at creation and backfilled for existing rows. T-007's
+moderator review workflow (Phase C) -- the first thing to actually query by
+organization -- is not yet started.
 
 ## 2. Roles and responsibilities
 
@@ -193,6 +197,16 @@ usability layer, not the security boundary.
 
 Organization relationships will also be added to uploads, images, enhancement
 results, processing jobs, identity groups, reports, and review resources.
+
+**Implementation note (2026-09-22):** rather than a separate `organization`
+column on every one of those models, only `UploadBatch` and `IdentityGroup`
+carry one -- every other model in that list (images, preprocessing/enhancement
+results, quality decisions, duplicate matches, reports) already has a FK back
+to one of those two, so its organization is reached transitively through that
+existing relationship (e.g. `image.batch.organization`) rather than
+duplicated. This avoids ~15 denormalized columns that nothing queries
+directly and removes any risk of them drifting out of sync with the anchor
+they'd have copied from.
 
 ## 8. Planned API endpoints
 

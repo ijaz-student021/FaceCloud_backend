@@ -84,6 +84,24 @@ def create_personal_organization(user):
     )
 
 
+def get_default_organization(user):
+    """The organization new content the user creates should be tagged with.
+
+    Prefers their personal organization (every user has exactly one, from
+    ``create_personal_organization``) so ownership keeps behaving the way it
+    always has; falls back to their oldest other active membership, and to
+    ``None`` only for a user with no organization at all (a test fixture
+    created directly rather than through registration).
+    """
+    membership = (
+        OrganizationMembership.objects.select_related("organization")
+        .filter(user=user, status=OrganizationMembership.Status.ACTIVE)
+        .order_by("-organization__is_personal", "created_at")
+        .first()
+    )
+    return membership.organization if membership else None
+
+
 def get_active_membership(user, organization_id):
     if not organization_id:
         return None

@@ -861,7 +861,7 @@ Protects completed behavior from regression as the platform grows.
 - Manual registration, token, profile, and real upload verification
 - Planned enhancement, face, queue, moderator, storage, and live-load tests
 
-### Feature 46: Organization and tenant management — In progress (T-008 Phase A complete, 2026-09-22)
+### Feature 46: Organization and tenant management — In progress (T-008 Phases A+B complete, 2026-09-22)
 
 Separates customer organizations and provides safe organization-level ownership,
 membership, moderation, and data access. See the full design in
@@ -874,11 +874,15 @@ membership, moderation, and data access. See the full design in
 - Owner, moderator, and member organization roles — Done
 - Secure, expiring member invitations — Done (hashed tokens, resend/cancel/accept,
   role restricted to moderator/member — an invitation can never grant ownership)
-- Organization-scoped uploads, images, jobs, groups, reports, and reviews — Open
-  (T-008 Phase B: adding the `organization` FK to every owner-scoped model and
-  re-scoping their querysets)
-- Explicit content ownership and visibility fields for personal, organization-owned, and review-shared data — Open (Phase B)
-- Organization membership does not automatically grant access to a member's personal content — Open (Phase B)
+- Organization-scoped uploads, images, jobs, groups, reports, and reviews — Partial
+  (`UploadBatch`/`IdentityGroup` carry an `organization` field, tagged at
+  creation and backfilled for existing rows; scoped down from an `organization`
+  column on every owner-scoped model to just these two, since every other
+  content model reaches its organization transitively through its FK to one
+  of them -- there is no org-scoped query surface yet to exercise those two
+  fields, which is T-007/Phase C)
+- Explicit content ownership and visibility fields for personal, organization-owned, and review-shared data — Open (Phase C)
+- Organization membership does not automatically grant access to a member's personal content — Done (every existing owner-scoped endpoint is unchanged by Phases A/B; this is verified by the fact that no view's queryset was touched)
 - Time-bounded, revocable review access where temporary moderator visibility is required — Open (T-007 Phase C)
 - Member activation, deactivation, removal, and resource-retention policies — Done
   (activation/deactivation/removal with protected-owner and last-owner rules;
@@ -887,14 +891,15 @@ membership, moderation, and data access. See the full design in
 - Prevention of cross-organization access and face matching by default — Partial
   (organization membership/invitation/audit APIs are isolated and tested —
   `OrganizationIsolationTests`; content and face-matching isolation is Phase B)
-- Queryset, object-permission, download, report, and background-task tenant isolation — Open (Phase B)
+- Queryset, object-permission, download, report, and background-task tenant isolation — Open (T-007/Phase C, the first org-scoped query surface)
 - Organization audit history — Done (`OrganizationAuditEvent`, immutable, written
   by every membership/invitation mutation)
-- Safe backfill of existing users and content into personal organizations — Partial
-  (every existing user backfilled into a personal organization they own,
-  `organizations/migrations/0002_backfill_personal_organizations.py`; new users
-  get one automatically at registration; backfilling existing *content* rows is
-  Phase B)
+- Safe backfill of existing users and content into personal organizations — Done
+  (users: `organizations/migrations/0002_backfill_personal_organizations.py`;
+  new users get one automatically at registration; the two content models that
+  carry their own `organization` field -- `UploadBatch`, `IdentityGroup` -- are
+  backfilled by `uploads/migrations/0007_backfill_batch_organization.py` and
+  `identities/migrations/0005_backfill_group_organization.py`)
 - Global deletion controlled by the account owner or FaceCloud administrator — Unchanged (already true; organizations do not add a new deletion path)
 
 ### Feature 47: Non-destructive photo gallery editor — Complete backend

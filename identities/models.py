@@ -83,6 +83,14 @@ class IdentityGroup(models.Model):
         ARCHIVED = "archived", "Archived"
 
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="identity_groups")
+    # See UploadBatch.organization: owner-scoped access is unchanged, this is
+    # for the org-scoped moderator workflow (T-007) to query by directly. A
+    # group has no single source image to derive it from transitively, so
+    # unlike most identity models it needs its own column.
+    organization = models.ForeignKey(
+        "organizations.Organization", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="identity_groups",
+    )
     display_name = models.CharField(max_length=80)
     state = models.CharField(max_length=12, choices=State.choices, default=State.ACTIVE)
     profile_membership = models.ForeignKey("IdentityMembership", on_delete=models.SET_NULL, null=True, blank=True, related_name="profile_for_groups")
