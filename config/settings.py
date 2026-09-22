@@ -73,6 +73,7 @@ INSTALLED_APPS = [
     "activity",
     "privacy",
     "sharing",
+    "organizations",
 ]
 
 MIDDLEWARE = [
@@ -618,6 +619,9 @@ SHARE_LINK_MAX_TTL_HOURS = env.int("SHARE_LINK_MAX_TTL_HOURS", default=24 * 30)
 SHARE_LINK_MAX_ACTIVE_PER_USER = env.int("SHARE_LINK_MAX_ACTIVE_PER_USER", default=50)
 SHARE_LINK_RETENTION_DAYS = env.int("SHARE_LINK_RETENTION_DAYS", default=30)
 
+# Organizations (Feature 46): how long an invitation link stays acceptable.
+ORG_INVITATION_TTL_HOURS = env.int("ORG_INVITATION_TTL_HOURS", default=72)
+
 # Periodic maintenance. Nothing runs these unless a beat process is started
 # (scripts/run_beat.ps1 or `celery -A config beat`). Every entry is safe to run
 # repeatedly and does nothing when the feature it serves is switched off.
@@ -735,6 +739,7 @@ REST_FRAMEWORK = {
         "share_create": "60/hour",
         "model_comparison": "30/hour",
         "share_public": "120/hour",
+        "org_invite": "30/hour",
     },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
@@ -761,6 +766,13 @@ SPECTACULAR_SETTINGS = {
         "UserRoleEnum": "accounts.models.User.ROLE_CHOICES",
         "ProcessingReportFormatEnum": "reports.models.ProcessingReport.Format",
         "ImageUploadStatusEnum": "uploads.models.ImageUpload.STATUS_CHOICES",
+        "OrganizationStatusEnum": "organizations.models.Organization.Status",
+        "OrganizationPlanEnum": "organizations.models.Organization.Plan",
+        "OrganizationMembershipRoleEnum": "organizations.models.OrganizationMembership.Role",
+        "OrganizationMembershipStatusEnum": "organizations.models.OrganizationMembership.Status",
+        "OrganizationInvitationRoleEnum": "organizations.models.OrganizationInvitation.Role",
+        "OrganizationInvitationStatusEnum": "organizations.models.OrganizationInvitation.Status",
+        "OrganizationAuditActionEnum": "organizations.models.OrganizationAuditEvent.Action",
     },
 }
 

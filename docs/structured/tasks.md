@@ -106,10 +106,22 @@
 
 ### T-008 — Organization and tenant management
 
-- **Status:** Backlog
-- Tenant membership and moderator assignment
-- Tenant-scoped queries, storage, reports, embeddings, and policies
-- Automated cross-tenant isolation tests
+- **Status:** In progress — Phase A done 2026-09-22: `organizations` app
+  (Organization, OrganizationMembership, OrganizationInvitation,
+  OrganizationAuditEvent), every existing user backfilled into a personal
+  organization they own, new users get one automatically at registration,
+  invitation lifecycle (invite/resend/cancel/accept, hashed tokens, role
+  restricted to moderator/member), member role/status management with
+  last-owner and moderator-cannot-manage-owner-or-moderator protection,
+  immutable audit trail, 32 tests including cross-org isolation returning 404
+  (not 403) for an invisible organization. Open: Phase B (organization FK and
+  queryset re-scoping across uploads/identities/duplicates/quality_control and
+  the rest of the owner-scoped apps) and T-007's moderator review workflow,
+  which depends on Phase B.
+- Tenant membership and moderator assignment — Done (Phase A)
+- Tenant-scoped queries, storage, reports, embeddings, and policies — Open (Phase B)
+- Automated cross-tenant isolation tests — Done for organization/membership APIs
+  (Phase A); content-level isolation tests are Phase B
 
 ## 4. Platform and frontend tasks
 
@@ -158,7 +170,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 43 | Private cloud/object storage | Backlog | T-031 |
 | 44 | OpenAPI schema for every APIView | Done (2026-09-19): zero schema warnings (enforced by a test), examples on the core flows, `docs/API_ERRORS.md` | T-032 |
 | 45 | Load, performance, camera and integration QA | Continuous | T-033 |
-| 46 | Organization and tenant management | Backlog | T-008 |
+| 46 | Organization and tenant management | In progress (Phase A done 2026-09-22) | T-008 |
 | 47 | Gallery-editor frontend integration | Next | T-034 |
 
 ### Register workstreams

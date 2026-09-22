@@ -24,6 +24,8 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
+from organizations.services import create_personal_organization
+
 from . import lockout
 from .models import PendingRegistration
 from .dashboard import build_user_dashboard
@@ -343,6 +345,7 @@ class VerifyEmailView(APIView):
                     )
                     user.password = pending.password_hash
                     user.save(force_insert=True)
+                    create_personal_organization(user)
             except IntegrityError:
                 pending.status = PendingRegistration.STATUS_CANCELLED
                 pending.password_hash = ""
