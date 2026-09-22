@@ -441,19 +441,25 @@ implemented. Frontend controls can consume the `/api/identities/` contract.
 
 ## 8. Background processing and progress
 
-### Feature 20: Background batch processing — Partial
+### Feature 20: Background batch processing — Complete (backend)
 
-Moves expensive work outside request-response execution. Preprocessing and OpenCV
-enhancement jobs are implemented; recognition, advanced retry, and cancellation
-workflows remain.
+Moves expensive work outside request-response execution, including recognition
+jobs. See T-005 in `docs/structured/tasks.md` and
+`identities/test_idempotency.py` for the recognition-job retry, cancellation,
+concurrency and idempotency guarantees.
 
 - Celery preprocessing worker and Redis configuration — Complete
 - Per-image and per-batch enhancement jobs — Complete
 - Controlled concurrency — Complete (per-user limits)
-- Retry and timeout policies
+- Retry and timeout policies — Complete (`autoretry_for` with backoff on every
+  task, project-wide `CELERY_TASK_TIME_LIMIT`/`SOFT_TIME_LIMIT`)
 - Preprocessing and enhancement failure isolation and batch counters — Complete
-- Cancellation where safe
-- CPU/GPU resource limits
+- Cancellation where safe — Complete (batch-level `cancellation_requested`,
+  checked per-image in the enhancement pipeline and per-face in identity
+  analysis)
+- Stuck-job recovery, queue monitoring, admin failed-job visibility — Complete
+  (Features 20 operations, 33)
+- CPU/GPU resource limits — open; GPU workloads have not been deployed yet
 
 ### Feature 21: Live batch progress tracker — Complete backend
 
