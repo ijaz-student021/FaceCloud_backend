@@ -8,9 +8,12 @@ inspect organization-owned processing data, and review uncertain AI decisions.
 The moderator is not a FaceCloud platform administrator and cannot access another
 organization's resources or global infrastructure settings.
 
-Current implementation status: **Planned**, with the existing global moderator
-role and reusable permission class providing only the initial authorization
-foundation.
+Current implementation status: **In progress**. T-008 Phase A (organization
+core: models, personal-organization backfill, membership/invitation APIs,
+audit trail, cross-org isolation tests) is done as of 2026-09-22 — see
+`organizations/` and the completion checklist in section 15. Phase B
+(organization-scoping the rest of the app's content) and T-007's moderator
+review workflow (Phase C) are not yet started.
 
 ## 2. Roles and responsibilities
 
@@ -453,10 +456,11 @@ another organization's users, images, metrics, or facial data.
 
 - [x] Requirements and frontend contract documented
 - [x] Existing global moderator permission foundation available
-- [ ] Organization models and migrations implemented
-- [ ] Existing records backfilled into organizations
-- [ ] Organization-scoped permissions implemented
-- [ ] Member invitation and management APIs implemented
+- [x] Organization models and migrations implemented (2026-09-22)
+- [x] Existing users backfilled into personal organizations (2026-09-22); existing
+      *content* rows are not yet organization-scoped -- that is Phase B
+- [x] Organization-scoped permissions implemented (2026-09-22, `OrganizationScopedMixin`)
+- [x] Member invitation and management APIs implemented (2026-09-22)
 - [ ] Moderator review workflow implemented
 - [ ] Organization dashboard metrics implemented
 - [ ] Duplicate and batch management implemented
