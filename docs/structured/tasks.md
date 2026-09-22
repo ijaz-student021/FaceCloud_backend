@@ -70,11 +70,16 @@
 
 ### T-005 — Finish background recognition jobs
 
-- **Status:** In progress — bounded retry policy (transient DB errors) and
+- **Status:** Done — bounded retry policy (transient DB errors) and
   per-face cancellation done 2026-09-18; stuck-job recovery, per-user
-  concurrency limits and queue monitoring done 2026-09-19. Idempotency tests
-  still open.
-- Add retry policy, cancellation, resource controls, and idempotency tests.
+  concurrency limits and queue monitoring done 2026-09-19; idempotency
+  tests done 2026-09-22 (`identities/test_idempotency.py`, 6 tests):
+  reprocessing a completed or needs-review analysis is a true no-op (no
+  provider calls, not just an unchanged end state); the task-level
+  "superseded" guard and the service-level mid-flight guard are both
+  proven, not just present; redelivering the same task id before
+  completion does not duplicate faces or memberships.
+- Add retry policy, cancellation, resource controls, and idempotency tests. — Done
 - Ensure progress accurately distinguishes enhancement, validation, and identity work.
 
 ## 3. Privacy and moderation tasks
@@ -132,7 +137,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 14–17 | Quality, face-validation and duplicate decision UI | Next | T-011 |
 | 18 | SFace threshold calibration and production enablement | Blocked (dataset) | T-001 |
 | 19 | Person Folders frontend and correction workflow | Blocked (no frontend repo) | T-002 |
-| 20 | Recognition concurrency and dead-job/queue monitoring | Next (retries/cancellation done) | T-005 |
+| 20 | Recognition concurrency and dead-job/queue monitoring | Done (2026-09-22) | T-005 |
 | 21 | Batch-progress frontend integration | Next | T-012 |
 | 22 | JSON/CSV/PDF report frontend integration | Next | T-013 |
 | 23 | Image and batch package frontend integration | Next | T-014 |
