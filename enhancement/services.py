@@ -127,6 +127,7 @@ class EnhancementPipelineContext:
     quality_guards: dict = field(default_factory=dict)
     post_exposure_noise: dict = field(default_factory=dict)
     adaptive_denoise: dict = field(default_factory=dict)
+    resolution_contract: dict = field(default_factory=dict)
     stage_timings_ms: dict = field(default_factory=dict)
     stage_order: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
@@ -337,6 +338,13 @@ def restore_low_resolution(image, quality):
         metadata["fallback_reason"] = "AI restoration is disabled."
         return image, metadata
     height, width = image.shape[:2]
+    metadata["maximum_input_edge"] = settings.AI_RESTORATION_MAX_INPUT_EDGE
+    if min(width, height) > settings.AI_RESTORATION_MAX_INPUT_EDGE:
+        metadata["fallback_reason"] = (
+            "The source resolution is above the EDSR activation threshold; "
+            "the original pixel grid was preserved."
+        )
+        return image, metadata
     output_pixels = (
         width * settings.AI_RESTORATION_SCALE
         * height * settings.AI_RESTORATION_SCALE
@@ -411,6 +419,161 @@ def _mean_chroma_shift(original, candidate):
     original_lab = cv2.cvtColor(original, cv2.COLOR_BGR2LAB).astype(np.float32)
     candidate_lab = cv2.cvtColor(candidate, cv2.COLOR_BGR2LAB).astype(np.float32)
     return float(np.mean(np.abs(candidate_lab[:, :, 1:] - original_lab[:, :, 1:])))
+
+
+def _structural_similarity(original, candidate):
+    """Return luminance SSIM on a bounded proxy without changing saved pixels."""
+    if original.shape != candidate.shape:
+        return 0.0
+    height, width = original.shape[:2]
+    longest_edge = max(height, width)
+    if longest_edge > 512:
+        scale = 512.0 / longest_edge
+        dimensions = (
+            max(1, round(width * scale)),
+            max(1, round(height * scale)),
+        )
+        original = cv2.resize(original, dimensions, interpolation=cv2.INTER_AREA)
+        candidate = cv2.resize(candidate, dimensions, interpolation=cv2.INTER_AREA)
+
+    source = cv2.cvtColor(original, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    output = cv2.cvtColor(candidate, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    constant_1 = (0.01 * 255) ** 2
+    constant_2 = (0.03 * 255) ** 2
+    source_mean = cv2.GaussianBlur(source, (11, 11), 1.5)
+    output_mean = cv2.GaussianBlur(output, (11, 11), 1.5)
+    source_variance = cv2.GaussianBlur(source * source, (11, 11), 1.5)
+    source_variance -= source_mean * source_mean
+    output_variance = cv2.GaussianBlur(output * output, (11, 11), 1.5)
+    output_variance -= output_mean * output_mean
+    covariance = cv2.GaussianBlur(source * output, (11, 11), 1.5)
+    covariance -= source_mean * output_mean
+    numerator = (
+        (2 * source_mean * output_mean + constant_1)
+        * (2 * covariance + constant_2)
+    )
+    denominator = (
+        (source_mean * source_mean + output_mean * output_mean + constant_1)
+        * (source_variance + output_variance + constant_2)
+    )
+    score = float(np.mean(numerator / np.maximum(denominator, 1e-6)))
+    return float(np.clip(score, 0.0, 1.0))
+
+
+def _face_restoration_metrics(original, candidate):
+    absolute_change = np.abs(
+        candidate.astype(np.float32) - original.astype(np.float32)
+    )
+    before = analyze_image_quality(original)
+    after = analyze_image_quality(candidate)
+    return {
+        "structural_similarity": round(
+            _structural_similarity(original, candidate),
+            5,
+        ),
+        "mean_absolute_change": round(float(np.mean(absolute_change)), 3),
+        "p95_absolute_change": round(
+            float(np.percentile(absolute_change, 95)),
+            3,
+        ),
+        "mean_chroma_shift": round(
+            _mean_chroma_shift(original, candidate),
+            3,
+        ),
+        "highlight_clipping_growth": round(
+            after["highlight_clipping_percent"]
+            - before["highlight_clipping_percent"],
+            3,
+        ),
+    }
+
+
+def _face_restoration_guard(original, candidate, configured_blend):
+    """Accept only a bounded, identity-conservative restoration candidate."""
+    if (
+        not isinstance(candidate, np.ndarray)
+        or candidate.shape != original.shape
+        or candidate.dtype != np.uint8
+        or not np.isfinite(candidate).all()
+    ):
+        raise GFPGANUnavailable(
+            "The restored candidate did not preserve the source pixel grid."
+        )
+
+    limits = {
+        "minimum_structural_similarity": float(
+            settings.GFPGAN_MIN_STRUCTURAL_SIMILARITY
+        ),
+        "maximum_mean_absolute_change": float(
+            settings.GFPGAN_MAX_MEAN_ABSOLUTE_CHANGE
+        ),
+        "maximum_p95_absolute_change": float(
+            settings.GFPGAN_MAX_P95_ABSOLUTE_CHANGE
+        ),
+        "maximum_mean_chroma_shift": float(settings.GFPGAN_MAX_CHROMA_SHIFT),
+        "maximum_highlight_clipping_growth": float(
+            settings.GFPGAN_MAX_HIGHLIGHT_CLIPPING_GROWTH
+        ),
+    }
+    minimum_blend = float(settings.GFPGAN_MIN_OUTPUT_BLEND)
+    blend = float(np.clip(configured_blend, 0.0, 0.60))
+    attempts = []
+    while blend >= minimum_blend:
+        blended = cv2.addWeighted(candidate, blend, original, 1.0 - blend, 0)
+        metrics = _face_restoration_metrics(original, blended)
+        violations = []
+        if (
+            metrics["structural_similarity"]
+            < limits["minimum_structural_similarity"]
+        ):
+            violations.append("structural_similarity")
+        if (
+            metrics["mean_absolute_change"]
+            > limits["maximum_mean_absolute_change"]
+        ):
+            violations.append("mean_absolute_change")
+        if (
+            metrics["p95_absolute_change"]
+            > limits["maximum_p95_absolute_change"]
+        ):
+            violations.append("p95_absolute_change")
+        if metrics["mean_chroma_shift"] > limits["maximum_mean_chroma_shift"]:
+            violations.append("mean_chroma_shift")
+        if (
+            metrics["highlight_clipping_growth"]
+            > limits["maximum_highlight_clipping_growth"]
+        ):
+            violations.append("highlight_clipping_growth")
+        attempts.append(
+            {
+                "blend": round(blend, 4),
+                "metrics": metrics,
+                "violations": violations,
+            }
+        )
+        if not violations:
+            return blended, {
+                "accepted": True,
+                "configured_blend": round(configured_blend, 4),
+                "applied_blend": round(blend, 4),
+                "blend_reduced": blend < configured_blend,
+                "limits": limits,
+                "attempts": attempts,
+            }
+        blend *= 0.72
+
+    return original, {
+        "accepted": False,
+        "configured_blend": round(configured_blend, 4),
+        "applied_blend": 0.0,
+        "blend_reduced": True,
+        "limits": limits,
+        "attempts": attempts,
+        "rejection_reason": (
+            "The restoration candidate exceeded identity or natural-image "
+            "quality limits at the minimum safe blend."
+        ),
+    }
 
 
 def _preserve_source_chroma(original, candidate):
@@ -935,9 +1098,12 @@ def purescale_super_resolution_stage(context):
 
 def restore_degraded_faces(image, input_quality):
     """Build a conservative GFPGAN candidate for genuinely degraded faces."""
+    eligible_defect_names = {"severe_blur", "low_resolution"}
+    if settings.GFPGAN_ALLOW_MILD_BLUR:
+        eligible_defect_names.add("mild_blur")
     eligible_defects = sorted(
         set(input_quality["defects"])
-        & {"severe_blur", "mild_blur", "low_resolution"}
+        & eligible_defect_names
     )
     metadata = {
         "requested": bool(eligible_defects),
@@ -947,8 +1113,9 @@ def restore_degraded_faces(image, input_quality):
         "provider": "private_gfpgan_v1_4",
         "fallback_reason": "",
         "identity_safeguard": (
-            "conservative_weight_and_blend; embedding verification pending"
+            "bounded_change_quality_guard_not_identity_verification"
         ),
+        "identity_embedding_verified": False,
     }
     if not metadata["requested"]:
         metadata["fallback_reason"] = "Face restoration is not required."
@@ -960,16 +1127,16 @@ def restore_degraded_faces(image, input_quality):
     blend = min(max(float(settings.GFPGAN_OUTPUT_BLEND), 0.0), 0.60)
     try:
         candidate, provider_metadata = restore_faces(image)
-        blended = cv2.addWeighted(candidate, blend, image, 1.0 - blend, 0)
-        if blended.shape != image.shape:
-            raise GFPGANUnavailable(
-                "The restored candidate did not preserve the source pixel grid."
-            )
+        blended, guard = _face_restoration_guard(image, candidate, blend)
         metadata.update(provider_metadata)
+        metadata["candidate_guard"] = guard
+        if not guard["accepted"]:
+            metadata["fallback_reason"] = guard["rejection_reason"]
+            return image, metadata
         metadata.update(
             {
                 "applied": True,
-                "output_blend": blend,
+                "output_blend": guard["applied_blend"],
                 "input_dimensions": [int(image.shape[1]), int(image.shape[0])],
                 "output_dimensions": [
                     int(blended.shape[1]),
@@ -1038,6 +1205,65 @@ def output_guard_b_stage(context):
     context.current_image = guarded
     context.output_quality = output_quality
     context.quality_guards["guard_b"] = metadata
+    return context
+
+
+def validate_output_stage(context):
+    """Enforce the final pixel-grid and datatype contract before persistence.
+
+    Runs last, after every other stage (including the identity guard), so it
+    judges the pixels that will actually be saved.
+    """
+    output = context.current_image
+    if (
+        not isinstance(output, np.ndarray)
+        or output.ndim != 3
+        or output.shape[2] != 3
+        or output.size == 0
+        or output.dtype != np.uint8
+        or not np.isfinite(output).all()
+    ):
+        raise ValidationError("The enhanced output failed final image validation.")
+
+    source_dimensions = [
+        int(context.source_image.shape[1]),
+        int(context.source_image.shape[0]),
+    ]
+    expected_dimensions = source_dimensions
+    source = "original_pixel_grid"
+    # At most one of these ever changes the pixel grid: hd_restoration_stage
+    # and purescale_super_resolution_stage are mutually exclusive (see their
+    # own docstrings), and low_resolution_restoration_stage (EDSR) only runs
+    # when HD restoration is disabled. PureVision never resizes.
+    if context.hd_restoration.get("applied"):
+        expected_dimensions = list(context.hd_restoration["output_dimensions"])
+        source = "bounded_hd_restoration_output_grid"
+    elif context.purescale.get("applied"):
+        expected_dimensions = list(context.purescale["output_dimensions"])
+        source = "bounded_purescale_output_grid"
+    elif context.restoration.get("applied"):
+        expected_dimensions = list(context.restoration["output_dimensions"])
+        source = "bounded_edsr_output_grid"
+    actual_dimensions = [int(output.shape[1]), int(output.shape[0])]
+    if actual_dimensions != expected_dimensions:
+        raise ValidationError(
+            "The enhanced output violated the configured resolution contract."
+        )
+
+    context.resolution_contract = {
+        "validated": True,
+        "source_dimensions": source_dimensions,
+        "expected_output_dimensions": expected_dimensions,
+        "actual_output_dimensions": actual_dimensions,
+        "pixel_grid_source": source,
+        "full_resolution_inference": bool(
+            settings.ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION
+        ),
+        "enhanced_image_was_not_downscaled": (
+            actual_dimensions[0] >= source_dimensions[0]
+            and actual_dimensions[1] >= source_dimensions[1]
+        ),
+    }
     return context
 
 
@@ -1176,6 +1402,7 @@ def enhance_bgr(
         ("colorization", colorization_stage),
         ("dynamic_style", dynamic_style_stage),
         ("identity_guard", identity_guard_stage),
+        ("validate_output", validate_output_stage),
     )
     for stage_name, stage_function in stages:
         with _timed_pipeline_stage(context, stage_name):
@@ -1229,7 +1456,7 @@ def enhance_bgr(
         "identity_guard": context.identity_guard,
         "mean_input_luminance": context.input_quality["mean_luminance"],
         "algorithm": algorithm,
-        "pipeline_version": "staged_natural_enhancement_v2",
+        "pipeline_version": "staged_natural_enhancement_v3",
         "colour_policy": (
             "learned_rgb_curves"
             if context.zero_dce["applied"]
@@ -1245,6 +1472,7 @@ def enhance_bgr(
         "quality_guards": context.quality_guards,
         "post_exposure_noise": context.post_exposure_noise,
         "adaptive_denoise": context.adaptive_denoise,
+        "resolution_contract": context.resolution_contract,
         "restoration": context.restoration,
         "hd_restoration": context.hd_restoration,
         "purevision": context.purevision,

@@ -1,5 +1,8 @@
+import uuid
+
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from django.db.models.functions import Lower
 
 
 class User(AbstractUser):
@@ -14,6 +17,8 @@ class User(AbstractUser):
 
 class AuthEvent(models.Model):
     EVENT_CHOICES = [
+        ("registration_pending", "Registration pending"),
+        ("verification_code_sent", "Verification code sent"),
         ("registered", "Registered"),
         ("email_verified", "Email verified"),
         ("login", "Login"),
@@ -58,3 +63,67 @@ class LoginAttempt(models.Model):
     failures = models.PositiveIntegerField(default=0)
     last_failure_at = models.DateTimeField(null=True, blank=True)
     locked_until = models.DateTimeField(null=True, blank=True)
+
+
+class PendingRegistration(models.Model):
+    STATUS_PENDING = "pending"
+    STATUS_CONSUMED = "consumed"
+    STATUS_EXPIRED = "expired"
+    STATUS_LOCKED = "locked"
+    STATUS_CANCELLED = "cancelled"
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_CONSUMED, "Consumed"),
+        (STATUS_EXPIRED, "Expired"),
+        (STATUS_LOCKED, "Locked"),
+        (STATUS_CANCELLED, "Cancelled"),
+    ]
+    ACTIVE_STATUSES = [STATUS_PENDING, STATUS_LOCKED]
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    username = models.CharField(max_length=150)
+    email = models.EmailField(max_length=254)
+    password_hash = models.CharField(max_length=128)
+    code_hash = models.CharField(max_length=128)
+    status = models.CharField(
+        max_length=16,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+    )
+    failed_attempts = models.PositiveSmallIntegerField(default=0)
+    resend_count = models.PositiveSmallIntegerField(default=1)
+    resend_window_started_at = models.DateTimeField()
+    code_expires_at = models.DateTimeField()
+    resend_available_at = models.DateTimeField()
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    created_user = models.OneToOneField(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="signup_registration",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                Lower("username"),
+                condition=models.Q(status__in=["pending", "locked"]),
+                name="accounts_unique_active_pending_username_ci",
+            ),
+            models.UniqueConstraint(
+                Lower("email"),
+                condition=models.Q(status__in=["pending", "locked"]),
+                name="accounts_unique_active_pending_email_ci",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["status", "code_expires_at"],
+                name="acct_pending_status_exp_idx",
+            ),
+            models.Index(fields=["email"], name="accounts_pending_email_idx"),
+        ]

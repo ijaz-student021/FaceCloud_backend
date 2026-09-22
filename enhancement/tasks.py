@@ -39,7 +39,13 @@ TRANSIENT_INFRASTRUCTURE_ERRORS = (OperationalError, InterfaceError)
 def process_enhancement_image(self, result_id):
     task_id = self.request.id or ""
     with transaction.atomic():
-        result = ImageEnhancementResult.objects.select_for_update().get(pk=result_id)
+        result = (
+            ImageEnhancementResult.objects.select_for_update()
+            .filter(pk=result_id)
+            .first()
+        )
+        if result is None:
+            return {"result_id": result_id, "status": "missing"}
         if result.status in (EnhancementStatus.COMPLETED, EnhancementStatus.CANCELLED):
             return {"result_id": result_id, "status": result.status}
         if result.image.batch.cancellation_requested:
@@ -102,7 +108,13 @@ def process_enhancement_image(self, result_id):
 def process_enhancement_batch(self, job_id):
     task_id = self.request.id or ""
     with transaction.atomic():
-        job = EnhancementBatchJob.objects.select_for_update().get(pk=job_id)
+        job = (
+            EnhancementBatchJob.objects.select_for_update()
+            .filter(pk=job_id)
+            .first()
+        )
+        if job is None:
+            return {"job_id": job_id, "status": "missing"}
         if job.status == EnhancementStatus.COMPLETED:
             return {"job_id": job_id, "status": job.status}
         if job.task_id and task_id and job.task_id != task_id:
@@ -190,7 +202,13 @@ def process_enhancement_batch(self, job_id):
 def process_gallery_edit(self, edit_id):
     task_id = self.request.id or ""
     with transaction.atomic():
-        edit = ImageEditVersion.objects.select_for_update().get(pk=edit_id)
+        edit = (
+            ImageEditVersion.objects.select_for_update()
+            .filter(pk=edit_id)
+            .first()
+        )
+        if edit is None:
+            return {"edit_id": edit_id, "status": "missing"}
         if edit.status in (
             EnhancementStatus.COMPLETED,
             EnhancementStatus.CANCELLED,

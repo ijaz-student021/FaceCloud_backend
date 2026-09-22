@@ -11,8 +11,10 @@ optional EDSR restoration, private FaceCloud curve-model inference, Celery execu
 progress, owner-only APIs, comparison metadata, secure downloads, and adaptive
 natural-output protection are implemented. Full-resolution source preservation and
 the non-destructive Auto/Manual gallery editor are also implemented. A private,
-checksum-pinned GFPGAN v1.4 face-restoration stage is implemented behind disabled
-rollout flags for isolated-worker evaluation.
+checksum-pinned GFPGAN v1.4 face-restoration stage is implemented and verified in
+an isolated Python 3.11 worker. Portable defaults remain disabled because private
+model artifacts are not distributed with the repository; an authorized deployment
+enables the stage only after its startup preflight passes.
 
 ## 2. Implemented foundation
 
@@ -36,6 +38,8 @@ rollout flags for isolated-worker evaluation.
 - Authenticated single-image and batch creation APIs
 - Asynchronous single-image enhancement with HTTP 202 queued responses
 - Per-result Celery task identifiers and superseded-task protection
+- Safe `missing` results for stale Celery identifiers after deletion, rollback,
+  or queue recovery instead of uncaught database lookup failures
 - Owner-only result, job, comparison-link, and download APIs
 - Automated processing, batch-progress, auto-level, and cross-user privacy tests
 - Image-quality analysis for exposure, contrast, blur, noise, clipping, and resolution
@@ -54,6 +58,8 @@ rollout flags for isolated-worker evaluation.
 - EDSR ordering after denoise so enlargement does not amplify avoidable noise
 - AI-restoration warning for severe blur and low-resolution inputs
 - Optional CPU EDSR 2x super-resolution routing for low-resolution inputs
+- EDSR activation limited to genuinely small inputs (shortest edge at or below
+  480 pixels by default), avoiding unnecessary enlargement of medium-size images
 - Bounded output-pixel safety limit and automatic OpenCV fallback
 - Auditable restoration provider, dimensions, outcome, and failure metadata
 - Full-resolution original selected for final enhancement rendering
@@ -74,7 +80,9 @@ Standardized image
   -> apply output Guard A
   -> measure revealed noise and optionally denoise
   -> route still-low-resolution output through optional EDSR 2x restoration
+  -> restore eligible degraded faces through guarded private GFPGAN
   -> apply bounded sharpening and output Guard B
+  -> validate the final datatype and pixel-grid contract
   -> save the enhanced output separately
   -> update progress and terminal status
   -> expose secure comparison and download data
@@ -217,6 +225,10 @@ State and privacy behavior:
 - EDSR is requested only when the quality router identifies low resolution.
 - EDSR executes after post-exposure noise measurement and denoising.
 - The configured model is OpenCV DNN EDSR at 2x scale.
+- EDSR runs only when the source shortest edge is at or below the configured
+  `AI_RESTORATION_MAX_INPUT_EDGE` (480 pixels by default).
+- A larger image classified as low resolution keeps its original grid and records
+  a safe skip reason instead of being enlarged merely to satisfy the classifier.
 - The model is cached in each Celery worker process after its first load.
 - The maximum output-pixel setting prevents unsafe memory growth.
 - Missing or failed restoration falls back to the OpenCV enhancement path.
@@ -421,7 +433,9 @@ The first four commercially structured hardening parts are implemented without
 starting face restoration or GFPGAN integration:
 
 1. Rollout flags were added for `ADAPTIVE_DENOISE_ENABLED`,
-   `GFPGAN_ENABLED`, and `GFPGAN_QUEUE_ENABLED`. All default to `False`.
+   `GFPGAN_ENABLED`, and `GFPGAN_QUEUE_ENABLED`. Adaptive denoise defaults to
+   `True`; the two private-model flags default to `False` in portable source
+   configuration.
 2. Enhancement orchestration now uses an `EnhancementPipelineContext` and
    named stages. Stored parameters include `stage_order` and
    `stage_timings_ms`.
@@ -435,8 +449,8 @@ The original `quality_guard` metadata key remains an alias of Guard A for
 existing clients. New clients should use `quality_guards.guard_a` and
 `quality_guards.guard_b`.
 
-The adaptive denoise rollout is intentionally disabled by default. With it
-disabled, the legacy denoise policy remains in effect.
+Adaptive denoise is enabled by default. A deployment can still disable it to use
+the legacy denoise policy during rollback or compatibility testing.
 
 Automated regression coverage includes extremely dark, normally exposed,
 bright, low-resolution, and multi-face scene fixtures. It verifies bounded
@@ -473,24 +487,32 @@ Implemented controls:
    falls back to the existing enhancement pipeline.
 4. Loading is lazy and process-cached. Inference is serialized within a worker
    to avoid concurrent use of one model instance.
-5. Restoration is eligible only for severe blur, mild blur, or low resolution.
-   Normally exposed, sharp, sufficiently large images skip the model.
+5. Restoration is eligible only for severe blur, optionally mild blur, or low
+   resolution. Normally exposed, sharp, sufficiently large images skip the model.
 6. GFPGAN uses `upscale=1`, the `clean` architecture, no background upsampler,
-   restoration weight `0.35`, and a bounded final blend of `0.40`.
+   restoration weight `0.30`, and an initial output blend of `0.25`.
 7. Candidates that contain no face, exceed five faces or the configured pixel
    limit, change dimensions, contain invalid pixels, or fail inference are
    rejected without failing the overall enhancement.
-8. Guard B evaluates face restoration and sharpening against the pre-GFPGAN
-   reference. The uploaded original remains unchanged.
+8. A dedicated face-restoration guard measures structural similarity, mean and
+   95th-percentile absolute change, chroma shift, and highlight-clipping growth.
+   It reduces the blend step-by-step or rejects the candidate when any configured
+   natural-image/change boundary is exceeded. This is explicitly recorded as a
+   quality guard, not as embedding-based identity verification.
 9. Stored metadata includes provider, checksum prefix, face count, dimensions,
-   timing, candidate quality, fallback reason, and identity-safeguard state. It
-   excludes the private path and license terms.
+   timing, every guard attempt, fallback reason, and identity-safeguard state. It
+   excludes private paths and license terms.
 10. `GFPGAN_ENABLED` and `GFPGAN_QUEUE_ENABLED` default to `False`.
+11. The detector, parser, and GFPGAN checkpoints are all checksum-pinned and must
+    already exist locally; runtime downloads are not permitted.
+12. Final output validation requires a contiguous `uint8` BGR result on the
+    expected original or bounded-EDSR grid. The enhanced output is never silently
+    downscaled.
 
 ### Isolated worker setup
 
-Use a separate Python 3.10 or 3.11 environment. Install the correct CPU or CUDA
-PyTorch build for the deployment host first, then run:
+Use the separate Python 3.11 environment. Install the authorized CPU or CUDA
+PyTorch build matching `requirements-gfpgan-constraints.txt`, then run:
 
 ```powershell
 python -m pip install -r requirements-gfpgan.txt
@@ -513,18 +535,41 @@ e2cd4703ab14f4d01fd1383a8a8b266f9a5833dacee8e6a79d3bf21a1b6be5ad
 Start the isolated worker:
 
 ```powershell
-celery -A config worker --loglevel=info --pool=solo -Q gfpgan
+.\scripts\start_gfpgan_worker.ps1
 ```
 
-Only after that worker is healthy should the deployment set
-`GFPGAN_ENABLED=True` and `GFPGAN_QUEUE_ENABLED=True` and restart its processes.
-The queue switch routes image and batch enhancement tasks to `gfpgan`. Rollback
-sets both flags to `False`.
+The launcher validates all checkpoint checksums, loads the private model, and
+starts a uniquely named solo Celery worker on the `gfpgan` queue. Only after that
+preflight is healthy should the deployment set `GFPGAN_ENABLED=True` and
+`GFPGAN_QUEUE_ENABLED=True`. Rollback sets both flags to `False`.
+
+### Verified local pipeline evidence
+
+The isolated CPU runtime passed dependency validation and loaded GFPGAN v1.4,
+its face detector, and its face parser without downloading artifacts. A real
+full-pipeline smoke test completed with these results:
+
+| Measurement | Verified result |
+|---|---:|
+| Source and output dimensions | 670 x 1194 |
+| End-to-end CPU time | 36.259 seconds |
+| Faces restored | 1 |
+| GFPGAN output blend | 0.25 |
+| Structural similarity | 0.99878 |
+| Mean absolute pixel change | 0.235 |
+| 95th-percentile absolute change | 2.0 |
+| Chroma shift | 0.106 |
+| Highlight-clipping growth | 0.0% |
+| Final pixel-grid validation | Passed |
+
+The same input was marked low resolution by the quality classifier, but EDSR
+correctly skipped it because its shortest edge exceeded 480 pixels. This reduced
+CPU processing time and preserved the original pixel grid.
 
 ### Remaining production enablement gate
 
-Run a consented evaluation set containing dark, dim, normal, bright, blurry,
-low-resolution, multi-face, different-skin-tone, and occlusion cases. Review
-identity fidelity manually and add embedding-based identity-drift protection
-before aggressive restoration is allowed. Until that gate passes, the adapter
-is ready for controlled QA but remains off for users.
+Before a broad production rollout, run a consented evaluation set containing
+dark, dim, normal, bright, blurry, low-resolution, multi-face, different-skin-tone,
+and occlusion cases. The current bounded guard is suitable for conservative
+controlled use; aggressive restoration must remain disabled until identity
+fidelity is validated against that evaluation set.

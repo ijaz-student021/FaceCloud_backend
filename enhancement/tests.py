@@ -35,7 +35,11 @@ from .services import (
     process_image_edit,
     restore_low_resolution,
 )
-from .tasks import process_enhancement_image, process_gallery_edit
+from .tasks import (
+    process_enhancement_batch,
+    process_enhancement_image,
+    process_gallery_edit,
+)
 from .zero_dce import _apply_curves_tiled
 
 User = get_user_model()
@@ -117,6 +121,22 @@ class EnhancementModelTests(TestCase):
 
         self.assertEqual(second.status, "pending")
 
+    def test_background_tasks_ignore_stale_database_identifiers(self):
+        missing_id = 9_999_999
+
+        self.assertEqual(
+            process_enhancement_image.run(missing_id),
+            {"result_id": missing_id, "status": "missing"},
+        )
+        self.assertEqual(
+            process_enhancement_batch.run(missing_id),
+            {"job_id": missing_id, "status": "missing"},
+        )
+        self.assertEqual(
+            process_gallery_edit.run(missing_id),
+            {"edit_id": missing_id, "status": "missing"},
+        )
+
 
 class OpenCVPolicyTests(SimpleTestCase):
     @override_settings(
@@ -184,6 +204,7 @@ class OpenCVPolicyTests(SimpleTestCase):
             "colorization",
             "dynamic_style",
             "identity_guard",
+            "validate_output",
         ]
         self.assertEqual(parameters["stage_order"], expected_order)
         self.assertEqual(
@@ -668,6 +689,25 @@ class OpenCVPolicyTests(SimpleTestCase):
         self.assertEqual(metadata["input_dimensions"], [100, 120])
         self.assertEqual(metadata["output_dimensions"], [200, 240])
 
+    @override_settings(
+        AI_RESTORATION_ENABLED=True,
+        AI_RESTORATION_MAX_INPUT_EDGE=480,
+    )
+    @patch("enhancement.services._load_edsr_model")
+    def test_medium_resolution_image_preserves_original_grid(self, load_model):
+        source = np.full((1194, 670, 3), 90, dtype=np.uint8)
+        quality = analyze_image_quality(source)
+        quality["defects"] = sorted(set(quality["defects"]) | {"low_resolution"})
+
+        restored, metadata = restore_low_resolution(source, quality)
+
+        self.assertIs(restored, source)
+        self.assertTrue(metadata["requested"])
+        self.assertFalse(metadata["applied"])
+        self.assertEqual(metadata["maximum_input_edge"], 480)
+        self.assertIn("original pixel grid", metadata["fallback_reason"])
+        load_model.assert_not_called()
+
     @override_settings(AI_RESTORATION_ENABLED=True)
     @patch("enhancement.services._load_edsr_model")
     def test_restoration_failure_falls_back_without_breaking_enhancement(
@@ -687,7 +727,14 @@ class OpenCVPolicyTests(SimpleTestCase):
         self.assertTrue(parameters["warnings"])
 
 
-@override_settings(MEDIA_ROOT=tempfile.mkdtemp(), AI_RESTORATION_ENABLED=False)
+@override_settings(
+    MEDIA_ROOT=tempfile.mkdtemp(),
+    AI_RESTORATION_ENABLED=False,
+    ZERO_DCE_ENABLED=False,
+    GFPGAN_ENABLED=False,
+    CELERY_TASK_ALWAYS_EAGER=True,
+    CELERY_TASK_EAGER_PROPAGATES=True,
+)
 class EnhancementProcessingAndAPITests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(

@@ -15,7 +15,7 @@ Status definitions:
 
 | Area | Status |
 |---|---|
-| Authentication and account management | Complete |
+| Authentication and account management | Complete, including six-digit pending signup verification |
 | Role-based authorization | Complete |
 | Authentication audit events | Complete |
 | Single, multiple, and ZIP image upload | Complete |
@@ -65,9 +65,13 @@ Status definitions:
 Provides the complete account lifecycle and proves the identity of API users.
 
 - Registration with username, email, and password
+- Six-digit email verification before permanent user creation
+- Hashed pending password and code storage
+- Verification expiry, attempt locking, resend cooldown, and hourly send limits
+- Atomic verified-user creation and pending-secret cleanup
 - Required, unique, normalized email addresses
 - Strong password validation and secure hashing
-- Email verification and verification resend
+- Email verification and verification-code resend
 - Login using username, email, or identifier
 - JWT access and refresh tokens
 - Password change and password reset
@@ -271,11 +275,17 @@ Uses deep learning to improve low-light images while preserving facial detail.
 - Checksum-pinned private checkpoint with no automatic model download
 - Face-only restoration with the background upsampler disabled
 - Same-pixel-grid validation, conservative restoration weight and output blend
+- Adaptive restoration guard using structural similarity, bounded pixel change,
+  chroma shift, and highlight-clipping growth
+- Checksum-pinned detector and parser artifacts with no runtime downloads
+- Dedicated Python 3.11 Celery worker preflight and `gfpgan` queue
 - Safe fallback when the optional runtime, checkpoint, face, or output is invalid
-- Dedicated Celery queue configuration for an isolated Python 3.10/3.11 worker
 
-The GFPGAN integration is implemented but remains disabled by default until the
-private worker environment completes consented photographic rollout QA.
+The GFPGAN integration and isolated worker have passed local model and real-image
+pipeline validation. Portable configuration remains disabled because licensed
+model artifacts are not distributed; authorized deployments can enable the
+private queue after preflight, while broader rollout still requires a consented
+photographic evaluation set.
 
 - PureScale (SAFMN) 2x super-resolution and PureVision (RRDBNet) same-resolution
   artifact-removal adapters, both checksum-pinned to third-party checkpoints
@@ -830,7 +840,7 @@ Maintains stable integration contracts and implementation documentation.
 
 Protects completed behavior from regression as the platform grows.
 
-- 172 authentication, upload, preprocessing, enhancement, validation, quality,
+- 598 authentication, upload, preprocessing, enhancement, validation, quality,
   duplicate-detection, dashboard, report, download, ownership, cleanup, and queue tests
   passing against PostgreSQL
 - Django system and migration-drift checks

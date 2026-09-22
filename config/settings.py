@@ -108,6 +108,9 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'config.wsgi.application'
+# Keep the existing BigAutoField schema explicit for both Django 6 web
+# processes and the isolated Django 5.2 GFPGAN worker.
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 
 # Database
@@ -195,6 +198,10 @@ AI_RESTORATION_EDSR_MODEL_PATH = env(
     default=str(BASE_DIR / ".runtime" / "models" / "EDSR_x2.pb"),
 )
 AI_RESTORATION_SCALE = env.int("AI_RESTORATION_SCALE", default=2)
+AI_RESTORATION_MAX_INPUT_EDGE = env.int(
+    "AI_RESTORATION_MAX_INPUT_EDGE",
+    default=480,
+)
 AI_RESTORATION_MAX_OUTPUT_PIXELS = env.int(
     "AI_RESTORATION_MAX_OUTPUT_PIXELS", default=20_000_000
 )
@@ -276,7 +283,10 @@ IDENTITY_GUARD_MAX_FACES = env.int("IDENTITY_GUARD_MAX_FACES", default=5)
 IDENTITY_GUARD_MAX_EDGE = env.int("IDENTITY_GUARD_MAX_EDGE", default=1024)
 IDENTITY_GUARD_MIN_FACE_EDGE = env.int("IDENTITY_GUARD_MIN_FACE_EDGE", default=40)
 
-ADAPTIVE_DENOISE_ENABLED = env.bool("ADAPTIVE_DENOISE_ENABLED", default=False)
+# Turned on once the guarded restoration pipeline was completed (see the
+# GFPGAN structural-similarity guard below); was off while that rollout was
+# still being validated.
+ADAPTIVE_DENOISE_ENABLED = env.bool("ADAPTIVE_DENOISE_ENABLED", default=True)
 ADAPTIVE_DENOISE_BREAKPOINTS = tuple(
     float(value)
     for value in env.list(
@@ -293,7 +303,9 @@ ADAPTIVE_DENOISE_STRENGTHS = tuple(
 )
 # The company has confirmed a private commercial license for the supplied
 # checkpoint.  The artifact and license evidence remain outside source control.
-# Both switches stay disabled until the isolated worker passes rollout QA.
+# Portable source defaults stay disabled because the licensed checkpoint is not
+# distributed with the repository. A deployment enables both switches only
+# after the isolated worker and checkpoint preflight pass.
 GFPGAN_ENABLED = env.bool("GFPGAN_ENABLED", default=False)
 GFPGAN_QUEUE_ENABLED = env.bool("GFPGAN_QUEUE_ENABLED", default=False)
 GFPGAN_QUEUE_NAME = env("GFPGAN_QUEUE_NAME", default="gfpgan")
@@ -305,13 +317,37 @@ GFPGAN_MODEL_SHA256 = env(
     "GFPGAN_MODEL_SHA256",
     default="e2cd4703ab14f4d01fd1383a8a8b266f9a5833dacee8e6a79d3bf21a1b6be5ad",
 )
+GFPGAN_DETECTION_MODEL_PATH = Path(
+    env(
+        "GFPGAN_DETECTION_MODEL_PATH",
+        default=str(
+            BASE_DIR / "gfpgan" / "weights" / "detection_Resnet50_Final.pth"
+        ),
+    )
+)
+GFPGAN_DETECTION_MODEL_SHA256 = env(
+    "GFPGAN_DETECTION_MODEL_SHA256",
+    default="6d1de9c2944f2ccddca5f5e010ea5ae64a39845a86311af6fdf30841b0a5a16d",
+)
+GFPGAN_PARSING_MODEL_PATH = Path(
+    env(
+        "GFPGAN_PARSING_MODEL_PATH",
+        default=str(BASE_DIR / "gfpgan" / "weights" / "parsing_parsenet.pth"),
+    )
+)
+GFPGAN_PARSING_MODEL_SHA256 = env(
+    "GFPGAN_PARSING_MODEL_SHA256",
+    default="3d558d8d0e42c20224f13cf5a29c79eba2d59913419f945545d8cf7b72920de2",
+)
 GFPGAN_ARCH = env("GFPGAN_ARCH", default="clean")
 GFPGAN_CHANNEL_MULTIPLIER = env.int("GFPGAN_CHANNEL_MULTIPLIER", default=2)
 GFPGAN_DEVICE = env("GFPGAN_DEVICE", default="auto")
 GFPGAN_RESTORATION_WEIGHT = env.float(
-    "GFPGAN_RESTORATION_WEIGHT", default=0.35
+    "GFPGAN_RESTORATION_WEIGHT", default=0.30
 )
-GFPGAN_OUTPUT_BLEND = env.float("GFPGAN_OUTPUT_BLEND", default=0.40)
+GFPGAN_OUTPUT_BLEND = env.float("GFPGAN_OUTPUT_BLEND", default=0.25)
+GFPGAN_MIN_OUTPUT_BLEND = env.float("GFPGAN_MIN_OUTPUT_BLEND", default=0.08)
+GFPGAN_ALLOW_MILD_BLUR = env.bool("GFPGAN_ALLOW_MILD_BLUR", default=True)
 GFPGAN_MAX_FACES = env.int("GFPGAN_MAX_FACES", default=5)
 GFPGAN_MAX_INPUT_PIXELS = env.int(
     "GFPGAN_MAX_INPUT_PIXELS", default=12_000_000
@@ -378,6 +414,23 @@ COLORIZATION_GRAYSCALE_CHROMA_THRESHOLD = env.float(
 )
 COLORIZATION_MAX_MEAN_LUMINANCE_SHIFT = env.float(
     "COLORIZATION_MAX_MEAN_LUMINANCE_SHIFT", default=6.0
+)
+
+# Guards the optional GFPGAN face-restoration candidate: accepted only if it
+# stays structurally close to the source (see enhancement/services.py
+# _face_restoration_guard).
+GFPGAN_MIN_STRUCTURAL_SIMILARITY = env.float(
+    "GFPGAN_MIN_STRUCTURAL_SIMILARITY", default=0.90
+)
+GFPGAN_MAX_MEAN_ABSOLUTE_CHANGE = env.float(
+    "GFPGAN_MAX_MEAN_ABSOLUTE_CHANGE", default=12.0
+)
+GFPGAN_MAX_P95_ABSOLUTE_CHANGE = env.float(
+    "GFPGAN_MAX_P95_ABSOLUTE_CHANGE", default=42.0
+)
+GFPGAN_MAX_CHROMA_SHIFT = env.float("GFPGAN_MAX_CHROMA_SHIFT", default=3.0)
+GFPGAN_MAX_HIGHLIGHT_CLIPPING_GROWTH = env.float(
+    "GFPGAN_MAX_HIGHLIGHT_CLIPPING_GROWTH", default=1.0
 )
 PER_FACE_METRICS_ENABLED = env.bool("PER_FACE_METRICS_ENABLED", default=False)
 IDENTITY_EMBEDDING_ENABLED = env.bool("IDENTITY_EMBEDDING_ENABLED", default=False)
@@ -624,6 +677,25 @@ NOTIFICATION_RETENTION_DAYS = env.int("NOTIFICATION_RETENTION_DAYS", default=90)
 NOTIFICATION_EMAIL_MAX_RETRIES = env.int(
     "NOTIFICATION_EMAIL_MAX_RETRIES", default=3,
 )
+SIGNUP_VERIFICATION_CODE_LIFETIME_SECONDS = env.int(
+    "SIGNUP_VERIFICATION_CODE_LIFETIME_SECONDS", default=600,
+)
+SIGNUP_VERIFICATION_RESEND_COOLDOWN_SECONDS = env.int(
+    "SIGNUP_VERIFICATION_RESEND_COOLDOWN_SECONDS", default=60,
+)
+SIGNUP_VERIFICATION_MAX_ATTEMPTS = env.int(
+    "SIGNUP_VERIFICATION_MAX_ATTEMPTS", default=5,
+)
+SIGNUP_VERIFICATION_MAX_SENDS_PER_HOUR = env.int(
+    "SIGNUP_VERIFICATION_MAX_SENDS_PER_HOUR", default=5,
+)
+SIGNUP_VERIFICATION_RETENTION_HOURS = env.int(
+    "SIGNUP_VERIFICATION_RETENTION_HOURS", default=24,
+)
+SIGNUP_VERIFICATION_SUPPORT_EMAIL = env(
+    "SIGNUP_VERIFICATION_SUPPORT_EMAIL",
+    default="support@facecloud.local",
+)
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -645,6 +717,7 @@ REST_FRAMEWORK = {
         "login": "20/hour",
         "token_refresh": "60/hour",
         "verification": "10/hour",
+        "verification_status": "60/hour",
         "password_reset": "10/hour",
         "password_change": "10/hour",
         "image_upload": "100/hour",

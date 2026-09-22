@@ -1,5 +1,9 @@
+import re
+from unittest import mock
+
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.auth.hashers import check_password
 from django.contrib.auth.tokens import default_token_generator
 from django.core import mail
 from django.test import override_settings
@@ -10,7 +14,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import AuthEvent
+from .models import AuthEvent, PendingRegistration
 from enhancement.models import ImageEnhancementResult
 from uploads.models import ImagePreprocessingResult, ImageUpload, UploadBatch
 from validation.models import FaceValidationResult
@@ -47,18 +51,36 @@ class AuthenticationTests(APITestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token.access_token}")
         return token
 
+    def latest_verification_code(self):
+        match = re.search(r"\b(\d{6})\b", mail.outbox[-1].body)
+        self.assertIsNotNone(match, "Verification email did not contain a six-digit code.")
+        return match.group(1)
+
     def test_registration_normalizes_email_and_sends_verification(self):
         response = self.client.post(
             reverse("register"),
             {"username": "NewUser", "email": "  NewUser@Example.COM ", "password": self.password},
             format="json",
         )
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        user = User.objects.get(username="NewUser")
-        self.assertEqual(user.email, "newuser@example.com")
-        self.assertFalse(user.is_email_verified)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertFalse(User.objects.filter(username="NewUser").exists())
+        pending = PendingRegistration.objects.get(
+            public_id=response.data["registration_id"]
+        )
+        self.assertEqual(pending.email, "newuser@example.com")
+        code = self.latest_verification_code()
+        self.assertTrue(check_password(self.password, pending.password_hash))
+        self.assertTrue(check_password(code, pending.code_hash))
+        self.assertNotIn(self.password, pending.password_hash)
+        self.assertNotIn(code, pending.code_hash)
         self.assertEqual(len(mail.outbox), 1)
-        self.assertTrue(AuthEvent.objects.filter(user=user, event="registered").exists())
+        self.assertTrue(
+            AuthEvent.objects.filter(
+                user=None,
+                event="registration_pending",
+                identifier="newuser@example.com",
+            ).exists()
+        )
 
     def test_dashboard_statistics_and_activity_are_owner_scoped(self):
         user = self.create_user(username="dashboard", email="dashboard@example.com")
@@ -118,16 +140,132 @@ class AuthenticationTests(APITestCase):
         self.assertEqual(duplicate.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_email_verification_enables_login(self):
-        user = self.create_user(is_email_verified=False)
-        denied = self.login(user)
-        self.assertEqual(denied.status_code, status.HTTP_400_BAD_REQUEST)
-        uid = urlsafe_base64_encode(force_bytes(user.pk))
-        token = default_token_generator.make_token(user)
-        verified = self.client.get(reverse("verify-email", kwargs={"uidb64": uid, "token": token}))
-        self.assertEqual(verified.status_code, status.HTTP_200_OK)
-        user.refresh_from_db()
+        started = self.client.post(
+            reverse("register"),
+            {
+                "username": "pending-alice",
+                "email": "pending-alice@example.com",
+                "password": self.password,
+            },
+            format="json",
+        )
+        self.assertEqual(started.status_code, status.HTTP_202_ACCEPTED)
+        self.assertFalse(User.objects.filter(username="pending-alice").exists())
+
+        verified = self.client.post(
+            reverse("verify-email"),
+            {
+                "registration_id": started.data["registration_id"],
+                "code": self.latest_verification_code(),
+            },
+            format="json",
+        )
+
+        self.assertEqual(verified.status_code, status.HTTP_201_CREATED)
+        user = User.objects.get(username="pending-alice")
         self.assertTrue(user.is_email_verified)
         self.assertEqual(self.login(user).status_code, status.HTTP_200_OK)
+        pending = PendingRegistration.objects.get(
+            public_id=started.data["registration_id"]
+        )
+        self.assertEqual(pending.status, PendingRegistration.STATUS_CONSUMED)
+        self.assertEqual(pending.created_user, user)
+        self.assertEqual(pending.password_hash, "")
+        self.assertEqual(pending.code_hash, "")
+        self.assertTrue(
+            AuthEvent.objects.filter(user=user, event="registered").exists()
+        )
+        self.assertTrue(
+            AuthEvent.objects.filter(user=user, event="email_verified").exists()
+        )
+
+    def test_verification_user_creation_and_events_are_atomic(self):
+        started = self.client.post(
+            reverse("register"),
+            {
+                "username": "atomic-user",
+                "email": "atomic@example.com",
+                "password": self.password,
+            },
+            format="json",
+        )
+        registration_id = started.data["registration_id"]
+        code = self.latest_verification_code()
+
+        with mock.patch(
+            "accounts.views.record_auth_event",
+            side_effect=RuntimeError("simulated audit failure"),
+        ):
+            with self.assertRaises(RuntimeError):
+                self.client.post(
+                    reverse("verify-email"),
+                    {"registration_id": registration_id, "code": code},
+                    format="json",
+                )
+
+        self.assertFalse(User.objects.filter(username="atomic-user").exists())
+        pending = PendingRegistration.objects.get(public_id=registration_id)
+        self.assertEqual(pending.status, PendingRegistration.STATUS_PENDING)
+        self.assertIsNone(pending.created_user)
+
+    @override_settings(SIGNUP_VERIFICATION_MAX_ATTEMPTS=2)
+    def test_verification_locks_after_configured_failed_attempts(self):
+        started = self.client.post(
+            reverse("register"),
+            {
+                "username": "locked-user",
+                "email": "locked@example.com",
+                "password": self.password,
+            },
+            format="json",
+        )
+        payload = {
+            "registration_id": started.data["registration_id"],
+            "code": "999999",
+        }
+        first = self.client.post(reverse("verify-email"), payload, format="json")
+        second = self.client.post(reverse("verify-email"), payload, format="json")
+
+        self.assertEqual(first.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(first.data["attempts_remaining"], 1)
+        self.assertEqual(second.status_code, status.HTTP_423_LOCKED)
+        self.assertEqual(second.data["attempts_remaining"], 0)
+        self.assertFalse(User.objects.filter(username="locked-user").exists())
+
+    @override_settings(SIGNUP_VERIFICATION_RESEND_COOLDOWN_SECONDS=0)
+    def test_resend_invalidates_previous_code(self):
+        with mock.patch(
+            "accounts.views.generate_verification_code",
+            side_effect=["111111", "222222"],
+        ):
+            started = self.client.post(
+                reverse("register"),
+                {
+                    "username": "resend-user",
+                    "email": "resend@example.com",
+                    "password": self.password,
+                },
+                format="json",
+            )
+            old_code = self.latest_verification_code()
+            resent = self.client.post(
+                reverse("resend-verification"),
+                {"registration_id": started.data["registration_id"]},
+                format="json",
+            )
+        new_code = self.latest_verification_code()
+
+        self.assertEqual(resent.status_code, status.HTTP_200_OK)
+        self.assertNotEqual(old_code, new_code)
+        rejected = self.client.post(
+            reverse("verify-email"),
+            {
+                "registration_id": started.data["registration_id"],
+                "code": old_code,
+            },
+            format="json",
+        )
+        self.assertEqual(rejected.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_login_accepts_email_and_returns_user_dashboard(self):
         user = self.create_user()

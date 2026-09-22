@@ -11,7 +11,8 @@ The backend supports three roles: user, moderator, and administrator. A public r
 - Registration with username, required email, and password
 - Case-insensitive username and email uniqueness validation
 - Django password validators and secure password hashing
-- Email verification and verification-email resend
+- Six-digit signup verification with pending registrations
+- Verification-code expiry, attempt locking, resend cooldown, and hourly limits
 - Login using username, email, or a common identifier field
 - JWT access and refresh tokens
 - Refresh-token rotation and blacklisting
@@ -30,11 +31,11 @@ The backend supports three roles: user, moderator, and administrator. A public r
 ```text
 Registration
   -> serializer validation
-  -> password hashing
-  -> unverified user record
-  -> verification email
-  -> token verification
-  -> verified account
+  -> pending password and six-digit code hashes
+  -> verification-code email
+  -> locked pending-row verification
+  -> atomic verified user creation
+  -> pending secrets cleared
 
 Login
   -> username/email lookup
@@ -75,7 +76,23 @@ Stores security-relevant events:
 - Structured event details
 - Creation timestamp
 
-The account schema is introduced by migrations `accounts.0001` through `accounts.0003`.
+### PendingRegistration
+
+Stores temporary signup state until email ownership is proven:
+
+- Opaque UUID registration ID
+- Normalized username and email
+- Django password hash and verification-code hash
+- Expiry, resend cooldown, attempt, and hourly-send limits
+- Pending, locked, expired, cancelled, or consumed status
+- Optional link to the final user for idempotent verification
+
+No permanent `User` exists before successful code verification. Final user
+creation, pending-record consumption, and audit events run in one
+`transaction.atomic()` database transaction.
+
+The account schema is introduced by migrations `accounts.0001` through
+`accounts.0004`.
 
 ## 5. API endpoints
 
@@ -83,11 +100,13 @@ The account schema is introduced by migrations `accounts.0001` through `accounts
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| POST | `/api/auth/register/` | Register an account |
+| POST | `/api/auth/register/` | Start pending registration and email a six-digit code |
 | POST | `/api/auth/login/` | Login using username, email, or identifier |
 | POST | `/api/auth/refresh/` | Rotate tokens and return a new access token |
-| GET | `/api/auth/verify-email/{uid}/{token}/` | Verify an email address |
-| POST | `/api/auth/verify-email/resend/` | Resend verification email |
+| POST | `/api/auth/verify-email/` | Verify a signup code and atomically create the user |
+| POST | `/api/auth/verify-email/resend/` | Replace and resend a signup code |
+| GET | `/api/auth/registrations/{registration_id}/status/` | Read masked pending status |
+| GET | `/api/auth/verify-email/change/{uid}/{token}/` | Verify an existing user's changed email |
 | POST | `/api/auth/password-reset/` | Request password-reset email |
 | POST | `/api/auth/password-reset/confirm/` | Set a new password using a valid token |
 
@@ -155,6 +174,9 @@ The frontend must redirect using `dashboard`, but protected backend endpoints st
 ## 8. Security controls
 
 - Passwords are never stored in plain text.
+- Signup codes are generated with `secrets` and stored only as Django hashes.
+- Permanent users are created only after verified pending rows are locked.
+- Final user creation and pending consumption are atomic.
 - Public registration cannot select a moderator or administrator role.
 - Email and username duplicates are checked case-insensitively.
 - Unverified, suspended, and inactive users cannot log in.
@@ -176,6 +198,12 @@ Important environment settings include:
 - `PUBLIC_BACKEND_URL`
 - `FRONTEND_URL`
 - SMTP email settings
+- `SIGNUP_VERIFICATION_CODE_LIFETIME_SECONDS`
+- `SIGNUP_VERIFICATION_RESEND_COOLDOWN_SECONDS`
+- `SIGNUP_VERIFICATION_MAX_ATTEMPTS`
+- `SIGNUP_VERIFICATION_MAX_SENDS_PER_HOUR`
+- `SIGNUP_VERIFICATION_RETENTION_HOURS`
+- `SIGNUP_VERIFICATION_SUPPORT_EMAIL`
 - CORS origins
 - HTTPS, secure-cookie, and HSTS settings
 

@@ -6,31 +6,82 @@ restoration, colorization, style presets), groups the faces it finds by
 identity, and keeps everything private to the owner. This repository is the
 Django REST Framework API and the Celery workers behind it.
 
-It is the backend of a final-year project. Every feature has a document under
-[`docs/features`](docs/features) that records what was built, how it was
-verified, and what its known limits are.
+It is the backend of a final-year project, designed around three principles:
+
+1. Preserve the original image and create new, traceable processing artifacts.
+2. Enforce ownership, role, and tenant boundaries in the backend.
+3. Apply enhancement conservatively, so facial identity, natural appearance,
+   resolution, and photographic detail are not destroyed.
+
+Every feature has a document under [`docs/features`](docs/features) that
+records what was built, how it was verified, and what its known limits are.
+[`docs/FEATURES.md`](docs/FEATURES.md) is the authoritative, always-current
+feature catalogue and status table; this README does not duplicate it.
 
 ## What it does
 
 | Area | Summary |
 |---|---|
-| Accounts | Registration, email verification, JWT login with refresh rotation, password reset, logout from all devices, admin / moderator / user roles, suspension, audit trail |
+| Accounts | Pending registration with six-digit email verification, JWT login with refresh rotation, per-account login backoff, password reset, logout from all devices, admin / moderator / user roles, suspension, audit trail |
 | Uploads | Single, multiple and ZIP upload; content-based JPG/PNG validation; ZIP-slip and ZIP-bomb protection; UUID storage paths; owner-only access |
 | Quality control | Sharpness, exposure, contrast, noise and resolution scoring with explainable accept / review / reject decisions |
-| Enhancement | Adaptive pipeline: Zero-DCE exposure, adaptive denoise, EDSR / NAFNet / Real-ESRGAN / PureScale / PureVision restoration, GFPGAN face restoration, sharpening, colorization, style presets and sliders |
+| Enhancement | Adaptive pipeline: Zero-DCE exposure, adaptive denoise, EDSR / NAFNet / Real-ESRGAN / PureScale / PureVision restoration, guarded GFPGAN face restoration, sharpening, colorization, style presets and sliders, final output-contract validation |
 | Identity | YuNet face detection, SFace embeddings, identity grouping, a guard that rejects enhancements that change who a face looks like, ZIP export per identity |
 | Privacy | Biometric consent history, verified erasure, retention purge, data export, AES-256-GCM encryption of embeddings and stored images with key rotation, temporary-file cleanup |
 | Model comparison | One image through several enhancement profiles side by side, with metrics, timing, previews, an explainable recommendation and a CSV report |
 | Sharing | Expiring, revocable public links to a result, optionally watermarked, with view counts and no viewer identity stored |
 | Operations | Duplicate detection, processing reports (PDF), live batch progress, notifications, activity timeline, system health |
 
-Feature status lives in [`docs/FEATURES.md`](docs/FEATURES.md).
+## Processing pipeline
+
+```text
+Authenticated request
+        |
+        v
+Single image / multiple images / ZIP archive
+        |
+        v
+Content validation and secure original storage
+        |
+        v
+Celery + Redis background processing
+        |
+        v
+Orientation, colour, format and size standardization
+        |
+        v
+Scene analysis and adaptive enhancement routing
+        |
+        +--> Dark image: Zero-DCE / private curve model + guarded blending
+        |
+        +--> Normal/bright image: conservative OpenCV correction
+        |
+        v
+Optional denoise, EDSR/NAFNet/Real-ESRGAN/PureScale/PureVision restoration
+        |
+        v
+Optional guarded GFPGAN face restoration (disabled by default)
+        |
+        v
+Output-quality guards, colorization, style, identity guard, output-contract
+validation, face validation and duplicate evidence
+        |
+        v
+Accepted / Rejected / Needs review / Failed
+        |
+        v
+Dashboard data, progress, notifications, reports and secure downloads
+```
+
+Original uploads are never overwritten. Standardized, enhanced, edited,
+comparison, report, and package artifacts are stored separately with
+owner-scoped access.
 
 ## Layout
 
 ```
-config/            settings, URL routing, Celery app
-accounts/          users, JWT authentication, roles, audit events
+config/            settings, URL routing, Celery app, storage encryption
+accounts/          users, JWT authentication, six-digit signup, roles, audit events
 uploads/           ingestion, storage, preprocessing
 validation/        face detection and validation
 quality_control/   quality scoring and decisions
@@ -59,6 +110,47 @@ python manage.py runserver
 ```
 
 API documentation is served by drf-spectacular once the server is running.
+
+### Six-digit signup verification
+
+Registration is deliberately a pending workflow: no permanent account exists
+until the code is verified.
+
+```text
+POST /api/auth/register/
+        |
+        v
+PendingRegistration with hashed password and hashed six-digit code
+        |
+        v
+Plain-text and HTML verification email
+        |
+        v
+POST /api/auth/verify-email/
+        |
+        v
+Locked row + transaction.atomic()
+        |
+        v
+Verified User + audit events + cleared pending secrets
+```
+
+Codes are generated with Python's cryptographic `secrets` module and stored
+only as Django hashes, with a configurable code lifetime, resend cooldown,
+hourly-send limit, and maximum failed attempts (`SIGNUP_VERIFICATION_*` in
+`.env.example`). See
+[`docs/features/01-authentication-and-authorization.md`](docs/features/01-authentication-and-authorization.md)
+and [`docs/PRD_6_DIGIT_SIGNUP_EMAIL_VERIFICATION.md`](docs/PRD_6_DIGIT_SIGNUP_EMAIL_VERIFICATION.md).
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| POST | `/api/auth/register/` | Start a pending registration and send a code |
+| POST | `/api/auth/verify-email/` | Verify the code and create the account |
+| POST | `/api/auth/verify-email/resend/` | Invalidate and replace the current code |
+| GET | `/api/auth/registrations/{registration_id}/status/` | Read masked registration status |
+| GET | `/api/auth/verify-email/change/{uidb64}/{token}/` | Verify an existing account's changed email |
+| POST | `/api/auth/login/` | Obtain JWT access and refresh tokens |
+| POST | `/api/auth/refresh/` | Rotate a refresh token |
 
 ### Background worker
 
@@ -92,6 +184,9 @@ enabled. Licences matter here: PureScale and PureVision are
 CC BY-NC-SA 4.0 (non-commercial), colorization is BSD-2-Clause. See the
 licence notes in [`docs/features`](docs/features) and
 [`docs/model-licenses`](docs/model-licenses).
+
+Private checkpoints, user media, runtime outputs, datasets, credentials, and
+local database backups must never be committed to Git.
 
 ## Testing
 
@@ -129,7 +224,7 @@ requests. The jobs need no model files or secrets, and a clean checkout passes.
 ## Security posture
 
 - Every endpoint requires authentication unless it is explicitly public
-  (registration, login, token refresh, email verification, password reset).
+  (registration, verification, login, token refresh, password reset).
   Only the `accounts` app declares public endpoints.
 - Access tokens last 15 minutes; refresh tokens rotate and are blacklisted.
   Password change, reset, email change, suspension and role change bump a
@@ -152,6 +247,13 @@ requests. The jobs need no model files or secrets, and a clean checkout passes.
 
 The retention purge and temporary-file cleanup run from the Celery beat
 schedule, so a beat process must be running in deployment.
+
+### Do not commit
+
+`.env` files or credentials, PostgreSQL or SQLite data, user-uploaded media,
+generated reports or packages, private model checkpoints, training datasets,
+virtual environments, or runtime caches / local backups. Only sanitized
+configuration examples and code should be published.
 
 ## Before deploying
 
@@ -198,3 +300,4 @@ Then run `python manage.py check --deploy` for Django's own checks.
 - [`docs/features`](docs/features): per-feature design, verification and limits
 - [`docs/structured`](docs/structured): architecture, decisions, tasks
 - [`docs/12_DAY_COMPLETION_PLAN.md`](docs/12_DAY_COMPLETION_PLAN.md): delivery plan
+- [`docs/PRD_6_DIGIT_SIGNUP_EMAIL_VERIFICATION.md`](docs/PRD_6_DIGIT_SIGNUP_EMAIL_VERIFICATION.md): signup verification PRD
