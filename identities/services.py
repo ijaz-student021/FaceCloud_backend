@@ -11,6 +11,7 @@ from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
+from organizations.services import get_default_organization
 from uploads.models import ImagePreprocessingResult, UploadBatch
 from validation.models import FaceValidationResult
 
@@ -133,7 +134,7 @@ def process_identity_analysis(analysis_id):
                 face = IdentityFace.objects.create(owner=locked.owner, image=locked.image, analysis=locked, face_index=index, bounding_box=face_data.get("standardized_box") or face_data, landmarks=face_data.get("landmarks") or [], protected_embedding=protect_embedding(vector), embedding_dimension=provider.dimension, provider=provider.name, model_checksum=provider.model_checksum, quality={key: face_data[key] for key in ("confidence", "sharpness", "brightness") if key in face_data})
                 decision, group, best, second = _choose_group(locked.owner, provider, vector)
                 if decision == "new":
-                    group = IdentityGroup.objects.create(owner=locked.owner, display_name=_next_group_name(locked.owner), embedding_dimension=provider.dimension, provider=provider.name, model_checksum=provider.model_checksum, policy_version=settings.IDENTITY_POLICY_VERSION)
+                    group = IdentityGroup.objects.create(owner=locked.owner, organization=get_default_organization(locked.owner), display_name=_next_group_name(locked.owner), embedding_dimension=provider.dimension, provider=provider.name, model_checksum=provider.model_checksum, policy_version=settings.IDENTITY_POLICY_VERSION)
                     state = IdentityMembership.State.NEW_GROUP
                     method = "new_group_boundary_v1"
                     assigned += 1
@@ -227,7 +228,7 @@ def review_membership(membership, reviewer, action, group_id=None):
             raise ValidationError("The selected person folder is unavailable.")
     elif action == "new_group":
         face = membership.identity_face
-        membership.identity_group = IdentityGroup.objects.create(owner=reviewer, display_name=_next_group_name(reviewer), embedding_dimension=face.embedding_dimension, provider=face.provider, model_checksum=face.model_checksum, policy_version=settings.IDENTITY_POLICY_VERSION)
+        membership.identity_group = IdentityGroup.objects.create(owner=reviewer, organization=get_default_organization(reviewer), display_name=_next_group_name(reviewer), embedding_dimension=face.embedding_dimension, provider=face.provider, model_checksum=face.model_checksum, policy_version=settings.IDENTITY_POLICY_VERSION)
     elif action == "reject":
         membership.state = IdentityMembership.State.REJECTED
     if action != "reject":

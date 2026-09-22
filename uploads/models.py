@@ -47,6 +47,14 @@ class UploadBatch(models.Model):
     ]
 
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="upload_batches")
+    # Every owner-scoped API (this batch's own included) keeps filtering by
+    # `owner` only -- org membership must never grant access to a member's
+    # personal content. This exists so the org-scoped moderator workflow
+    # (T-007) can query "this organization's batches" directly.
+    organization = models.ForeignKey(
+        "organizations.Organization", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="upload_batches",
+    )
     upload_type = models.CharField(max_length=10, choices=TYPE_CHOICES)
     original_archive_name = models.CharField(max_length=255, blank=True)
     display_name = models.CharField(max_length=120, blank=True)
