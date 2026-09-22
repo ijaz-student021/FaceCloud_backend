@@ -8,12 +8,18 @@ from .views import (
     EnhancementJobListView,
     EnhancementResultDetailView,
     EnhancementResultListView,
+    EnhancementWatermarkPreviewView,
     GalleryEditActivateView,
     GalleryEditDetailView,
     GalleryEditDownloadView,
     GalleryEditListCreateView,
     GalleryEditorConfigurationView,
+    ImageCompareView,
     ImageEnhanceView,
+    ModelComparisonDetailView,
+    ModelComparisonListView,
+    ModelComparisonPreviewView,
+    ModelComparisonReportView,
 )
 
 app_name = "enhancement"
@@ -21,6 +27,15 @@ app_name = "enhancement"
 urlpatterns = [
     path("editor/configuration/", GalleryEditorConfigurationView.as_view(), name="editor-configuration"),
     path("images/<int:image_id>/", ImageEnhanceView.as_view(), name="image-enhance"),
+    path("images/<int:image_id>/compare/", ImageCompareView.as_view(), name="image-compare"),
+    path("comparisons/", ModelComparisonListView.as_view(), name="comparison-list"),
+    path("comparisons/<int:pk>/", ModelComparisonDetailView.as_view(), name="comparison-detail"),
+    path(
+        "comparisons/<int:pk>/outputs/<str:profile>/preview/",
+        ModelComparisonPreviewView.as_view(),
+        name="comparison-preview",
+    ),
+    path("comparisons/<int:pk>/report/", ModelComparisonReportView.as_view(), name="comparison-report"),
     path("batches/<int:batch_id>/", BatchEnhanceView.as_view(), name="batch-enhance"),
     path("jobs/", EnhancementJobListView.as_view(), name="job-list"),
     path("jobs/<int:pk>/", EnhancementJobDetailView.as_view(), name="job-detail"),
@@ -32,6 +47,11 @@ urlpatterns = [
         name="result-comparison",
     ),
     path("results/<int:pk>/download/", EnhancementDownloadView.as_view(), name="result-download"),
+    path(
+        "results/<int:pk>/watermark-preview/",
+        EnhancementWatermarkPreviewView.as_view(),
+        name="result-watermark-preview",
+    ),
     path("results/<int:result_id>/edits/", GalleryEditListCreateView.as_view(), name="edit-list-create"),
     path("edits/<int:pk>/", GalleryEditDetailView.as_view(), name="edit-detail"),
     path("edits/<int:pk>/activate/", GalleryEditActivateView.as_view(), name="edit-activate"),

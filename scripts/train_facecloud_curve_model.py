@@ -272,7 +272,7 @@ def main() -> None:
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, args.epochs))
     start_epoch, best_loss = 1, math.inf
     if args.resume:
-        checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
+        checkpoint = torch.load(args.resume, map_location=device, weights_only=True)
         model.load_state_dict(checkpoint["model_state"])
         optimizer.load_state_dict(checkpoint["optimizer_state"])
         scheduler.load_state_dict(checkpoint["scheduler_state"])
@@ -302,7 +302,7 @@ def main() -> None:
               f"val={validation_metrics['loss']:.5f} best={best_loss:.5f} "
               f"time={record['seconds']:.1f}s")
 
-    best = torch.load(args.output_dir / "best.pt", map_location="cpu", weights_only=False)
+    best = torch.load(args.output_dir / "best.pt", map_location="cpu", weights_only=True)
     model.load_state_dict(best["model_state"])
     export_onnx(model, args.output_dir / "facecloud_curve_best.onnx", args.image_size)
     print(f"Training complete: {args.output_dir / 'facecloud_curve_best.onnx'}")

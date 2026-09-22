@@ -3,6 +3,8 @@ from pathlib import Path
 
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.pagination import PageNumberPagination
@@ -50,6 +52,10 @@ class ImageReportCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     throttle_scope = "report_generation"
 
+    @extend_schema(
+        request=ProcessingReportRequestSerializer,
+        responses={200: OpenApiTypes.OBJECT, 202: OpenApiTypes.OBJECT},
+    )
     def post(self, request, image_id):
         image = get_object_or_404(
             ImageUpload.objects.filter(owner=request.user).select_related(
@@ -71,6 +77,10 @@ class BatchReportCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     throttle_scope = "report_generation"
 
+    @extend_schema(
+        request=ProcessingReportRequestSerializer,
+        responses={200: OpenApiTypes.OBJECT, 202: OpenApiTypes.OBJECT},
+    )
     def post(self, request, batch_id):
         batch = get_object_or_404(
             UploadBatch.objects.filter(owner=request.user),
@@ -135,6 +145,9 @@ def _download_filename(report):
 class ProcessingReportDownloadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.BINARY, 409: OpenApiTypes.OBJECT, 410: OpenApiTypes.OBJECT},
+    )
     def get(self, request, pk):
         report = get_object_or_404(
             ProcessingReport.objects.filter(owner=request.user).select_related(
@@ -175,6 +188,10 @@ class ProcessingReportRegenerateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     throttle_scope = "report_generation"
 
+    @extend_schema(
+        request=ProcessingReportRequestSerializer,
+        responses={200: OpenApiTypes.OBJECT, 202: OpenApiTypes.OBJECT},
+    )
     def post(self, request, pk):
         report = get_object_or_404(
             ProcessingReport.objects.filter(owner=request.user).select_related(

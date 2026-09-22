@@ -1,9 +1,10 @@
 from django.urls import path
 
+from activity.views import UserActivityTimelineView
+
 from .views import (
     AdminUserListView,
     AdminUserUpdateView,
-    AuthEventListView,
     ChangePasswordView,
     DeleteAccountView,
     LogoutAllView,
@@ -19,7 +20,7 @@ urlpatterns = [
     path("logout/", LogoutView.as_view(), name="logout"),
     path("logout-all/", LogoutAllView.as_view(), name="logout-all"),
     path("delete-account/", DeleteAccountView.as_view(), name="delete-account"),
-    path("activity/", AuthEventListView.as_view(), name="auth-activity"),
+    path("activity/", UserActivityTimelineView.as_view(), name="user-activity"),
     path("admin/users/", AdminUserListView.as_view(), name="admin-user-list"),
     path("admin/users/<int:pk>/", AdminUserUpdateView.as_view(), name="admin-user-update"),
 ]

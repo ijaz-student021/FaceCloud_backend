@@ -27,7 +27,7 @@ Status definitions:
 | Non-destructive photo gallery editor | Complete backend; frontend slider wiring remains |
 | Quality assessment, face validation, and final decisions | Complete backend baseline |
 | Duplicate image and face-region detection | Complete backend baseline |
-| Identity grouping and moderation | Planned |
+| Identity grouping and moderation | Complete backend; production threshold evaluation remains |
 | User dashboard statistics and My Images API | Complete backend; frontend integration remains |
 | Processing reports | Complete backend; frontend integration remains |
 | Secure image and batch downloads | Complete backend; frontend integration remains |
@@ -49,6 +49,8 @@ Status definitions:
 - [Features 14–16: Quality scoring and final decision workflow](features/14-16-quality-decision-workflow.md)
 - [Feature 17: Duplicate image and face-region detection](features/17-duplicate-image-and-face-detection.md)
 - [Feature 18: Face recognition and identity-grouping implementation plan](features/18-face-recognition-and-identity-grouping.md)
+- [Feature 19: Identity group management](features/19-identity-group-management.md)
+- [Feature 28: Complete user activity timeline](features/28-user-activity-timeline.md)
 - [Feature 42: PostgreSQL data platform](features/42-postgresql-data-platform.md)
 - [Features 20–21: Background processing and live batch progress](features/20-21-live-batch-progress.md)
 - [Feature 22: Processing reports](features/22-processing-reports.md)
@@ -156,7 +158,7 @@ Stores files separately from database metadata while enforcing user ownership.
 - Original filename retained only as metadata
 - Authenticated listing and downloads
 - Owner-only details and deletion
-- Physical cleanup after image, batch, admin, cascade, or account deletion
+- Physical cleanup after image, batch, admin, cascade, or account deletions
 - Django storage abstraction for future private S3 storage
 
 ### Feature 08: Upload batch management — Complete
@@ -285,6 +287,34 @@ model artifacts are not distributed; authorized deployments can enable the
 private queue after preflight, while broader rollout still requires a consented
 photographic evaluation set.
 
+- PureScale (SAFMN) 2x super-resolution and PureVision (RRDBNet) same-resolution
+  artifact-removal adapters, both checksum-pinned to third-party checkpoints
+  from limitlesslab/AI-upscaling-models
+- Independently gated behind `PURESCALE_ENABLED` and `PUREVISION_ENABLED`
+  (both disabled by default); PureScale never stacks with the Real-ESRGAN
+  super-resolution stage
+- Fidelity guards mirroring the NAFNet luminance/chroma checks
+- CC BY-NC-SA 4.0 (non-commercial) licensed checkpoints — evaluation/FYP use
+  only until a commercial license is confirmed; see
+  [purescale-purevision.md](features/purescale-purevision.md)
+- Identity-preserving enhancement: the final image's faces are compared with
+  the source's using the identity-grouping SFace embeddings, and the result is
+  blended back toward the source when a face drifts; dark or undetectable
+  faces are skipped, not penalised; see
+  [identity-preserving-enhancement.md](features/identity-preserving-enhancement.md)
+- Automatic black-and-white colorization (SIGGRAPH17, BSD-2-Clause,
+  permissive), gated behind `COLORIZATION_ENABLED` and an automatic
+  near-grayscale detector so colour photos are left untouched
+- Runs as the final pipeline stage with a dedicated luminance-fidelity guard
+  (Lab-space gamut clipping can otherwise distort the BT.601 luma this
+  codebase measures elsewhere); see
+  [colorization.md](features/colorization.md)
+
+- Google Photos-style slider controls: `natural`/`dynamic`/`ai_max` style
+  presets at enhancement time, plus a `warmth` (colour balance) tone
+  control and a continuous 0-100% `intensity` blend slider in the gallery
+  editor; see [slider-enhancement-controls.md](features/slider-enhancement-controls.md)
+
 ### Feature 13: Before-and-after comparison — Complete backend
 
 Allows users to judge enhancement results visually and quantitatively.
@@ -375,7 +405,7 @@ evidence only and are not biometric identity recognition.
 
 ## 7. Recognition and identity organization
 
-### Feature 18: Face recognition and identity grouping — Planned
+### Feature 18: Face recognition and identity grouping — Complete backend
 
 Automatically organizes accepted images by person.
 
@@ -387,7 +417,13 @@ Automatically organizes accepted images by person.
 - Uncertain-match moderation
 - Original and enhanced image association
 
-### Feature 19: Identity group management — Planned
+Implemented with verified local YuNet and SFace artifacts, five-landmark alignment,
+128-dimensional protected embeddings, owner-scoped grouping and review APIs,
+idempotent Celery processing, progress/dashboard/report integration, configuration
+checks, and regression tests. Candidate similarity thresholds must still be
+calibrated before customer production rollout.
+
+### Feature 19: Identity group management — Complete backend
 
 Allows users and moderators to correct automatic grouping decisions.
 
@@ -399,6 +435,10 @@ Allows users and moderators to correct automatic grouping decisions.
 - Delete an invalid group
 - View confidence and change history
 
+Owner-scoped rename, merge, membership move/removal, profile selection, safe empty
+group deletion, confidence evidence, and immutable change-history APIs are
+implemented. Frontend controls can consume the `/api/identities/` contract.
+
 ## 8. Background processing and progress
 
 ### Feature 20: Background batch processing — Partial
@@ -409,7 +449,7 @@ workflows remain.
 
 - Celery preprocessing worker and Redis configuration — Complete
 - Per-image and per-batch enhancement jobs — Complete
-- Controlled concurrency
+- Controlled concurrency — Complete (per-user limits)
 - Retry and timeout policies
 - Preprocessing and enhancement failure isolation and batch counters — Complete
 - Cancellation where safe
@@ -442,7 +482,7 @@ versioned snapshot. Frontend Downloads-page integration remains.
 - Rejection or failure reason
 - Brightness, blur, sharpness, and quality scores
 - Face count and confidence
-- Explicit unavailable identity placeholder until Feature 18 is implemented
+- Real multi-person identity-group summaries when identity analysis is available
 - Duplicate result and enhancement level
 - Processing time and protected result links
 - CSV, PDF, and JSON formats
@@ -471,7 +511,7 @@ expiring batch-result packages. Frontend Downloads-page integration remains.
 - Download history for images, reports, and generated packages
 - Physical file cleanup on expiry and deletion
 
-### Feature 24: Identity-group ZIP export — Planned
+### Feature 24: Identity-group ZIP export - Backend complete; frontend integration planned
 
 Packages all images of one identity into a structured archive.
 
@@ -482,7 +522,7 @@ Packages all images of one identity into a structured archive.
 - Secure generated archive
 - Download audit event
 
-### Feature 25: Watermark options — Planned
+### Feature 25: Watermark options — Complete (backend)
 
 Adds optional branding to enhanced output copies.
 
@@ -494,7 +534,7 @@ Adds optional branding to enhanced output copies.
 - Preview before export
 - Original enhanced asset remains unmodified
 
-### Feature 26: Secure share links — Planned
+### Feature 26: Secure share links — Complete (backend)
 
 Allows controlled external viewing without exposing a user account.
 
@@ -534,17 +574,22 @@ member management and the operational review workflow remain.
 - Duplicate-group merging
 - Immutable membership and moderator audit history
 
-### Feature 28: Complete user activity timeline — Partial
+### Feature 28: Complete user activity timeline — Complete backend
 
-Authentication events exist; processing and content events will extend the timeline.
+Merges the existing authentication audit trail with a new cross-app activity
+feed into one owner-scoped, paginated timeline. See
+[Feature 28: Complete user activity timeline](features/28-user-activity-timeline.md).
 
-- Upload and batch events
-- Processing results
-- Moderator decisions
-- Downloads and exports
-- Group changes
-- Share-link activity
-- Administrative actions
+- Upload and batch events — implemented
+- Processing results (quality, enhancement, batch completion) — implemented
+- Downloads and exports (reports, packages, identity-group exports) — implemented
+- Group changes (rename, merge, move, remove) — implemented
+- Moderator decisions — reserved category; no events until Feature 27 exists
+- Share-link activity — `share_link_created` and `share_link_revoked` events (never containing the token)
+- Administrative actions — covered today via the existing `AuthEvent`
+  role-change/suspension events merged into the same timeline
+
+Frontend integration remains: `GET /api/user/activity/`.
 
 ### Feature 29: In-app and email notifications — Complete backend baseline
 
@@ -621,7 +666,7 @@ Account management is complete; operational image and processing controls remain
 - Moderator monitoring
 - System-wide audit views
 
-### Feature 34: System health page — Planned
+### Feature 34: System health page - Backend complete; frontend page planned
 
 Shows whether every production dependency is operating correctly.
 
@@ -633,9 +678,17 @@ Shows whether every production dependency is operating correctly.
 - Pending, active, and failed jobs
 - Available storage and application version
 
+Implemented backend evidence:
+
+- Administrator-only `GET /api/system/health/` endpoint
+- Sanitized dependency results with `healthy`, `degraded`, and `unavailable` states
+- HTTP 503 response when a required dependency is unavailable
+- Automated authorization, aggregation, response-contract, and failure tests
+- Implementation and API documentation in `docs/features/34-system-health.md`
+
 ## 12. Model evaluation and live camera scope
 
-### Feature 35: Uploaded-image model comparison page — Planned
+### Feature 35: Uploaded-image model comparison page — Complete (backend)
 
 Supports FYP and company evaluation of enhancement approaches.
 
@@ -722,12 +775,16 @@ Account and upload controls exist; advanced facial-data controls remain.
 - Organization moderators restricted to their active organization and authorized content scopes
 - No moderator or administrator access to passwords, tokens, or live-camera feeds
 - Non-disclosing authorization failures to reduce user and resource enumeration
-- Facial-data retention policy
-- Consent records
-- Encryption-at-rest configuration
-- Privacy export
-- Temporary-processing cleanup
-- Security audit reporting
+- Facial-data retention policy: `FACIAL_DATA_RETENTION_DAYS` with a purge command and Celery task — Complete backend
+- Consent records: append-only, policy-versioned, enforced on identity analysis and the identity guard when `BIOMETRIC_CONSENT_REQUIRED` is on — Complete backend
+- Facial-data erasure with verification (database recount and file check), also on consent withdrawal — Complete backend
+- Privacy export (own data as JSON; embeddings never exported) — Complete backend
+- Security audit reporting: administrator aggregate report and `check --deploy` findings — Complete backend
+- Encryption-at-rest configuration: embeddings use AES-256-GCM with key ids and a re-encryption command for rotation (legacy records stay readable); blank-key bug fixed and deploy checks added; stored images are now encrypted at rest too — Complete backend
+- Temporary-processing cleanup: stale ZIP build files and orphaned media, orphans report-only unless enabled — Complete backend
+- Frontend consent, erasure and export screens
+
+Details: [41-privacy-and-facial-data.md](features/41-privacy-and-facial-data.md)
 
 ### Feature 42: PostgreSQL data platform — Complete
 
@@ -741,7 +798,11 @@ Provides the final relational database foundation for concurrent processing and 
 - PostgreSQL test-database support
 - Preserved rollback backup
 
-### Feature 43: Private cloud storage — Planned
+### Feature 43: Private cloud storage — Partial (encryption at rest done)
+
+Stored images are already encrypted at rest on local storage (AES-256-GCM, key ids and
+rotation, conversion command): [stored-image-encryption.md](features/stored-image-encryption.md).
+Moving media to a private object store, signed URLs and quotas remain.
 
 Moves production assets from local media storage to private object storage.
 
@@ -752,22 +813,34 @@ Moves production assets from local media storage to private object storage.
 - Storage quotas and analytics
 - Lifecycle and deletion policies
 
-### Feature 44: API documentation and developer support — Partial
+### Feature 44: API documentation and developer support — Complete
 
 Maintains stable integration contracts and implementation documentation.
 
 - Root project README
+- [`docs/API_ERRORS.md`](API_ERRORS.md): error shapes and what each 4xx means, checked by tests
+- Schema generates with zero warnings (enforced by `config/test_openapi_schema.py`); 401 and 429 documented on every operation; request and error examples on register, login and enhancement
 - Per-feature implementation documents
 - Upload endpoint reference
 - PostgreSQL platform documentation
-- Planned Swagger/OpenAPI integration
-- Planned live/WebSocket documentation
+- `drf-spectacular` wired in with a registered auth extension for
+  `FaceCloudJWTAuthentication`; `GET /api/schema/`, `/api/docs/` (Swagger UI),
+  and `/api/redoc/` are live
+- Every raw `APIView` across the project (accounts, uploads, validation,
+  quality_control, duplicates, notifications, downloads, reports, identities,
+  enhancement — 55-56 views) has explicit `serializer_class` or
+  `@extend_schema` request/response typing; `manage.py spectacular --validate
+  --fail-on-warn` reports zero `Error`-level issues
+- Remaining polish (optional, non-blocking): a handful of
+  `SerializerMethodField` type hints and the `VerifyEmailView` path-parameter
+  type default to `string`
+- Planned live/WebSocket documentation (blocked on Features 36-40)
 
 ### Feature 45: Testing and quality assurance — Partial and continuous
 
 Protects completed behavior from regression as the platform grows.
 
-- 162 authentication, upload, preprocessing, enhancement, validation, quality,
+- 598 authentication, upload, preprocessing, enhancement, validation, quality,
   duplicate-detection, dashboard, report, download, ownership, cleanup, and queue tests
   passing against PostgreSQL
 - Django system and migration-drift checks

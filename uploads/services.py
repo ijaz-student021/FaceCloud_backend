@@ -74,6 +74,14 @@ def create_image_batch(owner, upload_type, files):
     transaction.on_commit(
         lambda batch_id=batch.pk: notify_upload_received(batch_id)
     )
+    from activity.services import record_activity_event
+    transaction.on_commit(
+        lambda: record_activity_event(
+            owner, "upload", "upload_received",
+            object_type="UploadBatch", object_id=batch.pk,
+            details={"upload_type": upload_type},
+        )
+    )
     for uploaded_file in files:
         try:
             saved_image = _save_valid_image(batch, owner, uploaded_file)
@@ -119,6 +127,14 @@ def create_zip_batch(owner, uploaded_zip):
 
     transaction.on_commit(
         lambda batch_id=batch.pk: notify_upload_received(batch_id)
+    )
+    from activity.services import record_activity_event
+    transaction.on_commit(
+        lambda: record_activity_event(
+            owner, "upload", "upload_received",
+            object_type="UploadBatch", object_id=batch.pk,
+            details={"upload_type": "zip"},
+        )
     )
     uploaded_zip.seek(0)
     with zipfile.ZipFile(uploaded_zip) as archive:
@@ -225,6 +241,12 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
         ):
             from duplicates.services import enqueue_duplicate_analysis
             enqueue_duplicate_analysis(image_upload)
+        if settings.IDENTITY_AUTO_ANALYZE and not hasattr(image_upload, "identity_analysis"):
+            from identities.services import enqueue_identity_analysis
+            try:
+                enqueue_identity_analysis(image_upload)
+            except ValidationError:
+                pass
         if not hasattr(image_upload, "quality_decision"):
             from quality_control.services import enqueue_quality_analysis
             enqueue_quality_analysis(image_upload)
@@ -290,6 +312,18 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
         if settings.DUPLICATE_AUTO_ANALYZE:
             from duplicates.services import enqueue_duplicate_analysis
             enqueue_duplicate_analysis(image_upload, force=force)
+        if settings.IDENTITY_AUTO_ANALYZE:
+            from identities.services import enqueue_identity_analysis
+            try:
+                enqueue_identity_analysis(image_upload, force=force)
+            except ValidationError:
+                # Not being eligible yet (e.g. face validation rejected the
+                # image) is an expected outcome for this best-effort auto
+                # trigger, not a preprocessing failure. Letting it propagate
+                # would roll back this whole @transaction.atomic function,
+                # discarding the preprocessing result and face-validation
+                # result that had already succeeded.
+                pass
         from quality_control.services import enqueue_quality_analysis
         enqueue_quality_analysis(image_upload)
         if old_file_name and old_file_name != result.processed_file.name:

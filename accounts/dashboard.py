@@ -1,6 +1,7 @@
 from datetime import timedelta
 from collections import Counter
 
+from django.conf import settings
 from django.db.models import Count, Sum
 from django.db.models.functions import TruncDate
 from django.utils import timezone
@@ -9,6 +10,7 @@ from enhancement.models import EnhancementStatus, ImageEnhancementResult
 from uploads.models import ImagePreprocessingResult, ImageUpload, UploadBatch
 from validation.models import FaceValidationResult
 from quality_control.models import ImageQualityDecision
+from identities.models import IdentityAnalysis, IdentityGroup
 
 
 def _daily_counts(queryset, date_field, *, distinct_field=None):
@@ -71,6 +73,7 @@ def build_user_dashboard(user):
     completed = enhancements.filter(status=EnhancementStatus.COMPLETED)
     validations = FaceValidationResult.objects.filter(owner=user)
     quality_results = ImageQualityDecision.objects.filter(owner=user, status="completed")
+    identity_groups = IdentityGroup.objects.filter(owner=user, state=IdentityGroup.State.ACTIVE)
     active = enhancements.filter(status__in=[
         EnhancementStatus.PENDING,
         EnhancementStatus.QUEUED,
@@ -158,8 +161,10 @@ def build_user_dashboard(user):
                     "image_id", flat=True
                 )
             )),
-            "identity_groups": 0,
-            "identity_groups_available": False,
+            "identity_groups": identity_groups.count(),
+            "identity_grouped_images": ImageUpload.objects.filter(owner=user, identity_faces__memberships__state__in=["auto_matched", "new_group", "confirmed"]).distinct().count(),
+            "identity_review_items": IdentityAnalysis.objects.filter(owner=user).aggregate(total=Sum("review_count"))["total"] or 0,
+            "identity_groups_available": settings.IDENTITY_PROVIDER != "disabled",
             "storage_bytes": original_bytes + standardized_bytes + enhanced_bytes,
         },
         "uploads_last_7_days": chart,

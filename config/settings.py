@@ -15,6 +15,8 @@ from datetime import timedelta
 from pathlib import Path
 
 import environ
+from celery.schedules import crontab
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -37,6 +39,9 @@ SECRET_KEY = os.environ.get(
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DJANGO_DEBUG", "True").lower() == "true"
 
+# (An unsafe SECRET_KEY with DEBUG off is refused by config/production_guard.py at
+# the end of this file, together with every other production problem.)
+
 ALLOWED_HOSTS = [host.strip() for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost,testserver").split(",") if host.strip()]
 
 
@@ -52,6 +57,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
+    "drf_spectacular",
     "corsheaders",
     "accounts",
     "uploads",
@@ -59,9 +65,14 @@ INSTALLED_APPS = [
     "validation",
     "quality_control",
     "duplicates",
+    "identities",
     "reports",
     "downloads",
     "notifications",
+    "operations",
+    "activity",
+    "privacy",
+    "sharing",
 ]
 
 MIDDLEWARE = [
@@ -75,7 +86,8 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-CORS_ALLOW_ALL_ORIGINS = os.environ.get("CORS_ALLOW_ALL_ORIGINS", "True").lower() == "true"
+# Open CORS is a development convenience only; it defaults to on solely in DEBUG.
+CORS_ALLOW_ALL_ORIGINS = os.environ.get("CORS_ALLOW_ALL_ORIGINS", str(DEBUG)).lower() == "true"
 CORS_ALLOWED_ORIGINS = [origin.strip() for origin in os.environ.get("CORS_ALLOWED_ORIGINS", "").split(",") if origin.strip()]
 
 ROOT_URLCONF = 'config.urls'
@@ -193,6 +205,34 @@ AI_RESTORATION_MAX_INPUT_EDGE = env.int(
 AI_RESTORATION_MAX_OUTPUT_PIXELS = env.int(
     "AI_RESTORATION_MAX_OUTPUT_PIXELS", default=20_000_000
 )
+HD_RESTORATION_ENABLED = env.bool("HD_RESTORATION_ENABLED", default=False)
+NAFNET_DEBLUR_ENABLED = env.bool("NAFNET_DEBLUR_ENABLED", default=False)
+NAFNET_MODEL_PATH = env(
+    "NAFNET_MODEL_PATH",
+    default=str(BASE_DIR / ".runtime" / "models" / "NAFNet-GoPro-width64.pth"),
+)
+NAFNET_MODEL_SHA256 = env(
+    "NAFNET_MODEL_SHA256",
+    default="329d3ab4077b8d6b7ff61de376e483714667960bf85be027bf4335cda701196f",
+)
+REALESRGAN_MODEL_PATH = env(
+    "REALESRGAN_MODEL_PATH",
+    default=str(BASE_DIR / ".runtime" / "models" / "RealESRGAN_x4plus.pth"),
+)
+REALESRGAN_MODEL_SHA256 = env(
+    "REALESRGAN_MODEL_SHA256",
+    default="4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1",
+)
+HD_RESTORATION_DEVICE = env("HD_RESTORATION_DEVICE", default="auto")
+HD_RESTORATION_OUTPUT_SCALE = env.int("HD_RESTORATION_OUTPUT_SCALE", default=2)
+REALESRGAN_OUTPUT_BLEND = env.float("REALESRGAN_OUTPUT_BLEND", default=0.35)
+HD_RESTORATION_TILE_SIZE = env.int("HD_RESTORATION_TILE_SIZE", default=256)
+HD_RESTORATION_TILE_OVERLAP = env.int("HD_RESTORATION_TILE_OVERLAP", default=24)
+NAFNET_MAX_MEAN_CHROMA_SHIFT = env.float("NAFNET_MAX_MEAN_CHROMA_SHIFT", default=8.0)
+NAFNET_MAX_MEAN_LUMINANCE_SHIFT = env.float("NAFNET_MAX_MEAN_LUMINANCE_SHIFT", default=30.0)
+HD_RESTORATION_MAX_NATIVE_OUTPUT_PIXELS = env.int(
+    "HD_RESTORATION_MAX_NATIVE_OUTPUT_PIXELS", default=20_000_000
+)
 ZERO_DCE_ENABLED = env.bool("ZERO_DCE_ENABLED", default=True)
 ZERO_DCE_MODEL_PATH = env(
     "ZERO_DCE_MODEL_PATH",
@@ -202,6 +242,50 @@ ZERO_DCE_MAX_INFERENCE_EDGE = env.int("ZERO_DCE_MAX_INFERENCE_EDGE", default=102
 ZERO_DCE_FULL_RESOLUTION_TILE_EDGE = env.int(
     "ZERO_DCE_FULL_RESOLUTION_TILE_EDGE", default=1024
 )
+# Photos this dark cannot be safely brightened within the normal
+# per-level guard limits, and their residual sensor noise is out of
+# distribution for PureVision/PureScale (trained on compression artifacts,
+# not extreme low-light grain) -- those models hallucinate texture on
+# input this noisy instead of cleaning it. Below this threshold, the
+# exposure guard is allowed a much larger luminance gain, and PureVision/
+# PureScale are skipped entirely regardless of their own enabled flags.
+EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD = env.float(
+    "EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD", default=25.0
+)
+EXTREME_LOW_LIGHT_MAX_LUMINANCE_GAIN = env.float(
+    "EXTREME_LOW_LIGHT_MAX_LUMINANCE_GAIN", default=90.0
+)
+EXTREME_LOW_LIGHT_MODEL_STRENGTH = env.float(
+    "EXTREME_LOW_LIGHT_MODEL_STRENGTH", default=0.85
+)
+
+# Identity-preserving enhancement: after the pipeline, the final image's faces
+# are compared to the source's faces with the same SFace embeddings used for
+# identity grouping. If similarity falls below the minimum, the result is
+# blended back toward the source along the strength ladder until identity is
+# preserved. It only ever reduces enhancement strength on detected faces, and
+# it skips silently when no face or identity model is available.
+IDENTITY_GUARD_ENABLED = env.bool("IDENTITY_GUARD_ENABLED", default=True)
+IDENTITY_GUARD_MIN_SIMILARITY = env.float("IDENTITY_GUARD_MIN_SIMILARITY", default=0.80)
+# SFace embeddings of very dark faces are unreliable (faithful brightening of
+# frames with a face luminance of 6-22/255 measured 0.45-0.87 similarity, and
+# grain often stops the detector re-finding the face at all), so faces below
+# this mean grey level are not judged rather than penalising correct
+# enhancement.
+IDENTITY_GUARD_MIN_FACE_LUMINANCE = env.float("IDENTITY_GUARD_MIN_FACE_LUMINANCE", default=45.0)
+IDENTITY_GUARD_STRENGTHS = tuple(
+    float(value)
+    for value in env.list(
+        "IDENTITY_GUARD_STRENGTHS", default=["1.0", "0.85", "0.7", "0.55", "0.4"]
+    )
+)
+IDENTITY_GUARD_MAX_FACES = env.int("IDENTITY_GUARD_MAX_FACES", default=5)
+IDENTITY_GUARD_MAX_EDGE = env.int("IDENTITY_GUARD_MAX_EDGE", default=1024)
+IDENTITY_GUARD_MIN_FACE_EDGE = env.int("IDENTITY_GUARD_MIN_FACE_EDGE", default=40)
+
+# Turned on once the guarded restoration pipeline was completed (see the
+# GFPGAN structural-similarity guard below); was off while that rollout was
+# still being validated.
 ADAPTIVE_DENOISE_ENABLED = env.bool("ADAPTIVE_DENOISE_ENABLED", default=True)
 ADAPTIVE_DENOISE_BREAKPOINTS = tuple(
     float(value)
@@ -268,6 +352,73 @@ GFPGAN_MAX_FACES = env.int("GFPGAN_MAX_FACES", default=5)
 GFPGAN_MAX_INPUT_PIXELS = env.int(
     "GFPGAN_MAX_INPUT_PIXELS", default=12_000_000
 )
+# PureScale and PureVision are third-party, non-commercially licensed
+# (CC BY-NC-SA 4.0) checkpoints from limitlesslab/AI-upscaling-models. They
+# stay disabled by default until visual QA and a license review clear them
+# for the intended deployment (see docs/features/purescale-purevision.md).
+PURESCALE_ENABLED = env.bool("PURESCALE_ENABLED", default=False)
+PURESCALE_MODEL_PATH = env(
+    "PURESCALE_MODEL_PATH",
+    default=str(BASE_DIR / ".runtime" / "models" / "PureScale_2x.pth"),
+)
+PURESCALE_MODEL_SHA256 = env(
+    "PURESCALE_MODEL_SHA256",
+    default="c8fb698766f502be6409cf3cee1a69d63381c6eebf3ff5de7df6ed87f6c9a5cb",
+)
+PURESCALE_DEVICE = env("PURESCALE_DEVICE", default="auto")
+PURESCALE_TILE_SIZE = env.int("PURESCALE_TILE_SIZE", default=256)
+PURESCALE_TILE_OVERLAP = env.int("PURESCALE_TILE_OVERLAP", default=24)
+PURESCALE_MAX_OUTPUT_PIXELS = env.int(
+    "PURESCALE_MAX_OUTPUT_PIXELS", default=20_000_000
+)
+
+PUREVISION_ENABLED = env.bool("PUREVISION_ENABLED", default=False)
+PUREVISION_MODEL_PATH = env(
+    "PUREVISION_MODEL_PATH",
+    default=str(BASE_DIR / ".runtime" / "models" / "PureVision_1x.pth"),
+)
+PUREVISION_MODEL_SHA256 = env(
+    "PUREVISION_MODEL_SHA256",
+    default="3c3bec2111d0f7c3926f3171f37ce28e72502b744e084c566d8960c06a6a06a3",
+)
+PUREVISION_DEVICE = env("PUREVISION_DEVICE", default="auto")
+PUREVISION_TILE_SIZE = env.int("PUREVISION_TILE_SIZE", default=256)
+PUREVISION_TILE_OVERLAP = env.int("PUREVISION_TILE_OVERLAP", default=24)
+PUREVISION_MAX_MEAN_CHROMA_SHIFT = env.float(
+    "PUREVISION_MAX_MEAN_CHROMA_SHIFT", default=8.0
+)
+PUREVISION_MAX_MEAN_LUMINANCE_SHIFT = env.float(
+    "PUREVISION_MAX_MEAN_LUMINANCE_SHIFT", default=30.0
+)
+
+# Automatic colorization (richzhang/colorization SIGGRAPH17, BSD-2-Clause).
+# Only ever predicts colour (ab) channels; the source luminance channel is
+# always preserved exactly. Disabled by default pending rollout QA, and only
+# runs automatically when the source image is detected as near-grayscale.
+COLORIZATION_ENABLED = env.bool("COLORIZATION_ENABLED", default=False)
+COLORIZATION_MODEL_PATH = env(
+    "COLORIZATION_MODEL_PATH",
+    default=str(BASE_DIR / ".runtime" / "models" / "colorization_siggraph17.pth"),
+)
+COLORIZATION_MODEL_SHA256 = env(
+    "COLORIZATION_MODEL_SHA256",
+    default="df00044c0a4d7c3edcecf6f75437ce346a66e7a42612d9b968e1a7e17dbc6f66",
+)
+COLORIZATION_DEVICE = env("COLORIZATION_DEVICE", default="auto")
+COLORIZATION_MAX_INFERENCE_EDGE = env.int("COLORIZATION_MAX_INFERENCE_EDGE", default=768)
+COLORIZATION_MAX_INPUT_PIXELS = env.int(
+    "COLORIZATION_MAX_INPUT_PIXELS", default=30_000_000
+)
+COLORIZATION_GRAYSCALE_CHROMA_THRESHOLD = env.float(
+    "COLORIZATION_GRAYSCALE_CHROMA_THRESHOLD", default=3.0
+)
+COLORIZATION_MAX_MEAN_LUMINANCE_SHIFT = env.float(
+    "COLORIZATION_MAX_MEAN_LUMINANCE_SHIFT", default=6.0
+)
+
+# Guards the optional GFPGAN face-restoration candidate: accepted only if it
+# stays structurally close to the source (see enhancement/services.py
+# _face_restoration_guard).
 GFPGAN_MIN_STRUCTURAL_SIMILARITY = env.float(
     "GFPGAN_MIN_STRUCTURAL_SIMILARITY", default=0.90
 )
@@ -283,6 +434,15 @@ GFPGAN_MAX_HIGHLIGHT_CLIPPING_GROWTH = env.float(
 )
 PER_FACE_METRICS_ENABLED = env.bool("PER_FACE_METRICS_ENABLED", default=False)
 IDENTITY_EMBEDDING_ENABLED = env.bool("IDENTITY_EMBEDDING_ENABLED", default=False)
+FACE_DETECTOR_PROVIDER = env("FACE_DETECTOR_PROVIDER", default="haar_v1")
+YUNET_MODEL_PATH = env(
+    "YUNET_MODEL_PATH",
+    default=str(BASE_DIR / ".runtime" / "models" / "yunet_s_dynamic.onnx"),
+)
+YUNET_MODEL_SHA256 = env("YUNET_MODEL_SHA256", default="")
+YUNET_SCORE_THRESHOLD = env.float("YUNET_SCORE_THRESHOLD", default=0.75)
+YUNET_NMS_THRESHOLD = env.float("YUNET_NMS_THRESHOLD", default=0.3)
+YUNET_TOP_K = env.int("YUNET_TOP_K", default=5000)
 ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION = env.bool(
     "ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION", default=True
 )
@@ -324,6 +484,94 @@ DUPLICATE_PERCEPTUAL_HASH_DISTANCE = env.int(
 DUPLICATE_FACE_HASH_DISTANCE = env.int("DUPLICATE_FACE_HASH_DISTANCE", default=6)
 DUPLICATE_MAX_CANDIDATES = env.int("DUPLICATE_MAX_CANDIDATES", default=5000)
 
+# Private identity grouping remains opt-in until a locally stored, commercially
+# approved model and checksum are configured.
+IDENTITY_AUTO_ANALYZE = env.bool("IDENTITY_AUTO_ANALYZE", default=False)
+IDENTITY_PROVIDER = env("IDENTITY_PROVIDER", default="disabled")
+IDENTITY_MODEL_PATH = env(
+    "IDENTITY_MODEL_PATH",
+    default=str(BASE_DIR / ".runtime" / "models" / "face_recognition_sface_2021dec.onnx"),
+)
+IDENTITY_MODEL_SHA256 = env("IDENTITY_MODEL_SHA256", default="")
+IDENTITY_LICENSE_RECORD_PATH = env("IDENTITY_LICENSE_RECORD_PATH", default="")
+IDENTITY_EMBEDDING_DIMENSION = env.int("IDENTITY_EMBEDDING_DIMENSION", default=128)
+IDENTITY_MATCH_THRESHOLD = env.float("IDENTITY_MATCH_THRESHOLD", default=0.82)
+IDENTITY_NEW_GROUP_THRESHOLD = env.float("IDENTITY_NEW_GROUP_THRESHOLD", default=0.68)
+IDENTITY_AMBIGUITY_MARGIN = env.float("IDENTITY_AMBIGUITY_MARGIN", default=0.06)
+IDENTITY_MAX_CANDIDATE_GROUPS = env.int("IDENTITY_MAX_CANDIDATE_GROUPS", default=1000)
+IDENTITY_POLICY_VERSION = env("IDENTITY_POLICY_VERSION", default="identity_policy_v1")
+# A blank value (as in .env.example) must not become an empty key, which would
+# encrypt every embedding with the public SHA-256 of nothing.
+IDENTITY_EMBEDDING_KEY = env("IDENTITY_EMBEDDING_KEY", default="").strip() or SECRET_KEY
+# Key rotation: new records use IDENTITY_EMBEDDING_KEY under this id (1-255);
+# records written under retired keys stay readable through the previous-keys
+# list ("id:secret,id:secret") until `manage.py reencrypt_identity_embeddings`
+# upgrades them.
+IDENTITY_EMBEDDING_KEY_ID = env.int("IDENTITY_EMBEDDING_KEY_ID", default=1)
+
+
+def _parse_previous_embedding_keys(raw, setting_name="IDENTITY_EMBEDDING_PREVIOUS_KEYS"):
+    keys = {}
+    for entry in (part.strip() for part in raw.split(",")):
+        if not entry:
+            continue
+        key_id, separator, secret = entry.partition(":")
+        if not separator or not key_id.strip().isdigit() or not secret.strip():
+            from django.core.exceptions import ImproperlyConfigured
+
+            raise ImproperlyConfigured(
+                f"{setting_name} must look like 'id:secret,id:secret'."
+            )
+        keys[int(key_id)] = secret.strip()
+    return keys
+
+
+IDENTITY_EMBEDDING_PREVIOUS_KEYS = _parse_previous_embedding_keys(
+    env("IDENTITY_EMBEDDING_PREVIOUS_KEYS", default="")
+)
+
+# Stored images (originals, enhanced results, previews, reports, packages) can be
+# encrypted at rest with AES-256-GCM (config/storage.py). Existing plaintext files
+# stay readable until `manage.py encrypt_stored_media` converts them. Unlike the
+# embedding key there is no fallback to SECRET_KEY: enabling encryption without
+# its own key stops startup. Ids and previous keys work as for the embedding key.
+IMAGE_ENCRYPTION_ENABLED = env.bool("IMAGE_ENCRYPTION_ENABLED", default=False)
+IMAGE_ENCRYPTION_KEY = env("IMAGE_ENCRYPTION_KEY", default="").strip()
+IMAGE_ENCRYPTION_KEY_ID = env.int("IMAGE_ENCRYPTION_KEY_ID", default=1)
+IMAGE_ENCRYPTION_PREVIOUS_KEYS = _parse_previous_embedding_keys(
+    env("IMAGE_ENCRYPTION_PREVIOUS_KEYS", default=""), "IMAGE_ENCRYPTION_PREVIOUS_KEYS",
+)
+# In production the key's strength is judged by config/production_guard.py; in
+# development a too-short key still stops startup rather than failing on the first upload.
+if DEBUG and IMAGE_ENCRYPTION_ENABLED and len(IMAGE_ENCRYPTION_KEY) < 32:
+    raise ImproperlyConfigured(
+        "IMAGE_ENCRYPTION_ENABLED needs its own IMAGE_ENCRYPTION_KEY of at least 32 characters."
+    )
+if not 1 <= IMAGE_ENCRYPTION_KEY_ID <= 255:
+    raise ImproperlyConfigured("IMAGE_ENCRYPTION_KEY_ID must be between 1 and 255.")
+STORAGES = {
+    "default": {"BACKEND": "config.storage.EncryptedFileSystemStorage"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+}
+
+# Biometric privacy controls (Feature 41). Consent is recorded either way;
+# enforcement is opt-in so existing deployments keep working, and
+# `manage.py check --deploy` warns until it is switched on.
+BIOMETRIC_CONSENT_REQUIRED = env.bool("BIOMETRIC_CONSENT_REQUIRED", default=False)
+BIOMETRIC_CONSENT_POLICY_VERSION = env("BIOMETRIC_CONSENT_POLICY_VERSION", default="2026-09-v1")
+# Face embeddings, identity groups and their exports older than this are purged
+# by the scheduled purge. 0 keeps them until the user deletes them.
+FACIAL_DATA_RETENTION_DAYS = env.int("FACIAL_DATA_RETENTION_DAYS", default=0)
+PRIVACY_EXPORT_MAX_ROWS = env.int("PRIVACY_EXPORT_MAX_ROWS", default=2000)
+# Leftover ZIP build files in the system temp directory older than this are
+# removed. Must exceed CELERY_TASK_TIME_LIMIT or a build in progress could be
+# deleted (checked at startup).
+TEMP_FILE_MAX_AGE_HOURS = env.int("TEMP_FILE_MAX_AGE_HOURS", default=6)
+# Files in a user's media folders that no database row references are reported
+# once older than this; they are only deleted when the cleanup is enabled.
+ORPHAN_MEDIA_GRACE_HOURS = env.int("ORPHAN_MEDIA_GRACE_HOURS", default=24)
+ORPHAN_MEDIA_CLEANUP_ENABLED = env.bool("ORPHAN_MEDIA_CLEANUP_ENABLED", default=False)
+
 CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="redis://127.0.0.1:6379/0")
 CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default="redis://127.0.0.1:6379/1")
 CELERY_TASK_ALWAYS_EAGER = env.bool("CELERY_TASK_ALWAYS_EAGER", default=DEBUG)
@@ -337,11 +585,81 @@ CELERY_TASK_SOFT_TIME_LIMIT = env.int("CELERY_TASK_SOFT_TIME_LIMIT", default=55 
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_TASK_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
+SYSTEM_HEALTH_TIMEOUT_SECONDS = env.float("SYSTEM_HEALTH_TIMEOUT_SECONDS", default=1.0)
+FACECLOUD_VERSION = env("FACECLOUD_VERSION", default="dev")
 if GFPGAN_QUEUE_ENABLED:
     CELERY_TASK_ROUTES = {
         "enhancement.process_image": {"queue": GFPGAN_QUEUE_NAME},
         "enhancement.process_batch": {"queue": GFPGAN_QUEUE_NAME},
     }
+# A "processing" job that has not changed for the task time limit plus this
+# grace has lost its worker; "queued" jobs may legitimately wait much longer.
+# See operations/jobs.py.
+JOB_PROCESSING_STALE_SECONDS = env.int(
+    "JOB_PROCESSING_STALE_SECONDS", default=CELERY_TASK_TIME_LIMIT + 600,
+)
+JOB_QUEUED_STALE_HOURS = env.int("JOB_QUEUED_STALE_HOURS", default=6)
+# Fair use: how much work one user may have in flight at once. Excess requests
+# get HTTP 429 rather than queueing behind (and starving) everyone else.
+MAX_ACTIVE_ENHANCEMENTS_PER_USER = env.int("MAX_ACTIVE_ENHANCEMENTS_PER_USER", default=10)
+MAX_ACTIVE_BATCH_ENHANCEMENTS_PER_USER = env.int("MAX_ACTIVE_BATCH_ENHANCEMENTS_PER_USER", default=2)
+
+# Model comparison (Feature 35): profiles run on a copy no larger than this edge,
+# a user may have this many running at once, and finished comparisons (which keep
+# preview copies of the user's photo) are deleted after the retention period.
+COMPARISON_MAX_EDGE = env.int("COMPARISON_MAX_EDGE", default=1280)
+MAX_ACTIVE_COMPARISONS_PER_USER = env.int("MAX_ACTIVE_COMPARISONS_PER_USER", default=2)
+COMPARISON_RETENTION_DAYS = env.int("COMPARISON_RETENTION_DAYS", default=7)
+
+# Share links (Feature 26): default and maximum lifetime, how many one user may
+# keep active, and how long ended links are kept before the daily cleanup.
+SHARE_LINK_DEFAULT_TTL_HOURS = env.int("SHARE_LINK_DEFAULT_TTL_HOURS", default=24)
+SHARE_LINK_MAX_TTL_HOURS = env.int("SHARE_LINK_MAX_TTL_HOURS", default=24 * 30)
+SHARE_LINK_MAX_ACTIVE_PER_USER = env.int("SHARE_LINK_MAX_ACTIVE_PER_USER", default=50)
+SHARE_LINK_RETENTION_DAYS = env.int("SHARE_LINK_RETENTION_DAYS", default=30)
+
+# Periodic maintenance. Nothing runs these unless a beat process is started
+# (scripts/run_beat.ps1 or `celery -A config beat`). Every entry is safe to run
+# repeatedly and does nothing when the feature it serves is switched off.
+CELERY_BEAT_SCHEDULE = {
+    "reap-stuck-jobs": {
+        "task": "operations.reap_stuck_jobs",
+        "schedule": crontab(minute="*/5"),
+    },
+    "expire-download-packages": {
+        "task": "downloads.cleanup_expired",
+        "schedule": crontab(minute=5),
+    },
+    "expire-identity-exports": {
+        "task": "identities.cleanup_expired_exports",
+        "schedule": crontab(minute=10),
+    },
+    # Must run more often than TEMP_FILE_MAX_AGE_HOURS.
+    "cleanup-temporary-files": {
+        "task": "privacy.cleanup_temporary_files",
+        "schedule": crontab(minute=20, hour="*/2"),
+    },
+    "purge-expired-facial-data": {
+        "task": "privacy.purge_expired_facial_data",
+        "schedule": crontab(minute=15, hour=3),
+    },
+    "expire-model-comparisons": {
+        "task": "enhancement.cleanup_comparisons",
+        "schedule": crontab(minute=30, hour=4),
+    },
+    "purge-login-attempts": {
+        "task": "accounts.cleanup_login_attempts",
+        "schedule": crontab(minute=50, hour=3),
+    },
+    "expire-share-links": {
+        "task": "sharing.cleanup_expired",
+        "schedule": crontab(minute=0, hour=4),
+    },
+    "expire-notifications": {
+        "task": "notifications.cleanup_expired",
+        "schedule": crontab(minute=45, hour=3),
+    },
+}
 BATCH_PROGRESS_MAX_RETRIES = env.int("BATCH_PROGRESS_MAX_RETRIES", default=3)
 DOWNLOAD_PACKAGE_TTL_HOURS = env.int("DOWNLOAD_PACKAGE_TTL_HOURS", default=24)
 DOWNLOAD_PACKAGE_MAX_FILES = env.int("DOWNLOAD_PACKAGE_MAX_FILES", default=500)
@@ -384,6 +702,9 @@ REST_FRAMEWORK = {
         "accounts.authentication.FaceCloudJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
+    # Number of reverse proxies in front of Django. With 0 the socket address is
+    # the client, so a spoofed X-Forwarded-For cannot evade throttling.
+    "NUM_PROXIES": int(os.environ.get("TRUSTED_PROXY_COUNT", "0")),
     "DEFAULT_THROTTLE_CLASSES": (
         "rest_framework.throttling.AnonRateThrottle",
         "rest_framework.throttling.UserRateThrottle",
@@ -405,8 +726,43 @@ REST_FRAMEWORK = {
         "report_generation": "60/hour",
         "download_package": "30/hour",
         "notification_action": "300/hour",
+        "privacy_consent": "60/hour",
+        "privacy_export": "10/hour",
+        "privacy_erasure": "10/hour",
+        "share_create": "60/hour",
+        "model_comparison": "30/hour",
+        "share_public": "120/hour",
+    },
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "FaceCloud API",
+    "DESCRIPTION": "Authenticated facial-image upload, enhancement, validation, identity grouping, reports, and downloads.",
+    "VERSION": FACECLOUD_VERSION,
+    "SERVE_INCLUDE_SCHEMA": False,
+    "POSTPROCESSING_HOOKS": [
+        "drf_spectacular.hooks.postprocess_schema_enums",
+        "config.schema_hooks.add_standard_error_responses",
+    ],
+    # Several models share field names ("status", "report_format", ...) with
+    # different choice sets; name each set explicitly so the schema is stable.
+    "ENUM_NAME_OVERRIDES": {
+        "ProcessingStatusEnum": "enhancement.models.EnhancementStatus",
+        "EnhancementLevelEnum": "enhancement.models.EnhancementLevel",
+        "EnhancementStyleEnum": "enhancement.models.EnhancementStyle",
+        "PackageStatusEnum": "downloads.models.DownloadPackage.Status",
+        "ProcessingReportStatusEnum": "reports.models.ProcessingReport.Status",
+        "IdentityAnalysisStatusEnum": "identities.models.IdentityAnalysis.Status",
+        "ExportReportFormatEnum": "identities.models.IdentityGroupExport.ReportFormat",
+        "UserRoleEnum": "accounts.models.User.ROLE_CHOICES",
+        "ProcessingReportFormatEnum": "reports.models.ProcessingReport.Format",
+        "ImageUploadStatusEnum": "uploads.models.ImageUpload.STATUS_CHOICES",
     },
 }
+
+# Runs tests against a throwaway media folder instead of the real one.
+TEST_RUNNER = "config.test_runner.FaceCloudTestRunner"
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
@@ -415,6 +771,14 @@ SIMPLE_JWT = {
     "BLACKLIST_AFTER_ROTATION": True,
     "UPDATE_LAST_LOGIN": True,
 }
+
+# Per-account login backoff (accounts/lockout.py): after this many consecutive
+# failures the account is locked for BASE seconds, doubling with each further
+# failure up to MAX. Failures older than WINDOW no longer count.
+LOGIN_LOCK_THRESHOLD = env.int("LOGIN_LOCK_THRESHOLD", default=5)
+LOGIN_LOCK_BASE_SECONDS = env.int("LOGIN_LOCK_BASE_SECONDS", default=30)
+LOGIN_LOCK_MAX_SECONDS = env.int("LOGIN_LOCK_MAX_SECONDS", default=900)
+LOGIN_FAILURE_WINDOW_SECONDS = env.int("LOGIN_FAILURE_WINDOW_SECONDS", default=900)
 
 PUBLIC_BACKEND_URL = os.environ.get("PUBLIC_BACKEND_URL", "http://127.0.0.1:8000")
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://127.0.0.1:3000")
@@ -429,6 +793,25 @@ EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True").lower() == "true"
 SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "False").lower() == "true"
 SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "False").lower() == "true"
 CSRF_COOKIE_SECURE = os.environ.get("CSRF_COOKIE_SECURE", "False").lower() == "true"
+# Set when a reverse proxy terminates TLS and forwards X-Forwarded-Proto, so Django
+# knows the original request was HTTPS. Only enable it behind a proxy that
+# overwrites that header.
+if os.environ.get("TRUST_PROXY_SSL_HEADER", "False").lower() == "true":
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_HSTS_SECONDS = int(os.environ.get("SECURE_HSTS_SECONDS", "0"))
 SECURE_HSTS_INCLUDE_SUBDOMAINS = os.environ.get("SECURE_HSTS_INCLUDE_SUBDOMAINS", "False").lower() == "true"
 SECURE_HSTS_PRELOAD = os.environ.get("SECURE_HSTS_PRELOAD", "False").lower() == "true"
+
+# Share-link tokens are credentials that appear in URL paths; keep them out of logs.
+from config.log_redaction import install as install_log_redaction  # noqa: E402
+
+install_log_redaction()
+
+# In production, refuse to start on an unsafe configuration. Kept last so every
+# setting above is final; see config/production_guard.py for the rules.
+if not DEBUG:
+    from config.production_guard import format_problems, production_problems
+
+    _production_problems = production_problems(globals())
+    if _production_problems:
+        raise ImproperlyConfigured(format_problems(_production_problems))

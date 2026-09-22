@@ -10,13 +10,22 @@ from django.db.models import Q
 from django.utils import timezone
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
-from rest_framework import generics, permissions, status
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import (
+    OpenApiExample,
+    OpenApiParameter,
+    extend_schema,
+    extend_schema_view,
+    inline_serializer,
+)
+from rest_framework import generics, permissions, serializers, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from .models import AuthEvent, PendingRegistration
+from . import lockout
+from .models import PendingRegistration
 from .dashboard import build_user_dashboard
 from .permissions import IsAdminRole
 from .serializers import (
@@ -28,6 +37,7 @@ from .serializers import (
     LogoutSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
+    ProfileUpdateSerializer,
     RegisterSerializer,
     ResendVerificationSerializer,
     UserSerializer,
@@ -46,6 +56,40 @@ User = get_user_model()
 logger = logging.getLogger(__name__)
 
 
+LoginResponseSerializer = inline_serializer("LoginResponse", {
+    "access": serializers.CharField(help_text="Short-lived (15 min) access token."),
+    "refresh": serializers.CharField(help_text="Rotating refresh token (7 days)."),
+    "role": serializers.ChoiceField(choices=User.ROLE_CHOICES),
+    "dashboard": serializers.CharField(
+        help_text="Which dashboard the frontend should route to: user, moderator or admin.",
+    ),
+    "user": UserSerializer(),
+})
+
+
+@extend_schema_view(
+    post=extend_schema(
+        summary="Start registration",
+        description=(
+            "Creates a pending registration and emails a six-digit verification code. "
+            "No account exists until the code is verified with POST /verify-email/."
+        ),
+        request=RegisterSerializer,
+        responses={202: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        examples=[
+            OpenApiExample(
+                "New account",
+                value={"username": "alice", "email": "alice@example.com", "password": "A-long-unique-passphrase-7"},
+                request_only=True,
+            ),
+            OpenApiExample(
+                "Email already used",
+                value={"email": ["A user with this email already exists."]},
+                response_only=True, status_codes=["400"],
+            ),
+        ],
+    )
+)
 class RegisterView(APIView):
     permission_classes = [permissions.AllowAny]
     throttle_scope = "registration"
@@ -142,6 +186,25 @@ class RegisterView(APIView):
         )
 
 
+@extend_schema_view(
+    post=extend_schema(
+        summary="Log in",
+        description="Provide exactly one of identifier, username or email, plus the password.",
+        request=FaceCloudTokenObtainPairSerializer,
+        responses={200: LoginResponseSerializer, 400: OpenApiTypes.OBJECT},
+        examples=[
+            OpenApiExample(
+                "Log in with an email", value={"email": "alice@example.com", "password": "A-long-unique-passphrase-7"},
+                request_only=True,
+            ),
+            OpenApiExample(
+                "Wrong credentials, unverified, suspended or inactive account",
+                value={"detail": ["Invalid username/email or password."]},
+                response_only=True, status_codes=["400"],
+            ),
+        ],
+    )
+)
 class FaceCloudTokenObtainPairView(TokenObtainPairView):
     serializer_class = FaceCloudTokenObtainPairSerializer
     throttle_scope = "login"
@@ -156,6 +219,12 @@ class VerifyEmailView(APIView):
     permission_classes = [permissions.AllowAny]
     throttle_scope = "verification"
 
+    @extend_schema(
+        summary="Verify a signup code",
+        description="Verifies the six-digit code and, on success, creates the account.",
+        request=VerifyRegistrationSerializer,
+        responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+    )
     def post(self, request):
         serializer = VerifyRegistrationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -328,6 +397,12 @@ class ResendVerificationView(APIView):
     permission_classes = [permissions.AllowAny]
     throttle_scope = "verification"
 
+    @extend_schema(
+        summary="Resend a signup code",
+        description="Invalidates the current code and sends a new one to the same pending registration.",
+        request=ResendVerificationSerializer,
+        responses={200: OpenApiTypes.OBJECT, 429: OpenApiTypes.OBJECT},
+    )
     def post(self, request):
         serializer = ResendVerificationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -457,6 +532,11 @@ class RegistrationStatusView(APIView):
     permission_classes = [permissions.AllowAny]
     throttle_scope = "verification_status"
 
+    @extend_schema(
+        summary="Read pending-registration status",
+        description="Masked status for a registration in progress (no secrets).",
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+    )
     def get(self, request, registration_id):
         pending = PendingRegistration.objects.filter(
             public_id=registration_id
@@ -498,6 +578,16 @@ class VerifyEmailChangeView(APIView):
     permission_classes = [permissions.AllowAny]
     throttle_scope = "verification"
 
+    @extend_schema(
+        summary="Verify a changed email address",
+        parameters=[
+            OpenApiParameter("uidb64", OpenApiTypes.STR, OpenApiParameter.PATH,
+                             description="URL-safe base64 user id from the verification email."),
+            OpenApiParameter("token", OpenApiTypes.STR, OpenApiParameter.PATH,
+                             description="Signed verification token from the verification email."),
+        ],
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+    )
     def get(self, request, uidb64, token):
         try:
             uid = force_str(urlsafe_base64_decode(uidb64))
@@ -521,7 +611,7 @@ class VerifyEmailChangeView(APIView):
 
 
 class ProfileView(generics.RetrieveUpdateAPIView):
-    serializer_class = UserSerializer
+    serializer_class = ProfileUpdateSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_object(self):
@@ -547,6 +637,7 @@ class ChangePasswordView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     throttle_scope = "password_change"
 
+    @extend_schema(request=ChangePasswordSerializer, responses={200: OpenApiTypes.OBJECT})
     def post(self, request):
         serializer = ChangePasswordSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
@@ -554,6 +645,7 @@ class ChangePasswordView(APIView):
         user.set_password(serializer.validated_data["new_password"])
         user.token_version += 1
         user.save(update_fields=["password", "token_version"])
+        lockout.clear_for_user(user)
         record_auth_event("password_changed", request, user, user.email)
         return Response({"detail": "Password changed. Please log in again."})
 
@@ -562,6 +654,7 @@ class PasswordResetRequestView(APIView):
     permission_classes = [permissions.AllowAny]
     throttle_scope = "password_reset"
 
+    @extend_schema(request=PasswordResetRequestSerializer, responses={200: OpenApiTypes.OBJECT})
     def post(self, request):
         serializer = PasswordResetRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -579,6 +672,7 @@ class PasswordResetConfirmView(APIView):
     permission_classes = [permissions.AllowAny]
     throttle_scope = "password_reset"
 
+    @extend_schema(request=PasswordResetConfirmSerializer, responses={200: OpenApiTypes.OBJECT})
     def post(self, request):
         serializer = PasswordResetConfirmSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -586,6 +680,8 @@ class PasswordResetConfirmView(APIView):
         user.set_password(serializer.validated_data["new_password"])
         user.token_version += 1
         user.save(update_fields=["password", "token_version"])
+        # Resetting the password is the legitimate owner's way back in.
+        lockout.clear_for_user(user)
         record_auth_event("password_reset", request, user, user.email)
         return Response({"detail": "Password reset successfully. Please log in."})
 
@@ -593,11 +689,15 @@ class PasswordResetConfirmView(APIView):
 class LogoutView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(request=LogoutSerializer, responses={204: None, 400: OpenApiTypes.OBJECT})
     def post(self, request):
         serializer = LogoutSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            RefreshToken(serializer.validated_data["refresh"]).blacklist()
+            token = RefreshToken(serializer.validated_data["refresh"])
+            if str(token.get("user_id")) != str(request.user.pk):
+                raise TokenError("Token belongs to another account.")
+            token.blacklist()
         except TokenError:
             return Response({"detail": "Invalid refresh token."}, status=status.HTTP_400_BAD_REQUEST)
         record_auth_event("logout", request, request.user, request.user.email)
@@ -607,6 +707,7 @@ class LogoutView(APIView):
 class LogoutAllView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(request=None, responses={200: OpenApiTypes.OBJECT})
     def post(self, request):
         user = request.user
         user.token_version += 1
@@ -618,6 +719,7 @@ class LogoutAllView(APIView):
 class DeleteAccountView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(request=DeleteAccountSerializer, responses={204: None})
     @transaction.atomic
     def delete(self, request):
         serializer = DeleteAccountSerializer(data=request.data, context={"request": request})
@@ -630,30 +732,10 @@ class DeleteAccountView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class AuthEventListView(generics.ListAPIView):
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get_queryset(self):
-        return AuthEvent.objects.filter(user=self.request.user)
-
-    def list(self, request, *args, **kwargs):
-        events = self.get_queryset()[:100]
-        data = [
-            {
-                "event": item.event,
-                "identifier": item.identifier,
-                "ip_address": item.ip_address,
-                "details": item.details,
-                "created_at": item.created_at,
-            }
-            for item in events
-        ]
-        return Response(data)
-
-
 class UserDashboardView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(responses={200: OpenApiTypes.OBJECT})
     def get(self, request):
         return Response(build_user_dashboard(request.user))
 
