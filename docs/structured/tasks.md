@@ -113,7 +113,7 @@
 | Connect completed dashboard APIs to frontend | Next |
 | Connect reports, downloads and notifications | Next |
 | Complete editor slider integration | Next |
-| Admin analytics dashboard | Backlog |
+| Admin analytics dashboard | Done (backend, 2026-09-22); frontend page remains |
 | System health frontend page | Next |
 | Model comparison page | Done (backend, 2026-09-19); frontend page remains |
 | Secure expiring share links | Done (backend, 2026-09-19); frontend remains |
@@ -144,8 +144,8 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 29 | Notification panel and preferences UI | Next | T-019 |
 | 30 | User dashboard and My Images integration | Next | T-020 |
 | 31 | Moderator dashboard frontend | Backlog | T-021 |
-| 32 | Admin analytics dashboard | Backlog | T-022 |
-| 33 | Platform-wide administrative controls | Backlog | T-023 |
+| 32 | Admin analytics dashboard | Done backend (2026-09-22, `docs/features/32-admin-analytics.md`); frontend page remains | T-022 |
+| 33 | Platform-wide administrative controls | Done backend (2026-09-22, `docs/features/33-administrative-management.md`); storage/threshold config and moderator monitoring deferred, frontend remains | T-023 |
 | 34 | Connect completed system health API to an admin page | Next | T-024 |
 | 35 | Uploaded-image model comparison page | Done backend (2026-09-19, `docs/features/35-model-comparison.md`); frontend page remains | T-025 |
 | 36–40 | Complete live-camera release | Backlog | T-026–T-030 |
