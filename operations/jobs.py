@@ -200,3 +200,48 @@ def queue_status(now=None):
         "queued_stale_after_hours": settings.JOB_QUEUED_STALE_HOURS,
         "jobs": kinds,
     }
+
+
+DEFAULT_FAILED_JOBS_LIMIT_PER_KIND = 20
+MAX_FAILED_JOBS_LIMIT_PER_KIND = 100
+JOB_KIND_KEYS = tuple(job_kind.key for job_kind in JOB_KINDS)
+
+
+class InvalidJobKind(ValueError):
+    """Raised for an unrecognised ``kind`` filter; carries a user-facing message."""
+
+
+def list_failed_jobs(*, kind=None, owner=None, limit_per_kind=DEFAULT_FAILED_JOBS_LIMIT_PER_KIND):
+    """The most recent failed row of each job kind, for administrator visibility.
+
+    Read-only: this surfaces what failed so an admin (or the affected user, via
+    the owner-facing retry/support flow) can act on it. ``kind`` restricts to one
+    job kind by its ``JobKind.key``; ``owner`` restricts to one user's id.
+    """
+    if kind is not None and kind not in JOB_KIND_KEYS:
+        raise InvalidJobKind(f"Unknown job kind '{kind}'. Choose one of: {', '.join(JOB_KIND_KEYS)}.")
+    limit = max(1, min(int(limit_per_kind), MAX_FAILED_JOBS_LIMIT_PER_KIND))
+    kinds = [candidate for candidate in JOB_KINDS if kind is None or candidate.key == kind]
+    results = {}
+    for job_kind in kinds:
+        model = job_kind.model_class()
+        rows = model.objects.filter(**{job_kind.status_field: job_kind.failed})
+        if owner is not None:
+            rows = rows.filter(owner_id=owner)
+        rows = rows.select_related("owner").order_by("-updated_at")[:limit]
+        results[job_kind.key] = [
+            {
+                "id": row.pk,
+                "owner_id": row.owner_id,
+                "owner_username": row.owner.username,
+                "reason": getattr(row, job_kind.reason_field, ""),
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+            }
+            for row in rows
+        ]
+    return {
+        "generated_at": timezone.now(),
+        "limit_per_kind": limit,
+        "kinds": results,
+    }

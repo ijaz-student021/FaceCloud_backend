@@ -12,8 +12,16 @@ from django.utils import timezone
 from PIL import Image, ImageColor, ImageOps, UnidentifiedImageError
 from rest_framework.exceptions import ValidationError
 
-from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
+from .models import BatchImageProgress, ImagePreprocessingResult, ImageUpload, UploadBatch
 from .validators import safe_original_name, validate_image_file, validate_zip_archive
+
+
+class BatchHasNoFailedImages(ValidationError):
+    default_detail = "This batch has no failed images to retry."
+
+
+class BatchRetryLimitReached(ValidationError):
+    pass
 
 
 def _error_text(error):
@@ -390,5 +398,69 @@ def enqueue_batch_preprocessing(batch):
             processing_error="The background processing queue is unavailable.",
             processing_finished_at=timezone.now(),
         )
+    batch.refresh_from_db()
+    return batch
+
+
+def retry_batch(batch):
+    """Requeue every failed image in ``batch`` from wherever it failed.
+
+    Used by both the owner-facing retry endpoint and the administrator's, so
+    both go through the exact same, already-tested logic. Raises
+    ``BatchHasNoFailedImages`` or ``BatchRetryLimitReached`` when it cannot
+    proceed; on success returns the refreshed batch.
+    """
+    from enhancement.models import EnhancementStatus
+    from enhancement.tasks import process_enhancement_image
+    from quality_control.services import enqueue_quality_analysis
+    from validation.services import validate_image_faces_safely
+    from .progress import sync_image_progress
+
+    failed = list(
+        BatchImageProgress.objects.filter(batch=batch, status="failed").select_related("image")
+    )
+    if not failed:
+        raise BatchHasNoFailedImages()
+    maximum = getattr(settings, "BATCH_PROGRESS_MAX_RETRIES", 3)
+    if batch.retry_count >= maximum:
+        raise BatchRetryLimitReached(f"The maximum of {maximum} batch retries has been reached.")
+
+    batch.cancellation_requested = False
+    batch.retry_count += 1
+    batch.processing_status = "queued"
+    batch.save(update_fields=["cancellation_requested", "retry_count", "processing_status", "updated_at"])
+
+    needs_preprocessing = False
+    for progress in failed:
+        progress.retry_count += 1
+        progress.status = "queued"
+        progress.failure_reason = ""
+        progress.finished_at = None
+        progress.save(update_fields=["retry_count", "status", "failure_reason", "finished_at", "updated_at"])
+        image = progress.image
+        if progress.failure_stage == "preprocessing":
+            ImagePreprocessingResult.objects.filter(image=image).update(
+                status="pending", failure_reason="",
+            )
+            needs_preprocessing = True
+        elif progress.failure_stage == "face_validation":
+            validate_image_faces_safely(image)
+            enqueue_quality_analysis(image)
+        elif progress.failure_stage == "quality_analysis":
+            enqueue_quality_analysis(image)
+        elif progress.failure_stage == "enhancement":
+            result = image.enhancement_results.filter(status=EnhancementStatus.FAILED).order_by("-created_at").first()
+            if result:
+                task_id = uuid.uuid4().hex
+                result.status = EnhancementStatus.QUEUED
+                result.task_id = task_id
+                result.failure_reason = ""
+                result.finished_at = None
+                result.save(update_fields=["status", "task_id", "failure_reason", "finished_at", "updated_at"])
+                process_enhancement_image.apply_async(args=[result.pk], task_id=task_id)
+        sync_image_progress(image.pk)
+
+    if needs_preprocessing:
+        enqueue_batch_preprocessing(batch)
     batch.refresh_from_db()
     return batch

@@ -644,27 +644,34 @@ review decisions.
 - No access to global platform administration
 - Backend-enforced tenant filtering on every list, detail, action, download, and export API
 
-### Feature 32: Admin analytics dashboard — Planned
+### Feature 32: Admin analytics dashboard — Complete (backend)
 
-Provides system-wide operational and business visibility.
+Provides system-wide operational and business visibility. See
+[32-admin-analytics.md](features/32-admin-analytics.md).
 
-- User, upload, enhancement, acceptance, and rejection totals
-- Live sessions and storage usage
-- Common rejection reason
-- Average processing time and system success rate
-- Upload, quality, storage, and latency charts
-- Date, user, role, status, model, and moderator filters
+- User, upload, enhancement, acceptance, and rejection totals — Complete
+- Storage usage — Complete
+- Common rejection reason — Complete
+- Average processing time and system success rate — Complete
+- Upload and enhancement charts — Complete
+- Date, status, model, and owner filters — Complete
+- Live sessions, quality/latency charts, role/moderator filters — deliberately
+  not built; see the doc's "Deliberately not built" section
+- Frontend dashboard page — remains
 
-### Feature 33: Administrative management — Partial
+### Feature 33: Administrative management — Complete (backend)
 
-Account management is complete; operational image and processing controls remain.
+Account management is complete; the operational monitoring and control pieces
+are now complete too. See
+[33-administrative-management.md](features/33-administrative-management.md).
 
-- User listing, roles, suspension, and reactivation
-- Upload and processing monitoring
-- Failed-job management
-- Storage and threshold configuration
-- Moderator monitoring
-- System-wide audit views
+- User listing, roles, suspension, and reactivation — Complete
+- Upload and processing monitoring — Complete (failed-batch list, cross-kind failed-job list)
+- Failed-job management — Complete for upload batches (admin retry, reusing the owner-facing logic); read-only visibility for every other job kind
+- System-wide audit views — Complete (combined AuthEvent + ActivityEvent feed)
+- Storage and threshold configuration, moderator monitoring — deliberately not
+  built; see the doc's "Deliberately not built" section
+- Frontend admin pages — remain
 
 ### Feature 34: System health page - Backend complete; frontend page planned
 

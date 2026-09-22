@@ -30,7 +30,7 @@ feature catalogue and status table; this README does not duplicate it.
 | Privacy | Biometric consent history, verified erasure, retention purge, data export, AES-256-GCM encryption of embeddings and stored images with key rotation, temporary-file cleanup |
 | Model comparison | One image through several enhancement profiles side by side, with metrics, timing, previews, an explainable recommendation and a CSV report |
 | Sharing | Expiring, revocable public links to a result, optionally watermarked, with view counts and no viewer identity stored |
-| Operations | Duplicate detection, processing reports (PDF), live batch progress, notifications, activity timeline, system health |
+| Operations | Duplicate detection, processing reports (PDF), live batch progress, notifications, activity timeline, system health, admin analytics and administration (failed-job visibility and retry, platform-wide audit feed) |
 
 ## Processing pipeline
 
