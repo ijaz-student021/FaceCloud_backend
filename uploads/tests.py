@@ -125,7 +125,7 @@ class ImageUploadTests(APITestCase):
         self.assertTrue(batch.cancellation_requested)
         self.assertEqual(response.data["images"][0]["status"], "cancelled")
 
-    @patch("uploads.views.enqueue_batch_preprocessing")
+    @patch("uploads.services.enqueue_batch_preprocessing")
     def test_batch_retry_only_requeues_failed_images(self, enqueue):
         batch = UploadBatch.objects.create(owner=self.user, upload_type="multiple", total_files=1, accepted_files=1)
         image = ImageUpload.objects.create(owner=self.user, batch=batch, original_name="retry.jpg", status="uploaded")
