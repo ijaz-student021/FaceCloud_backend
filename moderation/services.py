@@ -4,14 +4,16 @@ Review rows are created next to the pipeline that produced an uncertain
 result (see the create_review_for_* functions, called from
 identities/quality_control/duplicates services.py) and decided here. Decisions
 always update this app's own ModeratorReview row; where writing the decision
-back into the *source* record is safe and side-effect-free (quality,
-duplicate), it is also applied there. Identity membership write-back is
-intentionally not attempted: the only existing write path,
-identities.services.review_membership(), is owner-gated by design and has
-cascading group-centroid/member-count side effects that deserve a dedicated
-change of their own, not a relaxation of a security-relevant filter under
-this phase's scope. The moderator's decision is still fully recorded and
-audited on the ModeratorReview row either way.
+back into the *source* record is safe, it is also applied there -- including
+identity membership decisions (identities.services.review_membership()),
+which was deferred when this app first shipped because that function's
+owner=reviewer lookup is a real authorization gate. It still is: this module
+never relaxes it. Instead review_membership() now accepts the membership's
+actual owner as ``reviewer`` (so group ownership, candidate-group scoping and
+IdentityChange.owner all stay correctly attributed to the content's real
+owner) and the deciding moderator as a separate ``actor`` (used for
+reviewed_by and IdentityChange.actor). See review_membership()'s own
+docstring for the full reasoning.
 """
 from django.db import transaction
 from django.utils import timezone
@@ -39,6 +41,24 @@ _REVIEW_STATUS_FOR_ACTION = {
     "correct": ModeratorReview.Status.CORRECTED,
     "keep_in_review": ModeratorReview.Status.IN_REVIEW,
 }
+
+
+def _identity_review_action(action, group_id):
+    """The identities.services.review_membership() action for a moderator decision.
+
+    "approve" confirms whatever group _choose_group already suggested;
+    "reject" rejects the assignment outright; "correct" picks a specific
+    different group when one is given, or starts a brand-new group
+    otherwise. "keep_in_review" has no membership-level effect -- it only
+    holds the ModeratorReview open.
+    """
+    if action == "approve":
+        return "confirm"
+    if action == "reject":
+        return "reject"
+    if action == "correct":
+        return "select_group" if group_id else "new_group"
+    return None
 
 
 class ModerationConflict(APIException):
@@ -91,7 +111,7 @@ def create_review_for_identity_membership(membership):
 
 
 @transaction.atomic
-def decide_review(*, review, actor, action, reason="", notes="", request=None):
+def decide_review(*, review, actor, action, reason="", notes="", group_id=None, request=None):
     if action not in _REVIEW_STATUS_FOR_ACTION:
         raise ValidationError({"action": "Unknown review action."})
     locked = ModeratorReview.objects.select_for_update().get(pk=review.pk)
@@ -120,6 +140,12 @@ def decide_review(*, review, actor, action, reason="", notes="", request=None):
         DuplicateMatch.objects.filter(pk=locked.duplicate_match_id).update(
             review_status=_DUPLICATE_WRITEBACK[action], reviewed_by=actor, reviewed_at=timezone.now(),
         )
+    elif locked.source == ModeratorReview.Source.IDENTITY and locked.identity_membership_id:
+        membership_action = _identity_review_action(action, group_id)
+        if membership_action is not None:
+            from identities.services import review_membership
+            membership = locked.identity_membership
+            review_membership(membership, membership.owner, membership_action, group_id, actor=actor)
 
     record_audit_event(
         locked.organization, actor, OrganizationAuditEvent.Action.MODERATOR_REVIEW_DECIDED,

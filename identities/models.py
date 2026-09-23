@@ -135,7 +135,10 @@ class IdentityMembership(models.Model):
         ordering = ["-created_at"]
         constraints = [
             models.UniqueConstraint(fields=["identity_face"], condition=Q(state__in=["auto_matched", "new_group", "confirmed"]), name="identity_one_active_membership_per_face"),
-            models.CheckConstraint(condition=Q(identity_group__isnull=False) | Q(state="needs_review"), name="identity_group_required_except_review"),
+            # A rejected assignment has no group by definition (review_membership never
+            # requires one for the "reject" action); needs_review is exempt because a
+            # suggested group is optional there too.
+            models.CheckConstraint(condition=Q(identity_group__isnull=False) | Q(state__in=["needs_review", "rejected"]), name="identity_group_required_except_review"),
         ]
         indexes = [models.Index(fields=["owner", "state", "-created_at"]), models.Index(fields=["identity_group", "state"])]
 
