@@ -29,7 +29,9 @@ feature catalogue and status table; this README does not duplicate it.
 | Quality control | Sharpness, exposure, contrast, noise and resolution scoring with explainable accept / review / reject decisions |
 | Enhancement | Adaptive pipeline: Zero-DCE exposure, adaptive denoise, EDSR / NAFNet / Real-ESRGAN / PureScale / PureVision restoration, guarded GFPGAN face restoration, sharpening, colorization, style presets and sliders, final output-contract validation |
 | Identity | YuNet face detection, SFace embeddings, identity grouping, a guard that rejects enhancements that change who a face looks like, ZIP export per identity |
-| Privacy | Biometric consent history, verified erasure, retention purge, data export, AES-256-GCM encryption of embeddings and stored images with key rotation, temporary-file cleanup |
+| Organizations | Multi-tenant workspaces: owner / moderator / member roles, hashed-token invitations, protected-owner and last-owner rules, an immutable per-organization audit trail, organization-wide data export |
+| Moderation | Organization-scoped review queue for uncertain AI decisions (quality, duplicate, identity), decision write-back to the underlying record, assignment and escalation notifications, batch retry / cancel, organization reports, and duplicate-group merging |
+| Privacy | Biometric consent history, verified erasure, retention purge, personal and organization-wide data export, AES-256-GCM encryption of embeddings and stored images with key rotation, temporary-file cleanup |
 | Model comparison | One image through several enhancement profiles side by side, with metrics, timing, previews, an explainable recommendation and a CSV report |
 | Sharing | Expiring, revocable public links to a result, optionally watermarked, with view counts and no viewer identity stored |
 | Operations | Duplicate detection, processing reports (PDF), live batch progress, notifications, activity timeline, system health, admin analytics and administration (failed-job visibility and retry, platform-wide audit feed) |
@@ -90,7 +92,9 @@ quality_control/   quality scoring and decisions
 enhancement/       enhancement pipeline, model adapters, identity guard
 duplicates/        perceptual-hash duplicate detection
 identities/        face embeddings, identity groups, encrypted storage
-privacy/           consent, erasure, retention, export, cleanup
+organizations/     multi-tenant workspaces, membership, invitations, audit trail
+moderation/        organization-scoped review queue, decisions, reports, batch actions
+privacy/           consent, erasure, retention, personal and organization export, cleanup
 sharing/           expiring, revocable share links
 reports/  downloads/  notifications/  activity/  operations/
 scripts/           worker launcher, dataset audit, model training and export
