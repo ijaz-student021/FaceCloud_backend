@@ -8,13 +8,12 @@ inspect organization-owned processing data, and review uncertain AI decisions.
 The moderator is not a FaceCloud platform administrator and cannot access another
 organization's resources or global infrastructure settings.
 
-Current implementation status: **In progress**. T-008 Phase A (organization
-core), Phase B (organization-scoping content), T-007 Phase C (the
-review-decision core), and identity-membership write-back are all done as of
-2026-09-23 — see `organizations/`, `moderation/`, `identities/services.py`'s
-`review_membership()`, and the completion checklist in section 15. Two scope
-corrections were made during implementation, both documented in their PR/
-commit messages rather than silently applied:
+Current implementation status: **Backend done** (T-008 Phases A-B, T-007
+Phases C-G), as of 2026-09-23 — see `organizations/`, `moderation/`,
+`identities/services.py`'s `review_membership()` and
+`identities/management.py`'s `merge_groups()`, and the completion checklist
+in section 15. Several scope corrections were made during implementation,
+each documented in its PR/commit message rather than silently applied:
 
 - Phase B: rather than an `organization` column on every owner-scoped model,
   only `UploadBatch` and `IdentityGroup` carry one (the two models with no
@@ -32,9 +31,20 @@ commit messages rather than silently applied:
   the code's own exemption for `reject` (a real, if previously unreachable,
   inconsistency) -- corrected in the same change (`identities.0006`).
 
-Still open: moderator notifications, org-scoped reports/exports, batch
-monitoring/retry/reprocess/cancel, duplicate-group merging, and the frontend
-(no frontend repo in this workspace).
+- Phase F: only two report types (review-summary, moderator-activity) rather
+  than the originally-listed six -- `reports/renderers.py`'s CSV/PDF
+  rendering is hard-coded to a per-image row shape, so more types means
+  proportionally more new code, not more reuse.
+- Phase G: `identities.management.merge_groups()` got the same
+  reviewer/actor split `review_membership()` already has, for the same
+  reason -- a moderator merging groups on the content owner's behalf must
+  not misattribute group ownership or the `IdentityChange` audit trail.
+
+Still open: deadline/SLA alerts, batch-failure-to-moderators notifications,
+reprocessing at a different enhancement level (doesn't exist anywhere in
+the codebase, owner-facing or otherwise), rejection-reason/quality-score/
+batch/duplicate-decision report types, and the frontend (no frontend repo
+in this workspace).
 
 ## 2. Roles and responsibilities
 
@@ -500,7 +510,11 @@ another organization's users, images, metrics, or facial data.
 - [x] Batch management implemented (2026-09-23, list/retry/cancel, reusing
       `uploads.services.retry_batch`/`cancel_batch` exactly; reprocess is
       still open -- doesn't exist anywhere in the codebase, owner-facing or
-      otherwise). Duplicate-group merging is separate and still open.
+      otherwise).
+- [x] Duplicate-group merging implemented (2026-09-23, extends
+      `identities.management.merge_groups()` with a reviewer/actor split;
+      `moderation.services.groups_for_duplicate_match()` resolves which
+      identity groups a duplicate match's two images belong to)
 - [x] Moderator notifications implemented (2026-09-23, assignment + escalation
       only -- deadline/SLA and batch-failure fan-out are open, see T-007)
 - [x] Reports and exports implemented (2026-09-23, review-summary and

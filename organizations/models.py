@@ -136,6 +136,7 @@ class OrganizationAuditEvent(models.Model):
         MODERATOR_REVIEW_ASSIGNED = "moderator_review_assigned", "Moderator review assigned"
         BATCH_RETRIED_BY_MODERATOR = "batch_retried_by_moderator", "Batch retried by moderator"
         BATCH_CANCELLED_BY_MODERATOR = "batch_cancelled_by_moderator", "Batch cancelled by moderator"
+        IDENTITY_GROUPS_MERGED_BY_MODERATOR = "identity_groups_merged_by_moderator", "Identity groups merged by moderator"
 
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="audit_events",
@@ -144,7 +145,7 @@ class OrganizationAuditEvent(models.Model):
         settings.AUTH_USER_MODEL, null=True, blank=True,
         on_delete=models.SET_NULL, related_name="+",
     )
-    action = models.CharField(max_length=32, choices=Action.choices)
+    action = models.CharField(max_length=40, choices=Action.choices)
     target_type = models.CharField(max_length=32, blank=True)
     target_id = models.PositiveIntegerField(null=True, blank=True)
     previous_value = models.JSONField(default=dict, blank=True)

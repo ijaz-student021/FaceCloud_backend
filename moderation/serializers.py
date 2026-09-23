@@ -58,6 +58,12 @@ class ModeratorReportCreateSerializer(serializers.Serializer):
     format = serializers.ChoiceField(choices=ModeratorReport.Format.choices, default=ModeratorReport.Format.JSON)
 
 
+class ModeratorDuplicateGroupMergeSerializer(serializers.Serializer):
+    source_group_id = serializers.IntegerField(required=False, min_value=1)
+    target_group_id = serializers.IntegerField(required=False, min_value=1)
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=500)
+
+
 class ModeratorDashboardSerializer(serializers.Serializer):
     pending = serializers.IntegerField()
     in_review = serializers.IntegerField()

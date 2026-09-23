@@ -554,13 +554,14 @@ Allows controlled external viewing without exposing a user account.
 
 ## 10. Moderation, activity, and notifications
 
-### Feature 27: Moderator review system — Partial (T-007 Phases A-F done, 2026-09-23)
+### Feature 27: Moderator review system — Done backend (T-007 Phases A-G, 2026-09-23)
 
 Organization membership/invitation management (T-008 Phase A), the review-
 decision core (T-007 Phase C, including identity-membership write-back),
 assignment/escalation notifications (Phase D), batch retry/cancel (Phase E),
-and org-scoped review-summary/moderator-activity reports (Phase F) are done;
-duplicate-group merging is not yet built. See `moderation/` and
+org-scoped review-summary/moderator-activity reports (Phase F), and
+duplicate-group merging (Phase G) are all done. Frontend remains (no
+frontend repo in this workspace). See `moderation/` and
 `docs/features/27-31-46-moderator-organization-panel.md`.
 
 - Organization-scoped moderator access — Done (`OrganizationScopedMixin`,
@@ -582,7 +583,7 @@ duplicate-group merging is not yet built. See `moderation/` and
 - Approve, reject, correct, reprocess, escalate, or keep in review — Partial (approve/reject/keep-in-review/escalate work for all three sources; `correct` fully works for identity reviews — reassign to a specific group or start a new one — but is accepted as a no-op for quality/duplicate, which have no third outcome beyond their binary AI recommendation; `reprocess` has no defined outcome yet)
 - Rejection-reason management — Done (`decision_reason` on every decision, audited)
 - Identity correction — Done (2026-09-23)
-- Duplicate-group merging — Open
+- Duplicate-group merging — Done (`identities.management.merge_groups()` extended with the same reviewer/actor split `review_membership()` has; `moderation.services.groups_for_duplicate_match()` resolves which identity groups a duplicate match's two images belong to)
 - Immutable membership and moderator audit history — Done (`OrganizationAuditEvent`, both phases)
 
 ### Feature 28: Complete user activity timeline — Complete backend

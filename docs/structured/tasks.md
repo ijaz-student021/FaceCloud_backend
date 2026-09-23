@@ -105,7 +105,7 @@
 
 ### T-007 — Moderator workflow completion
 
-- **Status:** In progress — Phase C (review-decision core) done 2026-09-23:
+- **Status:** Done (backend) — Phase C (review-decision core) done 2026-09-23:
   new `moderation` app with `ModeratorReview`, created by additive hooks next
   to the three pipelines that already land on an uncertain result
   (`identities`, `quality_control`, `duplicates` services.py -- no existing
@@ -171,9 +171,29 @@
   (no custom encoder), which fails on save -- fixed by `.isoformat()`-ing
   every datetime before it goes in the payload, matching the exact
   convention `reports/services.py`'s own `build_report_payload` already
-  uses. 14 tests (`moderation/test_reports.py`). Still open: rejection-reason,
-  quality-score, batch, and duplicate-decision report types (deferred, not
-  dropped), and duplicate-group merging.
+  uses. 14 tests (`moderation/test_reports.py`).
+  Duplicate-group merging done 2026-09-23 (Phase G, the last of the four):
+  there is no `DuplicateMatch`-level merge concept anywhere -- the real
+  primitive is `identities.management.merge_groups()` (self-service only,
+  same `owner=reviewer`-gated shape `review_membership()` had before its
+  own fix), and the link from a duplicate review to *which* identity groups
+  are involved wasn't modeled anywhere, so both were built here.
+  `merge_groups()` got the identical reviewer/actor split
+  `review_membership()` already has; `moderation.services.
+  groups_for_duplicate_match()` walks a match's two images through their
+  faces/memberships to the (possibly several, since one image can have
+  multiple faces) candidate groups on each side, auto-resolving when
+  unambiguous and requiring an explicit `group_id` otherwise. Kept as its
+  own endpoint rather than overloading `decide_review`'s `correct` action,
+  since confirming a duplicate match and merging the identity groups it
+  points at are genuinely different operations. 9 tests
+  (`moderation/test_duplicate_group_merge.py`).
+  T-007's backend is now complete across all four remaining pieces from the
+  original Phase C note. Still open, flagged throughout rather than
+  claimed done: deadline/SLA alerts, batch-failure-to-moderators
+  notifications, reprocessing at a different enhancement level,
+  rejection-reason/quality-score/batch/duplicate-decision report types, and
+  the frontend (no frontend repo in this workspace).
 - Organization-scoped queues and decisions — Done for all three review
   sources (quality, duplicate, identity)
 - Corrections, reasons, and complete audit history — Done (every decision/
@@ -247,7 +267,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 24 | Connect completed identity-group ZIP API to Person Folders | Next | T-015 |
 | 25 | Export watermark options | Done backend (2026-09-19, `docs/features/25-watermark-options.md`); frontend controls remain | T-016 |
 | 26 | Secure expiring share links | Done backend (2026-09-19, `docs/features/26-secure-share-links.md`); frontend remains | T-017 |
-| 27 | Organization-scoped moderator review | In progress (Phase C + identity write-back + notifications + batch actions + reports done 2026-09-23) | T-007 |
+| 27 | Organization-scoped moderator review | Done backend (all phases A-G, 2026-09-23); frontend remains | T-007 |
 | 28 | Complete owner activity timeline | Done backend (2026-09-18); frontend remains | T-018 |
 | 29 | Notification panel and preferences UI | Next | T-019 |
 | 30 | User dashboard and My Images integration | Next | T-020 |

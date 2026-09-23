@@ -33,10 +33,22 @@ def rename_group(group, actor, display_name):
 
 
 @transaction.atomic
-def merge_groups(source, target, actor, reason=""):
+def merge_groups(source, target, reviewer, reason="", *, actor=None):
+    """Merge ``source`` into ``target``.
+
+    ``reviewer`` is always both groups' real owner -- the internal
+    ``owner=reviewer`` lookup below is a real authorization gate, unchanged.
+    A moderator merging on the owner's behalf (T-007) passes the groups'
+    actual owner as ``reviewer`` and themself as ``actor``: IdentityChange
+    stays attributed the same way review_membership()'s reviewer/actor split
+    already works (see that function's docstring for the full reasoning).
+    The self-service merge endpoint is unaffected -- it always passes the
+    same user as both, so ``actor`` defaults to ``reviewer``.
+    """
+    actor = actor or reviewer
     if source.pk == target.pk:
         raise ValidationError("A person folder cannot be merged into itself.")
-    groups = {row.pk: row for row in IdentityGroup.objects.select_for_update().filter(owner=actor, pk__in=[source.pk, target.pk])}
+    groups = {row.pk: row for row in IdentityGroup.objects.select_for_update().filter(owner=reviewer, pk__in=[source.pk, target.pk])}
     if len(groups) != 2:
         raise ValidationError("Both person folders must belong to the current user.")
     source, target = groups[source.pk], groups[target.pk]
@@ -54,7 +66,7 @@ def merge_groups(source, target, actor, reason=""):
     _refresh_group(source)
     _refresh_group(target)
     target.save(update_fields=["profile_membership", "updated_at"])
-    _record(actor, actor, IdentityChange.Action.MERGED, group=target, before={"source_group_id": source.pk, "source_name": source.display_name}, after={"target_group_id": target.pk, "moved_memberships": moved}, reason=reason)
+    _record(reviewer, actor, IdentityChange.Action.MERGED, group=target, before={"source_group_id": source.pk, "source_name": source.display_name}, after={"target_group_id": target.pk, "moved_memberships": moved}, reason=reason)
     return source, target
 
 
