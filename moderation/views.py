@@ -7,6 +7,7 @@ from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from identities.serializers import IdentityGroupSerializer
 from operations.serializers import AdminFailedBatchSerializer
 from organizations.permissions import OrganizationScopedMixin
 from uploads.models import UploadBatch
@@ -17,6 +18,7 @@ from .serializers import (
     ModeratorAssignSerializer,
     ModeratorDashboardSerializer,
     ModeratorDecisionSerializer,
+    ModeratorDuplicateGroupMergeSerializer,
     ModeratorEscalateSerializer,
     ModeratorReportCreateSerializer,
     ModeratorReportSerializer,
@@ -30,6 +32,7 @@ from .services import (
     enqueue_moderator_report,
     escalate_review,
     expire_moderator_report_if_needed,
+    merge_duplicate_identity_groups,
     retry_batch_for_organization,
 )
 
@@ -257,3 +260,35 @@ class ModeratorReportFileView(OrganizationScopedMixin, APIView):
             filename=f"facecloud-{report.report_type}-report-{report.pk}.{report.format}",
             content_type=report.content_type or "application/octet-stream",
         )
+
+
+class ModeratorDuplicateGroupMergeView(OrganizationScopedMixin, APIView):
+    """Merges the identity groups behind a flagged duplicate (T-007 Phase G).
+
+    Kept separate from ModeratorReviewDecisionView's "correct" action on
+    purpose: confirming a duplicate match and merging the identity groups it
+    points at are genuinely different operations that happen to originate
+    from the same review.
+    """
+
+    require_owner_or_moderator = True
+
+    @extend_schema(
+        request=ModeratorDuplicateGroupMergeSerializer,
+        responses={200: OpenApiTypes.OBJECT, **ERROR_RESPONSES},
+        summary="Merge the identity groups behind a duplicate-match review",
+    )
+    def post(self, request, organization_id, review_id):
+        review = get_object_or_404(ModeratorReview, pk=review_id, organization_id=organization_id)
+        serializer = ModeratorDuplicateGroupMergeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        source, target = merge_duplicate_identity_groups(
+            review=review, actor=request.user,
+            source_group_id=serializer.validated_data.get("source_group_id"),
+            target_group_id=serializer.validated_data.get("target_group_id"),
+            reason=serializer.validated_data.get("reason", ""), request=request,
+        )
+        return Response({
+            "source": IdentityGroupSerializer(source).data,
+            "target": IdentityGroupSerializer(target).data,
+        })

@@ -53,4 +53,8 @@ urlpatterns = [
         "<int:organization_id>/moderator/reports/<int:report_id>/download/",
         views.ModeratorReportFileView.as_view(), name="report-download",
     ),
+    path(
+        "<int:organization_id>/moderator/reviews/<int:review_id>/merge-identity-groups/",
+        views.ModeratorDuplicateGroupMergeView.as_view(), name="review-merge-identity-groups",
+    ),
 ]

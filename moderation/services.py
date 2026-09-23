@@ -409,3 +409,76 @@ def expire_due_moderator_reports(now=None):
     for report in queryset.iterator():
         expired += int(expire_moderator_report_if_needed(report, now=now))
     return expired
+
+
+# -- Duplicate-group merging (T-007 Phase G) ---------------------------------
+#
+# There is no DuplicateMatch-level merge concept -- the real merge primitive
+# is identities.management.merge_groups(), and the link from a duplicate
+# review to *which* identity groups are involved is not modeled anywhere, so
+# both are resolved here rather than reused wholesale.
+
+_CONFIRMED_MEMBERSHIP_STATES = ["auto_matched", "new_group", "confirmed"]
+
+
+def groups_for_duplicate_match(match):
+    """(source-side groups, matched-side groups) linked to a duplicate match.
+
+    An image can have multiple faces, and thus multiple groups, so each side
+    returns a small candidate set rather than assuming exactly one.
+    """
+    from identities.models import IdentityGroup
+
+    def groups_for_image(image):
+        return list(
+            IdentityGroup.objects.filter(
+                memberships__identity_face__image=image,
+                memberships__state__in=_CONFIRMED_MEMBERSHIP_STATES,
+                state=IdentityGroup.State.ACTIVE,
+            ).distinct().order_by("pk")
+        )
+
+    return groups_for_image(match.source_image), groups_for_image(match.matched_image)
+
+
+def _resolve_merge_candidate(candidates, explicit_id, field_name):
+    if explicit_id:
+        for group in candidates:
+            if group.pk == explicit_id:
+                return group
+        raise ValidationError({field_name: "That identity group is not linked to this duplicate match."})
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise ValidationError({field_name: "No identity group is linked to this side of the duplicate match yet."})
+    raise ValidationError({
+        field_name: "Multiple identity groups are linked to this side; specify which one explicitly.",
+        "candidates": [group.pk for group in candidates],
+    })
+
+
+def merge_duplicate_identity_groups(
+    *, review, actor, source_group_id=None, target_group_id=None, reason="", request=None,
+):
+    if review.source != ModeratorReview.Source.DUPLICATE or not review.duplicate_match_id:
+        raise ValidationError({"detail": "This review is not a duplicate-match review."})
+    from identities.management import merge_groups
+
+    match = review.duplicate_match
+    source_candidates, target_candidates = groups_for_duplicate_match(match)
+    source_group = _resolve_merge_candidate(source_candidates, source_group_id, "source_group_id")
+    target_group = _resolve_merge_candidate(target_candidates, target_group_id, "target_group_id")
+    if source_group.pk == target_group.pk:
+        raise ValidationError({"detail": "The duplicate match resolves to the same identity group on both sides."})
+    if source_group.owner_id != target_group.owner_id:
+        raise ValidationError({"detail": "These identity groups belong to different owners and cannot be merged."})
+    merged_source, merged_target = merge_groups(
+        source_group, target_group, source_group.owner, reason, actor=actor,
+    )
+    record_audit_event(
+        review.organization, actor, OrganizationAuditEvent.Action.IDENTITY_GROUPS_MERGED_BY_MODERATOR,
+        target_type="IdentityGroup", target_id=merged_target.pk,
+        new_value={"source_group_id": merged_source.pk, "target_group_id": merged_target.pk},
+        reason=reason, request=request,
+    )
+    return merged_source, merged_target
