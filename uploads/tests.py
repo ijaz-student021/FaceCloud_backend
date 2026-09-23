@@ -125,7 +125,7 @@ class ImageUploadTests(APITestCase):
         self.assertTrue(batch.cancellation_requested)
         self.assertEqual(response.data["images"][0]["status"], "cancelled")
 
-    @patch("uploads.views.enqueue_batch_preprocessing")
+    @patch("uploads.services.enqueue_batch_preprocessing")
     def test_batch_retry_only_requeues_failed_images(self, enqueue):
         batch = UploadBatch.objects.create(owner=self.user, upload_type="multiple", total_files=1, accepted_files=1)
         image = ImageUpload.objects.create(owner=self.user, batch=batch, original_name="retry.jpg", status="uploaded")
@@ -454,7 +454,7 @@ class ImageUploadTests(APITestCase):
         self.assertEqual(response.data["output_format"], "jpeg")
         self.assertEqual(response.data["output_name"], "Profile Photo.jpg")
         result = ImagePreprocessingResult.objects.get(image=image)
-        with Image.open(result.processed_file.path) as processed:
+        with result.processed_file.open("rb") as stored, Image.open(stored) as processed:
             self.assertEqual(processed.format, "JPEG")
         image.refresh_from_db()
         self.assertEqual(image.checksum_sha256, original_checksum)
@@ -489,7 +489,7 @@ class ImageUploadTests(APITestCase):
         response = self.preprocess(image, output_format="jpeg")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         result = ImagePreprocessingResult.objects.get(image=image)
-        with Image.open(result.processed_file.path) as processed:
+        with result.processed_file.open("rb") as stored, Image.open(stored) as processed:
             pixel = processed.convert("RGB").getpixel((4, 4))
             self.assertTrue(all(channel > 240 for channel in pixel))
 
@@ -529,6 +529,21 @@ class ImageUploadTests(APITestCase):
         result.refresh_from_db()
         self.assertNotEqual(result.processed_file.path, old_path)
         self.assertFalse(os.path.exists(old_path))
+
+    @override_settings(IDENTITY_AUTO_ANALYZE=True)
+    @patch("identities.services.enqueue_identity_analysis")
+    def test_identity_ineligibility_does_not_roll_back_preprocessing(self, enqueue_identity):
+        """An optional auto-triggered identity analysis being ineligible
+        (e.g. face validation rejected the image) must not discard the
+        preprocessing result that already succeeded."""
+        enqueue_identity.side_effect = ValidationError("The image is not eligible for identity analysis.")
+        image = self.upload_image(make_image())
+        response = self.preprocess(image, output_format="jpeg")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        result = ImagePreprocessingResult.objects.get(image=image)
+        self.assertEqual(result.status, "completed")
+        self.assertTrue(result.processed_file)
+        self.assertTrue(result.processed_file.storage.exists(result.processed_file.name))
 
     def test_preprocessing_status_download_and_cross_user_access(self):
         image = self.upload_image(make_image())

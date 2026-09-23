@@ -1,12 +1,12 @@
-Django>=5.0
-djangorestframework
+# Floors below are security fixes (pip-audit, 2026-09-19): Django 6.0.8; DRF 3.17.2
+# (request.data size-limit bypass); sqlparse 0.6.0 (a Django dependency).
+Django>=6.0.8,<6.1
+djangorestframework>=3.17.2,<3.18
+sqlparse>=0.6.0
 djangorestframework-simplejwt
 psycopg2-binary
 celery
 redis
-django-celery-results
-boto3
-django-storages
 opencv-contrib-python-headless==5.0.0.93
 numpy
 Pillow
@@ -14,8 +14,6 @@ drf-spectacular
 django-cors-headers
 django-environ
 reportlab
-pandas
+cryptography>=46
 gunicorn
-whitenoise
-pytest
-pytest-django
+# boto3 and django-storages return with Feature 43 (private cloud storage).

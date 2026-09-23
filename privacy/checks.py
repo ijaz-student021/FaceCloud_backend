@@ -1,0 +1,88 @@
+from django.conf import settings
+from django.core.checks import Error, Tags, Warning, register
+
+
+@register()
+def privacy_configuration_check(app_configs, **kwargs):
+    issues = []
+    if settings.FACIAL_DATA_RETENTION_DAYS < 0:
+        issues.append(Error("FACIAL_DATA_RETENTION_DAYS cannot be negative.", id="privacy.E002"))
+    if not str(settings.BIOMETRIC_CONSENT_POLICY_VERSION).strip():
+        issues.append(Error("BIOMETRIC_CONSENT_POLICY_VERSION cannot be empty.", id="privacy.E003"))
+    if settings.PRIVACY_EXPORT_MAX_ROWS <= 0:
+        issues.append(Error("PRIVACY_EXPORT_MAX_ROWS must be positive.", id="privacy.E004"))
+    if settings.TEMP_FILE_MAX_AGE_HOURS <= 0 or settings.ORPHAN_MEDIA_GRACE_HOURS <= 0:
+        issues.append(
+            Error(
+                "TEMP_FILE_MAX_AGE_HOURS and ORPHAN_MEDIA_GRACE_HOURS must be positive.",
+                id="privacy.E008",
+            )
+        )
+    elif settings.TEMP_FILE_MAX_AGE_HOURS * 3600 <= settings.CELERY_TASK_TIME_LIMIT:
+        issues.append(
+            Error(
+                "TEMP_FILE_MAX_AGE_HOURS must be longer than CELERY_TASK_TIME_LIMIT, or the cleanup "
+                "could delete an archive that is still being built.",
+                id="privacy.E009",
+            )
+        )
+    key_id = settings.IDENTITY_EMBEDDING_KEY_ID
+    if not 1 <= key_id <= 255:
+        issues.append(Error("IDENTITY_EMBEDDING_KEY_ID must be between 1 and 255.", id="privacy.E006"))
+    elif settings.IDENTITY_EMBEDDING_PREVIOUS_KEYS.get(key_id, settings.IDENTITY_EMBEDDING_KEY) != settings.IDENTITY_EMBEDDING_KEY:
+        issues.append(
+            Error(
+                "IDENTITY_EMBEDDING_PREVIOUS_KEYS reuses the current key id for a different secret; "
+                "every key needs its own id.",
+                id="privacy.E007",
+            )
+        )
+    return issues
+
+
+@register(Tags.security, deploy=True)
+def privacy_deployment_check(app_configs, **kwargs):
+    """Deployment-only findings (`manage.py check --deploy`)."""
+    issues = []
+    key = settings.IDENTITY_EMBEDDING_KEY
+    if not key.strip():
+        issues.append(
+            Error(
+                "IDENTITY_EMBEDDING_KEY is empty, so face embeddings would be protected "
+                "with a publicly known key.",
+                id="privacy.E005",
+            )
+        )
+    elif key == settings.SECRET_KEY:
+        issues.append(
+            Error(
+                "IDENTITY_EMBEDDING_KEY falls back to SECRET_KEY. Face embeddings must "
+                "use a dedicated key so rotating the Django secret cannot lock or expose them.",
+                id="privacy.E001",
+            )
+        )
+    elif len(key) < 32:
+        issues.append(Warning("IDENTITY_EMBEDDING_KEY should be at least 32 characters.", id="privacy.W001"))
+    if settings.IDENTITY_EMBEDDING_PREVIOUS_KEYS:
+        issues.append(
+            Warning(
+                "IDENTITY_EMBEDDING_PREVIOUS_KEYS is set. After `manage.py reencrypt_identity_embeddings` "
+                "finishes with no failures, remove the retired keys.",
+                id="privacy.W005",
+            )
+        )
+    if not settings.BIOMETRIC_CONSENT_REQUIRED:
+        issues.append(
+            Warning(
+                "BIOMETRIC_CONSENT_REQUIRED is off: face embeddings are created without recorded consent.",
+                id="privacy.W002",
+            )
+        )
+    if settings.FACIAL_DATA_RETENTION_DAYS <= 0:
+        issues.append(
+            Warning(
+                "FACIAL_DATA_RETENTION_DAYS is 0: biometric data is kept until the user deletes it.",
+                id="privacy.W003",
+            )
+        )
+    return issues

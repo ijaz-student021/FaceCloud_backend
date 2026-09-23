@@ -49,6 +49,7 @@ def _image_queryset():
             "face_validation",
             "quality_decision",
             "duplicate_analysis",
+            "identity_analysis",
             "processing_progress",
         )
         .prefetch_related(
@@ -56,7 +57,8 @@ def _image_queryset():
                 "enhancement_results",
                 queryset=ImageEnhancementResult.objects.order_by("-created_at"),
                 to_attr="report_enhancement_results",
-            )
+            ),
+            "identity_faces__memberships__identity_group",
         )
     )
 
@@ -132,11 +134,36 @@ def _image_status(image, preprocessing, enhancement, quality, progress):
     return image.status
 
 
+def _identity_report_summary(image, identity):
+    if identity is None:
+        return {"available": False, "group_id": None, "confidence": None}
+    memberships = []
+    for face in image.identity_faces.all():
+        for membership in face.memberships.all():
+            if membership.state in {"auto_matched", "new_group", "confirmed", "needs_review"}:
+                memberships.append({
+                    "group_id": membership.identity_group_id,
+                    "display_name": membership.identity_group.display_name if membership.identity_group_id else None,
+                    "face_index": face.face_index,
+                    "confidence": _confidence(membership.similarity_score),
+                    "state": membership.state,
+                })
+    first = memberships[0] if memberships else {}
+    return {
+        "available": identity.status in {"completed", "needs_review"},
+        "group_id": first.get("group_id"),
+        "confidence": first.get("confidence"),
+        "status": identity.status,
+        "groups": memberships,
+    }
+
+
 def build_image_record(image):
     preprocessing = _optional_related(image, "preprocessing_result")
     face = _optional_related(image, "face_validation")
     quality = _optional_related(image, "quality_decision")
     duplicate = _optional_related(image, "duplicate_analysis")
+    identity = _optional_related(image, "identity_analysis")
     progress = _optional_related(image, "processing_progress")
     enhancement_results = getattr(image, "report_enhancement_results", None)
     if enhancement_results is None:
@@ -169,6 +196,7 @@ def build_image_record(image):
         getattr(quality, "processing_duration_ms", 0),
         getattr(enhancement, "processing_duration_ms", 0),
         getattr(duplicate, "processing_duration_ms", 0),
+        getattr(identity, "processing_duration_ms", 0),
     ]
     reasons = _rejection_reasons(image, preprocessing, face, quality, progress)
     failure_candidates = [
@@ -235,7 +263,7 @@ def build_image_record(image):
             "match_count": duplicate.match_count if duplicate else 0,
             "policy_version": duplicate.policy_version if duplicate else None,
         },
-        "identity_group": {"available": False, "group_id": None, "confidence": None},
+        "identity_group": _identity_report_summary(image, identity),
         "processing_duration_ms": sum(int(value or 0) for value in durations),
         "protected_links": links,
     }

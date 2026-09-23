@@ -1,5 +1,7 @@
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.pagination import PageNumberPagination
@@ -67,6 +69,10 @@ class BatchPackageCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     throttle_scope = "download_package"
 
+    @extend_schema(
+        request=DownloadPackageRequestSerializer,
+        responses={200: OpenApiTypes.OBJECT, 202: OpenApiTypes.OBJECT},
+    )
     def post(self, request, batch_id):
         batch = get_object_or_404(
             UploadBatch.objects.filter(owner=request.user), pk=batch_id
@@ -146,6 +152,9 @@ class DownloadPackageDetailView(generics.RetrieveDestroyAPIView):
 class DownloadPackageFileView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        responses={200: OpenApiTypes.BINARY, 409: OpenApiTypes.OBJECT, 410: OpenApiTypes.OBJECT},
+    )
     def get(self, request, pk):
         package = get_object_or_404(
             DownloadPackage.objects.filter(owner=request.user).select_related("batch"),
@@ -185,6 +194,10 @@ class DownloadPackageRegenerateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     throttle_scope = "download_package"
 
+    @extend_schema(
+        request=None,
+        responses={200: OpenApiTypes.OBJECT, 202: OpenApiTypes.OBJECT},
+    )
     def post(self, request, pk):
         package = get_object_or_404(
             DownloadPackage.objects.filter(owner=request.user).select_related("batch"),

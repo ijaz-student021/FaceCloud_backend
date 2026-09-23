@@ -19,7 +19,7 @@ class DuplicateAnalysisSerializer(serializers.ModelSerializer):
             "created_at", "updated_at",
         ]
 
-    def get_matches_url(self, obj):
+    def get_matches_url(self, obj) -> str:
         path = f"/api/duplicates/images/{obj.image_id}/matches/"
         request = self.context.get("request")
         return request.build_absolute_uri(path) if request else path
@@ -41,12 +41,12 @@ class DuplicateMatchSerializer(serializers.ModelSerializer):
             "review_status", "reviewed_at", "created_at", "updated_at",
         ]
 
-    def get_matched_image_download_url(self, obj):
+    def get_matched_image_download_url(self, obj) -> str:
         path = f"/api/images/{obj.matched_image_id}/download/"
         request = self.context.get("request")
         return request.build_absolute_uri(path) if request else path
 
-    def get_source_image_download_url(self, obj):
+    def get_source_image_download_url(self, obj) -> str:
         path = f"/api/images/{obj.source_image_id}/download/"
         request = self.context.get("request")
         return request.build_absolute_uri(path) if request else path

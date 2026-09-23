@@ -27,11 +27,11 @@ Status definitions:
 | Non-destructive photo gallery editor | Complete backend; frontend slider wiring remains |
 | Quality assessment, face validation, and final decisions | Complete backend baseline |
 | Duplicate image and face-region detection | Complete backend baseline |
-| Identity grouping and moderation | Planned |
+| Identity grouping and moderation | Complete backend; production threshold evaluation remains |
 | User dashboard statistics and My Images API | Complete backend; frontend integration remains |
 | Processing reports | Complete backend; frontend integration remains |
 | Secure image and batch downloads | Complete backend; frontend integration remains |
-| Analytics | Planned |
+| Admin analytics and administrative management | Complete backend; frontend dashboards remain |
 | In-app and email notifications | Complete backend baseline; frontend integration remains |
 | Live camera detection and enhancement | Planned |
 | Frontend dashboards | Planned for frontend integration |
@@ -49,6 +49,8 @@ Status definitions:
 - [Features 14–16: Quality scoring and final decision workflow](features/14-16-quality-decision-workflow.md)
 - [Feature 17: Duplicate image and face-region detection](features/17-duplicate-image-and-face-detection.md)
 - [Feature 18: Face recognition and identity-grouping implementation plan](features/18-face-recognition-and-identity-grouping.md)
+- [Feature 19: Identity group management](features/19-identity-group-management.md)
+- [Feature 28: Complete user activity timeline](features/28-user-activity-timeline.md)
 - [Feature 42: PostgreSQL data platform](features/42-postgresql-data-platform.md)
 - [Features 20–21: Background processing and live batch progress](features/20-21-live-batch-progress.md)
 - [Feature 22: Processing reports](features/22-processing-reports.md)
@@ -156,7 +158,7 @@ Stores files separately from database metadata while enforcing user ownership.
 - Original filename retained only as metadata
 - Authenticated listing and downloads
 - Owner-only details and deletion
-- Physical cleanup after image, batch, admin, cascade, or account deletion
+- Physical cleanup after image, batch, admin, cascade, or account deletions
 - Django storage abstraction for future private S3 storage
 
 ### Feature 08: Upload batch management — Complete
@@ -285,6 +287,34 @@ model artifacts are not distributed; authorized deployments can enable the
 private queue after preflight, while broader rollout still requires a consented
 photographic evaluation set.
 
+- PureScale (SAFMN) 2x super-resolution and PureVision (RRDBNet) same-resolution
+  artifact-removal adapters, both checksum-pinned to third-party checkpoints
+  from limitlesslab/AI-upscaling-models
+- Independently gated behind `PURESCALE_ENABLED` and `PUREVISION_ENABLED`
+  (both disabled by default); PureScale never stacks with the Real-ESRGAN
+  super-resolution stage
+- Fidelity guards mirroring the NAFNet luminance/chroma checks
+- CC BY-NC-SA 4.0 (non-commercial) licensed checkpoints — evaluation/FYP use
+  only until a commercial license is confirmed; see
+  [purescale-purevision.md](features/purescale-purevision.md)
+- Identity-preserving enhancement: the final image's faces are compared with
+  the source's using the identity-grouping SFace embeddings, and the result is
+  blended back toward the source when a face drifts; dark or undetectable
+  faces are skipped, not penalised; see
+  [identity-preserving-enhancement.md](features/identity-preserving-enhancement.md)
+- Automatic black-and-white colorization (SIGGRAPH17, BSD-2-Clause,
+  permissive), gated behind `COLORIZATION_ENABLED` and an automatic
+  near-grayscale detector so colour photos are left untouched
+- Runs as the final pipeline stage with a dedicated luminance-fidelity guard
+  (Lab-space gamut clipping can otherwise distort the BT.601 luma this
+  codebase measures elsewhere); see
+  [colorization.md](features/colorization.md)
+
+- Google Photos-style slider controls: `natural`/`dynamic`/`ai_max` style
+  presets at enhancement time, plus a `warmth` (colour balance) tone
+  control and a continuous 0-100% `intensity` blend slider in the gallery
+  editor; see [slider-enhancement-controls.md](features/slider-enhancement-controls.md)
+
 ### Feature 13: Before-and-after comparison — Complete backend
 
 Allows users to judge enhancement results visually and quantitatively.
@@ -375,7 +405,7 @@ evidence only and are not biometric identity recognition.
 
 ## 7. Recognition and identity organization
 
-### Feature 18: Face recognition and identity grouping — Planned
+### Feature 18: Face recognition and identity grouping — Complete backend
 
 Automatically organizes accepted images by person.
 
@@ -387,7 +417,13 @@ Automatically organizes accepted images by person.
 - Uncertain-match moderation
 - Original and enhanced image association
 
-### Feature 19: Identity group management — Planned
+Implemented with verified local YuNet and SFace artifacts, five-landmark alignment,
+128-dimensional protected embeddings, owner-scoped grouping and review APIs,
+idempotent Celery processing, progress/dashboard/report integration, configuration
+checks, and regression tests. Candidate similarity thresholds must still be
+calibrated before customer production rollout.
+
+### Feature 19: Identity group management — Complete backend
 
 Allows users and moderators to correct automatic grouping decisions.
 
@@ -399,21 +435,31 @@ Allows users and moderators to correct automatic grouping decisions.
 - Delete an invalid group
 - View confidence and change history
 
+Owner-scoped rename, merge, membership move/removal, profile selection, safe empty
+group deletion, confidence evidence, and immutable change-history APIs are
+implemented. Frontend controls can consume the `/api/identities/` contract.
+
 ## 8. Background processing and progress
 
-### Feature 20: Background batch processing — Partial
+### Feature 20: Background batch processing — Complete (backend)
 
-Moves expensive work outside request-response execution. Preprocessing and OpenCV
-enhancement jobs are implemented; recognition, advanced retry, and cancellation
-workflows remain.
+Moves expensive work outside request-response execution, including recognition
+jobs. See T-005 in `docs/structured/tasks.md` and
+`identities/test_idempotency.py` for the recognition-job retry, cancellation,
+concurrency and idempotency guarantees.
 
 - Celery preprocessing worker and Redis configuration — Complete
 - Per-image and per-batch enhancement jobs — Complete
-- Controlled concurrency
-- Retry and timeout policies
+- Controlled concurrency — Complete (per-user limits)
+- Retry and timeout policies — Complete (`autoretry_for` with backoff on every
+  task, project-wide `CELERY_TASK_TIME_LIMIT`/`SOFT_TIME_LIMIT`)
 - Preprocessing and enhancement failure isolation and batch counters — Complete
-- Cancellation where safe
-- CPU/GPU resource limits
+- Cancellation where safe — Complete (batch-level `cancellation_requested`,
+  checked per-image in the enhancement pipeline and per-face in identity
+  analysis)
+- Stuck-job recovery, queue monitoring, admin failed-job visibility — Complete
+  (Features 20 operations, 33)
+- CPU/GPU resource limits — open; GPU workloads have not been deployed yet
 
 ### Feature 21: Live batch progress tracker — Complete backend
 
@@ -442,7 +488,7 @@ versioned snapshot. Frontend Downloads-page integration remains.
 - Rejection or failure reason
 - Brightness, blur, sharpness, and quality scores
 - Face count and confidence
-- Explicit unavailable identity placeholder until Feature 18 is implemented
+- Real multi-person identity-group summaries when identity analysis is available
 - Duplicate result and enhancement level
 - Processing time and protected result links
 - CSV, PDF, and JSON formats
@@ -471,7 +517,7 @@ expiring batch-result packages. Frontend Downloads-page integration remains.
 - Download history for images, reports, and generated packages
 - Physical file cleanup on expiry and deletion
 
-### Feature 24: Identity-group ZIP export — Planned
+### Feature 24: Identity-group ZIP export - Backend complete; frontend integration planned
 
 Packages all images of one identity into a structured archive.
 
@@ -482,7 +528,7 @@ Packages all images of one identity into a structured archive.
 - Secure generated archive
 - Download audit event
 
-### Feature 25: Watermark options — Planned
+### Feature 25: Watermark options — Complete (backend)
 
 Adds optional branding to enhanced output copies.
 
@@ -494,7 +540,7 @@ Adds optional branding to enhanced output copies.
 - Preview before export
 - Original enhanced asset remains unmodified
 
-### Feature 26: Secure share links — Planned
+### Feature 26: Secure share links — Complete (backend)
 
 Allows controlled external viewing without exposing a user account.
 
@@ -508,43 +554,51 @@ Allows controlled external viewing without exposing a user account.
 
 ## 10. Moderation, activity, and notifications
 
-### Feature 27: Moderator review system — Partial
+### Feature 27: Moderator review system — Partial (T-007 Phases A-C done, 2026-09-23)
 
-The global role and reusable permission foundation exists; organization-scoped
-member management and the operational review workflow remain.
+Organization membership/invitation management (T-008 Phase A) and the review-
+decision core (T-007 Phase C) are done; batch monitoring, notifications, and
+reports are not yet built. See `moderation/` and
+`docs/features/27-31-46-moderator-organization-panel.md`.
 
-- Organization-scoped moderator access
-- Active-organization member directory with no visibility into other organizations
-- Personal user content remains private and is never exposed through organization membership alone
-- Moderator access is limited to organization-owned content or content explicitly shared for review
-- Out-of-scope users and resources return a non-disclosing not-found response
-- Invite, resend, cancel, deactivate, reactivate, and remove-member workflows
-- Membership removal instead of unsafe global-account deletion
-- Protected owner, administrator, and last-owner rules
-- Organization dashboard summary and operational metrics
-- Organization batch monitoring, retry, reprocessing, and safe cancellation
-- Duplicate image, face, and identity-group review
-- Moderator assignment, deadline, and escalation notifications
-- Organization-scoped CSV, PDF, and JSON reports and exports
-- Low-confidence review queue
-- Original/enhanced comparison
-- Approve, reject, correct, reprocess, escalate, or keep in review
-- Rejection-reason management
-- Identity correction
-- Duplicate-group merging
-- Immutable membership and moderator audit history
+- Organization-scoped moderator access — Done (`OrganizationScopedMixin`,
+  reused unchanged from `organizations/` for every moderation endpoint)
+- Active-organization member directory with no visibility into other organizations — Done (T-008 Phase A)
+- Personal user content remains private and is never exposed through organization membership alone — Done (unchanged by any phase; see Feature 46)
+- Moderator access is limited to organization-owned content or content explicitly shared for review — Done for the three review sources (quality, duplicate, identity); general content browsing (batch monitoring) is open
+- Out-of-scope users and resources return a non-disclosing not-found response — Done
+- Invite, resend, cancel, deactivate, reactivate, and remove-member workflows — Done (T-008 Phase A)
+- Membership removal instead of unsafe global-account deletion — Done (T-008 Phase A)
+- Protected owner, administrator, and last-owner rules — Done (T-008 Phase A)
+- Organization dashboard summary and operational metrics — Partial (review-queue counts done; batch/storage/member metrics open)
+- Organization batch monitoring, retry, reprocessing, and safe cancellation — Open
+- Duplicate image, face, and identity-group review — Partial (duplicate-match review done with write-back; identity-group review still only reachable via the existing owner-only self-review path -- see T-007's note on why write-back was deferred)
+- Moderator assignment, deadline, and escalation notifications — Open (escalation itself works; notifications do not exist yet)
+- Organization-scoped CSV, PDF, and JSON reports and exports — Open
+- Low-confidence review queue — Done (`ModeratorReview`, created by additive hooks in identities/quality_control/duplicates)
+- Original/enhanced comparison — Open
+- Approve, reject, correct, reprocess, escalate, or keep in review — Partial (approve/reject/keep-in-review/escalate all work; `correct` and `reprocess` have no defined outcome yet)
+- Rejection-reason management — Done (`decision_reason` on every decision, audited)
+- Identity correction — Open (deferred write-back, see above)
+- Duplicate-group merging — Open
+- Immutable membership and moderator audit history — Done (`OrganizationAuditEvent`, both phases)
 
-### Feature 28: Complete user activity timeline — Partial
+### Feature 28: Complete user activity timeline — Complete backend
 
-Authentication events exist; processing and content events will extend the timeline.
+Merges the existing authentication audit trail with a new cross-app activity
+feed into one owner-scoped, paginated timeline. See
+[Feature 28: Complete user activity timeline](features/28-user-activity-timeline.md).
 
-- Upload and batch events
-- Processing results
-- Moderator decisions
-- Downloads and exports
-- Group changes
-- Share-link activity
-- Administrative actions
+- Upload and batch events — implemented
+- Processing results (quality, enhancement, batch completion) — implemented
+- Downloads and exports (reports, packages, identity-group exports) — implemented
+- Group changes (rename, merge, move, remove) — implemented
+- Moderator decisions — reserved category; no events until Feature 27 exists
+- Share-link activity — `share_link_created` and `share_link_revoked` events (never containing the token)
+- Administrative actions — covered today via the existing `AuthEvent`
+  role-change/suspension events merged into the same timeline
+
+Frontend integration remains: `GET /api/user/activity/`.
 
 ### Feature 29: In-app and email notifications — Complete backend baseline
 
@@ -599,29 +653,36 @@ review decisions.
 - No access to global platform administration
 - Backend-enforced tenant filtering on every list, detail, action, download, and export API
 
-### Feature 32: Admin analytics dashboard — Planned
+### Feature 32: Admin analytics dashboard — Complete (backend)
 
-Provides system-wide operational and business visibility.
+Provides system-wide operational and business visibility. See
+[32-admin-analytics.md](features/32-admin-analytics.md).
 
-- User, upload, enhancement, acceptance, and rejection totals
-- Live sessions and storage usage
-- Common rejection reason
-- Average processing time and system success rate
-- Upload, quality, storage, and latency charts
-- Date, user, role, status, model, and moderator filters
+- User, upload, enhancement, acceptance, and rejection totals — Complete
+- Storage usage — Complete
+- Common rejection reason — Complete
+- Average processing time and system success rate — Complete
+- Upload and enhancement charts — Complete
+- Date, status, model, and owner filters — Complete
+- Live sessions, quality/latency charts, role/moderator filters — deliberately
+  not built; see the doc's "Deliberately not built" section
+- Frontend dashboard page — remains
 
-### Feature 33: Administrative management — Partial
+### Feature 33: Administrative management — Complete (backend)
 
-Account management is complete; operational image and processing controls remain.
+Account management is complete; the operational monitoring and control pieces
+are now complete too. See
+[33-administrative-management.md](features/33-administrative-management.md).
 
-- User listing, roles, suspension, and reactivation
-- Upload and processing monitoring
-- Failed-job management
-- Storage and threshold configuration
-- Moderator monitoring
-- System-wide audit views
+- User listing, roles, suspension, and reactivation — Complete
+- Upload and processing monitoring — Complete (failed-batch list, cross-kind failed-job list)
+- Failed-job management — Complete for upload batches (admin retry, reusing the owner-facing logic); read-only visibility for every other job kind
+- System-wide audit views — Complete (combined AuthEvent + ActivityEvent feed)
+- Storage and threshold configuration, moderator monitoring — deliberately not
+  built; see the doc's "Deliberately not built" section
+- Frontend admin pages — remain
 
-### Feature 34: System health page — Planned
+### Feature 34: System health page - Backend complete; frontend page planned
 
 Shows whether every production dependency is operating correctly.
 
@@ -633,9 +694,17 @@ Shows whether every production dependency is operating correctly.
 - Pending, active, and failed jobs
 - Available storage and application version
 
+Implemented backend evidence:
+
+- Administrator-only `GET /api/system/health/` endpoint
+- Sanitized dependency results with `healthy`, `degraded`, and `unavailable` states
+- HTTP 503 response when a required dependency is unavailable
+- Automated authorization, aggregation, response-contract, and failure tests
+- Implementation and API documentation in `docs/features/34-system-health.md`
+
 ## 12. Model evaluation and live camera scope
 
-### Feature 35: Uploaded-image model comparison page — Planned
+### Feature 35: Uploaded-image model comparison page — Complete (backend)
 
 Supports FYP and company evaluation of enhancement approaches.
 
@@ -722,12 +791,16 @@ Account and upload controls exist; advanced facial-data controls remain.
 - Organization moderators restricted to their active organization and authorized content scopes
 - No moderator or administrator access to passwords, tokens, or live-camera feeds
 - Non-disclosing authorization failures to reduce user and resource enumeration
-- Facial-data retention policy
-- Consent records
-- Encryption-at-rest configuration
-- Privacy export
-- Temporary-processing cleanup
-- Security audit reporting
+- Facial-data retention policy: `FACIAL_DATA_RETENTION_DAYS` with a purge command and Celery task — Complete backend
+- Consent records: append-only, policy-versioned, enforced on identity analysis and the identity guard when `BIOMETRIC_CONSENT_REQUIRED` is on — Complete backend
+- Facial-data erasure with verification (database recount and file check), also on consent withdrawal — Complete backend
+- Privacy export (own data as JSON; embeddings never exported) — Complete backend
+- Security audit reporting: administrator aggregate report and `check --deploy` findings — Complete backend
+- Encryption-at-rest configuration: embeddings use AES-256-GCM with key ids and a re-encryption command for rotation (legacy records stay readable); blank-key bug fixed and deploy checks added; stored images are now encrypted at rest too — Complete backend
+- Temporary-processing cleanup: stale ZIP build files and orphaned media, orphans report-only unless enabled — Complete backend
+- Frontend consent, erasure and export screens
+
+Details: [41-privacy-and-facial-data.md](features/41-privacy-and-facial-data.md)
 
 ### Feature 42: PostgreSQL data platform — Complete
 
@@ -741,7 +814,11 @@ Provides the final relational database foundation for concurrent processing and 
 - PostgreSQL test-database support
 - Preserved rollback backup
 
-### Feature 43: Private cloud storage — Planned
+### Feature 43: Private cloud storage — Partial (encryption at rest done)
+
+Stored images are already encrypted at rest on local storage (AES-256-GCM, key ids and
+rotation, conversion command): [stored-image-encryption.md](features/stored-image-encryption.md).
+Moving media to a private object store, signed URLs and quotas remain.
 
 Moves production assets from local media storage to private object storage.
 
@@ -752,22 +829,34 @@ Moves production assets from local media storage to private object storage.
 - Storage quotas and analytics
 - Lifecycle and deletion policies
 
-### Feature 44: API documentation and developer support — Partial
+### Feature 44: API documentation and developer support — Complete
 
 Maintains stable integration contracts and implementation documentation.
 
 - Root project README
+- [`docs/API_ERRORS.md`](API_ERRORS.md): error shapes and what each 4xx means, checked by tests
+- Schema generates with zero warnings (enforced by `config/test_openapi_schema.py`); 401 and 429 documented on every operation; request and error examples on register, login and enhancement
 - Per-feature implementation documents
 - Upload endpoint reference
 - PostgreSQL platform documentation
-- Planned Swagger/OpenAPI integration
-- Planned live/WebSocket documentation
+- `drf-spectacular` wired in with a registered auth extension for
+  `FaceCloudJWTAuthentication`; `GET /api/schema/`, `/api/docs/` (Swagger UI),
+  and `/api/redoc/` are live
+- Every raw `APIView` across the project (accounts, uploads, validation,
+  quality_control, duplicates, notifications, downloads, reports, identities,
+  enhancement — 55-56 views) has explicit `serializer_class` or
+  `@extend_schema` request/response typing; `manage.py spectacular --validate
+  --fail-on-warn` reports zero `Error`-level issues
+- Remaining polish (optional, non-blocking): a handful of
+  `SerializerMethodField` type hints and the `VerifyEmailView` path-parameter
+  type default to `string`
+- Planned live/WebSocket documentation (blocked on Features 36-40)
 
 ### Feature 45: Testing and quality assurance — Partial and continuous
 
 Protects completed behavior from regression as the platform grows.
 
-- 162 authentication, upload, preprocessing, enhancement, validation, quality,
+- 598 authentication, upload, preprocessing, enhancement, validation, quality,
   duplicate-detection, dashboard, report, download, ownership, cleanup, and queue tests
   passing against PostgreSQL
 - Django system and migration-drift checks
@@ -775,24 +864,46 @@ Protects completed behavior from regression as the platform grows.
 - Manual registration, token, profile, and real upload verification
 - Planned enhancement, face, queue, moderator, storage, and live-load tests
 
-### Feature 46: Organization and tenant management — Planned
+### Feature 46: Organization and tenant management — In progress (T-008 Phases A-C complete, 2026-09-23)
 
 Separates customer organizations and provides safe organization-level ownership,
-membership, moderation, and data access.
+membership, moderation, and data access. See the full design in
+`docs/features/27-31-46-moderator-organization-panel.md`; `organizations/tests.py`
+(32 tests) and `moderation/` (23 tests) cover the rules below.
 
-- Organization creation, status, subscription, quota, and owner management
-- Owner, moderator, and member organization roles
-- Secure, expiring member invitations
-- Organization-scoped uploads, images, jobs, groups, reports, and reviews
-- Explicit content ownership and visibility fields for personal, organization-owned, and review-shared data
-- Organization membership does not automatically grant access to a member's personal content
-- Time-bounded, revocable review access where temporary moderator visibility is required
-- Member activation, deactivation, removal, and resource-retention policies
-- Prevention of cross-organization access and face matching by default
-- Queryset, object-permission, download, report, and background-task tenant isolation
-- Organization audit history
-- Safe backfill of existing users and content into personal organizations
-- Global deletion controlled by the account owner or FaceCloud administrator
+- Organization creation, status, subscription, quota, and owner management — Done
+  (admin-created orgs; self-service org creation is not offered, matching the
+  spec's "administrator creates or approves organization" model)
+- Owner, moderator, and member organization roles — Done
+- Secure, expiring member invitations — Done (hashed tokens, resend/cancel/accept,
+  role restricted to moderator/member — an invitation can never grant ownership)
+- Organization-scoped uploads, images, jobs, groups, reports, and reviews — Partial
+  (`UploadBatch`/`IdentityGroup` carry an `organization` field; `ModeratorReview`
+  is the first real org-scoped query surface over that data -- quality,
+  duplicate, and identity review queues. General batch/job monitoring and
+  reports are still open)
+- Explicit content ownership and visibility fields for personal, organization-owned, and review-shared data — Open
+- Organization membership does not automatically grant access to a member's personal content — Done (every existing owner-scoped endpoint is unchanged by any phase; this is verified by the fact that no view's queryset was touched)
+- Time-bounded, revocable review access where temporary moderator visibility is required — Open (a review is currently permanent once created, not time-bounded)
+- Member activation, deactivation, removal, and resource-retention policies — Partial
+  (activation/deactivation/removal with protected-owner and last-owner rules
+  done; resource-retention/reassignment of a removed member's open reviews is
+  not yet implemented)
+- Prevention of cross-organization access and face matching by default — Partial
+  (organization membership/invitation/audit APIs and moderator review APIs are
+  isolated and tested — `OrganizationIsolationTests`,
+  `ModeratorReviewIsolationTests`; general content isolation beyond the
+  review workflow is open)
+- Queryset, object-permission, download, report, and background-task tenant isolation — Partial (done for `ModeratorReview`; download/report/background-task isolation is open)
+- Organization audit history — Done (`OrganizationAuditEvent`, immutable, written
+  by every membership/invitation mutation)
+- Safe backfill of existing users and content into personal organizations — Done
+  (users: `organizations/migrations/0002_backfill_personal_organizations.py`;
+  new users get one automatically at registration; the two content models that
+  carry their own `organization` field -- `UploadBatch`, `IdentityGroup` -- are
+  backfilled by `uploads/migrations/0007_backfill_batch_organization.py` and
+  `identities/migrations/0005_backfill_group_organization.py`)
+- Global deletion controlled by the account owner or FaceCloud administrator — Unchanged (already true; organizations do not add a new deletion path)
 
 ### Feature 47: Non-destructive photo gallery editor — Complete backend
 
@@ -833,8 +944,8 @@ The following items remain outside the required core until the preceding feature
 3. Identity management and organization-scoped moderator review
 4. Identity-group ZIP downloads
 5. Notifications and full activity timeline
-6. Admin analytics and system health
-7. Uploaded-image model comparison
+6. ~~Admin analytics and system health~~ — done (Features 32, 33, 34 backends complete)
+7. ~~Uploaded-image model comparison~~ — done (Feature 35 backend complete)
 8. Live camera detection
 9. Real-time enhancement and communication
 10. Live comparison page

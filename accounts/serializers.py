@@ -5,9 +5,11 @@ from django.db.models.functions import Lower
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 from rest_framework import serializers
+from rest_framework.exceptions import Throttled
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from . import lockout
 from .services import record_auth_event
 
 User = get_user_model()
@@ -95,9 +97,26 @@ class FaceCloudTokenObtainPairSerializer(serializers.Serializer):
         user = User.objects.filter(
             Q(username__iexact=identifier) | Q(email__iexact=identifier)
         ).first()
+        key = lockout.attempt_key(user, identifier)
+        remaining = lockout.seconds_locked(key)
+        if remaining:
+            # Refused before the password is even checked, for real and unknown
+            # accounts alike.
+            record_auth_event("login_failed", request, user, identifier, {"reason": "locked"})
+            raise Throttled(
+                wait=remaining,
+                detail=f"Too many failed sign-in attempts. Try again in {remaining} seconds.",
+            )
+        if not user:
+            # Hash anyway so an unknown account takes as long as a wrong password.
+            User().set_password(attrs["password"])
         if not user or not user.check_password(attrs["password"]):
             record_auth_event("login_failed", request, user, identifier, {"reason": "invalid_credentials"})
+            delay = lockout.record_failure(key)
+            if delay:
+                record_auth_event("login_locked", request, user, identifier, {"seconds": delay})
             raise serializers.ValidationError({"detail": "Invalid username/email or password."})
+        lockout.clear(key)
         if not user.is_active:
             record_auth_event("login_failed", request, user, identifier, {"reason": "account_inactive"})
             raise serializers.ValidationError({"detail": "This account is inactive."})
@@ -150,6 +169,29 @@ class UserSerializer(serializers.ModelSerializer):
 
     def validate_email(self, value):
         return validate_unique_email(value, self.instance)
+
+
+class ProfileUpdateSerializer(UserSerializer):
+    """Profile edits. Changing the email re-routes password recovery to a new
+    mailbox, so it needs proof of the current password: a stolen access token
+    alone must not be enough to take over an account."""
+
+    current_password = serializers.CharField(
+        write_only=True, required=False, trim_whitespace=False
+    )
+
+    class Meta(UserSerializer.Meta):
+        fields = UserSerializer.Meta.fields + ["current_password"]
+
+    def validate(self, attrs):
+        password = attrs.pop("current_password", None)
+        new_email = attrs.get("email")
+        if new_email and new_email != self.instance.email:
+            if not password or not self.instance.check_password(password):
+                raise serializers.ValidationError(
+                    {"current_password": "Current password is required to change the email."}
+                )
+        return attrs
 
 
 class ChangePasswordSerializer(serializers.Serializer):

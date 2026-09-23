@@ -245,3 +245,34 @@ def notify_download_result(package):
         },
     )
     return notification
+
+
+def notify_identity_export_result(export):
+    ready = export.status == export.Status.READY
+    if export.status not in {export.Status.READY, export.Status.FAILED}:
+        return None
+    notification, _ = create_user_notification(
+        recipient=export.owner,
+        event_type=(
+            UserNotification.EventType.DOWNLOAD_READY
+            if ready else UserNotification.EventType.DOWNLOAD_FAILED
+        ),
+        idempotency_key=f"identity-export:{export.pk}:{export.status}",
+        title="Identity export ready" if ready else "Identity export failed",
+        message=(
+            "Your identity-group ZIP export is ready."
+            if ready else "Your identity-group ZIP export could not be generated safely."
+        ),
+        severity=(
+            UserNotification.Severity.SUCCESS if ready else UserNotification.Severity.ERROR
+        ),
+        resource_type="identity_export",
+        resource_id=export.pk,
+        action_path="/dashboard/person-folders",
+        metadata={
+            "export_id": export.pk,
+            "group_id": export.identity_group_id,
+            "status": export.status,
+        },
+    )
+    return notification

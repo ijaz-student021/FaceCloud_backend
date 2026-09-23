@@ -128,6 +128,9 @@ def _create_match(
             "reviewed_at": None,
         },
     )
+    if not confirmed:
+        from moderation.services import create_review_for_duplicate_match
+        create_review_for_duplicate_match(match)
     return match
 
 
