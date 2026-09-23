@@ -133,9 +133,21 @@
   `identities.0006` corrects the constraint. 15 more tests
   (`identities/test_review_membership.py` -- review_membership() itself had
   zero prior coverage; `moderation/test_identity_writeback.py`).
-  Still open: moderator notifications, org-scoped CSV/PDF/JSON reports, and
-  batch-management moderator actions (retry/reprocess/cancel) reusing the
-  existing admin batch endpoints.
+  Moderator notifications done 2026-09-23 (Phase D of the remainder):
+  `notifications` gained `MODERATOR_REVIEW_ASSIGNED`/`_ESCALATED` event types
+  and a `moderator_review_updates` preference. A new explicit
+  `moderation.services.assign_review()` action (previously only an implicit
+  side effect of deciding/escalating) notifies the assigned moderator;
+  escalation notifies every active organization owner (a bounded fan-out --
+  realistically 1-2 owners -- unlike the deferred all-moderators
+  batch-failure case). 8 tests (`moderation/test_notifications.py`).
+  Deliberately not attempted, flagged rather than dropped: deadline/SLA
+  alerts (no deadline field exists on `ModeratorReview`, and none is being
+  invented for this); batch-failure-to-moderators (needs a genuinely new
+  multi-recipient fan-out pattern, bigger than the owner-only escalation
+  case above). Still open: org-scoped CSV/PDF/JSON reports, batch-management
+  moderator actions (retry/cancel; reprocess doesn't exist anywhere in the
+  codebase today, owner-facing or otherwise), and duplicate-group merging.
 - Organization-scoped queues and decisions — Done for all three review
   sources (quality, duplicate, identity)
 - Corrections, reasons, and complete audit history — Done (every decision/
@@ -209,7 +221,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 24 | Connect completed identity-group ZIP API to Person Folders | Next | T-015 |
 | 25 | Export watermark options | Done backend (2026-09-19, `docs/features/25-watermark-options.md`); frontend controls remain | T-016 |
 | 26 | Secure expiring share links | Done backend (2026-09-19, `docs/features/26-secure-share-links.md`); frontend remains | T-017 |
-| 27 | Organization-scoped moderator review | In progress (Phase C + identity write-back done 2026-09-23) | T-007 |
+| 27 | Organization-scoped moderator review | In progress (Phase C + identity write-back + notifications done 2026-09-23) | T-007 |
 | 28 | Complete owner activity timeline | Done backend (2026-09-18); frontend remains | T-018 |
 | 29 | Notification panel and preferences UI | Next | T-019 |
 | 30 | User dashboard and My Images integration | Next | T-020 |

@@ -1,8 +1,11 @@
+from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from organizations.serializers import MemberUserSerializer
 
 from .models import ModeratorReview
+
+User = get_user_model()
 
 
 class ModeratorReviewSerializer(serializers.ModelSerializer):
@@ -34,6 +37,10 @@ class ModeratorDecisionSerializer(serializers.Serializer):
 
 class ModeratorEscalateSerializer(serializers.Serializer):
     reason = serializers.CharField(required=False, allow_blank=True, max_length=500)
+
+
+class ModeratorAssignSerializer(serializers.Serializer):
+    moderator_id = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), source="moderator")
 
 
 class ModeratorDashboardSerializer(serializers.Serializer):

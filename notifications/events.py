@@ -97,6 +97,54 @@ def notify_quality_result(decision):
     return notification
 
 
+def notify_moderator_review_assigned(review):
+    if review.assigned_moderator_id is None:
+        return None
+    notification, _ = create_user_notification(
+        recipient=review.assigned_moderator,
+        event_type=UserNotification.EventType.MODERATOR_REVIEW_ASSIGNED,
+        idempotency_key=f"review:{review.pk}:assigned:{review.assigned_moderator_id}",
+        title="A review was assigned to you",
+        message=f"You were assigned a {review.get_source_display().lower()} review to decide.",
+        severity=UserNotification.Severity.INFO,
+        resource_type="moderator_review",
+        resource_id=review.pk,
+        action_path="/moderator/queue",
+        metadata={
+            "review_id": review.pk, "organization_id": review.organization_id, "source": review.source,
+        },
+    )
+    return notification
+
+
+def notify_moderator_review_escalated(review):
+    from organizations.models import OrganizationMembership
+
+    owners = OrganizationMembership.objects.filter(
+        organization_id=review.organization_id, role=OrganizationMembership.Role.OWNER,
+        status=OrganizationMembership.Status.ACTIVE,
+    ).select_related("user")
+    notifications = []
+    for membership in owners:
+        notification, _ = create_user_notification(
+            recipient=membership.user,
+            event_type=UserNotification.EventType.MODERATOR_REVIEW_ESCALATED,
+            idempotency_key=f"review:{review.pk}:escalated:{membership.user_id}",
+            title="A review was escalated",
+            message=f"A {review.get_source_display().lower()} review was escalated and needs your attention.",
+            severity=UserNotification.Severity.WARNING,
+            resource_type="moderator_review",
+            resource_id=review.pk,
+            action_path="/moderator/queue",
+            metadata={
+                "review_id": review.pk, "organization_id": review.organization_id, "source": review.source,
+            },
+        )
+        if notification:
+            notifications.append(notification)
+    return notifications
+
+
 def notify_enhancement_result(result):
     image = result.image
     if result.status == "completed":

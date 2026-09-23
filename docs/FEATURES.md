@@ -554,12 +554,13 @@ Allows controlled external viewing without exposing a user account.
 
 ## 10. Moderation, activity, and notifications
 
-### Feature 27: Moderator review system — Partial (T-007 Phases A-C + identity write-back done, 2026-09-23)
+### Feature 27: Moderator review system — Partial (T-007 Phases A-D done, 2026-09-23)
 
-Organization membership/invitation management (T-008 Phase A) and the review-
-decision core (T-007 Phase C, including identity-membership write-back) are
-done; batch monitoring, notifications, and reports are not yet built. See
-`moderation/` and `docs/features/27-31-46-moderator-organization-panel.md`.
+Organization membership/invitation management (T-008 Phase A), the review-
+decision core (T-007 Phase C, including identity-membership write-back), and
+assignment/escalation notifications (Phase D) are done; batch monitoring and
+reports are not yet built. See `moderation/` and
+`docs/features/27-31-46-moderator-organization-panel.md`.
 
 - Organization-scoped moderator access — Done (`OrganizationScopedMixin`,
   reused unchanged from `organizations/` for every moderation endpoint)
@@ -573,7 +574,7 @@ done; batch monitoring, notifications, and reports are not yet built. See
 - Organization dashboard summary and operational metrics — Partial (review-queue counts done; batch/storage/member metrics open)
 - Organization batch monitoring, retry, reprocessing, and safe cancellation — Open
 - Duplicate image, face, and identity-group review — Done (both write back to the underlying record on decision; identity review reassigns/creates a group via `identities.services.review_membership()` with a reviewer/actor split that keeps group ownership attributed to the content's real owner)
-- Moderator assignment, deadline, and escalation notifications — Open (escalation itself works; notifications do not exist yet)
+- Moderator assignment, deadline, and escalation notifications — Partial (assignment and escalation both notify -- a new explicit `assign_review()` action notifies the assigned moderator, escalation notifies every active organization owner; deadline/SLA alerts are open, no deadline concept exists on `ModeratorReview`)
 - Organization-scoped CSV, PDF, and JSON reports and exports — Open
 - Low-confidence review queue — Done (`ModeratorReview`, created by additive hooks in identities/quality_control/duplicates)
 - Original/enhanced comparison — Open
