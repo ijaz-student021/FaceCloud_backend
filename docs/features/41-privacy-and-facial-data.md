@@ -17,6 +17,18 @@ All jobs are on the Celery beat schedule (see
 | Face embeddings, identity-group centroids, group edit history, group ZIP exports | **Biometric** - covered by consent, erasure, retention | They identify a person |
 | Uploaded photos, enhancement results | The user's content | Deleted through the normal image flow and on account deletion |
 | Face-detection boxes and landmarks, duplicate-image hashes | Image metadata | They locate a face in an image or match a duplicate image; they cannot recognise a person |
+| Upload timestamps | Not facial data at all | No face detection, embedding, or identity data involved |
+| A query embedding computed from a freshly uploaded search photo (Feature 50, backlog) | **Biometric** - gated by the same consent check as identity analysis, but never stored | Deriving it is new biometric processing under this table's own rule, even though it is discarded after the comparison rather than persisted |
+
+Three backlog features (48-50, `FEATURES.md`) were designed directly against
+this table rather than inventing new rules: event/timeline grouping (Feature
+48) uses only upload timestamps and needs no consent check at all; the
+face-aware crop in AI collages (Feature 49) uses only bounding boxes/
+landmarks, also no consent check, while a *person-specific* collage reads
+existing `IdentityGroup`/`IdentityMembership` rows that are already
+consent-gated by the identity-analysis pipeline that created them; visual
+search (Feature 50) is the one new source of biometric processing and must
+reuse `biometric_processing_allowed`, never persisting the query embedding.
 
 ## Consent
 

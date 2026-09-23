@@ -225,6 +225,9 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 45 | Load, performance, camera and integration QA | Continuous | T-033 |
 | 46 | Organization and tenant management | In progress (Phases A+B done 2026-09-22, C done 2026-09-23) | T-008 |
 | 47 | Gallery-editor frontend integration | Next | T-034 |
+| 48 | Automatic event/timeline grouping | Backlog (no face data involved -- see `FEATURES.md`) | T-035 |
+| 49 | AI-generated photo collages (face-aware smart crop) | Backlog (face-box crop needs no consent; person-specific collage reuses existing identity consent gate -- see `FEATURES.md`) | T-036 |
+| 50 | Face-based visual search | Backlog (new biometric processing -- must reuse `biometric_processing_allowed`, query embedding never persisted -- see `FEATURES.md`) | T-037 |
 
 ### Register workstreams
 
@@ -238,6 +241,12 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 - **T-032:** OpenAPI schema, examples, error catalogue and deployment instructions.
 - **T-033:** load, performance, security, restoration and end-to-end suites.
 - **T-034:** editor sliders, previews, versions, undo and downloads.
+- **T-035–T-037:** event/timeline grouping, AI collages, and face-based visual
+  search -- three feature ideas surfaced by reviewing a separate, unrelated
+  prototype project (`smart_gallery/`, not part of this repo's dependency or
+  code base) for UX/feature concepts; none of its code or face-recognition
+  stack (InsightFace/DBSCAN) was adopted, only the feature ideas, redesigned
+  against this project's own identity data and consent rules.
 
 ## 6. Generative restoration research
 
