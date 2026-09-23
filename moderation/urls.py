@@ -29,4 +29,16 @@ urlpatterns = [
         "<int:organization_id>/moderator/dashboard/",
         views.ModeratorDashboardView.as_view(), name="dashboard",
     ),
+    path(
+        "<int:organization_id>/moderator/batches/",
+        views.ModeratorBatchListView.as_view(), name="batch-list",
+    ),
+    path(
+        "<int:organization_id>/moderator/batches/<int:batch_id>/retry/",
+        views.ModeratorBatchRetryView.as_view(), name="batch-retry",
+    ),
+    path(
+        "<int:organization_id>/moderator/batches/<int:batch_id>/cancel/",
+        views.ModeratorBatchCancelView.as_view(), name="batch-cancel",
+    ),
 ]

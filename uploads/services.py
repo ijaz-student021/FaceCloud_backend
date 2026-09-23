@@ -407,6 +407,29 @@ def enqueue_batch_preprocessing(batch):
     return batch
 
 
+def cancel_batch(batch):
+    """Mark ``batch`` (and every non-terminal image in it) cancelled.
+
+    Extracted from the owner-facing cancel endpoint so the org-scoped
+    moderator cancel endpoint (T-007) can call the exact same, already-used
+    logic rather than duplicating it.
+    """
+    with transaction.atomic():
+        locked = UploadBatch.objects.select_for_update().get(pk=batch.pk)
+        locked.cancellation_requested = True
+        locked.processing_status = "cancelled"
+        locked.save(update_fields=["cancellation_requested", "processing_status", "updated_at"])
+        BatchImageProgress.objects.filter(batch=locked).exclude(
+            status__in=["accepted", "rejected", "needs_review", "completed", "failed", "cancelled"],
+        ).update(
+            stage="completed", status="cancelled", progress_percentage=100,
+            failure_reason="Processing was cancelled by the user.",
+            finished_at=timezone.now(),
+        )
+    locked.refresh_from_db()
+    return locked
+
+
 def retry_batch(batch):
     """Requeue every failed image in ``batch`` from wherever it failed.
 

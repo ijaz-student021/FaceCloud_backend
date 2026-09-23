@@ -497,8 +497,10 @@ another organization's users, images, metrics, or facial data.
       with write-back to the underlying record on decision)
 - [x] Organization dashboard metrics implemented (2026-09-23, review-queue
       counts only; batch/storage/member metrics not yet included)
-- [ ] Duplicate and batch management implemented (duplicate *review* is done;
-      duplicate-group merging and batch monitoring/retry/reprocess/cancel are not)
+- [x] Batch management implemented (2026-09-23, list/retry/cancel, reusing
+      `uploads.services.retry_batch`/`cancel_batch` exactly; reprocess is
+      still open -- doesn't exist anywhere in the codebase, owner-facing or
+      otherwise). Duplicate-group merging is separate and still open.
 - [x] Moderator notifications implemented (2026-09-23, assignment + escalation
       only -- deadline/SLA and batch-failure fan-out are open, see T-007)
 - [ ] Reports and exports implemented

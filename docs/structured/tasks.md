@@ -145,9 +145,19 @@
   alerts (no deadline field exists on `ModeratorReview`, and none is being
   invented for this); batch-failure-to-moderators (needs a genuinely new
   multi-recipient fan-out pattern, bigger than the owner-only escalation
-  case above). Still open: org-scoped CSV/PDF/JSON reports, batch-management
-  moderator actions (retry/cancel; reprocess doesn't exist anywhere in the
-  codebase today, owner-facing or otherwise), and duplicate-group merging.
+  case above).
+  Batch-management moderator actions done 2026-09-23 (Phase E): org-scoped
+  retry/cancel, both reusing `uploads.services.retry_batch`/`cancel_batch`
+  exactly -- `cancel_batch` was newly extracted from the owner-facing view's
+  inline logic (previously not a standalone function, unlike `retry_batch`
+  which the admin endpoint already reused) so this and the owner endpoint
+  share one implementation, not a duplicate. Reprocessing at a different
+  enhancement level is still explicitly deferred: it does not exist
+  anywhere in the codebase today, not even an owner-facing version, and is
+  real new design work rather than a reuse. 8 tests
+  (`moderation/test_batch_management.py`, including one guarding that the
+  owner-facing cancel endpoint's behavior is unchanged by the extraction).
+  Still open: org-scoped CSV/PDF/JSON reports, and duplicate-group merging.
 - Organization-scoped queues and decisions — Done for all three review
   sources (quality, duplicate, identity)
 - Corrections, reasons, and complete audit history — Done (every decision/
@@ -221,7 +231,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 24 | Connect completed identity-group ZIP API to Person Folders | Next | T-015 |
 | 25 | Export watermark options | Done backend (2026-09-19, `docs/features/25-watermark-options.md`); frontend controls remain | T-016 |
 | 26 | Secure expiring share links | Done backend (2026-09-19, `docs/features/26-secure-share-links.md`); frontend remains | T-017 |
-| 27 | Organization-scoped moderator review | In progress (Phase C + identity write-back + notifications done 2026-09-23) | T-007 |
+| 27 | Organization-scoped moderator review | In progress (Phase C + identity write-back + notifications + batch actions done 2026-09-23) | T-007 |
 | 28 | Complete owner activity timeline | Done backend (2026-09-18); frontend remains | T-018 |
 | 29 | Notification panel and preferences UI | Next | T-019 |
 | 30 | User dashboard and My Images integration | Next | T-020 |
