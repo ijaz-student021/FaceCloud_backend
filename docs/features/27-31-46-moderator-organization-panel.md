@@ -499,7 +499,8 @@ another organization's users, images, metrics, or facial data.
       counts only; batch/storage/member metrics not yet included)
 - [ ] Duplicate and batch management implemented (duplicate *review* is done;
       duplicate-group merging and batch monitoring/retry/reprocess/cancel are not)
-- [ ] Moderator notifications implemented
+- [x] Moderator notifications implemented (2026-09-23, assignment + escalation
+      only -- deadline/SLA and batch-failure fan-out are open, see T-007)
 - [ ] Reports and exports implemented
 - [x] Immutable audit events implemented (2026-09-22/23, membership +
       moderator-review actions)

@@ -15,6 +15,7 @@ class NotificationPreference(models.Model):
     person_group_created = models.BooleanField(default=True)
     email_notifications = models.BooleanField(default=False)
     live_session_alerts = models.BooleanField(default=False)
+    moderator_review_updates = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -37,6 +38,8 @@ class UserNotification(models.Model):
         DOWNLOAD_FAILED = "download_failed", "Download failed"
         IDENTITY_GROUP_CREATED = "identity_group_created", "Identity group created"
         LIVE_SESSION_ALERT = "live_session_alert", "Live session alert"
+        MODERATOR_REVIEW_ASSIGNED = "moderator_review_assigned", "Moderator review assigned"
+        MODERATOR_REVIEW_ESCALATED = "moderator_review_escalated", "Moderator review escalated"
 
     class Severity(models.TextChoices):
         INFO = "info", "Information"

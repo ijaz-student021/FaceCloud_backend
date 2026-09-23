@@ -23,6 +23,8 @@ EVENT_POLICY = {
     UserNotification.EventType.DOWNLOAD_FAILED: ("batch_upload_finished", True),
     UserNotification.EventType.IDENTITY_GROUP_CREATED: ("person_group_created", True),
     UserNotification.EventType.LIVE_SESSION_ALERT: ("live_session_alerts", False),
+    UserNotification.EventType.MODERATOR_REVIEW_ASSIGNED: ("moderator_review_updates", True),
+    UserNotification.EventType.MODERATOR_REVIEW_ESCALATED: ("moderator_review_updates", True),
 }
 
 
@@ -39,6 +41,7 @@ def _safe_metadata(metadata):
         if key in {
             "filename", "batch_id", "image_id", "report_id", "package_id",
             "status", "accepted", "rejected", "needs_review", "failed", "format",
+            "review_id", "organization_id", "source",
         } and isinstance(value, (str, int, float, bool, type(None))):
             safe[str(key)[:40]] = value
     return safe

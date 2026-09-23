@@ -21,8 +21,8 @@ from rest_framework import status
 from rest_framework.exceptions import APIException, ValidationError
 
 from duplicates.models import DuplicateMatch
-from organizations.models import OrganizationAuditEvent
-from organizations.services import record_audit_event
+from organizations.models import OrganizationAuditEvent, OrganizationMembership
+from organizations.services import get_active_membership, record_audit_event
 from quality_control.models import ImageQualityDecision
 
 from .models import ModeratorReview
@@ -157,6 +157,8 @@ def decide_review(*, review, actor, action, reason="", notes="", group_id=None, 
 
 @transaction.atomic
 def escalate_review(*, review, actor, reason="", request=None):
+    from notifications.events import notify_moderator_review_escalated
+
     locked = ModeratorReview.objects.select_for_update().get(pk=review.pk)
     if locked.decided_at is not None:
         raise ModerationConflict("This review has already been decided.")
@@ -168,6 +170,38 @@ def escalate_review(*, review, actor, reason="", request=None):
         locked.organization, actor, OrganizationAuditEvent.Action.MODERATOR_REVIEW_ESCALATED,
         target_type="ModeratorReview", target_id=locked.pk, reason=reason, request=request,
     )
+    transaction.on_commit(lambda: notify_moderator_review_escalated(locked))
+    return locked
+
+
+@transaction.atomic
+def assign_review(*, review, actor, moderator, request=None):
+    """Assign a review to a specific org member with the owner/moderator role.
+
+    Separate from the self-assignment that already happens as a side effect
+    of decide_review()/escalate_review() -- this is the explicit "give this
+    review to someone" action, which is also what makes a "you were
+    assigned a review" notification meaningful (notifying yourself that you
+    picked something up is not).
+    """
+    from notifications.events import notify_moderator_review_assigned
+
+    locked = ModeratorReview.objects.select_for_update().get(pk=review.pk)
+    if locked.decided_at is not None:
+        raise ModerationConflict("This review has already been decided.")
+    membership = get_active_membership(moderator, locked.organization_id)
+    if membership is None or membership.role not in (
+        OrganizationMembership.Role.OWNER, OrganizationMembership.Role.MODERATOR,
+    ):
+        raise ValidationError({"moderator_id": "This user is not an owner or moderator of this organization."})
+    locked.assigned_moderator = moderator
+    locked.save(update_fields=["assigned_moderator", "updated_at"])
+    record_audit_event(
+        locked.organization, actor, OrganizationAuditEvent.Action.MODERATOR_REVIEW_ASSIGNED,
+        target_type="ModeratorReview", target_id=locked.pk,
+        new_value={"assigned_moderator": moderator.pk}, request=request,
+    )
+    transaction.on_commit(lambda: notify_moderator_review_assigned(locked))
     return locked
 
 

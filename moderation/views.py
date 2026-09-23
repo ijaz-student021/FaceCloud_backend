@@ -9,12 +9,13 @@ from organizations.permissions import OrganizationScopedMixin
 
 from .models import ModeratorReview
 from .serializers import (
+    ModeratorAssignSerializer,
     ModeratorDashboardSerializer,
     ModeratorDecisionSerializer,
     ModeratorEscalateSerializer,
     ModeratorReviewSerializer,
 )
-from .services import dashboard_summary, decide_review, escalate_review
+from .services import assign_review, dashboard_summary, decide_review, escalate_review
 
 ERROR_RESPONSES = {
     400: OpenApiTypes.OBJECT, 401: OpenApiTypes.OBJECT, 403: OpenApiTypes.OBJECT,
@@ -86,6 +87,25 @@ class ModeratorReviewEscalateView(OrganizationScopedMixin, APIView):
             reason=serializer.validated_data.get("reason", ""), request=request,
         )
         return Response(ModeratorReviewSerializer(escalated).data)
+
+
+class ModeratorReviewAssignView(OrganizationScopedMixin, APIView):
+    require_owner_or_moderator = True
+
+    @extend_schema(
+        request=ModeratorAssignSerializer,
+        responses={200: ModeratorReviewSerializer, **ERROR_RESPONSES},
+        summary="Assign a review to a specific moderator",
+    )
+    def post(self, request, organization_id, review_id):
+        review = get_object_or_404(ModeratorReview, pk=review_id, organization_id=organization_id)
+        serializer = ModeratorAssignSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        assigned = assign_review(
+            review=review, actor=request.user, moderator=serializer.validated_data["moderator"],
+            request=request,
+        )
+        return Response(ModeratorReviewSerializer(assigned).data)
 
 
 class ModeratorDashboardView(OrganizationScopedMixin, APIView):

@@ -22,6 +22,10 @@ urlpatterns = [
         views.ModeratorReviewEscalateView.as_view(), name="review-escalate",
     ),
     path(
+        "<int:organization_id>/moderator/reviews/<int:review_id>/assign/",
+        views.ModeratorReviewAssignView.as_view(), name="review-assign",
+    ),
+    path(
         "<int:organization_id>/moderator/dashboard/",
         views.ModeratorDashboardView.as_view(), name="dashboard",
     ),
