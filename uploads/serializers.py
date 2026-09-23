@@ -1,9 +1,15 @@
+from drf_spectacular.utils import extend_schema_field, inline_serializer
 from rest_framework import serializers
 
 from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
 from validation.models import FaceValidationResult
 from quality_control.models import ImageQualityDecision
 from duplicates.models import DuplicateAnalysis
+from duplicates.serializers import DuplicateAnalysisSerializer
+from enhancement.serializers import ImageEnhancementResultSerializer
+from identities.serializers import IdentityAnalysisSerializer
+from quality_control.serializers import ImageQualityDecisionSerializer
+from validation.serializers import FaceValidationResultSerializer
 
 
 class ImagePreprocessingResultSerializer(serializers.ModelSerializer):
@@ -19,7 +25,7 @@ class ImagePreprocessingResultSerializer(serializers.ModelSerializer):
             "failure_reason", "download_url", "created_at", "updated_at",
         ]
 
-    def get_download_url(self, obj):
+    def get_download_url(self, obj) -> str | None:
         if obj.status != "completed" or not obj.processed_file:
             return None
         request = self.context.get("request")
@@ -45,19 +51,27 @@ class ImageUploadSerializer(serializers.ModelSerializer):
             "rejection_reason", "download_url", "preprocessing", "created_at",
         ]
 
-    def get_download_url(self, obj):
+    def get_download_url(self, obj) -> str | None:
         if obj.status != "uploaded" or not obj.original_file:
             return None
         request = self.context.get("request")
         path = f"/api/images/{obj.pk}/download/"
         return request.build_absolute_uri(path) if request else path
 
+    @extend_schema_field(ImagePreprocessingResultSerializer(allow_null=True))
     def get_preprocessing(self, obj):
         try:
             result = obj.preprocessing_result
         except ImagePreprocessingResult.DoesNotExist:
             return None
         return ImagePreprocessingResultSerializer(result, context=self.context).data
+
+
+IDENTITY_GROUP_REFERENCES = inline_serializer(
+    "IdentityGroupReference",
+    {"id": serializers.IntegerField(), "display_name": serializers.CharField()},
+    many=True,
+)
 
 
 class MyImageSerializer(ImageUploadSerializer):
@@ -68,12 +82,14 @@ class MyImageSerializer(ImageUploadSerializer):
     face_validation = serializers.SerializerMethodField()
     quality_decision = serializers.SerializerMethodField()
     duplicate_analysis = serializers.SerializerMethodField()
+    identity_analysis = serializers.SerializerMethodField()
+    identity_groups = serializers.SerializerMethodField()
 
     class Meta(ImageUploadSerializer.Meta):
         fields = ImageUploadSerializer.Meta.fields + [
             "batch_display_name", "upload_type", "display_status",
             "latest_enhancement", "face_validation", "quality_decision",
-            "duplicate_analysis", "updated_at",
+            "duplicate_analysis", "identity_analysis", "identity_groups", "updated_at",
         ]
 
     @staticmethod
@@ -83,38 +99,62 @@ class MyImageSerializer(ImageUploadSerializer):
             return prefetched[0] if prefetched else None
         return obj.enhancement_results.order_by("-created_at").first()
 
+    @extend_schema_field(ImageEnhancementResultSerializer(allow_null=True))
     def get_latest_enhancement(self, obj):
         result = self._latest_result(obj)
         if result is None:
             return None
-        from enhancement.serializers import ImageEnhancementResultSerializer
         return ImageEnhancementResultSerializer(result, context=self.context).data
 
+    @extend_schema_field(FaceValidationResultSerializer(allow_null=True))
     def get_face_validation(self, obj):
         try:
             result = obj.face_validation
         except FaceValidationResult.DoesNotExist:
             return None
-        from validation.serializers import FaceValidationResultSerializer
         return FaceValidationResultSerializer(result).data
 
+    @extend_schema_field(ImageQualityDecisionSerializer(allow_null=True))
     def get_quality_decision(self, obj):
         try:
             result = obj.quality_decision
         except ImageQualityDecision.DoesNotExist:
             return None
-        from quality_control.serializers import ImageQualityDecisionSerializer
         return ImageQualityDecisionSerializer(result).data
 
+    @extend_schema_field(DuplicateAnalysisSerializer(allow_null=True))
     def get_duplicate_analysis(self, obj):
         try:
             result = obj.duplicate_analysis
         except DuplicateAnalysis.DoesNotExist:
             return None
-        from duplicates.serializers import DuplicateAnalysisSerializer
         return DuplicateAnalysisSerializer(result, context=self.context).data
 
-    def get_display_status(self, obj):
+    @extend_schema_field(IdentityAnalysisSerializer(allow_null=True))
+    def get_identity_analysis(self, obj):
+        try:
+            result = obj.identity_analysis
+        except Exception:
+            return None
+        return IdentityAnalysisSerializer(result).data
+
+    @extend_schema_field(IDENTITY_GROUP_REFERENCES)
+    def get_identity_groups(self, obj):
+        faces = getattr(obj, "prefetched_identity_faces", None)
+        if faces is not None:
+            # Prefetched by MyImageListView: no query per image.
+            groups = {}
+            for face in faces:
+                for membership in face.active_memberships:
+                    group = membership.identity_group
+                    if group is not None:
+                        groups.setdefault(group.pk, {"id": group.pk, "display_name": group.display_name})
+            return list(groups.values())
+        # order_by() clears the model ordering, which would otherwise leak into DISTINCT.
+        memberships = obj.identity_faces.filter(memberships__state__in=["auto_matched", "new_group", "confirmed"]).order_by().values("memberships__identity_group_id", "memberships__identity_group__display_name").distinct()
+        return [{"id": row["memberships__identity_group_id"], "display_name": row["memberships__identity_group__display_name"]} for row in memberships if row["memberships__identity_group_id"]]
+
+    def get_display_status(self, obj) -> str:
         if obj.status == "rejected":
             return "rejected"
         try:

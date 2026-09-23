@@ -125,6 +125,9 @@ def process_quality_decision(decision_id):
         result.processing_duration_ms = max(1, round((time.perf_counter() - started) * 1000))
         result.finished_at = timezone.now()
         result.save()
+        if decision == "needs_review":
+            from moderation.services import create_review_for_quality_decision
+            create_review_for_quality_decision(result)
         return result
     except Exception as error:
         result.status = ImageQualityDecision.Status.FAILED

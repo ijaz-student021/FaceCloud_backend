@@ -3,11 +3,16 @@ import logging
 from celery import shared_task
 from django.core.files import File
 from django.db import transaction
+from django.db.utils import InterfaceError, OperationalError
 from django.utils import timezone
 
 from .archives import build_package_archive, package_display_name
 from .models import DownloadPackage
 from .services import expire_due_packages, package_expiration_time
+
+# Transient infrastructure failures only (dropped DB connections). Business
+# and archive-building errors are handled per-record and must never retry.
+TRANSIENT_INFRASTRUCTURE_ERRORS = (OperationalError, InterfaceError)
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +76,16 @@ def process_download_package(package_id, task_id=""):
             temporary_path.unlink(missing_ok=True)
 
 
-@shared_task(bind=True, name="downloads.generate_package", acks_late=True)
+@shared_task(
+    bind=True,
+    name="downloads.generate_package",
+    acks_late=True,
+    autoretry_for=TRANSIENT_INFRASTRUCTURE_ERRORS,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    max_retries=3,
+)
 def generate_download_package_task(self, package_id):
     package = DownloadPackage.objects.filter(pk=package_id).first()
     if package is None:
@@ -82,12 +96,24 @@ def generate_download_package_task(self, package_id):
     if package is not None:
         from notifications.events import notify_download_result
         notify_download_result(package)
+        from activity.services import record_activity_event
+        record_activity_event(
+            package.owner, "download", f"package_{package.status}",
+            object_type="DownloadPackage", object_id=package.pk,
+        )
     return {
         "package_id": package_id,
         "status": package.status if package is not None else "deleted",
     }
 
 
-@shared_task(name="downloads.cleanup_expired")
+@shared_task(
+    name="downloads.cleanup_expired",
+    autoretry_for=TRANSIENT_INFRASTRUCTURE_ERRORS,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    max_retries=3,
+)
 def cleanup_expired_download_packages():
     return {"expired_packages": expire_due_packages()}
