@@ -1,5 +1,6 @@
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
@@ -20,6 +21,7 @@ from .services import enqueue_duplicate_analysis, review_duplicate_match
 class DuplicateImageAnalysisView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(responses={200: DuplicateAnalysisSerializer})
     def get(self, request, image_id):
         analysis = get_object_or_404(
             DuplicateAnalysis.objects.filter(owner=request.user),
@@ -29,6 +31,10 @@ class DuplicateImageAnalysisView(APIView):
             DuplicateAnalysisSerializer(analysis, context={"request": request}).data
         )
 
+    @extend_schema(
+        request=DuplicateAnalyzeRequestSerializer,
+        responses={202: DuplicateAnalysisSerializer},
+    )
     def post(self, request, image_id):
         image = get_object_or_404(
             ImageUpload.objects.filter(owner=request.user, status="uploaded").select_related(
@@ -102,6 +108,10 @@ class DuplicateMatchDetailView(generics.RetrieveAPIView):
 class DuplicateMatchReviewView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        request=DuplicateMatchReviewSerializer,
+        responses={200: DuplicateMatchSerializer},
+    )
     def patch(self, request, pk):
         match = get_object_or_404(
             DuplicateMatch.objects.filter(owner=request.user).select_related("analysis"),

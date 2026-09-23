@@ -7,9 +7,13 @@ from celery import shared_task
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.db import transaction
+from django.db.utils import InterfaceError, OperationalError
 from django.utils import timezone
 
 from .models import NotificationPreference, UserNotification
+
+# Transient infrastructure failures only (dropped DB connections).
+TRANSIENT_INFRASTRUCTURE_ERRORS = (OperationalError, InterfaceError)
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +106,13 @@ def cleanup_expired_notifications(now=None):
     return deleted
 
 
-@shared_task(name="notifications.cleanup_expired")
+@shared_task(
+    name="notifications.cleanup_expired",
+    autoretry_for=TRANSIENT_INFRASTRUCTURE_ERRORS,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    max_retries=3,
+)
 def cleanup_expired_notifications_task():
     return {"deleted_notifications": cleanup_expired_notifications()}

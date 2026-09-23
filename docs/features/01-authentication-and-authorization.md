@@ -211,13 +211,13 @@ Development uses the console email backend by default. Production requires real 
 
 ## 10. Automated tests
 
-The authentication suite contains 14 test methods covering registration, password validation, email verification, username/email login, role-based dashboard values, suspension, token refresh, profile changes, password reset, logout, account deletion, and administrator permissions.
+The authentication suite contains 21 test methods covering registration, password validation, email verification, username/email login, role-based dashboard values, suspension, token refresh, profile changes, password reset, logout, account deletion, administrator permissions, and the 2026-09-19 hardening (email change needs the password, logout token ownership, spoof-proof client IP, uniform unknown-account login).
 
 ```text
 Command: python manage.py test accounts --verbosity 2
 Latest result: Passed
 Combined authentication/upload suite: 29 tests passed
-Verification date: 2026-07-14
+Verification date: 2026-09-19 (full project suite: 361 tests passed)
 ```
 
 ## 11. Frontend integration
@@ -240,6 +240,74 @@ Frontend route guards improve user experience but do not replace backend permiss
 - The visual dashboards belong to the frontend project.
 - Moderator permissions exist, while moderator review endpoints belong to the later review-system feature.
 - Image and processing events will expand the activity timeline in later features.
+
+## 12a. Security review (2026-09-19)
+
+The authentication layer was reviewed end to end: JWT settings, the custom
+authentication class, verification, password reset, revocation, roles,
+throttling and the security-relevant settings defaults.
+
+**Confirmed sound, no change needed**
+
+- Access tokens live 15 minutes; refresh tokens rotate and are blacklisted.
+- `FaceCloudJWTAuthentication` re-checks verified / suspended / `token_version`
+  on every request, so a suspension or password change takes effect at once.
+- Verification and reset links use Django's signed token generator: they expire,
+  are bound to the user's password, last login and email, and a reset link
+  stops working once used. Reset and resend responses do not reveal whether an
+  account exists.
+- Only the `accounts` app exposes public endpoints; everything else falls back to
+  `IsAuthenticated`. Admin endpoints require `IsAdminRole`, and an administrator
+  cannot suspend, deactivate or demote themselves.
+- Role, verification and suspension flags are read-only on the self-service
+  profile serializer, so a user cannot escalate themselves.
+
+**Gaps found and fixed**
+
+| Gap | Fix |
+|---|---|
+| Throttling and the audit-log IP trusted `X-Forwarded-For`. With `NUM_PROXIES` unset, DRF keys the throttle on the whole header, so rotating the header bypassed every rate limit and forged the recorded address. | `REST_FRAMEWORK["NUM_PROXIES"]` from `TRUSTED_PROXY_COUNT` (default 0); `get_client_ip` now uses the same trusted-hop logic. |
+| A stolen access token could change the account email, then use password reset on the new mailbox to take the account over permanently. | Changing the email now requires `current_password`. |
+| Login skipped password hashing for unknown accounts, so response time revealed which usernames exist. | A dummy hash is computed for unknown accounts. |
+| Logout would blacklist any refresh token presented, including another user's. | The token must belong to the authenticated user. |
+| `CORS_ALLOW_ALL_ORIGINS` defaulted to on and the built-in development `SECRET_KEY` was usable with `DEBUG=False`. | CORS defaults to on only when `DEBUG` is on; startup fails if `DEBUG` is off and the key is the development default. |
+
+**Known limits, not changed**
+
+- ~~No per-account lockout~~ Added 2026-09-19, see "Login backoff" below.
+- Logout revokes the refresh token; the access token stays valid until it expires
+  (at most 15 minutes). "Log out everywhere" revokes both immediately.
+- Verification and password-reset links share one token generator, so a link of
+  one kind is technically accepted by the other endpoint. Both go only to the
+  account's own mailbox, so this is not exploitable today.
+- Access and refresh tokens are signed with `SECRET_KEY` (HS256).
+
+Frontend impact: `PATCH /api/user/profile/` must send `current_password` when it
+changes `email`; other profile edits are unchanged.
+
+## 12b. Login backoff (2026-09-19)
+
+The per-address throttle limits one client but not a guesser spread over many
+addresses. `accounts/lockout.py` slows guessing against a single account:
+
+- After `LOGIN_LOCK_THRESHOLD` (5) consecutive wrong passwords the account locks
+  for `LOGIN_LOCK_BASE_SECONDS` (30), doubling with every further failure up to
+  `LOGIN_LOCK_MAX_SECONDS` (15 minutes). Failures older than
+  `LOGIN_FAILURE_WINDOW_SECONDS` stop counting.
+- While locked, login returns **429** with a `Retry-After` header, **even for the
+  correct password**. The check happens before the password is verified.
+- Username and email of one account share one counter.
+- An identifier that matches no account is tracked identically, so neither the
+  lock nor its timing reveals which accounts exist.
+- The table stores only HMACs of the account, never an email or username.
+- A successful login, a password reset or a password change clears the counter.
+  The first lock in a run is written to the audit trail as `login_locked`;
+  refused attempts are `login_failed` with reason `locked`.
+- Idle counters are deleted daily (`accounts.cleanup_login_attempts`).
+
+Trade-off: anyone who knows a victim's email can keep them locked out, but only
+for at most 15 minutes at a time, the per-address throttle limits how fast one
+machine can do it, and a password reset clears the lock immediately.
 
 ## 13. Completion checklist
 

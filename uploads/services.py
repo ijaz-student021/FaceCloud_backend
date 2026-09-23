@@ -12,8 +12,16 @@ from django.utils import timezone
 from PIL import Image, ImageColor, ImageOps, UnidentifiedImageError
 from rest_framework.exceptions import ValidationError
 
-from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
+from .models import BatchImageProgress, ImagePreprocessingResult, ImageUpload, UploadBatch
 from .validators import safe_original_name, validate_image_file, validate_zip_archive
+
+
+class BatchHasNoFailedImages(ValidationError):
+    default_detail = "This batch has no failed images to retry."
+
+
+class BatchRetryLimitReached(ValidationError):
+    pass
 
 
 def _error_text(error):
@@ -69,10 +77,21 @@ def create_image_batch(owner, upload_type, files):
     from django.conf import settings
     if len(files) > settings.MAX_UPLOAD_BATCH_FILES:
         raise ValidationError(f"A batch cannot contain more than {settings.MAX_UPLOAD_BATCH_FILES} images.")
-    batch = UploadBatch.objects.create(owner=owner, upload_type=upload_type)
+    from organizations.services import get_default_organization
+    batch = UploadBatch.objects.create(
+        owner=owner, upload_type=upload_type, organization=get_default_organization(owner),
+    )
     from notifications.events import notify_upload_received
     transaction.on_commit(
         lambda batch_id=batch.pk: notify_upload_received(batch_id)
+    )
+    from activity.services import record_activity_event
+    transaction.on_commit(
+        lambda: record_activity_event(
+            owner, "upload", "upload_received",
+            object_type="UploadBatch", object_id=batch.pk,
+            details={"upload_type": upload_type},
+        )
     )
     for uploaded_file in files:
         try:
@@ -110,15 +129,25 @@ def create_image_batch(owner, upload_type, files):
 @transaction.atomic
 def create_zip_batch(owner, uploaded_zip):
     members = validate_zip_archive(uploaded_zip)
+    from organizations.services import get_default_organization
     batch = UploadBatch.objects.create(
         owner=owner,
         upload_type="zip",
         original_archive_name=safe_original_name(uploaded_zip.name),
+        organization=get_default_organization(owner),
     )
     from notifications.events import notify_upload_received
 
     transaction.on_commit(
         lambda batch_id=batch.pk: notify_upload_received(batch_id)
+    )
+    from activity.services import record_activity_event
+    transaction.on_commit(
+        lambda: record_activity_event(
+            owner, "upload", "upload_received",
+            object_type="UploadBatch", object_id=batch.pk,
+            details={"upload_type": "zip"},
+        )
     )
     uploaded_zip.seek(0)
     with zipfile.ZipFile(uploaded_zip) as archive:
@@ -225,6 +254,12 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
         ):
             from duplicates.services import enqueue_duplicate_analysis
             enqueue_duplicate_analysis(image_upload)
+        if settings.IDENTITY_AUTO_ANALYZE and not hasattr(image_upload, "identity_analysis"):
+            from identities.services import enqueue_identity_analysis
+            try:
+                enqueue_identity_analysis(image_upload)
+            except ValidationError:
+                pass
         if not hasattr(image_upload, "quality_decision"):
             from quality_control.services import enqueue_quality_analysis
             enqueue_quality_analysis(image_upload)
@@ -290,6 +325,18 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
         if settings.DUPLICATE_AUTO_ANALYZE:
             from duplicates.services import enqueue_duplicate_analysis
             enqueue_duplicate_analysis(image_upload, force=force)
+        if settings.IDENTITY_AUTO_ANALYZE:
+            from identities.services import enqueue_identity_analysis
+            try:
+                enqueue_identity_analysis(image_upload, force=force)
+            except ValidationError:
+                # Not being eligible yet (e.g. face validation rejected the
+                # image) is an expected outcome for this best-effort auto
+                # trigger, not a preprocessing failure. Letting it propagate
+                # would roll back this whole @transaction.atomic function,
+                # discarding the preprocessing result and face-validation
+                # result that had already succeeded.
+                pass
         from quality_control.services import enqueue_quality_analysis
         enqueue_quality_analysis(image_upload)
         if old_file_name and old_file_name != result.processed_file.name:
@@ -356,5 +403,69 @@ def enqueue_batch_preprocessing(batch):
             processing_error="The background processing queue is unavailable.",
             processing_finished_at=timezone.now(),
         )
+    batch.refresh_from_db()
+    return batch
+
+
+def retry_batch(batch):
+    """Requeue every failed image in ``batch`` from wherever it failed.
+
+    Used by both the owner-facing retry endpoint and the administrator's, so
+    both go through the exact same, already-tested logic. Raises
+    ``BatchHasNoFailedImages`` or ``BatchRetryLimitReached`` when it cannot
+    proceed; on success returns the refreshed batch.
+    """
+    from enhancement.models import EnhancementStatus
+    from enhancement.tasks import process_enhancement_image
+    from quality_control.services import enqueue_quality_analysis
+    from validation.services import validate_image_faces_safely
+    from .progress import sync_image_progress
+
+    failed = list(
+        BatchImageProgress.objects.filter(batch=batch, status="failed").select_related("image")
+    )
+    if not failed:
+        raise BatchHasNoFailedImages()
+    maximum = getattr(settings, "BATCH_PROGRESS_MAX_RETRIES", 3)
+    if batch.retry_count >= maximum:
+        raise BatchRetryLimitReached(f"The maximum of {maximum} batch retries has been reached.")
+
+    batch.cancellation_requested = False
+    batch.retry_count += 1
+    batch.processing_status = "queued"
+    batch.save(update_fields=["cancellation_requested", "retry_count", "processing_status", "updated_at"])
+
+    needs_preprocessing = False
+    for progress in failed:
+        progress.retry_count += 1
+        progress.status = "queued"
+        progress.failure_reason = ""
+        progress.finished_at = None
+        progress.save(update_fields=["retry_count", "status", "failure_reason", "finished_at", "updated_at"])
+        image = progress.image
+        if progress.failure_stage == "preprocessing":
+            ImagePreprocessingResult.objects.filter(image=image).update(
+                status="pending", failure_reason="",
+            )
+            needs_preprocessing = True
+        elif progress.failure_stage == "face_validation":
+            validate_image_faces_safely(image)
+            enqueue_quality_analysis(image)
+        elif progress.failure_stage == "quality_analysis":
+            enqueue_quality_analysis(image)
+        elif progress.failure_stage == "enhancement":
+            result = image.enhancement_results.filter(status=EnhancementStatus.FAILED).order_by("-created_at").first()
+            if result:
+                task_id = uuid.uuid4().hex
+                result.status = EnhancementStatus.QUEUED
+                result.task_id = task_id
+                result.failure_reason = ""
+                result.finished_at = None
+                result.save(update_fields=["status", "task_id", "failure_reason", "finished_at", "updated_at"])
+                process_enhancement_image.apply_async(args=[result.pk], task_id=task_id)
+        sync_image_progress(image.pk)
+
+    if needs_preprocessing:
+        enqueue_batch_preprocessing(batch)
     batch.refresh_from_db()
     return batch
