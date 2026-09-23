@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import ConsentPurpose
+from .models import ConsentPurpose, OrganizationExport
 
 
 class ConsentRequestSerializer(serializers.Serializer):
@@ -24,3 +24,14 @@ class FacialDataErasureSerializer(serializers.Serializer):
         if value is not True:
             raise serializers.ValidationError("Set confirm to true to permanently erase your facial data.")
         return value
+
+
+class OrganizationExportSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrganizationExport
+        fields = [
+            "id", "organization", "requested_by", "status", "file_size",
+            "row_counts", "truncated", "failure_reason", "generated_at",
+            "expires_at", "created_at",
+        ]
+        read_only_fields = fields

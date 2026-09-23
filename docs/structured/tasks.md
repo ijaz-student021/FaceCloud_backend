@@ -86,15 +86,21 @@
 
 ### T-006 — Biometric consent and retention
 
-- **Status:** In progress — backend done 2026-09-19 (`privacy` app, 71 tests,
-  plus 17 cipher tests): consent records, retention purge, erasure with
-  verification, export, audit report, deploy checks, AES-256-GCM embedding
+- **Status:** Done (backend) — 2026-09-19: `privacy` app, 71 tests plus 17
+  cipher tests: consent records, retention purge, erasure with verification,
+  personal export, audit report, deploy checks, AES-256-GCM embedding
   encryption with key ids and a re-encryption command, and stale-temp-file /
-  orphaned-media cleanup; both periodic jobs are on the beat schedule since
-  2026-09-19. Open: tenant-level export, frontend screens.
+  orphaned-media cleanup. 2026-09-23: organization-wide export
+  (`privacy.OrganizationExport`, 16 tests) -- an async job (queued/
+  generating/ready/failed, downloadable once ready, 24h TTL) covering
+  organization-owned batches/images/reviews while deliberately excluding a
+  member's personal consent/login/activity history, the same isolation rule
+  every other org-scoped endpoint in this codebase follows. All periodic
+  jobs are on the beat schedule. Open: frontend screens only.
 - Record consent purpose and timestamp. — Done
 - Add configurable embedding retention and deletion. — Done
-- Add account export and deletion verification. — Done (tenant export waits on T-008)
+- Add account export and deletion verification. — Done, including
+  organization-wide export (2026-09-23)
 - Document encryption-at-rest requirements. — Done; see `features/41-privacy-and-facial-data.md`
 
 ### T-007 — Moderator workflow completion
@@ -203,7 +209,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 34 | Connect completed system health API to an admin page | Next | T-024 |
 | 35 | Uploaded-image model comparison page | Done backend (2026-09-19, `docs/features/35-model-comparison.md`); frontend page remains | T-025 |
 | 36–40 | Complete live-camera release | Backlog | T-026–T-030 |
-| 41 | Consent, retention, encryption, export and erasure | Backend done (2026-09-19), incl. AES-GCM key rotation, temp/orphan cleanup and beat scheduling; frontend remains | T-006 |
+| 41 | Consent, retention, encryption, export and erasure | Backend done (2026-09-19, org-wide export added 2026-09-23), incl. AES-GCM key rotation, temp/orphan cleanup and beat scheduling; frontend remains | T-006 |
 | 43 | Private cloud/object storage | Backlog | T-031 |
 | 44 | OpenAPI schema for every APIView | Done (2026-09-19): zero schema warnings (enforced by a test), examples on the core flows, `docs/API_ERRORS.md` | T-032 |
 | 45 | Load, performance, camera and integration QA | Continuous | T-033 |

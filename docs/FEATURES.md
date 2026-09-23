@@ -795,6 +795,7 @@ Account and upload controls exist; advanced facial-data controls remain.
 - Consent records: append-only, policy-versioned, enforced on identity analysis and the identity guard when `BIOMETRIC_CONSENT_REQUIRED` is on — Complete backend
 - Facial-data erasure with verification (database recount and file check), also on consent withdrawal — Complete backend
 - Privacy export (own data as JSON; embeddings never exported) — Complete backend
+- Organization-wide export (async job, organization-owned data only, never a member's personal content) — Complete backend (2026-09-23)
 - Security audit reporting: administrator aggregate report and `check --deploy` findings — Complete backend
 - Encryption-at-rest configuration: embeddings use AES-256-GCM with key ids and a re-encryption command for rotation (legacy records stay readable); blank-key bug fixed and deploy checks added; stored images are now encrypted at rest too — Complete backend
 - Temporary-processing cleanup: stale ZIP build files and orphaned media, orphans report-only unless enabled — Complete backend

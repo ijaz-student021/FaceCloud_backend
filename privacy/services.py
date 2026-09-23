@@ -8,19 +8,23 @@ image deletion flow; face-detection boxes and duplicate-image hashes identify
 images, not people, and are left in place.
 """
 
+import hashlib
+import json
 import logging
+import uuid
 from collections import Counter
 from datetime import timedelta
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from .cleanup import stale_temp_archives
-from .models import BiometricConsent, ConsentPurpose, PrivacyRequest
+from .models import BiometricConsent, ConsentPurpose, OrganizationExport, PrivacyRequest
 
 logger = logging.getLogger(__name__)
 
@@ -345,6 +349,259 @@ def record_export_request(user):
         user, "privacy", "data_exported", object_type="PrivacyRequest", object_id=request.pk
     )
     return request
+
+
+def build_organization_export_payload(organization):
+    """An organization's own data as JSON-serialisable dicts.
+
+    Covers organization-*owned* content only -- batches, images, reviews,
+    membership, its own audit trail. Deliberately excludes anything keyed to
+    an individual member's personal account (consent, login, activity
+    history): organization membership must never expose a member's personal
+    content, the same rule every other org-scoped view in this codebase
+    follows. Biometric templates (protected_embedding/protected_centroid)
+    are never included, matching build_privacy_export's guarantee.
+    """
+    from duplicates.models import DuplicateMatch
+    from identities.models import IdentityGroup, IdentityMembership
+    from moderation.models import ModeratorReview
+    from organizations.models import OrganizationAuditEvent, OrganizationInvitation, OrganizationMembership
+    from quality_control.models import ImageQualityDecision
+    from uploads.models import ImageUpload, UploadBatch
+
+    limit = settings.ORGANIZATION_EXPORT_MAX_ROWS
+    truncated = {}
+    row_counts = {}
+
+    def collect(name, queryset, fields):
+        rows, was_truncated = _capped(queryset, fields, limit)
+        truncated[name] = was_truncated
+        row_counts[name] = len(rows)
+        return rows
+
+    members = collect(
+        "members",
+        OrganizationMembership.objects.filter(organization=organization).select_related("user"),
+        ("id", "user__id", "user__username", "user__email", "role", "status", "created_at"),
+    )
+    invitations = collect(
+        "invitations",
+        OrganizationInvitation.objects.filter(organization=organization),
+        ("id", "email", "role", "status", "expires_at", "created_at"),
+    )
+    batches = collect(
+        "batches",
+        UploadBatch.objects.filter(organization=organization),
+        ("id", "owner_id", "upload_type", "status", "processing_status", "created_at"),
+    )
+    images = collect(
+        "images",
+        ImageUpload.objects.filter(batch__organization=organization),
+        ("id", "batch_id", "original_name", "status", "created_at"),
+    )
+    quality_decisions = collect(
+        "quality_decisions",
+        ImageQualityDecision.objects.filter(image__batch__organization=organization),
+        ("id", "image_id", "status", "decision", "overall_score", "created_at"),
+    )
+    duplicate_matches = collect(
+        "duplicate_matches",
+        DuplicateMatch.objects.filter(source_image__batch__organization=organization),
+        ("id", "source_image_id", "matched_image_id", "match_type", "review_status", "similarity_score", "created_at"),
+    )
+    identity_groups = collect(
+        "identity_groups",
+        IdentityGroup.objects.filter(organization=organization),
+        ("id", "display_name", "state", "member_count", "created_at"),
+    )
+    identity_memberships = collect(
+        "identity_memberships",
+        IdentityMembership.objects.filter(identity_group__organization=organization),
+        ("id", "identity_face_id", "identity_group_id", "state", "similarity_score", "created_at"),
+    )
+    moderator_reviews = collect(
+        "moderator_reviews",
+        ModeratorReview.objects.filter(organization=organization),
+        ("id", "image_id", "source", "status", "ai_recommendation", "decision_reason", "decided_at", "created_at"),
+    )
+    audit_events = collect(
+        "audit_events",
+        OrganizationAuditEvent.objects.filter(organization=organization),
+        ("id", "actor_id", "action", "target_type", "target_id", "reason", "created_at"),
+    )
+    return {
+        "format_version": EXPORT_FORMAT_VERSION,
+        "generated_at": timezone.now(),
+        "organization": {
+            "id": organization.pk,
+            "name": organization.name,
+            "slug": organization.slug,
+            "status": organization.status,
+            "plan": organization.plan,
+            "created_at": organization.created_at,
+        },
+        "members": members,
+        "invitations": invitations,
+        "batches": batches,
+        "images": images,
+        "quality_decisions": quality_decisions,
+        "duplicate_matches": duplicate_matches,
+        "identity": {
+            "groups": identity_groups,
+            "memberships": identity_memberships,
+            "note": (
+                "Face embeddings and group centroids are biometric templates and "
+                "are not included in exports."
+            ),
+        },
+        "moderator_reviews": moderator_reviews,
+        "audit_events": audit_events,
+        "row_counts": row_counts,
+        "truncated": truncated,
+        "row_limit": limit,
+    }
+
+
+def organization_export_expiration_time():
+    return timezone.now() + timedelta(hours=settings.ORGANIZATION_EXPORT_TTL_HOURS)
+
+
+def enqueue_organization_export(*, organization, requested_by):
+    """Create (or reuse) the organization's in-flight export and queue the build.
+
+    Mirrors downloads.services.enqueue_download_package: one active
+    (queued/generating) export per organization, dispatched only after the
+    row commits so the task can never fire before its own row exists.
+    """
+    from .tasks import generate_organization_export_task
+
+    active_filters = {
+        "organization": organization,
+        "status__in": [OrganizationExport.Status.QUEUED, OrganizationExport.Status.GENERATING],
+    }
+    try:
+        with transaction.atomic():
+            active = OrganizationExport.objects.select_for_update().filter(**active_filters).first()
+            if active:
+                return active, False
+            task_id = uuid.uuid4().hex
+            export = OrganizationExport.objects.create(
+                organization=organization, requested_by=requested_by,
+                status=OrganizationExport.Status.QUEUED, task_id=task_id,
+            )
+
+            def dispatch():
+                try:
+                    generate_organization_export_task.apply_async(args=[export.pk], task_id=task_id)
+                except Exception:
+                    logger.exception("Could not queue organization export_id=%s.", export.pk)
+                    OrganizationExport.objects.filter(pk=export.pk).update(
+                        status=OrganizationExport.Status.FAILED,
+                        failure_reason="The export queue is unavailable.",
+                    )
+
+            transaction.on_commit(dispatch)
+    except IntegrityError:
+        active = OrganizationExport.objects.filter(**active_filters).first()
+        if active:
+            return active, False
+        raise
+    export.refresh_from_db()
+    return export, True
+
+
+def process_organization_export(export_id, task_id=""):
+    with transaction.atomic():
+        export = OrganizationExport.objects.select_for_update().filter(pk=export_id).first()
+        if export is None:
+            return None
+        if export.status == OrganizationExport.Status.READY:
+            return export
+        if export.task_id and task_id and export.task_id != task_id:
+            return export
+        export.status = OrganizationExport.Status.GENERATING
+        export.failure_reason = ""
+        export.save(update_fields=["status", "failure_reason", "updated_at"])
+
+    try:
+        export = OrganizationExport.objects.select_related("organization").get(pk=export_id)
+        payload = build_organization_export_payload(export.organization)
+        content = json.dumps(payload, indent=2, sort_keys=True, default=str).encode("utf-8")
+        checksum = hashlib.sha256(content).hexdigest()
+        with transaction.atomic():
+            locked = OrganizationExport.objects.select_for_update().filter(pk=export_id).first()
+            if locked is None:
+                return None
+            if locked.task_id and task_id and locked.task_id != task_id:
+                return locked
+            if locked.export_file:
+                locked.export_file.delete(save=False)
+            locked.export_file.save(
+                f"organization-export-{export_id}.json", ContentFile(content), save=False,
+            )
+            locked.file_size = len(content)
+            locked.file_checksum_sha256 = checksum
+            locked.row_counts = payload["row_counts"]
+            locked.truncated = payload["truncated"]
+            locked.status = OrganizationExport.Status.READY
+            locked.failure_reason = ""
+            locked.generated_at = timezone.now()
+            locked.expires_at = organization_export_expiration_time()
+            locked.save()
+        from organizations.models import OrganizationAuditEvent
+        from organizations.services import record_audit_event
+        record_audit_event(
+            locked.organization, locked.requested_by, OrganizationAuditEvent.Action.ORGANIZATION_DATA_EXPORTED,
+            target_type="OrganizationExport", target_id=locked.pk,
+        )
+        return locked
+    except Exception:
+        logger.exception("Could not generate organization export_id=%s.", export_id)
+        with transaction.atomic():
+            failed = OrganizationExport.objects.select_for_update().filter(pk=export_id).first()
+            if failed is None:
+                return None
+            if failed.export_file:
+                failed.export_file.delete(save=False)
+            failed.export_file = ""
+            failed.status = OrganizationExport.Status.FAILED
+            failed.failure_reason = "The organization export could not be generated safely."
+            failed.file_size = 0
+            failed.file_checksum_sha256 = ""
+            failed.expires_at = None
+            failed.save()
+            return failed
+
+
+def expire_organization_export_if_needed(export, now=None):
+    now = now or timezone.now()
+    if (
+        export.status == OrganizationExport.Status.READY
+        and export.expires_at
+        and export.expires_at <= now
+    ):
+        if export.export_file:
+            export.export_file.delete(save=False)
+        export.status = OrganizationExport.Status.EXPIRED
+        export.export_file = ""
+        export.file_size = 0
+        export.file_checksum_sha256 = ""
+        export.save(update_fields=[
+            "status", "export_file", "file_size", "file_checksum_sha256", "updated_at",
+        ])
+        return True
+    return False
+
+
+def expire_due_organization_exports(now=None):
+    now = now or timezone.now()
+    queryset = OrganizationExport.objects.filter(
+        status=OrganizationExport.Status.READY, expires_at__lte=now,
+    )
+    expired = 0
+    for export in queryset.iterator():
+        expired += int(expire_organization_export_if_needed(export, now=now))
+    return expired
 
 
 def _embedding_fields():

@@ -2,12 +2,13 @@
 
 ## Status
 
-Backend complete for consent, erasure with verification, retention, export,
-audit reporting, deployment checks, embedding encryption with key rotation,
-and temporary-file and orphaned-media cleanup (`privacy` app and
-`identities/storage.py`). Still open: encryption of stored images
-(Feature 43) and the consent screens in the frontend. Both jobs are on the Celery
-beat schedule (see [Feature 20 operations](20-background-job-operations.md)). Details under "Open items".
+Backend complete for consent, erasure with verification, retention, personal
+and organization-wide export, audit reporting, deployment checks, embedding
+encryption with key rotation, and temporary-file and orphaned-media cleanup
+(`privacy` app and `identities/storage.py`). Still open: encryption of
+stored images (Feature 43) and the consent/export screens in the frontend.
+All jobs are on the Celery beat schedule (see
+[Feature 20 operations](20-background-job-operations.md)). Details under "Open items".
 
 ## What counts as facial data
 
@@ -121,6 +122,39 @@ and centroids are never exported** (only a count), so a leaked export cannot
 be used to recognise the person. Each collection is capped at
 `PRIVACY_EXPORT_MAX_ROWS` and flagged in `truncated`.
 
+### Organization (tenant) export
+
+`POST /api/organizations/{id}/export/` (owner or moderator) queues an
+organization-wide export instead — every batch, image, quality/duplicate
+decision, identity group, and moderator review the organization owns,
+covering an order of magnitude more data than the personal export above. It
+follows the same async job pattern as `downloads.DownloadPackage` /
+`reports.ProcessingReport` rather than the personal export's synchronous,
+in-request response: `queued` → `generating` → `ready`/`failed`, downloaded
+once ready via `GET .../{export_id}/download/` (409 if not ready yet, 410 if
+expired). A second request while one is already in flight returns the
+existing job instead of creating a duplicate.
+
+**Scope boundary:** organization membership must never expose a member's
+*personal* content, the same rule every other org-scoped endpoint in this
+codebase follows — so this export includes only organization-*owned* data
+(members, invitations, batches, images, quality/duplicate decisions, identity
+groups and memberships, moderator reviews, the organization's own audit
+trail) and deliberately excludes anything keyed to an individual member's
+personal account: consent history, sign-in events, activity events, and
+personal privacy requests all stay out, even for the organization owner.
+Embeddings and centroids are never included, same guarantee as the personal
+export. Every generated export writes an `OrganizationAuditEvent`
+(`organization_data_exported`) and expires after
+`ORGANIZATION_EXPORT_TTL_HOURS`, cleaned up by
+`privacy.cleanup_organization_exports` on the Celery beat schedule.
+
+Deeper per-stage artifacts (preprocessing metadata, enhancement results,
+identity change history, existing download packages/reports) are left out of
+this first delivery to keep the payload focused on what
+[the moderator/organization spec](27-31-46-moderator-organization-panel.md)'s
+own "organization data visibility" list names directly.
+
 ## Encryption at rest - what is actually implemented
 
 Face embeddings and group centroids are stored as `protected_*` binary
@@ -194,17 +228,23 @@ key protected it.
 | `DELETE /api/privacy/facial-data/` | Erase and verify (body must be `{"confirm": true}`) |
 | `GET /api/privacy/export/` | JSON data export |
 | `GET /api/privacy/audit/` | Administrator-only aggregate report (consent counts, requests, unverified erasures, retention, encryption posture) |
+| `POST /api/organizations/{id}/export/` | Owner or moderator: queue an organization-wide export (reuses the existing one if already in flight) |
+| `GET /api/organizations/{id}/export/` | List the organization's past/current exports |
+| `GET /api/organizations/{id}/export/{export_id}/` | Export status and row counts |
+| `GET /api/organizations/{id}/export/{export_id}/download/` | Download once `ready`; 409 if not ready, 410 if expired |
 
 ## Settings
 
 `BIOMETRIC_CONSENT_REQUIRED`, `BIOMETRIC_CONSENT_POLICY_VERSION`,
 `FACIAL_DATA_RETENTION_DAYS`, `PRIVACY_EXPORT_MAX_ROWS`,
+`ORGANIZATION_EXPORT_MAX_ROWS`, `ORGANIZATION_EXPORT_TTL_HOURS`,
 `IDENTITY_EMBEDDING_KEY`. Throttle scopes: `privacy_consent`,
-`privacy_export`, `privacy_erasure`.
+`privacy_export`, `privacy_erasure`, `org_export`.
 
 ## Open items
 
-- Frontend: consent screen, "delete my face data", export download.
+- Frontend: consent screen, "delete my face data", export download (personal
+  and organization).
 - Decide whether to enable `ORPHAN_MEDIA_CLEANUP_ENABLED` after reviewing a
   few `--dry-run` reports.
 - In production, set a dedicated `IDENTITY_EMBEDDING_KEY`, then run

@@ -132,6 +132,7 @@ class OrganizationAuditEvent(models.Model):
         MEMBER_REMOVED = "member_removed", "Member removed"
         MODERATOR_REVIEW_DECIDED = "moderator_review_decided", "Moderator review decided"
         MODERATOR_REVIEW_ESCALATED = "moderator_review_escalated", "Moderator review escalated"
+        ORGANIZATION_DATA_EXPORTED = "organization_data_exported", "Organization data exported"
 
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="audit_events",
