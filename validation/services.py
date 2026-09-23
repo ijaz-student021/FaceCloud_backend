@@ -45,7 +45,8 @@ class OpenCVHaarFaceDetector:
     version = HAAR_DETECTOR_VERSION
     confidence_type = HEURISTIC_CONFIDENCE_TYPE
 
-    def detect(self, gray):
+    def detect(self, image):
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
         boxes, scores = _detect(gray)
         count = len(boxes)
         return FaceDetection(
@@ -59,8 +60,62 @@ class OpenCVHaarFaceDetector:
         )
 
 
+class OpenCVYuNetFaceDetector:
+    name = "opencv_yunet"
+    version = "s_dynamic_v1"
+    confidence_type = "yunet_detection_score"
+
+    def __init__(self):
+        from identities.providers import verify_model_checksum
+
+        verify_model_checksum(settings.YUNET_MODEL_PATH, settings.YUNET_MODEL_SHA256)
+        try:
+            self.detector = cv2.FaceDetectorYN_create(
+                settings.YUNET_MODEL_PATH,
+                "",
+                (320, 320),
+                settings.YUNET_SCORE_THRESHOLD,
+                settings.YUNET_NMS_THRESHOLD,
+                settings.YUNET_TOP_K,
+            )
+        except cv2.error as error:
+            raise ValidationError("The configured YuNet detector cannot be loaded safely.") from error
+
+    def detect(self, image):
+        if image is None or image.size == 0:
+            raise ValidationError("The image cannot be inspected for faces safely.")
+        if image.ndim == 2:
+            image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+        height, width = image.shape[:2]
+        self.detector.setInputSize((width, height))
+        try:
+            _result, rows = self.detector.detect(image)
+        except cv2.error as error:
+            raise ValidationError("YuNet face detection failed safely.") from error
+        rows = [] if rows is None else rows
+        boxes, scores, landmarks = [], [], []
+        for row in rows:
+            boxes.append(tuple(int(round(value)) for value in row[:4]))
+            landmarks.append([
+                (float(row[offset]), float(row[offset + 1]))
+                for offset in range(4, 14, 2)
+            ])
+            scores.append(round(float(row[14]), 6))
+        return FaceDetection(
+            boxes=boxes,
+            scores=scores,
+            landmarks=landmarks,
+            landmark_scores=list(scores),
+            detector=self.name,
+            detector_version=self.version,
+            confidence_type=self.confidence_type,
+        )
+
+
 def get_face_detector():
     """Return the configured detector through a replaceable adapter contract."""
+    if settings.FACE_DETECTOR_PROVIDER == "yunet_v1":
+        return OpenCVYuNetFaceDetector()
     return OpenCVHaarFaceDetector()
 
 
@@ -286,7 +341,7 @@ def validate_image_faces(image_upload):
     image = _read_image(preprocessing)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     gray = cv2.equalizeHist(gray)
-    detection = get_face_detector().detect(gray)
+    detection = get_face_detector().detect(image)
     _validate_detection_contract(detection)
     height, width = gray.shape
     image_area = float(width * height)
@@ -302,6 +357,13 @@ def validate_image_faces(image_upload):
             "x": x, "y": y, "width": face_width, "height": face_height,
             "area_ratio": round((face_width * face_height) / image_area, 4),
             "confidence": confidence,
+            "standardized_box": {
+                "x": x, "y": y, "width": face_width, "height": face_height,
+            },
+            "standardized_landmarks": [
+                {"x": round(float(point[0]), 3), "y": round(float(point[1]), 3)}
+                for point in (landmarks or [])
+            ],
         }
         if settings.PER_FACE_METRICS_ENABLED:
             face["confidence_type"] = detection.confidence_type
@@ -367,6 +429,9 @@ def validate_image_faces(image_upload):
                     "reason": "detector_does_not_provide_landmarks",
                 },
             })
+        else:
+            face["landmarks"] = face["standardized_landmarks"]
+            face["landmark_confidence"] = landmark_score
         enriched_faces.append(face)
     faces = enriched_faces
     faces.sort(key=lambda face: face["area_ratio"], reverse=True)

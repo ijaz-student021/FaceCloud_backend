@@ -92,6 +92,7 @@ class DownloadEvent(models.Model):
         EDITED_IMAGE = "edited_image", "Edited image"
         PROCESSING_REPORT = "processing_report", "Processing report"
         BATCH_PACKAGE = "batch_package", "Batch package"
+        IDENTITY_GROUP_PACKAGE = "identity_group_package", "Identity group package"
 
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
