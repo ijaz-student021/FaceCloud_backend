@@ -554,31 +554,34 @@ Allows controlled external viewing without exposing a user account.
 
 ## 10. Moderation, activity, and notifications
 
-### Feature 27: Moderator review system — Partial
+### Feature 27: Moderator review system — Partial (T-007 Phases A-C done, 2026-09-23)
 
-The global role and reusable permission foundation exists; organization-scoped
-member management and the operational review workflow remain.
+Organization membership/invitation management (T-008 Phase A) and the review-
+decision core (T-007 Phase C) are done; batch monitoring, notifications, and
+reports are not yet built. See `moderation/` and
+`docs/features/27-31-46-moderator-organization-panel.md`.
 
-- Organization-scoped moderator access
-- Active-organization member directory with no visibility into other organizations
-- Personal user content remains private and is never exposed through organization membership alone
-- Moderator access is limited to organization-owned content or content explicitly shared for review
-- Out-of-scope users and resources return a non-disclosing not-found response
-- Invite, resend, cancel, deactivate, reactivate, and remove-member workflows
-- Membership removal instead of unsafe global-account deletion
-- Protected owner, administrator, and last-owner rules
-- Organization dashboard summary and operational metrics
-- Organization batch monitoring, retry, reprocessing, and safe cancellation
-- Duplicate image, face, and identity-group review
-- Moderator assignment, deadline, and escalation notifications
-- Organization-scoped CSV, PDF, and JSON reports and exports
-- Low-confidence review queue
-- Original/enhanced comparison
-- Approve, reject, correct, reprocess, escalate, or keep in review
-- Rejection-reason management
-- Identity correction
-- Duplicate-group merging
-- Immutable membership and moderator audit history
+- Organization-scoped moderator access — Done (`OrganizationScopedMixin`,
+  reused unchanged from `organizations/` for every moderation endpoint)
+- Active-organization member directory with no visibility into other organizations — Done (T-008 Phase A)
+- Personal user content remains private and is never exposed through organization membership alone — Done (unchanged by any phase; see Feature 46)
+- Moderator access is limited to organization-owned content or content explicitly shared for review — Done for the three review sources (quality, duplicate, identity); general content browsing (batch monitoring) is open
+- Out-of-scope users and resources return a non-disclosing not-found response — Done
+- Invite, resend, cancel, deactivate, reactivate, and remove-member workflows — Done (T-008 Phase A)
+- Membership removal instead of unsafe global-account deletion — Done (T-008 Phase A)
+- Protected owner, administrator, and last-owner rules — Done (T-008 Phase A)
+- Organization dashboard summary and operational metrics — Partial (review-queue counts done; batch/storage/member metrics open)
+- Organization batch monitoring, retry, reprocessing, and safe cancellation — Open
+- Duplicate image, face, and identity-group review — Partial (duplicate-match review done with write-back; identity-group review still only reachable via the existing owner-only self-review path -- see T-007's note on why write-back was deferred)
+- Moderator assignment, deadline, and escalation notifications — Open (escalation itself works; notifications do not exist yet)
+- Organization-scoped CSV, PDF, and JSON reports and exports — Open
+- Low-confidence review queue — Done (`ModeratorReview`, created by additive hooks in identities/quality_control/duplicates)
+- Original/enhanced comparison — Open
+- Approve, reject, correct, reprocess, escalate, or keep in review — Partial (approve/reject/keep-in-review/escalate all work; `correct` and `reprocess` have no defined outcome yet)
+- Rejection-reason management — Done (`decision_reason` on every decision, audited)
+- Identity correction — Open (deferred write-back, see above)
+- Duplicate-group merging — Open
+- Immutable membership and moderator audit history — Done (`OrganizationAuditEvent`, both phases)
 
 ### Feature 28: Complete user activity timeline — Complete backend
 
@@ -861,12 +864,12 @@ Protects completed behavior from regression as the platform grows.
 - Manual registration, token, profile, and real upload verification
 - Planned enhancement, face, queue, moderator, storage, and live-load tests
 
-### Feature 46: Organization and tenant management — In progress (T-008 Phases A+B complete, 2026-09-22)
+### Feature 46: Organization and tenant management — In progress (T-008 Phases A-C complete, 2026-09-23)
 
 Separates customer organizations and provides safe organization-level ownership,
 membership, moderation, and data access. See the full design in
 `docs/features/27-31-46-moderator-organization-panel.md`; `organizations/tests.py`
-(32 tests) covers the rules below.
+(32 tests) and `moderation/` (23 tests) cover the rules below.
 
 - Organization creation, status, subscription, quota, and owner management — Done
   (admin-created orgs; self-service org creation is not offered, matching the
@@ -875,23 +878,23 @@ membership, moderation, and data access. See the full design in
 - Secure, expiring member invitations — Done (hashed tokens, resend/cancel/accept,
   role restricted to moderator/member — an invitation can never grant ownership)
 - Organization-scoped uploads, images, jobs, groups, reports, and reviews — Partial
-  (`UploadBatch`/`IdentityGroup` carry an `organization` field, tagged at
-  creation and backfilled for existing rows; scoped down from an `organization`
-  column on every owner-scoped model to just these two, since every other
-  content model reaches its organization transitively through its FK to one
-  of them -- there is no org-scoped query surface yet to exercise those two
-  fields, which is T-007/Phase C)
-- Explicit content ownership and visibility fields for personal, organization-owned, and review-shared data — Open (Phase C)
-- Organization membership does not automatically grant access to a member's personal content — Done (every existing owner-scoped endpoint is unchanged by Phases A/B; this is verified by the fact that no view's queryset was touched)
-- Time-bounded, revocable review access where temporary moderator visibility is required — Open (T-007 Phase C)
-- Member activation, deactivation, removal, and resource-retention policies — Done
-  (activation/deactivation/removal with protected-owner and last-owner rules;
-  resource-retention/reassignment of a removed member's work waits on Phase C,
-  since there is no review-workflow yet to reassign)
+  (`UploadBatch`/`IdentityGroup` carry an `organization` field; `ModeratorReview`
+  is the first real org-scoped query surface over that data -- quality,
+  duplicate, and identity review queues. General batch/job monitoring and
+  reports are still open)
+- Explicit content ownership and visibility fields for personal, organization-owned, and review-shared data — Open
+- Organization membership does not automatically grant access to a member's personal content — Done (every existing owner-scoped endpoint is unchanged by any phase; this is verified by the fact that no view's queryset was touched)
+- Time-bounded, revocable review access where temporary moderator visibility is required — Open (a review is currently permanent once created, not time-bounded)
+- Member activation, deactivation, removal, and resource-retention policies — Partial
+  (activation/deactivation/removal with protected-owner and last-owner rules
+  done; resource-retention/reassignment of a removed member's open reviews is
+  not yet implemented)
 - Prevention of cross-organization access and face matching by default — Partial
-  (organization membership/invitation/audit APIs are isolated and tested —
-  `OrganizationIsolationTests`; content and face-matching isolation is Phase B)
-- Queryset, object-permission, download, report, and background-task tenant isolation — Open (T-007/Phase C, the first org-scoped query surface)
+  (organization membership/invitation/audit APIs and moderator review APIs are
+  isolated and tested — `OrganizationIsolationTests`,
+  `ModeratorReviewIsolationTests`; general content isolation beyond the
+  review workflow is open)
+- Queryset, object-permission, download, report, and background-task tenant isolation — Partial (done for `ModeratorReview`; download/report/background-task isolation is open)
 - Organization audit history — Done (`OrganizationAuditEvent`, immutable, written
   by every membership/invitation mutation)
 - Safe backfill of existing users and content into personal organizations — Done

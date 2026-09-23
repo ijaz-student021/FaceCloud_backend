@@ -147,6 +147,9 @@ def process_identity_analysis(analysis_id):
                     method = "ambiguous_centroid_cosine_v1"
                     review += 1
                 membership = IdentityMembership.objects.create(owner=locked.owner, identity_face=face, identity_group=group, similarity_score=best, matching_distance=(1 - best if best is not None else None), state=state, decision_method=method, evidence={"best_score": best, "second_best_score": second, "threshold": settings.IDENTITY_MATCH_THRESHOLD, "ambiguity_margin": settings.IDENTITY_AMBIGUITY_MARGIN})
+                if state == IdentityMembership.State.NEEDS_REVIEW:
+                    from moderation.services import create_review_for_identity_membership
+                    create_review_for_identity_membership(membership)
                 if state in _confirmed_states():
                     _refresh_group(group)
             for group in IdentityGroup.objects.filter(pk__in=[pk for pk in old_group_ids if pk]):
