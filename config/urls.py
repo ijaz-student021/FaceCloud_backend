@@ -42,4 +42,5 @@ urlpatterns = [
     path("api/shares/", include("sharing.urls")),
     path("api/system/", include("operations.urls")),
     path("api/organizations/", include("organizations.urls")),
+    path("api/organizations/", include("moderation.urls")),
 ]

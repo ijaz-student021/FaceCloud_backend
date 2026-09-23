@@ -74,6 +74,7 @@ INSTALLED_APPS = [
     "privacy",
     "sharing",
     "organizations",
+    "moderation",
 ]
 
 MIDDLEWARE = [

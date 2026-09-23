@@ -130,6 +130,8 @@ class OrganizationAuditEvent(models.Model):
         MEMBER_ROLE_CHANGED = "member_role_changed", "Member role changed"
         MEMBER_STATUS_CHANGED = "member_status_changed", "Member status changed"
         MEMBER_REMOVED = "member_removed", "Member removed"
+        MODERATOR_REVIEW_DECIDED = "moderator_review_decided", "Moderator review decided"
+        MODERATOR_REVIEW_ESCALATED = "moderator_review_escalated", "Moderator review escalated"
 
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="audit_events",

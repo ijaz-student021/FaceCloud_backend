@@ -99,10 +99,35 @@
 
 ### T-007 — Moderator workflow completion
 
-- **Status:** Backlog
-- Organization-scoped queues and decisions
-- Corrections, reasons, and complete audit history
-- Frontend moderator dashboard integration
+- **Status:** In progress — Phase C (review-decision core) done 2026-09-23:
+  new `moderation` app with `ModeratorReview`, created by additive hooks next
+  to the three pipelines that already land on an uncertain result
+  (`identities`, `quality_control`, `duplicates` services.py -- no existing
+  decision logic was rewritten). Org-scoped list/detail/decision/escalate
+  endpoints and a dashboard-counts endpoint, all gated to the organization's
+  owner/moderator role via the same `OrganizationScopedMixin` the
+  organizations app uses, so cross-org access is a 404 exactly like every
+  other org-scoped endpoint. Decisions write back into the underlying
+  quality decision / duplicate match for the `approve`/`reject` actions
+  (the two source types where that write is a safe, side-effect-free status
+  flip). 23 tests (`moderation/test_hooks.py`, `moderation/tests.py`).
+  Deliberately not attempted in this phase, flagged rather than silently
+  dropped: identity-membership write-back (the only existing write path,
+  `identities.services.review_membership()`, is owner-gated by design and
+  has cascading group-centroid/member-count side effects that deserve a
+  dedicated change, not a rushed relaxation of a security-relevant filter);
+  moderator notifications; org-scoped CSV/PDF/JSON reports; and
+  batch-management moderator actions (retry/reprocess/cancel) reusing the
+  existing admin batch endpoints. These remain open, tracked below.
+- Organization-scoped queues and decisions — Done for quality and duplicate
+  reviews; identity-membership decisions still only reachable via the
+  existing owner-only self-review path
+- Corrections, reasons, and complete audit history — Partial (every
+  decision/escalation writes an `OrganizationAuditEvent`; a `correct`
+  action exists on the API but has no defined outcome for quality/duplicate,
+  since both are binary AI recommendations -- it only has real meaning for
+  identity, which is deferred)
+- Frontend moderator dashboard integration — Open (no frontend repo in this workspace)
 
 ### T-008 — Organization and tenant management
 
@@ -125,15 +150,15 @@
   (`organizations.services.get_default_organization`); existing rows were
   backfilled. Owner-scoped access is unchanged everywhere -- org membership
   still does not grant access to a member's personal content, per the spec.
-  Open: T-007's moderator review workflow (Phase C), the first real consumer
-  of these two fields.
+  T-007's moderator review workflow (Phase C, the first real consumer of
+  these two fields) is done as of 2026-09-23 -- see T-007 below.
 - Tenant membership and moderator assignment — Done (Phase A)
 - Tenant-scoped queries, storage, reports, embeddings, and policies — Partial
-  (Phase B tags new/backfilled batches and identity groups with an
-  organization; the org-scoped query surface itself is T-007/Phase C)
+  (Phase C's `ModeratorReview` is the first org-scoped query surface, covering
+  quality/duplicate/identity review queues and a dashboard; reports, storage
+  quotas, and embedding-level policies are still open)
 - Automated cross-tenant isolation tests — Done for organization/membership APIs
-  (Phase A); content-level isolation tests land with Phase C's org-scoped
-  queries, since Phase B added no new query surface to isolate yet
+  (Phase A) and moderator review APIs (Phase C, `moderation/tests.py`)
 
 ## 4. Platform and frontend tasks
 
@@ -168,7 +193,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 24 | Connect completed identity-group ZIP API to Person Folders | Next | T-015 |
 | 25 | Export watermark options | Done backend (2026-09-19, `docs/features/25-watermark-options.md`); frontend controls remain | T-016 |
 | 26 | Secure expiring share links | Done backend (2026-09-19, `docs/features/26-secure-share-links.md`); frontend remains | T-017 |
-| 27 | Organization-scoped moderator review | Backlog | T-007 |
+| 27 | Organization-scoped moderator review | In progress (Phase C done 2026-09-23) | T-007 |
 | 28 | Complete owner activity timeline | Done backend (2026-09-18); frontend remains | T-018 |
 | 29 | Notification panel and preferences UI | Next | T-019 |
 | 30 | User dashboard and My Images integration | Next | T-020 |
@@ -182,7 +207,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 43 | Private cloud/object storage | Backlog | T-031 |
 | 44 | OpenAPI schema for every APIView | Done (2026-09-19): zero schema warnings (enforced by a test), examples on the core flows, `docs/API_ERRORS.md` | T-032 |
 | 45 | Load, performance, camera and integration QA | Continuous | T-033 |
-| 46 | Organization and tenant management | In progress (Phases A+B done 2026-09-22) | T-008 |
+| 46 | Organization and tenant management | In progress (Phases A+B done 2026-09-22, C done 2026-09-23) | T-008 |
 | 47 | Gallery-editor frontend integration | Next | T-034 |
 
 ### Register workstreams

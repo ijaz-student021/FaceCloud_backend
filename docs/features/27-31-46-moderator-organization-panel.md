@@ -9,15 +9,27 @@ The moderator is not a FaceCloud platform administrator and cannot access anothe
 organization's resources or global infrastructure settings.
 
 Current implementation status: **In progress**. T-008 Phase A (organization
-core: models, personal-organization backfill, membership/invitation APIs,
-audit trail, cross-org isolation tests) and Phase B (organization-scoping
-content) are done as of 2026-09-22 — see `organizations/` and the completion
-checklist in section 15. Phase B was scoped down from adding an `organization`
-column to every owner-scoped model: only `UploadBatch` and `IdentityGroup`
-carry one (the two models with no single parent to derive it from
-transitively), tagged at creation and backfilled for existing rows. T-007's
-moderator review workflow (Phase C) -- the first thing to actually query by
-organization -- is not yet started.
+core), Phase B (organization-scoping content), and T-007 Phase C (the
+review-decision core) are all done as of 2026-09-23 — see `organizations/`,
+`moderation/`, and the completion checklist in section 15. Two scope
+corrections were made during implementation, both documented in their PR/
+commit messages rather than silently applied:
+
+- Phase B: rather than an `organization` column on every owner-scoped model,
+  only `UploadBatch` and `IdentityGroup` carry one (the two models with no
+  single parent to derive it from transitively).
+- Phase C: identity-membership decisions do not yet write back to the
+  underlying `IdentityMembership` the way quality and duplicate decisions do.
+  The only existing write path, `identities.services.review_membership()`, is
+  owner-gated by design and has cascading group-centroid/member-count side
+  effects -- extending it to accept an authorized moderator (rather than only
+  the content's own owner) deserves a dedicated, carefully-tested change, not
+  a rushed relaxation of a security-relevant filter. The moderator's decision
+  is still fully recorded and audited on the `ModeratorReview` row.
+
+Still open: moderator notifications, org-scoped reports/exports, batch
+monitoring/retry/reprocess/cancel, duplicate-group merging, and the frontend
+(no frontend repo in this workspace).
 
 ## 2. Roles and responsibilities
 
@@ -475,12 +487,18 @@ another organization's users, images, metrics, or facial data.
       *content* rows are not yet organization-scoped -- that is Phase B
 - [x] Organization-scoped permissions implemented (2026-09-22, `OrganizationScopedMixin`)
 - [x] Member invitation and management APIs implemented (2026-09-22)
-- [ ] Moderator review workflow implemented
-- [ ] Organization dashboard metrics implemented
-- [ ] Duplicate and batch management implemented
+- [x] Moderator review workflow implemented (2026-09-23, core: list/detail/
+      decision/escalate for quality, duplicate, and identity reviews;
+      identity write-back deferred, see the note above)
+- [x] Organization dashboard metrics implemented (2026-09-23, review-queue
+      counts only; batch/storage/member metrics not yet included)
+- [ ] Duplicate and batch management implemented (duplicate *review* is done;
+      duplicate-group merging and batch monitoring/retry/reprocess/cancel are not)
 - [ ] Moderator notifications implemented
 - [ ] Reports and exports implemented
-- [ ] Immutable audit events implemented
-- [ ] Automated security tests passed
+- [x] Immutable audit events implemented (2026-09-22/23, membership +
+      moderator-review actions)
+- [x] Automated security tests passed (2026-09-23, `organizations/tests.py`
+      32 tests + `moderation/` 23 tests, incl. cross-org isolation)
 - [ ] Manual cross-organization verification completed
 - [ ] OpenAPI documentation published
