@@ -15,7 +15,13 @@ owner) and the deciding moderator as a separate ``actor`` (used for
 reviewed_by and IdentityChange.actor). See review_membership()'s own
 docstring for the full reasoning.
 """
-from django.db import transaction
+import uuid
+from collections import Counter
+from datetime import timedelta
+
+from django.conf import settings
+from django.db import IntegrityError, transaction
+from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import APIException, ValidationError
@@ -26,7 +32,7 @@ from organizations.services import get_active_membership, record_audit_event
 from quality_control.models import ImageQualityDecision
 from uploads.services import cancel_batch, retry_batch
 
-from .models import ModeratorReview
+from .models import ModeratorReport, ModeratorReview
 
 _QUALITY_WRITEBACK = {
     "approve": ImageQualityDecision.Decision.ACCEPTED,
@@ -242,3 +248,164 @@ def dashboard_summary(organization):
         "rejected_total": reviews.filter(status=ModeratorReview.Status.REJECTED).count(),
         "corrected_total": reviews.filter(status=ModeratorReview.Status.CORRECTED).count(),
     }
+
+
+# -- Org-scoped reports (T-007 Phase F) --------------------------------------
+#
+# Only two report types, deliberately: reports/renderers.py's CSV/PDF
+# rendering is hard-coded to a per-image row shape, so a report type outside
+# that shape needs its own renderer (see moderation/renderers.py) rather than
+# reusing reports/ wholesale. review-summary and moderator-activity are the
+# two most directly useful given what ModeratorReview/OrganizationAuditEvent
+# already track; rejection-reason, quality-score, batch, and
+# duplicate-decision reports are explicitly deferred.
+
+_ORGANIZATION_AUDIT_ACTIONS_FOR_ACTIVITY = [
+    OrganizationAuditEvent.Action.MODERATOR_REVIEW_DECIDED,
+    OrganizationAuditEvent.Action.MODERATOR_REVIEW_ESCALATED,
+    OrganizationAuditEvent.Action.MODERATOR_REVIEW_ASSIGNED,
+    OrganizationAuditEvent.Action.BATCH_RETRIED_BY_MODERATOR,
+    OrganizationAuditEvent.Action.BATCH_CANCELLED_BY_MODERATOR,
+]
+
+
+def build_review_summary_payload(organization):
+    reviews = ModeratorReview.objects.filter(organization=organization)
+    rows = list(
+        reviews.order_by("-created_at").values(
+            "id", "source", "status", "ai_recommendation", "ai_confidence",
+            "decision_reason", "decided_at", "created_at",
+        )[:200]
+    )
+    # JSONField has no custom encoder here (matches reports/models.py's
+    # ProcessingReport.payload), so every datetime must already be a string
+    # before this dict is assigned to a payload field -- reports/services.py's
+    # own build_report_payload follows the same .isoformat() convention.
+    for row in rows:
+        row["decided_at"] = row["decided_at"].isoformat() if row["decided_at"] else None
+        row["created_at"] = row["created_at"].isoformat()
+    return {
+        "format_version": 1,
+        "report_type": ModeratorReport.ReportType.REVIEW_SUMMARY,
+        "generated_at": timezone.now().isoformat(),
+        "organization": {"id": organization.pk, "name": organization.name},
+        "summary": {
+            "total_reviews": reviews.count(),
+            "by_status": dict(Counter(reviews.values_list("status", flat=True))),
+            "by_source": dict(Counter(reviews.values_list("source", flat=True))),
+        },
+        "rows": rows,
+        "row_count": len(rows),
+    }
+
+
+def build_moderator_activity_payload(organization):
+    decided = ModeratorReview.objects.filter(organization=organization, decided_by__isnull=False)
+    per_moderator = list(
+        decided.values("decided_by_id", "decided_by__username")
+        .annotate(
+            total=Count("id"),
+            approved=Count("id", filter=Q(status=ModeratorReview.Status.APPROVED)),
+            rejected=Count("id", filter=Q(status=ModeratorReview.Status.REJECTED)),
+            corrected=Count("id", filter=Q(status=ModeratorReview.Status.CORRECTED)),
+        )
+        .order_by("-total")
+    )
+    rows = list(
+        OrganizationAuditEvent.objects.filter(
+            organization=organization, action__in=_ORGANIZATION_AUDIT_ACTIONS_FOR_ACTIVITY,
+        )
+        .order_by("-created_at")
+        .values("actor_id", "actor__username", "action", "target_type", "target_id", "reason", "created_at")[:200]
+    )
+    for row in rows:
+        row["created_at"] = row["created_at"].isoformat()
+    return {
+        "format_version": 1,
+        "report_type": ModeratorReport.ReportType.MODERATOR_ACTIVITY,
+        "generated_at": timezone.now().isoformat(),
+        "organization": {"id": organization.pk, "name": organization.name},
+        "summary": {"moderators": per_moderator},
+        "rows": rows,
+        "row_count": len(rows),
+    }
+
+
+_REPORT_PAYLOAD_BUILDERS = {
+    ModeratorReport.ReportType.REVIEW_SUMMARY: build_review_summary_payload,
+    ModeratorReport.ReportType.MODERATOR_ACTIVITY: build_moderator_activity_payload,
+}
+
+
+def build_moderator_report_payload(report):
+    return _REPORT_PAYLOAD_BUILDERS[report.report_type](report.organization)
+
+
+def moderator_report_expiration_time():
+    return timezone.now() + timedelta(hours=settings.MODERATOR_REPORT_TTL_HOURS)
+
+
+def enqueue_moderator_report(*, organization, requested_by, report_type, report_format):
+    from .tasks import generate_moderator_report_task
+
+    active_filters = {
+        "organization": organization, "report_type": report_type, "format": report_format,
+        "status__in": [ModeratorReport.Status.QUEUED, ModeratorReport.Status.GENERATING],
+    }
+    try:
+        with transaction.atomic():
+            active = ModeratorReport.objects.select_for_update().filter(**active_filters).first()
+            if active:
+                return active, False
+            task_id = uuid.uuid4().hex
+            report = ModeratorReport.objects.create(
+                organization=organization, requested_by=requested_by, report_type=report_type,
+                format=report_format, status=ModeratorReport.Status.QUEUED, task_id=task_id,
+            )
+
+            def dispatch():
+                try:
+                    generate_moderator_report_task.apply_async(args=[report.pk], task_id=task_id)
+                except Exception:
+                    ModeratorReport.objects.filter(pk=report.pk).update(
+                        status=ModeratorReport.Status.FAILED,
+                        failure_reason="The report queue is unavailable.",
+                    )
+
+            transaction.on_commit(dispatch)
+    except IntegrityError:
+        active = ModeratorReport.objects.filter(**active_filters).first()
+        if active:
+            return active, False
+        raise
+    report.refresh_from_db()
+    return report, True
+
+
+def expire_moderator_report_if_needed(report, now=None):
+    now = now or timezone.now()
+    if (
+        report.status == ModeratorReport.Status.READY
+        and report.expires_at
+        and report.expires_at <= now
+    ):
+        if report.report_file:
+            report.report_file.delete(save=False)
+        report.status = ModeratorReport.Status.EXPIRED
+        report.report_file = ""
+        report.file_size = 0
+        report.file_checksum_sha256 = ""
+        report.save(update_fields=[
+            "status", "report_file", "file_size", "file_checksum_sha256", "updated_at",
+        ])
+        return True
+    return False
+
+
+def expire_due_moderator_reports(now=None):
+    now = now or timezone.now()
+    queryset = ModeratorReport.objects.filter(status=ModeratorReport.Status.READY, expires_at__lte=now)
+    expired = 0
+    for report in queryset.iterator():
+        expired += int(expire_moderator_report_if_needed(report, now=now))
+    return expired

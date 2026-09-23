@@ -554,13 +554,14 @@ Allows controlled external viewing without exposing a user account.
 
 ## 10. Moderation, activity, and notifications
 
-### Feature 27: Moderator review system — Partial (T-007 Phases A-E done, 2026-09-23)
+### Feature 27: Moderator review system — Partial (T-007 Phases A-F done, 2026-09-23)
 
 Organization membership/invitation management (T-008 Phase A), the review-
 decision core (T-007 Phase C, including identity-membership write-back),
-assignment/escalation notifications (Phase D), and batch retry/cancel
-(Phase E) are done; reports and duplicate-group merging are not yet built.
-See `moderation/` and `docs/features/27-31-46-moderator-organization-panel.md`.
+assignment/escalation notifications (Phase D), batch retry/cancel (Phase E),
+and org-scoped review-summary/moderator-activity reports (Phase F) are done;
+duplicate-group merging is not yet built. See `moderation/` and
+`docs/features/27-31-46-moderator-organization-panel.md`.
 
 - Organization-scoped moderator access — Done (`OrganizationScopedMixin`,
   reused unchanged from `organizations/` for every moderation endpoint)
@@ -575,7 +576,7 @@ See `moderation/` and `docs/features/27-31-46-moderator-organization-panel.md`.
 - Organization batch monitoring, retry, reprocessing, and safe cancellation — Partial (list/retry/cancel done, reusing `uploads.services.retry_batch`/`cancel_batch` exactly; reprocessing at a different enhancement level is open -- it doesn't exist anywhere in the codebase today, not even an owner-facing version)
 - Duplicate image, face, and identity-group review — Done (both write back to the underlying record on decision; identity review reassigns/creates a group via `identities.services.review_membership()` with a reviewer/actor split that keeps group ownership attributed to the content's real owner)
 - Moderator assignment, deadline, and escalation notifications — Partial (assignment and escalation both notify -- a new explicit `assign_review()` action notifies the assigned moderator, escalation notifies every active organization owner; deadline/SLA alerts are open, no deadline concept exists on `ModeratorReview`)
-- Organization-scoped CSV, PDF, and JSON reports and exports — Open
+- Organization-scoped CSV, PDF, and JSON reports and exports — Partial (review-summary and moderator-activity reports done, async job + download, same pattern as Feature 41's organization export; rejection-reason, quality-score, batch, and duplicate-decision report types are open)
 - Low-confidence review queue — Done (`ModeratorReview`, created by additive hooks in identities/quality_control/duplicates)
 - Original/enhanced comparison — Open
 - Approve, reject, correct, reprocess, escalate, or keep in review — Partial (approve/reject/keep-in-review/escalate work for all three sources; `correct` fully works for identity reviews — reassign to a specific group or start a new one — but is accepted as a no-op for quality/duplicate, which have no third outcome beyond their binary AI recommendation; `reprocess` has no defined outcome yet)

@@ -569,6 +569,9 @@ PRIVACY_EXPORT_MAX_ROWS = env.int("PRIVACY_EXPORT_MAX_ROWS", default=2000)
 # generated file stays downloadable before the periodic cleanup removes it.
 ORGANIZATION_EXPORT_MAX_ROWS = env.int("ORGANIZATION_EXPORT_MAX_ROWS", default=2000)
 ORGANIZATION_EXPORT_TTL_HOURS = env.int("ORGANIZATION_EXPORT_TTL_HOURS", default=24)
+# Moderator reports (T-007 Phase F): how long a generated report file stays
+# downloadable before the periodic cleanup removes it.
+MODERATOR_REPORT_TTL_HOURS = env.int("MODERATOR_REPORT_TTL_HOURS", default=24)
 # Leftover ZIP build files in the system temp directory older than this are
 # removed. Must exceed CELERY_TASK_TIME_LIMIT or a build in progress could be
 # deleted (checked at startup).
@@ -642,6 +645,10 @@ CELERY_BEAT_SCHEDULE = {
     "expire-organization-exports": {
         "task": "privacy.cleanup_organization_exports",
         "schedule": crontab(minute=35, hour="*/2"),
+    },
+    "expire-moderator-reports": {
+        "task": "moderation.cleanup_reports",
+        "schedule": crontab(minute=50, hour="*/2"),
     },
     "expire-identity-exports": {
         "task": "identities.cleanup_expired_exports",
@@ -751,6 +758,7 @@ REST_FRAMEWORK = {
         "org_invite": "30/hour",
         "org_export": "10/hour",
         "org_batch_action": "60/hour",
+        "org_report": "20/hour",
     },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
@@ -784,6 +792,7 @@ SPECTACULAR_SETTINGS = {
         "OrganizationInvitationRoleEnum": "organizations.models.OrganizationInvitation.Role",
         "OrganizationInvitationStatusEnum": "organizations.models.OrganizationInvitation.Status",
         "OrganizationAuditActionEnum": "organizations.models.OrganizationAuditEvent.Action",
+        "ModeratorReportTypeEnum": "moderation.models.ModeratorReport.ReportType",
     },
 }
 

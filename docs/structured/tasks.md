@@ -157,7 +157,23 @@
   real new design work rather than a reuse. 8 tests
   (`moderation/test_batch_management.py`, including one guarding that the
   owner-facing cancel endpoint's behavior is unchanged by the extraction).
-  Still open: org-scoped CSV/PDF/JSON reports, and duplicate-group merging.
+  Org-scoped reports done 2026-09-23 (Phase F), scoped to two report types
+  (review-summary, moderator-activity) rather than the original six:
+  `reports/renderers.py`'s CSV/PDF rendering is hard-coded to a per-image row
+  shape, so covering more types is proportionally more new code, not more
+  reuse. `ModeratorReport` follows `privacy.OrganizationExport`'s async job
+  shape (`ProcessingReport` has no `organization` FK and wasn't reusable
+  unmodified). `reports/renderers.py`'s `_table_style`/`_csv_safe` were
+  promoted to public (`table_style`/`csv_safe`, no behavior change) so the
+  new `moderation/renderers.py` could import and reuse them instead of
+  duplicating ~10 lines. Real bug caught and fixed, not worked around: the
+  payload builders stored raw `datetime` objects in a plain `JSONField`
+  (no custom encoder), which fails on save -- fixed by `.isoformat()`-ing
+  every datetime before it goes in the payload, matching the exact
+  convention `reports/services.py`'s own `build_report_payload` already
+  uses. 14 tests (`moderation/test_reports.py`). Still open: rejection-reason,
+  quality-score, batch, and duplicate-decision report types (deferred, not
+  dropped), and duplicate-group merging.
 - Organization-scoped queues and decisions — Done for all three review
   sources (quality, duplicate, identity)
 - Corrections, reasons, and complete audit history — Done (every decision/
@@ -231,7 +247,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 24 | Connect completed identity-group ZIP API to Person Folders | Next | T-015 |
 | 25 | Export watermark options | Done backend (2026-09-19, `docs/features/25-watermark-options.md`); frontend controls remain | T-016 |
 | 26 | Secure expiring share links | Done backend (2026-09-19, `docs/features/26-secure-share-links.md`); frontend remains | T-017 |
-| 27 | Organization-scoped moderator review | In progress (Phase C + identity write-back + notifications + batch actions done 2026-09-23) | T-007 |
+| 27 | Organization-scoped moderator review | In progress (Phase C + identity write-back + notifications + batch actions + reports done 2026-09-23) | T-007 |
 | 28 | Complete owner activity timeline | Done backend (2026-09-18); frontend remains | T-018 |
 | 29 | Notification panel and preferences UI | Next | T-019 |
 | 30 | User dashboard and My Images integration | Next | T-020 |
