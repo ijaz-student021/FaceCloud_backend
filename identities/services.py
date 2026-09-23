@@ -219,7 +219,21 @@ def enqueue_identity_analysis(image, force=False):
 
 
 @transaction.atomic
-def review_membership(membership, reviewer, action, group_id=None):
+def review_membership(membership, reviewer, action, group_id=None, *, actor=None):
+    """Decide an uncertain identity assignment.
+
+    ``reviewer`` is always the membership's own owner -- the internal
+    ``owner=reviewer`` lookup below is a real authorization gate, not
+    loosened here. A moderator deciding on someone else's behalf (T-007's
+    org-scoped review workflow) passes the membership's actual owner as
+    ``reviewer`` and themself as ``actor``: group ownership, the
+    owner-scoped candidate-group lookup, and IdentityChange.owner all stay
+    attributed to the real content owner, while ``reviewed_by`` and
+    IdentityChange.actor record who actually made the call. The self-review
+    endpoint is unaffected -- it always passes the same user as both, so
+    ``actor`` defaults to ``reviewer``.
+    """
+    actor = actor or reviewer
     from .models import IdentityChange
     membership = IdentityMembership.objects.select_for_update(of=("self",)).select_related("identity_face", "identity_group").get(pk=membership.pk, owner=reviewer)
     if membership.state != IdentityMembership.State.NEEDS_REVIEW:
@@ -238,7 +252,7 @@ def review_membership(membership, reviewer, action, group_id=None):
         if membership.identity_group_id is None:
             raise ValidationError("No suggested group is available to confirm.")
         membership.state = IdentityMembership.State.CONFIRMED
-    membership.reviewed_by = reviewer
+    membership.reviewed_by = actor
     membership.reviewed_at = timezone.now()
     membership.save()
     if old_group:
@@ -250,5 +264,5 @@ def review_membership(membership, reviewer, action, group_id=None):
     analysis.assigned_count = analysis.faces.filter(memberships__state__in=_confirmed_states()).count()
     analysis.status = IdentityAnalysis.Status.NEEDS_REVIEW if analysis.review_count else IdentityAnalysis.Status.COMPLETED
     analysis.save(update_fields=["review_count", "assigned_count", "status", "updated_at"])
-    IdentityChange.objects.create(owner=reviewer, actor=reviewer, group=membership.identity_group, membership=membership, action=IdentityChange.Action.REVIEWED, before={"state": IdentityMembership.State.NEEDS_REVIEW}, after={"state": membership.state, "group_id": membership.identity_group_id})
+    IdentityChange.objects.create(owner=reviewer, actor=actor, group=membership.identity_group, membership=membership, action=IdentityChange.Action.REVIEWED, before={"state": IdentityMembership.State.NEEDS_REVIEW}, after={"state": membership.state, "group_id": membership.identity_group_id})
     return membership

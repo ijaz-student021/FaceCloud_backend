@@ -114,25 +114,35 @@
   owner/moderator role via the same `OrganizationScopedMixin` the
   organizations app uses, so cross-org access is a 404 exactly like every
   other org-scoped endpoint. Decisions write back into the underlying
-  quality decision / duplicate match for the `approve`/`reject` actions
-  (the two source types where that write is a safe, side-effect-free status
-  flip). 23 tests (`moderation/test_hooks.py`, `moderation/tests.py`).
-  Deliberately not attempted in this phase, flagged rather than silently
-  dropped: identity-membership write-back (the only existing write path,
-  `identities.services.review_membership()`, is owner-gated by design and
-  has cascading group-centroid/member-count side effects that deserve a
-  dedicated change, not a rushed relaxation of a security-relevant filter);
-  moderator notifications; org-scoped CSV/PDF/JSON reports; and
+  quality decision / duplicate match for the `approve`/`reject` actions.
+  23 tests (`moderation/test_hooks.py`, `moderation/tests.py`).
+  Identity-membership write-back done 2026-09-23 (same day, a follow-up
+  once the review-decision core landed): `identities.services.
+  review_membership()` now takes the membership's real owner as `reviewer`
+  (the authorization gate is unchanged -- still requires the row's actual
+  owner) and a separate `actor` for who is actually deciding, so a
+  moderator can decide on the owner's behalf without misattributing group
+  ownership or the `IdentityChange` audit trail to the moderator. `approve`/
+  `reject`/`correct` (with or without an explicit `group_id`) all write
+  through to the real `IdentityMembership`. Caught and fixed along the way:
+  a real (if previously unreachable) inconsistency between the model's
+  `identity_group_required_except_review` CheckConstraint and
+  `review_membership()`'s own logic -- the constraint only exempted
+  `needs_review` from requiring a group, not `rejected`, even though the
+  code has always treated `reject` as not needing one; migration
+  `identities.0006` corrects the constraint. 15 more tests
+  (`identities/test_review_membership.py` -- review_membership() itself had
+  zero prior coverage; `moderation/test_identity_writeback.py`).
+  Still open: moderator notifications, org-scoped CSV/PDF/JSON reports, and
   batch-management moderator actions (retry/reprocess/cancel) reusing the
-  existing admin batch endpoints. These remain open, tracked below.
-- Organization-scoped queues and decisions — Done for quality and duplicate
-  reviews; identity-membership decisions still only reachable via the
-  existing owner-only self-review path
-- Corrections, reasons, and complete audit history — Partial (every
-  decision/escalation writes an `OrganizationAuditEvent`; a `correct`
-  action exists on the API but has no defined outcome for quality/duplicate,
-  since both are binary AI recommendations -- it only has real meaning for
-  identity, which is deferred)
+  existing admin batch endpoints.
+- Organization-scoped queues and decisions — Done for all three review
+  sources (quality, duplicate, identity)
+- Corrections, reasons, and complete audit history — Done (every decision/
+  escalation writes an `OrganizationAuditEvent`; `correct` has a defined
+  outcome for all three sources -- reassign or start a new group for
+  identity, and is accepted but a no-op write-back for quality/duplicate
+  since both are binary AI recommendations with no third outcome)
 - Frontend moderator dashboard integration — Open (no frontend repo in this workspace)
 
 ### T-008 — Organization and tenant management
@@ -199,7 +209,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 24 | Connect completed identity-group ZIP API to Person Folders | Next | T-015 |
 | 25 | Export watermark options | Done backend (2026-09-19, `docs/features/25-watermark-options.md`); frontend controls remain | T-016 |
 | 26 | Secure expiring share links | Done backend (2026-09-19, `docs/features/26-secure-share-links.md`); frontend remains | T-017 |
-| 27 | Organization-scoped moderator review | In progress (Phase C done 2026-09-23) | T-007 |
+| 27 | Organization-scoped moderator review | In progress (Phase C + identity write-back done 2026-09-23) | T-007 |
 | 28 | Complete owner activity timeline | Done backend (2026-09-18); frontend remains | T-018 |
 | 29 | Notification panel and preferences UI | Next | T-019 |
 | 30 | User dashboard and My Images integration | Next | T-020 |

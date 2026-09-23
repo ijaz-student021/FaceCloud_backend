@@ -63,7 +63,8 @@ class ModeratorReviewDecisionView(OrganizationScopedMixin, APIView):
         decided = decide_review(
             review=review, actor=request.user, action=serializer.validated_data["action"],
             reason=serializer.validated_data.get("reason", ""),
-            notes=serializer.validated_data.get("notes", ""), request=request,
+            notes=serializer.validated_data.get("notes", ""),
+            group_id=serializer.validated_data.get("group_id"), request=request,
         )
         return Response(ModeratorReviewSerializer(decided).data)
 

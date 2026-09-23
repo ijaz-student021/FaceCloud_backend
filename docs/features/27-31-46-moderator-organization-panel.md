@@ -9,23 +9,28 @@ The moderator is not a FaceCloud platform administrator and cannot access anothe
 organization's resources or global infrastructure settings.
 
 Current implementation status: **In progress**. T-008 Phase A (organization
-core), Phase B (organization-scoping content), and T-007 Phase C (the
-review-decision core) are all done as of 2026-09-23 — see `organizations/`,
-`moderation/`, and the completion checklist in section 15. Two scope
+core), Phase B (organization-scoping content), T-007 Phase C (the
+review-decision core), and identity-membership write-back are all done as of
+2026-09-23 — see `organizations/`, `moderation/`, `identities/services.py`'s
+`review_membership()`, and the completion checklist in section 15. Two scope
 corrections were made during implementation, both documented in their PR/
 commit messages rather than silently applied:
 
 - Phase B: rather than an `organization` column on every owner-scoped model,
   only `UploadBatch` and `IdentityGroup` carry one (the two models with no
   single parent to derive it from transitively).
-- Phase C: identity-membership decisions do not yet write back to the
-  underlying `IdentityMembership` the way quality and duplicate decisions do.
-  The only existing write path, `identities.services.review_membership()`, is
-  owner-gated by design and has cascading group-centroid/member-count side
-  effects -- extending it to accept an authorized moderator (rather than only
-  the content's own owner) deserves a dedicated, carefully-tested change, not
-  a rushed relaxation of a security-relevant filter. The moderator's decision
-  is still fully recorded and audited on the `ModeratorReview` row.
+- Phase C initially shipped without identity-membership write-back: the only
+  existing write path, `identities.services.review_membership()`, hard-gated
+  on `owner=reviewer` and had no way to distinguish "whose content this is"
+  from "who is deciding." Resolved the same day rather than left open:
+  `review_membership()` now takes the membership's real owner as `reviewer`
+  (the authorization gate is unchanged) and a separate `actor` for the
+  deciding moderator, so group ownership and the `IdentityChange` audit trail
+  stay correctly attributed to the content owner while `reviewed_by` records
+  who actually decided. Caught and fixed along the way: the model's
+  `identity_group_required_except_review` constraint didn't actually match
+  the code's own exemption for `reject` (a real, if previously unreachable,
+  inconsistency) -- corrected in the same change (`identities.0006`).
 
 Still open: moderator notifications, org-scoped reports/exports, batch
 monitoring/retry/reprocess/cancel, duplicate-group merging, and the frontend
@@ -488,8 +493,8 @@ another organization's users, images, metrics, or facial data.
 - [x] Organization-scoped permissions implemented (2026-09-22, `OrganizationScopedMixin`)
 - [x] Member invitation and management APIs implemented (2026-09-22)
 - [x] Moderator review workflow implemented (2026-09-23, core: list/detail/
-      decision/escalate for quality, duplicate, and identity reviews;
-      identity write-back deferred, see the note above)
+      decision/escalate for quality, duplicate, and identity reviews, all
+      with write-back to the underlying record on decision)
 - [x] Organization dashboard metrics implemented (2026-09-23, review-queue
       counts only; batch/storage/member metrics not yet included)
 - [ ] Duplicate and batch management implemented (duplicate *review* is done;

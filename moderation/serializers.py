@@ -25,6 +25,11 @@ class ModeratorDecisionSerializer(serializers.Serializer):
     action = serializers.ChoiceField(choices=["approve", "reject", "correct", "keep_in_review"])
     reason = serializers.CharField(required=False, allow_blank=True, max_length=500)
     notes = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+    group_id = serializers.IntegerField(
+        required=False, min_value=1,
+        help_text="Identity reviews only: the person folder to assign on a 'correct' decision. "
+        "Omit to start a new folder instead.",
+    )
 
 
 class ModeratorEscalateSerializer(serializers.Serializer):
