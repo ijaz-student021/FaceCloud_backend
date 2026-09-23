@@ -565,6 +565,10 @@ BIOMETRIC_CONSENT_POLICY_VERSION = env("BIOMETRIC_CONSENT_POLICY_VERSION", defau
 # by the scheduled purge. 0 keeps them until the user deletes them.
 FACIAL_DATA_RETENTION_DAYS = env.int("FACIAL_DATA_RETENTION_DAYS", default=0)
 PRIVACY_EXPORT_MAX_ROWS = env.int("PRIVACY_EXPORT_MAX_ROWS", default=2000)
+# Organization-wide export (T-006): row cap per section, and how long a
+# generated file stays downloadable before the periodic cleanup removes it.
+ORGANIZATION_EXPORT_MAX_ROWS = env.int("ORGANIZATION_EXPORT_MAX_ROWS", default=2000)
+ORGANIZATION_EXPORT_TTL_HOURS = env.int("ORGANIZATION_EXPORT_TTL_HOURS", default=24)
 # Leftover ZIP build files in the system temp directory older than this are
 # removed. Must exceed CELERY_TASK_TIME_LIMIT or a build in progress could be
 # deleted (checked at startup).
@@ -634,6 +638,10 @@ CELERY_BEAT_SCHEDULE = {
     "expire-download-packages": {
         "task": "downloads.cleanup_expired",
         "schedule": crontab(minute=5),
+    },
+    "expire-organization-exports": {
+        "task": "privacy.cleanup_organization_exports",
+        "schedule": crontab(minute=35, hour="*/2"),
     },
     "expire-identity-exports": {
         "task": "identities.cleanup_expired_exports",
@@ -741,6 +749,7 @@ REST_FRAMEWORK = {
         "model_comparison": "30/hour",
         "share_public": "120/hour",
         "org_invite": "30/hour",
+        "org_export": "10/hour",
     },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }

@@ -254,6 +254,12 @@ def sample_instance(model):
     try:
         return model(owner_id=1)
     except TypeError:
+        pass
+    try:
+        # Models keyed by their requesting user rather than an "owner" field
+        # (e.g. an organization-scoped export, which has no single owner).
+        return model(requested_by_id=1)
+    except TypeError:
         # Models that reach their owner through a parent (comparison outputs).
         from enhancement.models import ModelComparison
 
