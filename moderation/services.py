@@ -24,6 +24,7 @@ from duplicates.models import DuplicateMatch
 from organizations.models import OrganizationAuditEvent, OrganizationMembership
 from organizations.services import get_active_membership, record_audit_event
 from quality_control.models import ImageQualityDecision
+from uploads.services import cancel_batch, retry_batch
 
 from .models import ModeratorReview
 
@@ -203,6 +204,30 @@ def assign_review(*, review, actor, moderator, request=None):
     )
     transaction.on_commit(lambda: notify_moderator_review_assigned(locked))
     return locked
+
+
+def retry_batch_for_organization(*, batch, actor, request=None):
+    """Retry a batch on a moderator's behalf, reusing uploads.services.retry_batch exactly.
+
+    Raises BatchHasNoFailedImages/BatchRetryLimitReached (both ValidationError
+    subclasses) unchanged -- the caller (the view) decides how to present
+    those, same as the existing admin retry endpoint.
+    """
+    updated = retry_batch(batch)
+    record_audit_event(
+        updated.organization, actor, OrganizationAuditEvent.Action.BATCH_RETRIED_BY_MODERATOR,
+        target_type="UploadBatch", target_id=updated.pk, request=request,
+    )
+    return updated
+
+
+def cancel_batch_for_organization(*, batch, actor, request=None):
+    updated = cancel_batch(batch)
+    record_audit_event(
+        updated.organization, actor, OrganizationAuditEvent.Action.BATCH_CANCELLED_BY_MODERATOR,
+        target_type="UploadBatch", target_id=updated.pk, request=request,
+    )
+    return updated
 
 
 def dashboard_summary(organization):

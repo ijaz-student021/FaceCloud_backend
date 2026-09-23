@@ -134,6 +134,8 @@ class OrganizationAuditEvent(models.Model):
         MODERATOR_REVIEW_ESCALATED = "moderator_review_escalated", "Moderator review escalated"
         ORGANIZATION_DATA_EXPORTED = "organization_data_exported", "Organization data exported"
         MODERATOR_REVIEW_ASSIGNED = "moderator_review_assigned", "Moderator review assigned"
+        BATCH_RETRIED_BY_MODERATOR = "batch_retried_by_moderator", "Batch retried by moderator"
+        BATCH_CANCELLED_BY_MODERATOR = "batch_cancelled_by_moderator", "Batch cancelled by moderator"
 
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="audit_events",

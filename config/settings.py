@@ -750,6 +750,7 @@ REST_FRAMEWORK = {
         "share_public": "120/hour",
         "org_invite": "30/hour",
         "org_export": "10/hour",
+        "org_batch_action": "60/hour",
     },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }

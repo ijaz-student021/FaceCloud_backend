@@ -1,6 +1,5 @@
 from django.http import FileResponse
 from django.conf import settings
-from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.db.models import OuterRef, Prefetch, Q, Subquery
 from django.utils import timezone
@@ -16,7 +15,7 @@ from rest_framework.pagination import PageNumberPagination
 from enhancement.models import ImageEnhancementResult
 from identities.models import IdentityFace, IdentityMembership
 
-from .models import BatchImageProgress, ImagePreprocessingResult, ImageUpload, UploadBatch
+from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
 from .progress import batch_progress_payload, sync_image_progress
 from .serializers import (
     ImagePreprocessingResultSerializer,
@@ -26,6 +25,7 @@ from .serializers import (
     UploadBatchSerializer,
 )
 from .services import (
+    cancel_batch,
     create_image_batch,
     create_zip_batch,
     delete_batch,
@@ -140,20 +140,8 @@ class UploadBatchCancelView(APIView):
 
     @extend_schema(request=None, responses={200: OpenApiTypes.OBJECT})
     def post(self, request, batch_id):
-        with transaction.atomic():
-            batch = get_object_or_404(
-                UploadBatch.objects.select_for_update().filter(owner=request.user), pk=batch_id,
-            )
-            batch.cancellation_requested = True
-            batch.processing_status = "cancelled"
-            batch.save(update_fields=["cancellation_requested", "processing_status", "updated_at"])
-            BatchImageProgress.objects.filter(batch=batch).exclude(
-                status__in=["accepted", "rejected", "needs_review", "completed", "failed", "cancelled"],
-            ).update(
-                stage="completed", status="cancelled", progress_percentage=100,
-                failure_reason="Processing was cancelled by the user.",
-                finished_at=timezone.now(),
-            )
+        batch = get_object_or_404(UploadBatch.objects.filter(owner=request.user), pk=batch_id)
+        batch = cancel_batch(batch)
         return Response(batch_progress_payload(batch))
 
 
