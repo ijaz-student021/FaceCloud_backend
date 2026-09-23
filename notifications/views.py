@@ -1,5 +1,7 @@
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
@@ -53,6 +55,7 @@ class NotificationDetailView(generics.RetrieveDestroyAPIView):
 class NotificationUnreadCountView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(responses={200: OpenApiTypes.OBJECT})
     def get(self, request):
         count = UserNotification.objects.filter(
             recipient=request.user, read_at__isnull=True
@@ -64,6 +67,7 @@ class NotificationMarkReadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     throttle_scope = "notification_action"
 
+    @extend_schema(request=None, responses={200: UserNotificationSerializer})
     def post(self, request, pk):
         notification = get_object_or_404(
             UserNotification.objects.filter(recipient=request.user), pk=pk
@@ -76,6 +80,7 @@ class NotificationMarkAllReadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     throttle_scope = "notification_action"
 
+    @extend_schema(request=None, responses={200: OpenApiTypes.OBJECT})
     def post(self, request):
         updated = UserNotification.objects.filter(
             recipient=request.user, read_at__isnull=True
@@ -87,10 +92,15 @@ class NotificationPreferenceView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     throttle_scope = "notification_action"
 
+    @extend_schema(responses={200: NotificationPreferenceSerializer})
     def get(self, request):
         preferences = get_notification_preferences(request.user)
         return Response(NotificationPreferenceSerializer(preferences).data)
 
+    @extend_schema(
+        request=NotificationPreferenceSerializer,
+        responses={200: NotificationPreferenceSerializer},
+    )
     def patch(self, request):
         preferences = get_notification_preferences(request.user)
         serializer = NotificationPreferenceSerializer(

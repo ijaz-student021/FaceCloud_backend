@@ -17,6 +17,7 @@ from .models import (
     EditMode,
     EnhancementBatchJob,
     EnhancementLevel,
+    EnhancementStyle,
     ImageEditVersion,
     ImageEnhancementResult,
 )
@@ -144,6 +145,9 @@ class OpenCVPolicyTests(SimpleTestCase):
         ADAPTIVE_DENOISE_ENABLED=False,
         GFPGAN_ENABLED=False,
         GFPGAN_QUEUE_ENABLED=False,
+        HD_RESTORATION_ENABLED=False,
+        NAFNET_DEBLUR_ENABLED=False,
+        IDENTITY_GUARD_ENABLED=False,
     )
     def test_rollout_flags_default_to_safe_disabled_pipeline(self):
         source = np.full((96, 96, 3), 135, dtype=np.uint8)
@@ -159,6 +163,12 @@ class OpenCVPolicyTests(SimpleTestCase):
                 "adaptive_denoise_enabled": False,
                 "gfpgan_enabled": False,
                 "gfpgan_queue_enabled": False,
+                "hd_restoration_enabled": False,
+                "nafnet_deblur_enabled": False,
+                "purevision_enabled": False,
+                "purescale_enabled": False,
+                "colorization_enabled": False,
+                "identity_guard_enabled": False,
             },
         )
         self.assertFalse(parameters["adaptive_denoise"]["enabled"])
@@ -168,6 +178,7 @@ class OpenCVPolicyTests(SimpleTestCase):
         AI_RESTORATION_ENABLED=False,
         ZERO_DCE_ENABLED=False,
         ADAPTIVE_DENOISE_ENABLED=False,
+        IDENTITY_GUARD_ENABLED=False,
     )
     def test_pipeline_exposes_stable_stage_order_and_timings(self):
         source = np.full((96, 96, 3), 75, dtype=np.uint8)
@@ -183,10 +194,16 @@ class OpenCVPolicyTests(SimpleTestCase):
             "output_guard_a",
             "measure_post_exposure_noise",
             "adaptive_denoise",
+            "purevision_restoration",
             "low_resolution_restoration",
+            "hd_restoration",
+            "purescale_super_resolution",
             "face_restoration",
             "sharpen",
             "output_guard_b",
+            "colorization",
+            "dynamic_style",
+            "identity_guard",
             "validate_output",
         ]
         self.assertEqual(parameters["stage_order"], expected_order)
@@ -385,6 +402,47 @@ class OpenCVPolicyTests(SimpleTestCase):
         np.testing.assert_array_equal(output, source)
 
     @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=False)
+    def test_style_natural_is_the_default_and_unchanged(self):
+        source = np.full((80, 80, 3), 120, dtype=np.uint8)
+        _enhanced, _level, parameters = enhance_bgr(source, EnhancementLevel.AUTO)
+        self.assertEqual(parameters["style"], EnhancementStyle.NATURAL)
+        self.assertFalse(parameters["dynamic_style"]["applied"])
+
+    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=False)
+    def test_style_dynamic_applies_a_bounded_vivid_boost(self):
+        source = np.zeros((80, 80, 3), dtype=np.uint8)
+        source[:, :40] = (60, 90, 120)
+        source[:, 40:] = (180, 160, 140)
+
+        natural, _level, natural_params = enhance_bgr(
+            source, EnhancementLevel.AUTO, style=EnhancementStyle.NATURAL,
+        )
+        vivid, _level, vivid_params = enhance_bgr(
+            source, EnhancementLevel.AUTO, style=EnhancementStyle.DYNAMIC,
+        )
+
+        self.assertTrue(vivid_params["dynamic_style"]["applied"])
+        self.assertIn("dynamic_vivid_boost", vivid_params["algorithm"])
+        self.assertEqual(vivid.shape, natural.shape)
+        natural_saturation = cv2.cvtColor(natural, cv2.COLOR_BGR2HSV)[:, :, 1].mean()
+        vivid_saturation = cv2.cvtColor(vivid, cv2.COLOR_BGR2HSV)[:, :, 1].mean()
+        self.assertGreater(vivid_saturation, natural_saturation)
+
+    @override_settings(
+        AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=False,
+        ADAPTIVE_DENOISE_ENABLED=False,
+    )
+    def test_style_ai_max_forces_high_level_and_adaptive_denoise(self):
+        source = np.full((80, 80, 3), 120, dtype=np.uint8)
+
+        _enhanced, level, parameters = enhance_bgr(
+            source, EnhancementLevel.LOW, style=EnhancementStyle.AI_MAX,
+        )
+
+        self.assertEqual(level, EnhancementLevel.HIGH)
+        self.assertTrue(parameters["adaptive_denoise"]["enabled"])
+
+    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=False)
     def test_auto_selects_high_for_dark_image_and_improves_luminance(self):
         source = np.full((80, 80, 3), 35, dtype=np.uint8)
         enhanced, level, parameters = enhance_bgr(source, EnhancementLevel.AUTO)
@@ -392,6 +450,29 @@ class OpenCVPolicyTests(SimpleTestCase):
         self.assertEqual(level, EnhancementLevel.HIGH)
         self.assertGreater(float(np.mean(enhanced)), float(np.mean(source)))
         self.assertEqual(parameters["colour_policy"], "preserve_lab_chroma_channels")
+
+    @override_settings(
+        AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True,
+        EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD=25.0,
+        EXTREME_LOW_LIGHT_MAX_LUMINANCE_GAIN=90.0,
+        EXTREME_LOW_LIGHT_MODEL_STRENGTH=0.85,
+    )
+    @patch("enhancement.services.enhance_with_zero_dce")
+    def test_extremely_dark_source_gets_a_larger_brightening_allowance(self, zero_dce):
+        """A normal HIGH-level max_luminance_gain of 30 would cap a
+        luminance-12 source at ~42; the extreme-low-light allowance must
+        let it end up meaningfully brighter than that."""
+        source = np.full((80, 80, 3), 12, dtype=np.uint8)
+        zero_dce.return_value = (
+            np.full_like(source, 220),
+            {"provider": "official_zero_dce_onnx_opencv_dnn", "curve_iterations": 8},
+        )
+
+        enhanced, level, parameters = enhance_bgr(source, EnhancementLevel.AUTO)
+
+        self.assertEqual(level, EnhancementLevel.HIGH)
+        self.assertTrue(parameters["zero_dce"]["applied"])
+        self.assertGreater(float(enhanced.mean()), 60.0)
 
     @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True)
     @patch("enhancement.services.enhance_with_zero_dce")
@@ -533,6 +614,39 @@ class OpenCVPolicyTests(SimpleTestCase):
             ),
         )
 
+    def test_gallery_warmth_shifts_the_blue_yellow_axis(self):
+        source = np.full((80, 80, 3), 128, dtype=np.uint8)
+
+        warmer, _metadata = apply_gallery_adjustments(source, EditMode.MANUAL, {"warmth": 80})
+        cooler, _metadata = apply_gallery_adjustments(source, EditMode.MANUAL, {"warmth": -80})
+
+        warmer_b = cv2.cvtColor(warmer, cv2.COLOR_BGR2LAB)[:, :, 2].mean()
+        cooler_b = cv2.cvtColor(cooler, cv2.COLOR_BGR2LAB)[:, :, 2].mean()
+        source_b = cv2.cvtColor(source, cv2.COLOR_BGR2LAB)[:, :, 2].mean()
+        self.assertGreater(warmer_b, source_b)
+        self.assertLess(cooler_b, source_b)
+
+    def test_gallery_intensity_blends_toward_the_preprocessed_original(self):
+        baseline = np.full((80, 80, 3), 60, dtype=np.uint8)
+        source = np.full((80, 80, 3), 200, dtype=np.uint8)
+
+        full, full_metadata = apply_gallery_adjustments(
+            source, EditMode.MANUAL, {"intensity": 100}, baseline=baseline,
+        )
+        half, half_metadata = apply_gallery_adjustments(
+            source, EditMode.MANUAL, {"intensity": 50}, baseline=baseline,
+        )
+        zero, zero_metadata = apply_gallery_adjustments(
+            source, EditMode.MANUAL, {"intensity": 0}, baseline=baseline,
+        )
+
+        self.assertFalse(full_metadata["intensity"]["applied"])
+        self.assertTrue(half_metadata["intensity"]["applied"])
+        self.assertTrue(zero_metadata["intensity"]["applied"])
+        self.assertAlmostEqual(float(full.mean()), 200.0, delta=1.0)
+        self.assertAlmostEqual(float(zero.mean()), 60.0, delta=1.0)
+        self.assertAlmostEqual(float(half.mean()), 130.0, delta=2.0)
+
     def test_gallery_auto_mode_is_scene_aware_and_conservative(self):
         source = np.full((100, 100, 3), 210, dtype=np.uint8)
 
@@ -661,6 +775,30 @@ class EnhancementProcessingAndAPITests(TestCase):
         self.assertTrue(result.enhanced_file.name)
         self.assertNotEqual(result.enhanced_file.name, self.preprocessing.processed_file.name)
         self.assertGreater(result.output_file_size, 0)
+
+    def test_quality_rejected_image_is_still_enhanced_with_a_warning(self):
+        from quality_control.models import ImageQualityDecision
+
+        ImageQualityDecision.objects.create(
+            owner=self.user, image=self.image, preprocessing_result=self.preprocessing,
+            status=ImageQualityDecision.Status.COMPLETED,
+            decision=ImageQualityDecision.Decision.REJECTED,
+            defects=["severe_low_light"],
+            rejection_reasons=["severe_underexposure"],
+        )
+        result = ImageEnhancementResult.objects.create(
+            owner=self.user, image=self.image, preprocessing_result=self.preprocessing,
+            requested_level=EnhancementLevel.AUTO,
+        )
+        result = process_enhancement_result(result)
+
+        self.assertEqual(result.status, "completed")
+        self.assertTrue(result.enhanced_file.name)
+        self.assertTrue(result.applied_parameters["quality_gate"]["bypassed"])
+        self.assertEqual(result.applied_parameters["quality_gate"]["decision"], "rejected")
+        self.assertTrue(
+            any("quality checks" in warning for warning in result.applied_parameters["warnings"])
+        )
 
     def test_enhancement_uses_original_pixel_grid_instead_of_small_proxy(self):
         success, full = cv2.imencode(
@@ -817,7 +955,7 @@ class EnhancementProcessingAndAPITests(TestCase):
             404,
         )
 
-    def test_editor_configuration_exposes_auto_and_five_manual_controls(self):
+    def test_editor_configuration_exposes_auto_and_manual_controls(self):
         response = self.client.get(reverse("enhancement:editor-configuration"))
 
         self.assertEqual(response.status_code, 200)
@@ -825,8 +963,12 @@ class EnhancementProcessingAndAPITests(TestCase):
         self.assertEqual(response.data["modes"], ["auto", "manual"])
         self.assertEqual(
             set(response.data["controls"]),
-            {"brightness", "contrast", "shadows", "saturation", "highlights"},
+            {
+                "brightness", "contrast", "shadows", "saturation", "highlights",
+                "warmth", "intensity",
+            },
         )
+        self.assertEqual(response.data["controls"]["intensity"]["default"], 100)
 
     def test_comparison_is_private_and_requires_authentication(self):
         result = ImageEnhancementResult.objects.create(
@@ -896,6 +1038,10 @@ class EnhancementProcessingAndAPITests(TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertIn("measurements", response.data["detail"].lower())
 
+    @override_settings(
+        CELERY_TASK_ALWAYS_EAGER=True,
+        CELERY_TASK_EAGER_PROPAGATES=True,
+    )
     def test_batch_api_processes_ready_images_and_reports_progress(self):
         response = self.client.post(
             reverse("enhancement:batch-enhance", kwargs={"batch_id": self.batch.pk}),

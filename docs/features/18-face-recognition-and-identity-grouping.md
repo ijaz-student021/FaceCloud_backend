@@ -2,9 +2,12 @@
 
 ## Status
 
-Planned. This document defines the implementation contract. No identity model or
-grouping API should be presented as complete until the privacy, model-license,
-migration, API, Celery, and test gates below pass.
+Complete backend implementation and enabled local evaluation. The verified YuNet
+and SFace artifacts, five-landmark alignment, protected embedding storage,
+owner-scoped grouping and review APIs, Celery pipeline, progress/dashboard/report
+integration, configuration checks, and regression tests are implemented. The
+current thresholds remain evaluation candidates and must be calibrated before a
+customer production rollout.
 
 ## Outcome
 
