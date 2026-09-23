@@ -3,7 +3,7 @@ from rest_framework import serializers
 
 from organizations.serializers import MemberUserSerializer
 
-from .models import ModeratorReview
+from .models import ModeratorReport, ModeratorReview
 
 User = get_user_model()
 
@@ -41,6 +41,21 @@ class ModeratorEscalateSerializer(serializers.Serializer):
 
 class ModeratorAssignSerializer(serializers.Serializer):
     moderator_id = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), source="moderator")
+
+
+class ModeratorReportSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ModeratorReport
+        fields = [
+            "id", "organization", "requested_by", "report_type", "format", "status",
+            "file_size", "failure_reason", "generated_at", "expires_at", "created_at",
+        ]
+        read_only_fields = fields
+
+
+class ModeratorReportCreateSerializer(serializers.Serializer):
+    report_type = serializers.ChoiceField(choices=ModeratorReport.ReportType.choices)
+    format = serializers.ChoiceField(choices=ModeratorReport.Format.choices, default=ModeratorReport.Format.JSON)
 
 
 class ModeratorDashboardSerializer(serializers.Serializer):

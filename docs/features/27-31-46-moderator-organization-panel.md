@@ -503,7 +503,9 @@ another organization's users, images, metrics, or facial data.
       otherwise). Duplicate-group merging is separate and still open.
 - [x] Moderator notifications implemented (2026-09-23, assignment + escalation
       only -- deadline/SLA and batch-failure fan-out are open, see T-007)
-- [ ] Reports and exports implemented
+- [x] Reports and exports implemented (2026-09-23, review-summary and
+      moderator-activity only -- rejection-reason, quality-score, batch, and
+      duplicate-decision report types are open, see T-007)
 - [x] Immutable audit events implemented (2026-09-22/23, membership +
       moderator-review actions)
 - [x] Automated security tests passed (2026-09-23, `organizations/tests.py`

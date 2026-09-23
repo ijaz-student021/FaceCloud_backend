@@ -19,7 +19,7 @@ CONTENT_TYPES = {
 }
 
 
-def _csv_safe(value):
+def csv_safe(value):
     if value is None:
         return ""
     if isinstance(value, (list, tuple)):
@@ -69,7 +69,7 @@ def render_csv(payload):
     writer = csv.DictWriter(output, fieldnames=fieldnames)
     writer.writeheader()
     for row in rows:
-        writer.writerow({key: _csv_safe(value) for key, value in row.items()})
+        writer.writerow({key: csv_safe(value) for key, value in row.items()})
     return ("\ufeff" + output.getvalue()).encode("utf-8")
 
 
@@ -102,7 +102,7 @@ def render_pdf(payload):
             value = ", ".join(f"{item}: {count}" for item, count in value.items())
         summary_rows.append([key.replace("_", " ").title(), str(value)])
     summary_table = Table(summary_rows, colWidths=[55 * mm, 115 * mm], repeatRows=1)
-    summary_table.setStyle(_table_style())
+    summary_table.setStyle(table_style())
     story.extend([summary_table, Spacer(1, 6 * mm)])
 
     rows = [[
@@ -123,13 +123,13 @@ def render_pdf(payload):
         colWidths=[50 * mm, 24 * mm, 20 * mm, 22 * mm, 17 * mm, 14 * mm, 25 * mm],
         repeatRows=1,
     )
-    image_table.setStyle(_table_style(font_size=7))
+    image_table.setStyle(table_style(font_size=7))
     story.append(image_table)
     document.build(story)
     return output.getvalue()
 
 
-def _table_style(font_size=8):
+def table_style(font_size=8):
     return TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0B5CAD")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),

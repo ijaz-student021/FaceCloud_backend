@@ -1,8 +1,9 @@
+from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -11,12 +12,14 @@ from organizations.permissions import OrganizationScopedMixin
 from uploads.models import UploadBatch
 from uploads.services import BatchHasNoFailedImages, BatchRetryLimitReached
 
-from .models import ModeratorReview
+from .models import ModeratorReport, ModeratorReview
 from .serializers import (
     ModeratorAssignSerializer,
     ModeratorDashboardSerializer,
     ModeratorDecisionSerializer,
     ModeratorEscalateSerializer,
+    ModeratorReportCreateSerializer,
+    ModeratorReportSerializer,
     ModeratorReviewSerializer,
 )
 from .services import (
@@ -24,7 +27,9 @@ from .services import (
     cancel_batch_for_organization,
     dashboard_summary,
     decide_review,
+    enqueue_moderator_report,
     escalate_review,
+    expire_moderator_report_if_needed,
     retry_batch_for_organization,
 )
 
@@ -172,3 +177,83 @@ class ModeratorBatchCancelView(OrganizationScopedMixin, APIView):
         batch = get_object_or_404(UploadBatch, pk=batch_id, organization_id=organization_id)
         batch = cancel_batch_for_organization(batch=batch, actor=request.user, request=request)
         return Response(AdminFailedBatchSerializer(batch).data)
+
+
+class ModeratorReportNotReady(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "The report is not ready for download."
+    default_code = "report_not_ready"
+
+
+class ModeratorReportExpired(APIException):
+    status_code = status.HTTP_410_GONE
+    default_detail = "This generated report has expired."
+    default_code = "report_expired"
+
+
+class ModeratorReportListCreateView(OrganizationScopedMixin, generics.ListAPIView):
+    """Org-scoped review-summary/moderator-activity reports (T-007 Phase F)."""
+
+    require_owner_or_moderator = True
+    serializer_class = ModeratorReportSerializer
+    throttle_scope = "org_report"
+
+    def get_queryset(self):
+        return ModeratorReport.objects.filter(organization_id=self.kwargs["organization_id"])
+
+    @extend_schema(
+        request=ModeratorReportCreateSerializer,
+        responses={201: ModeratorReportSerializer, 200: ModeratorReportSerializer, **ERROR_RESPONSES},
+        summary="Request an organization report",
+        description=(
+            "Returns the existing in-flight report instead of creating a "
+            "duplicate if one of the same type and format is already queued or generating."
+        ),
+    )
+    def post(self, request, organization_id):
+        serializer = ModeratorReportCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        report, created = enqueue_moderator_report(
+            organization=self.organization, requested_by=request.user,
+            report_type=serializer.validated_data["report_type"],
+            report_format=serializer.validated_data["format"],
+        )
+        return Response(
+            ModeratorReportSerializer(report).data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class ModeratorReportDetailView(OrganizationScopedMixin, APIView):
+    require_owner_or_moderator = True
+
+    @extend_schema(responses={200: ModeratorReportSerializer, **ERROR_RESPONSES})
+    def get(self, request, organization_id, report_id):
+        report = get_object_or_404(ModeratorReport, pk=report_id, organization_id=organization_id)
+        expire_moderator_report_if_needed(report)
+        return Response(ModeratorReportSerializer(report).data)
+
+
+class ModeratorReportFileView(OrganizationScopedMixin, APIView):
+    require_owner_or_moderator = True
+
+    @extend_schema(
+        responses={200: OpenApiTypes.BINARY, 409: OpenApiTypes.OBJECT, 410: OpenApiTypes.OBJECT},
+        summary="Download a ready organization report",
+    )
+    def get(self, request, organization_id, report_id):
+        report = get_object_or_404(ModeratorReport, pk=report_id, organization_id=organization_id)
+        if expire_moderator_report_if_needed(report):
+            raise ModeratorReportExpired()
+        if report.status != ModeratorReport.Status.READY:
+            raise ModeratorReportNotReady()
+        if not report.report_file or not report.report_file.storage.exists(report.report_file.name):
+            return Response(
+                {"detail": "The generated report file is unavailable."},
+                status=status.HTTP_410_GONE,
+            )
+        return FileResponse(
+            report.report_file.open("rb"), as_attachment=True,
+            filename=f"facecloud-{report.report_type}-report-{report.pk}.{report.format}",
+            content_type=report.content_type or "application/octet-stream",
+        )

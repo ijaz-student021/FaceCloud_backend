@@ -41,4 +41,16 @@ urlpatterns = [
         "<int:organization_id>/moderator/batches/<int:batch_id>/cancel/",
         views.ModeratorBatchCancelView.as_view(), name="batch-cancel",
     ),
+    path(
+        "<int:organization_id>/moderator/reports/",
+        views.ModeratorReportListCreateView.as_view(), name="report-list-create",
+    ),
+    path(
+        "<int:organization_id>/moderator/reports/<int:report_id>/",
+        views.ModeratorReportDetailView.as_view(), name="report-detail",
+    ),
+    path(
+        "<int:organization_id>/moderator/reports/<int:report_id>/download/",
+        views.ModeratorReportFileView.as_view(), name="report-download",
+    ),
 ]
