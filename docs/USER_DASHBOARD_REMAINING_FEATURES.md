@@ -24,7 +24,7 @@ The affected catalogue numbers are Features 18–20, 24–26, 28, 30, and 36–4
 
 ## 1. Identity and Person Folders
 
-### Feature 18: Face recognition and identity grouping — Planned
+### Feature 18: Face recognition and identity grouping — Complete backend; deployment gate remains
 
 Automatically organize accepted images into real person folders.
 
@@ -39,7 +39,7 @@ Remaining work:
 - Associate original, standardized, and enhanced images with the group.
 - Enforce owner-only visibility for all identities and embeddings.
 
-### Feature 19: Identity group management — Planned
+### Feature 19: Identity group management — Complete backend
 
 Allow a user to correct and organize automatically generated person folders.
 

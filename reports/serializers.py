@@ -36,7 +36,7 @@ class ProcessingReportSerializer(serializers.ModelSerializer):
         )
         read_only_fields = fields
 
-    def get_source_name(self, obj):
+    def get_source_name(self, obj) -> str:
         if obj.image_id:
             return obj.image.original_name
         return (
@@ -45,7 +45,7 @@ class ProcessingReportSerializer(serializers.ModelSerializer):
             or f"Batch {obj.batch_id}"
         )
 
-    def get_download_url(self, obj):
+    def get_download_url(self, obj) -> str | None:
         if obj.status != ProcessingReport.Status.READY or not obj.report_file:
             return None
         request = self.context.get("request")
