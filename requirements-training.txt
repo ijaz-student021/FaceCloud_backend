@@ -1,6 +1,6 @@
 # Install separately from production dependencies (prefer a CUDA-enabled PyTorch build in Colab).
 torch>=2.3
 torchvision>=0.18
-Pillow>=10.0
+Pillow>=12.3.0
 numpy>=1.26
 onnx>=1.16
