@@ -586,6 +586,41 @@ def _preserve_source_chroma(original, candidate):
     return cv2.cvtColor(protected_lab, cv2.COLOR_LAB2BGR)
 
 
+def _amplify_source_chroma(source, protected, max_gain):
+    """Restore some of the photo's own colour after a large brightening.
+
+    ``protected`` has the learned luminance but the source's colour channels, so a
+    photo brightened many times over looks grey. Each pixel's colour is scaled by
+    the square root of how much its lightness grew (capped by ``max_gain``). The
+    colour is smoothed first, since in near-black pixels it is mostly sensor noise,
+    and only the source's own colour is used, never a model's, so no colour is
+    invented. Returns ``(image, metadata)``.
+    """
+    metadata = {"applied": False, "max_gain": float(max_gain), "mean_gain": 1.0}
+    if max_gain <= 1.0:
+        return protected, metadata
+    height, width = source.shape[:2]
+    scale = min(1.0, 512.0 / max(height, width))
+    small = (max(1, round(width * scale)), max(1, round(height * scale)))
+
+    def to_small(channel):
+        return cv2.resize(channel, small, interpolation=cv2.INTER_AREA)
+
+    lab_source = cv2.cvtColor(source, cv2.COLOR_BGR2LAB).astype(np.float32)
+    lab_output = cv2.cvtColor(protected, cv2.COLOR_BGR2LAB).astype(np.float32)
+    ratio = to_small(lab_output[:, :, 0]) / np.maximum(to_small(lab_source[:, :, 0]), 6.0)
+    gain = cv2.GaussianBlur(np.sqrt(np.clip(ratio, 1.0, max_gain)), (0, 0), 3.5)
+    gain = cv2.resize(gain, (width, height), interpolation=cv2.INTER_LINEAR)
+    for channel in (1, 2):
+        smooth = to_small(lab_source[:, :, channel])
+        smooth = cv2.GaussianBlur(cv2.bilateralFilter(smooth, 0, 10, 6), (0, 0), 3.5)
+        smooth = cv2.resize(smooth, (width, height), interpolation=cv2.INTER_LINEAR)
+        lab_output[:, :, channel] = 128.0 + (smooth - 128.0) * gain
+    result = cv2.cvtColor(np.clip(lab_output, 0, 255).astype(np.uint8), cv2.COLOR_LAB2BGR)
+    metadata.update({"applied": True, "mean_gain": round(float(gain.mean()), 3)})
+    return result, metadata
+
+
 def _adaptive_learned_strength(input_quality, level):
     """Scale model strength by the actual need for additional exposure."""
     mean = input_quality["mean_luminance"] / 255.0
@@ -779,8 +814,12 @@ def exposure_enhancement_stage(context):
         )
 
     if context.zero_dce["applied"]:
-        context.current_image = _preserve_source_chroma(source, working)
+        protected = _preserve_source_chroma(source, working)
+        context.current_image, gain = _amplify_source_chroma(
+            source, protected, settings.ENHANCEMENT_DARK_COLOUR_GAIN_MAX,
+        )
         context.zero_dce["chroma_protection"] = "preserve_source_lab_chroma"
+        context.zero_dce["chroma_gain"] = gain
         return context
 
     policy = context.policy

@@ -268,6 +268,14 @@ EXTREME_LOW_LIGHT_MODEL_STRENGTH = env.float(
     "EXTREME_LOW_LIGHT_MODEL_STRENGTH", default=0.85
 )
 
+# Colour in very dark photos: the learned brightening keeps only the source's
+# colour channels (an identity/skin-tone protection), and a near-black source
+# has almost none, so the result looks grey. This lifts the photo's own smoothed
+# colour in proportion to how much it was brightened, capped at this gain (the
+# effective boost is its square root, so 9 means at most 3x). It never uses the
+# model's colours, which show false green/magenta casts. 1 or less switches it off.
+ENHANCEMENT_DARK_COLOUR_GAIN_MAX = env.float("ENHANCEMENT_DARK_COLOUR_GAIN_MAX", default=9.0)
+
 # Identity-preserving enhancement: after the pipeline, the final image's faces
 # are compared to the source's faces with the same SFace embeddings used for
 # identity grouping. If similarity falls below the minimum, the result is
