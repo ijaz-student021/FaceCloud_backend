@@ -366,6 +366,13 @@ for the settings screen. Each notification has a `title`, `message`, `severity`,
 `resource_type`/`resource_id` and an `action_path` you can route to. Poll the
 unread count (every 30 to 60 seconds is plenty); there is no websocket.
 
+Moderators and owners of an organization also receive `event_type`
+`moderator_batch_failed` when one of the organization's batches fails entirely
+(`resource_type` `batch`, `metadata.batch_id` and `metadata.organization_id`,
+`action_path` `/moderator/batches`). It is in-app only, follows the
+`moderator_review_updates` preference, and never goes to the person who uploaded
+the batch (they get their own `batch_completed`).
+
 ## 9. Privacy screens
 
 - Consent: section 5.

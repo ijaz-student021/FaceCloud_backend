@@ -145,6 +145,41 @@ def notify_moderator_review_escalated(review):
     return notifications
 
 
+def notify_moderators_batch_failed(batch):
+    """Tell an organization's owners and moderators that one of its batches failed entirely.
+
+    The uploader already gets their own notification, so they are skipped here.
+    The retry count is part of the key, so a batch that fails again after a
+    retry alerts again while a repeated check of the same failure does not.
+    """
+    if batch.organization_id is None:
+        return []
+    from organizations.models import OrganizationMembership
+
+    staff = OrganizationMembership.objects.filter(
+        organization_id=batch.organization_id,
+        role__in=[OrganizationMembership.Role.OWNER, OrganizationMembership.Role.MODERATOR],
+        status=OrganizationMembership.Status.ACTIVE,
+    ).exclude(user_id=batch.owner_id).select_related("user")
+    notifications = []
+    for membership in staff:
+        notification, _ = create_user_notification(
+            recipient=membership.user,
+            event_type=UserNotification.EventType.MODERATOR_BATCH_FAILED,
+            idempotency_key=f"batch:{batch.pk}:failed:{batch.retry_count}:{membership.user_id}",
+            title="A batch failed",
+            message=f"Batch {batch.pk} in your organization failed to process. You can retry or cancel it.",
+            severity=UserNotification.Severity.ERROR,
+            resource_type="batch",
+            resource_id=batch.pk,
+            action_path="/moderator/batches",
+            metadata={"batch_id": batch.pk, "organization_id": batch.organization_id, "status": "failed"},
+        )
+        if notification:
+            notifications.append(notification)
+    return notifications
+
+
 def notify_enhancement_result(result):
     image = result.image
     if result.status == "completed":
@@ -233,6 +268,8 @@ def notify_batch_completed(batch_id, counts=None):
             "failed": failed,
         },
     )
+    if batch.processing_status == "failed":
+        notify_moderators_batch_failed(batch)
     return notification
 
 
