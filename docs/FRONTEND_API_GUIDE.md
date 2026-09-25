@@ -238,6 +238,25 @@ Photos are grouped into events by upload time. No face data is used.
 - Event ids are not permanent: a photo that is not the first of its event is
   not a valid id. Always take ids from the list response.
 
+## 5c. Collages
+
+A collage is a generated JPEG made from an event's photos or one person's photos.
+
+- `POST /api/collages/` with `{"source_type": "event", "event_id": 12, "gap_hours": 6}`
+  or `{"source_type": "person", "group_id": 3}` (optional `title`). Returns `202`
+  with the collage in `queued` state, or `200` with the already-running one:
+  each user can have only one collage in progress.
+- Poll `GET /api/collages/{id}/` until `status` is `ready` (or `failed`, with
+  `failure_reason`). `download_url` then serves the JPEG. Use the same
+  `gap_hours` you used for the events list.
+- `GET /api/collages/` lists them (paginated). `DELETE /api/collages/{id}/` removes one.
+- Needs at least 3 processed photos (a clear `400` otherwise); at most 6 are
+  used, spread across the source.
+- A person collage needs biometric consent. Without it the request is a `400`;
+  the same check runs again when the job starts.
+- A ready collage expires after about 72 hours (`410` on download); create a new one.
+- `manifest.photos[].faces_in_frame` is `false` when faces could not all fit the tile.
+
 ## 6. Reports, packages, sharing
 
 **Reports** (`json`, `csv`, `pdf`) and **download packages** (ZIP) are
