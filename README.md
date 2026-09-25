@@ -216,6 +216,17 @@ python manage.py test --exclude-tag slow     # quick loop
 python manage.py test                        # everything, before a commit
 ```
 
+`config/test_end_to_end.py` is one realistic pass through the whole product over
+the real HTTP API (sign up by emailed code, log in, upload, progress, thumbnails,
+encrypted downloads, events, enhancement, collage, notifications, isolation from
+another user). It runs the background jobs in-process, needs no Redis, and uses a
+throwaway database. It needs the sample photos in `Dataset/` and `People/`, so it
+is skipped when they are missing and by the quick loop above:
+
+```powershell
+python manage.py test config.test_end_to_end --tag slow
+```
+
 ### Continuous integration
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull
