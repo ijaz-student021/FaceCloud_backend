@@ -473,13 +473,36 @@ settings, Zero-DCE on) found two defects in the denoise stage; both are fixed.
   (`post_exposure_noise.quality`), so a genuinely blurry photo is still
   protected. In the sample this affected 1 image in 60.
 
-What was **not** changed: raising the strength table barely helped without the
-edge fix (mean noise 5.42 and 5.38 at stronger settings). Colours in very dark
-photos stay muted by design: the learned brightening keeps the source LAB chroma
-(a documented identity/skin-tone protection with chroma-shift limits), and a
-near-black source has almost no colour to keep. Reducing the remaining grain
-and restoring colour needs the heavier restoration models (GPU roadmap) or a
-deliberate change to that chroma policy.
+What was **not** changed by the grain fixes: raising the strength table barely
+helped without the edge fix (mean noise 5.42 and 5.38 at stronger settings).
+
+### Colour in very dark photos (`ENHANCEMENT_DARK_COLOUR_GAIN_MAX`)
+
+When the learned brightening runs, the pipeline keeps the source's LAB colour
+channels (an identity and skin-tone protection). A near-black source has almost
+no colour, so a photo brightened many times over came out grey (mean
+colourfulness 2.9 in, 2.86 out on the 60-image sample).
+
+- **Rejected: using the model's colours.** The raw Zero-DCE output has strong
+  green and magenta casts on pavements and trees, and smoothing or blending it
+  keeps them. Near-black 8-bit pixels do not contain that colour information,
+  so the model invents it.
+- **Shipped: bounded gain on the photo's own colour.** After the brightening,
+  the source's colour channels are smoothed (in near-black pixels they are mostly
+  sensor noise) and scaled by the square root of how much each area's lightness
+  grew, capped by `ENHANCEMENT_DARK_COLOUR_GAIN_MAX` (default 9, so at most 3x).
+  Lightness is not touched, and no colour is introduced that the photo did not
+  already hold. `1` or less switches it off and restores the old output exactly.
+  The applied gain is recorded in `zero_dce.chroma_gain`.
+- **Result (60 dark photos, full pipeline):** mean colourfulness 2.86 to 5.04,
+  largest chroma shift 2.54 (the guard limits are 2.5 to 5.0 and cut it back on
+  0 of 60), brightness unchanged, about 0.55 s more per image. Visible effect:
+  warm shop lights, green courts and coloured clothing return; a few very dark
+  scenes gain a faint tint.
+- **Not verified:** the identity guard judged none of the 60 photos (no face
+  large enough), so its interaction with the gain has not been measured on real
+  faces. The gain only shifts chroma by about 2 to 3 units and the guard still
+  runs afterwards; test with consented portraits before relying on it.
 
 Automated regression coverage includes extremely dark, normally exposed,
 bright, low-resolution, and multi-face scene fixtures. It verifies bounded
