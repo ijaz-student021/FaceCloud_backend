@@ -18,7 +18,15 @@ each event.
 
 ## How it works
 
-- **Generated on first request, then cached.** One `ImageThumbnail` row per image
+- **Pre-generated after upload, otherwise on first request.** As soon as a stored
+  photo is saved, a background task (`thumbnails.generate`) makes the default-size
+  thumbnail after the transaction commits, so the first gallery view finds it
+  cached. It is best effort: a queue outage is logged and never affects the upload,
+  and the endpoint still generates on demand. `THUMBNAIL_PREGENERATE=False`
+  switches it off; the larger size is always made on demand. For photos uploaded
+  before this existed, `python manage.py generate_thumbnails` (options `--size`,
+  `--limit`, `--dry-run`) fills in the missing ones and is safe to repeat.
+- **Cached.** One `ImageThumbnail` row per image
   and size (unique constraint), one JPEG file at
   `users/<id>/thumbnails/<uuid>.jpg`. Later requests just stream the cached file.
   A cached row whose file has vanished is regenerated. Two requests racing on the
@@ -54,9 +62,7 @@ gallery requests many). Invalid values stop startup.
 
 ## Not built
 
-- **Pre-generating after upload.** The first view of a large gallery pays the
-  generation cost once per photo. Generating in the preprocessing task is a small
-  follow-up if that first paint matters.
+- **Pre-generating the 1024 px size.** Only the default size is made after upload.
 - **Thumbnails of enhanced or edited results** (only the original photo).
 - **Loading through a bare `<img src>`.** The endpoint is protected like every
   download; a frontend fetches it with the Authorization header. Signed short-lived

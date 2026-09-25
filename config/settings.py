@@ -648,6 +648,8 @@ SHARE_LINK_RETENTION_DAYS = env.int("SHARE_LINK_RETENTION_DAYS", default=30)
 # edges in pixels (the first is the default) and the JPEG quality.
 THUMBNAIL_SIZES = tuple(int(size) for size in env.list("THUMBNAIL_SIZES", default=["256", "1024"]))
 THUMBNAIL_JPEG_QUALITY = env.int("THUMBNAIL_JPEG_QUALITY", default=80)
+# Make the default-size thumbnail in the background right after upload.
+THUMBNAIL_PREGENERATE = env.bool("THUMBNAIL_PREGENERATE", default=True)
 if not THUMBNAIL_SIZES or any(not 32 <= size <= 4096 for size in THUMBNAIL_SIZES):
     raise ImproperlyConfigured("THUMBNAIL_SIZES must list sizes between 32 and 4096 pixels.")
 if not 30 <= THUMBNAIL_JPEG_QUALITY <= 95:
