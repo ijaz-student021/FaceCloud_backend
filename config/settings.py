@@ -73,6 +73,7 @@ INSTALLED_APPS = [
     "activity",
     "privacy",
     "sharing",
+    "events",
     "organizations",
     "moderation",
 ]
@@ -633,6 +634,8 @@ SHARE_LINK_MAX_ACTIVE_PER_USER = env.int("SHARE_LINK_MAX_ACTIVE_PER_USER", defau
 SHARE_LINK_RETENTION_DAYS = env.int("SHARE_LINK_RETENTION_DAYS", default=30)
 
 # Organizations (Feature 46): how long an invitation link stays acceptable.
+# Feature 48: hours between two photos that starts a new event in the timeline.
+EVENT_GAP_HOURS = env.float("EVENT_GAP_HOURS", default=6.0)
 ORG_INVITATION_TTL_HOURS = env.int("ORG_INVITATION_TTL_HOURS", default=72)
 
 # Periodic maintenance. Nothing runs these unless a beat process is started
