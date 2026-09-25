@@ -74,6 +74,7 @@ INSTALLED_APPS = [
     "privacy",
     "sharing",
     "events",
+    "collages",
     "organizations",
     "moderation",
 ]
@@ -634,6 +635,8 @@ SHARE_LINK_MAX_ACTIVE_PER_USER = env.int("SHARE_LINK_MAX_ACTIVE_PER_USER", defau
 SHARE_LINK_RETENTION_DAYS = env.int("SHARE_LINK_RETENTION_DAYS", default=30)
 
 # Organizations (Feature 46): how long an invitation link stays acceptable.
+# Feature 49: hours a generated collage stays downloadable.
+COLLAGE_TTL_HOURS = env.int("COLLAGE_TTL_HOURS", default=72)
 # Feature 48: hours between two photos that starts a new event in the timeline.
 EVENT_GAP_HOURS = env.float("EVENT_GAP_HOURS", default=6.0)
 ORG_INVITATION_TTL_HOURS = env.int("ORG_INVITATION_TTL_HOURS", default=72)
@@ -649,6 +652,10 @@ CELERY_BEAT_SCHEDULE = {
     "expire-download-packages": {
         "task": "downloads.cleanup_expired",
         "schedule": crontab(minute=5),
+    },
+    "expire-collages": {
+        "task": "collages.cleanup_expired",
+        "schedule": crontab(minute=25),
     },
     "expire-organization-exports": {
         "task": "privacy.cleanup_organization_exports",
@@ -753,6 +760,7 @@ REST_FRAMEWORK = {
         "image_preprocess": "100/hour",
         "report_generation": "60/hour",
         "download_package": "30/hour",
+        "collage": "20/hour",
         "notification_action": "300/hour",
         "admin_analytics": "120/hour",
         "admin_batch_retry": "60/hour",

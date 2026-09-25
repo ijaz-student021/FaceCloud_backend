@@ -91,6 +91,11 @@ JOB_KINDS = (
         finished_field=None,
     ),
     JobKind(
+        "collage", "collages.Collage",
+        queued=("queued",), processing=("generating",), failed="failed",
+        finished_field=None,
+    ),
+    JobKind(
         "report", "reports.ProcessingReport",
         queued=("queued",), processing=("generating",), failed="failed",
         finished_field=None,
