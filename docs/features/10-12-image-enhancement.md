@@ -452,6 +452,35 @@ existing clients. New clients should use `quality_guards.guard_a` and
 Adaptive denoise is enabled by default. A deployment can still disable it to use
 the legacy denoise policy during rollback or compatibility testing.
 
+### Night-photo grain fixes (2026-09)
+
+A review on 60 real, very dark images from `Dataset/image` (default `auto`
+settings, Zero-DCE on) found two defects in the denoise stage; both are fixed.
+
+- **Edges were found on the noisy image.** The edge-aware blend protects edges
+  and denoises flat areas, but it located edges by measuring gradients on the
+  noisy input. Grain creates gradients everywhere, so only ~14% of a brightened
+  night photo counted as flat and about 80% of the grain survived at *any*
+  strength (raising the strength from 7 to 14 changed nothing). Edges are now
+  measured on the denoised candidate. Result on the 60 images: mean measured
+  noise 5.53 to 4.88, images still flagged `visible_noise` 24 to 22, edge
+  strength retained 1.000 and a mean pixel change of 0.41/255 (detail is not
+  lost). On a synthetic block image with grain, grain in flat areas fell 49%
+  where the old logic removed 11%.
+- **Dark frames counted as "severe blur".** "Severe blur" is a Laplacian
+  variance below 35, which any near-black frame has, and it switched denoising
+  off for the grainiest night photos. It is now judged on the brightened image
+  (`post_exposure_noise.quality`), so a genuinely blurry photo is still
+  protected. In the sample this affected 1 image in 60.
+
+What was **not** changed: raising the strength table barely helped without the
+edge fix (mean noise 5.42 and 5.38 at stronger settings). Colours in very dark
+photos stay muted by design: the learned brightening keeps the source LAB chroma
+(a documented identity/skin-tone protection with chroma-shift limits), and a
+near-black source has almost no colour to keep. Reducing the remaining grain
+and restoring colour needs the heavier restoration models (GPU roadmap) or a
+deliberate change to that chroma policy.
+
 Automated regression coverage includes extremely dark, normally exposed,
 bright, low-resolution, and multi-face scene fixtures. It verifies bounded
 highlight clipping, contrast retention, normalized comparisons, stage ordering,
