@@ -162,6 +162,31 @@ def decide_review(*, review, actor, action, reason="", notes="", group_id=None, 
     return locked
 
 
+OPEN_REVIEW_STATUSES = (
+    ModeratorReview.Status.PENDING, ModeratorReview.Status.IN_REVIEW, ModeratorReview.Status.ESCALATED,
+)
+
+
+def release_open_reviews(*, organization, user):
+    """Take a member's undecided reviews back into the queue; return how many.
+
+    Called when someone stops being able to moderate (removed, suspended or
+    demoted), so their reviews are not left assigned to a person who can no
+    longer act on them. A review that was being worked on returns to
+    ``pending``; an escalated one keeps its status so it still reaches an owner.
+    Decided reviews are history and are never touched.
+    """
+    queryset = ModeratorReview.objects.filter(
+        organization=organization, assigned_moderator=user, status__in=OPEN_REVIEW_STATUSES,
+    )
+    now = timezone.now()
+    with transaction.atomic():
+        ModeratorReview.objects.filter(
+            pk__in=queryset.filter(status=ModeratorReview.Status.IN_REVIEW).values("pk"),
+        ).update(status=ModeratorReview.Status.PENDING, updated_at=now)
+        return queryset.update(assigned_moderator=None, updated_at=now)
+
+
 @transaction.atomic
 def escalate_review(*, review, actor, reason="", request=None):
     from notifications.events import notify_moderator_review_escalated
