@@ -26,6 +26,8 @@ refresh, password reset, public share links).
 **CORS:** open only while the backend runs with `DJANGO_DEBUG=True`. In
 production the backend allows only the origins in `CORS_ALLOWED_ORIGINS`, so
 your frontend's origin must be listed there.
+Browser scripts can read the `Content-Disposition` (download filename) and
+`Retry-After` (429 wait time) response headers; the backend exposes both.
 
 **Dates** are ISO 8601 strings in UTC.
 

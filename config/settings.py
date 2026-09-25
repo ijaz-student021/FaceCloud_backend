@@ -91,6 +91,11 @@ MIDDLEWARE = [
 # Open CORS is a development convenience only; it defaults to on solely in DEBUG.
 CORS_ALLOW_ALL_ORIGINS = os.environ.get("CORS_ALLOW_ALL_ORIGINS", str(DEBUG)).lower() == "true"
 CORS_ALLOWED_ORIGINS = [origin.strip() for origin in os.environ.get("CORS_ALLOWED_ORIGINS", "").split(",") if origin.strip()]
+# A browser hides every response header except a short safelist from
+# cross-origin JavaScript unless it is exposed here. The frontend needs
+# Content-Disposition (the real download filename) and Retry-After (how long a
+# 429 says to wait).
+CORS_EXPOSE_HEADERS = ["Content-Disposition", "Retry-After"]
 
 ROOT_URLCONF = 'config.urls'
 
