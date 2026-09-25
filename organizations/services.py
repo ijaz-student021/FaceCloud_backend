@@ -251,6 +251,13 @@ def update_member(*, membership, actor_membership, role=None, status_value=None,
             raise OrganizationConflict("The last organization owner cannot be suspended or removed.")
         locked.status = status_value
     locked.save(update_fields=["role", "status", "updated_at"])
+    released = 0
+    if not (
+        locked.status == OrganizationMembership.Status.ACTIVE and locked.role in MANAGER_ROLES
+    ):
+        from moderation.services import release_open_reviews
+
+        released = release_open_reviews(organization=locked.organization, user=locked.user)
     action = (
         OrganizationAuditEvent.Action.MEMBER_ROLE_CHANGED if role is not None
         else OrganizationAuditEvent.Action.MEMBER_STATUS_CHANGED
@@ -258,7 +265,8 @@ def update_member(*, membership, actor_membership, role=None, status_value=None,
     record_audit_event(
         locked.organization, actor_membership.user, action,
         target_type="OrganizationMembership", target_id=locked.pk,
-        previous_value=previous, new_value={"role": locked.role, "status": locked.status},
+        previous_value=previous,
+        new_value={"role": locked.role, "status": locked.status, **({"released_reviews": released} if released else {})},
         reason=reason, request=request,
     )
     return locked
@@ -278,10 +286,13 @@ def remove_member(*, membership, actor_membership, reason="", request=None):
     previous = {"role": locked.role, "status": locked.status}
     locked.status = OrganizationMembership.Status.REMOVED
     locked.save(update_fields=["status", "updated_at"])
+    from moderation.services import release_open_reviews
+
+    released = release_open_reviews(organization=locked.organization, user=locked.user)
     record_audit_event(
         locked.organization, actor_membership.user, OrganizationAuditEvent.Action.MEMBER_REMOVED,
         target_type="OrganizationMembership", target_id=locked.pk,
-        previous_value=previous, new_value={"status": locked.status},
+        previous_value=previous, new_value={"status": locked.status, "released_reviews": released},
         reason=reason, request=request,
     )
     return locked

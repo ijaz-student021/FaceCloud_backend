@@ -889,10 +889,15 @@ membership, moderation, and data access. See the full design in
 - Explicit content ownership and visibility fields for personal, organization-owned, and review-shared data — Open
 - Organization membership does not automatically grant access to a member's personal content — Done (every existing owner-scoped endpoint is unchanged by any phase; this is verified by the fact that no view's queryset was touched)
 - Time-bounded, revocable review access where temporary moderator visibility is required — Open (a review is currently permanent once created, not time-bounded)
-- Member activation, deactivation, removal, and resource-retention policies — Partial
-  (activation/deactivation/removal with protected-owner and last-owner rules
-  done; resource-retention/reassignment of a removed member's open reviews is
-  not yet implemented)
+- Member activation, deactivation, removal, and resource-retention policies — Done
+  for review work (activation/deactivation/removal with protected-owner and
+  last-owner rules; when a member is removed, suspended or demoted so they can no
+  longer moderate, their undecided reviews return to the queue unassigned, an
+  in-review one becomes pending again, an escalated one stays escalated, decided
+  reviews are untouched, and the audit event records `released_reviews`).
+  Retention of other content belonging to a removed member is unchanged: it stays
+  with its personal owner, because organization membership never granted access
+  to it
 - Prevention of cross-organization access and face matching by default — Partial
   (organization membership/invitation/audit APIs and moderator review APIs are
   isolated and tested — `OrganizationIsolationTests`,
