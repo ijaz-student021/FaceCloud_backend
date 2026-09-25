@@ -25,12 +25,13 @@ feature catalogue and status table; this README does not duplicate it.
 | Area | Summary |
 |---|---|
 | Accounts | Pending registration with six-digit email verification, JWT login with refresh rotation, per-account login backoff, password reset, logout from all devices, admin / moderator / user roles, suspension, audit trail |
-| Uploads | Single, multiple and ZIP upload; content-based JPG/PNG validation; ZIP-slip and ZIP-bomb protection; UUID storage paths; owner-only access |
+| Uploads | Single, multiple and ZIP upload; content-based validation of JPG, PNG, WebP, BMP, TIFF and static GIF; ZIP-slip and ZIP-bomb protection; UUID storage paths; owner-only access |
+| Gallery | Automatic event/timeline grouping of a user's photos, face-aware collages from an event or a person (asynchronous, consent-gated for person collages), and cached, encrypted JPEG thumbnails so a gallery never loads full originals |
 | Quality control | Sharpness, exposure, contrast, noise and resolution scoring with explainable accept / review / reject decisions |
-| Enhancement | Adaptive pipeline: Zero-DCE exposure, adaptive denoise, EDSR / NAFNet / Real-ESRGAN / PureScale / PureVision restoration, guarded GFPGAN face restoration, sharpening, colorization, style presets and sliders, final output-contract validation |
+| Enhancement | Adaptive pipeline: Zero-DCE exposure, adaptive denoise, EDSR / NAFNet / Real-ESRGAN / PureScale / PureVision restoration, guarded GFPGAN face restoration, sharpening, colorization, bounded colour recovery for very dark photos, style presets and sliders, final output-contract validation |
 | Identity | YuNet face detection, SFace embeddings, identity grouping, a guard that rejects enhancements that change who a face looks like, ZIP export per identity |
 | Organizations | Multi-tenant workspaces: owner / moderator / member roles, hashed-token invitations, protected-owner and last-owner rules, an immutable per-organization audit trail, organization-wide data export |
-| Moderation | Organization-scoped review queue for uncertain AI decisions (quality, duplicate, identity), decision write-back to the underlying record, assignment and escalation notifications, batch retry / cancel, organization reports, and duplicate-group merging |
+| Moderation | Organization-scoped review queue for uncertain AI decisions (quality, duplicate, identity), decision write-back to the underlying record, assignment, escalation and batch-failure notifications, batch retry / cancel, organization reports, duplicate-group merging, and automatic release of a removed or demoted moderator's open reviews |
 | Privacy | Biometric consent history, verified erasure, retention purge, personal and organization-wide data export, AES-256-GCM encryption of embeddings and stored images with key rotation, temporary-file cleanup |
 | Model comparison | One image through several enhancement profiles side by side, with metrics, timing, previews, an explainable recommendation and a CSV report |
 | Sharing | Expiring, revocable public links to a result, optionally watermarked, with view counts and no viewer identity stored |
@@ -332,7 +333,7 @@ Then run `python manage.py check --deploy` for Django's own checks.
 
 - [`docs/FEATURES.md`](docs/FEATURES.md): feature catalogue and status
 - [`docs/SECURITY_AND_PERFORMANCE_REVIEW.md`](docs/SECURITY_AND_PERFORMANCE_REVIEW.md): dependency audit, static analysis and performance findings, and how to repeat them
-- [`docs/FRONTEND_API_GUIDE.md`](docs/FRONTEND_API_GUIDE.md): how a frontend uses the API (auth, upload and polling, enhancement, people, sharing, organizations, moderator area)
+- [`docs/FRONTEND_API_GUIDE.md`](docs/FRONTEND_API_GUIDE.md): how a frontend uses the API (auth, upload and polling, thumbnails, enhancement, people, events, collages, sharing, organizations, moderator area, notifications)
 - [`docs/API_ERRORS.md`](docs/API_ERRORS.md): error shapes the frontend can rely on
 - [`docs/features`](docs/features): per-feature design, verification and limits
 - [`docs/structured`](docs/structured): architecture, decisions, tasks
