@@ -40,6 +40,7 @@ urlpatterns = [
     path("api/notifications/", include("notifications.urls")),
     path("api/privacy/", include("privacy.urls")),
     path("api/shares/", include("sharing.urls")),
+    path("api/events/", include("events.urls")),
     path("api/system/", include("operations.urls")),
     path("api/organizations/", include("organizations.urls")),
     path("api/organizations/", include("moderation.urls")),

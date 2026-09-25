@@ -223,6 +223,21 @@ duplicates. Confirm or dismiss with
 `PATCH /api/duplicates/matches/{id}/review/`. An exact checksum match cannot be
 dismissed (the API returns a 400).
 
+## 5b. Events (moments timeline)
+
+Photos are grouped into events by upload time. No face data is used.
+
+- `GET /api/events/` lists events, newest first (paginated). Each has `id`,
+  `start`, `end`, `photo_count`, `cover_image_id` and `cover_download_url`.
+- `GET /api/events/{id}/` shows one event; `GET /api/events/{id}/photos/` lists
+  its photos (paginated, oldest first) with `download_url` for each.
+- The optional `gap_hours` query parameter (0.25-168) sets how long a silence
+  starts a new event. Send the same value on every call, because event ids
+  depend on it. Omit it to use the server default (6 hours).
+- The cover is the original photo, not a small thumbnail; scale it in the UI.
+- Event ids are not permanent: a photo that is not the first of its event is
+  not a valid id. Always take ids from the list response.
+
 ## 6. Reports, packages, sharing
 
 **Reports** (`json`, `csv`, `pdf`) and **download packages** (ZIP) are
@@ -354,7 +369,6 @@ hide these routes, but never rely on that for security.
 
 - There is no websocket/server-sent events channel; use polling.
 - Live camera features are not implemented.
-- Text search and event/timeline "moments" views are not implemented.
 - Deadline/SLA alerts for moderators and extra moderator report types are not
   implemented.
 

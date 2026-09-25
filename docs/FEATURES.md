@@ -926,7 +926,7 @@ submit the chosen values for a full-resolution, asynchronous server render.
 - Secure download history for edited outputs
 - Original upload and primary enhancement are never overwritten
 
-### Feature 48: Automatic event/timeline grouping — Backlog
+### Feature 48: Automatic event/timeline grouping — Done (backend)
 
 Groups a user's photos into "moments" (an upload-time-gap-based timeline) for
 a gallery moments view, similar to the automatic event grouping in most
@@ -935,9 +935,17 @@ consumer photo apps.
 - Group photos into events by a configurable gap between consecutive
   `ImageUpload.created_at` timestamps within an owner (or, once relevant,
   within an organization)
-- Recompute incrementally on new uploads rather than wiping and rebuilding
-  every event on every call
-- Event listing and detail APIs (photo count, date range, cover thumbnail)
+- Event listing, detail and photo-list APIs (photo count, date range, cover
+  photo) under `/api/events/`, in the new `events` app
+- **Shipped as computed-on-demand, not stored.** Events are derived from the
+  owner's uploaded photos on every call (one query of ids and timestamps), so
+  a deleted or added photo can never leave stale events behind and there is no
+  table to migrate or repair. An event's id is its first photo's id, which
+  stays the same while later photos are appended to it. The gap defaults to
+  `EVENT_GAP_HOURS` (6) and a caller may pass `gap_hours` (0.25-168); use the
+  same value for the list, detail and photos calls.
+- Not built: organization-wide events (owner-scoped only), user-editable event
+  titles, and a real thumbnail (the cover is the original photo's download URL)
 
 **Facial data usage: none.** Event grouping only reads upload timestamps —
 no face detection, embedding, or identity data is read or written. Per

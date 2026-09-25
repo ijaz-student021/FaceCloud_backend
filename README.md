@@ -96,6 +96,7 @@ organizations/     multi-tenant workspaces, membership, invitations, audit trail
 moderation/        organization-scoped review queue, decisions, reports, batch actions
 privacy/           consent, erasure, retention, personal and organization export, cleanup
 sharing/           expiring, revocable share links
+events/            automatic event/timeline grouping of a user's photos
 reports/  downloads/  notifications/  activity/  operations/
 scripts/           worker launcher, dataset audit, model training and export
 notebooks/         model training notebooks
