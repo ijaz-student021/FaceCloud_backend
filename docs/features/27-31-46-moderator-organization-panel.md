@@ -40,7 +40,16 @@ each documented in its PR/commit message rather than silently applied:
   reason -- a moderator merging groups on the content owner's behalf must
   not misattribute group ownership or the `IdentityChange` audit trail.
 
-Still open: deadline/SLA alerts, batch-failure-to-moderators notifications,
+Batch-failure alerts (2026-09-25): when an organization's batch fails entirely
+(every image failed; partial results and cancellations are routine and do not
+alert), every active owner and moderator except the uploader gets an in-app
+`moderator_batch_failed` notification linking to `/moderator/batches`, where the
+existing retry and cancel actions live. It uses the existing `moderator_review_updates`
+preference and is never emailed. The key includes the batch's retry count, so a
+failure after a retry alerts again while a repeated check of the same failure
+does not. Tests: `moderation/test_batch_failure_alerts.py`.
+
+Still open: deadline/SLA alerts,
 reprocessing at a different enhancement level (doesn't exist anywhere in
 the codebase, owner-facing or otherwise), rejection-reason/quality-score/
 batch/duplicate-decision report types, and the frontend (no frontend repo
@@ -516,7 +525,7 @@ another organization's users, images, metrics, or facial data.
       `moderation.services.groups_for_duplicate_match()` resolves which
       identity groups a duplicate match's two images belong to)
 - [x] Moderator notifications implemented (2026-09-23, assignment + escalation
-      only -- deadline/SLA and batch-failure fan-out are open, see T-007)
+      and batch failure -- only deadline/SLA is open, see T-007)
 - [x] Reports and exports implemented (2026-09-23, review-summary and
       moderator-activity only -- rejection-reason, quality-score, batch, and
       duplicate-decision report types are open, see T-007)

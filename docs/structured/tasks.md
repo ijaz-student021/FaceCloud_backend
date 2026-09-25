@@ -143,9 +143,9 @@
   batch-failure case). 8 tests (`moderation/test_notifications.py`).
   Deliberately not attempted, flagged rather than dropped: deadline/SLA
   alerts (no deadline field exists on `ModeratorReview`, and none is being
-  invented for this); batch-failure-to-moderators (needs a genuinely new
-  multi-recipient fan-out pattern, bigger than the owner-only escalation
-  case above).
+  invented for this); batch-failure-to-moderators was deferred here and is done as of 2026-09-25
+  (`notify_moderators_batch_failed`: a bounded loop over the organization's active
+  owners and moderators, the same shape as the escalation fan-out, in-app only).
   Batch-management moderator actions done 2026-09-23 (Phase E): org-scoped
   retry/cancel, both reusing `uploads.services.retry_batch`/`cancel_batch`
   exactly -- `cancel_batch` was newly extracted from the owner-facing view's
@@ -190,8 +190,8 @@
   (`moderation/test_duplicate_group_merge.py`).
   T-007's backend is now complete across all four remaining pieces from the
   original Phase C note. Still open, flagged throughout rather than
-  claimed done: deadline/SLA alerts, batch-failure-to-moderators
-  notifications, reprocessing at a different enhancement level,
+  claimed done: deadline/SLA alerts (batch-failure alerts done 2026-09-25),
+  reprocessing at a different enhancement level,
   rejection-reason/quality-score/batch/duplicate-decision report types, and
   the frontend (no frontend repo in this workspace).
 - Organization-scoped queues and decisions — Done for all three review

@@ -25,6 +25,8 @@ EVENT_POLICY = {
     UserNotification.EventType.LIVE_SESSION_ALERT: ("live_session_alerts", False),
     UserNotification.EventType.MODERATOR_REVIEW_ASSIGNED: ("moderator_review_updates", True),
     UserNotification.EventType.MODERATOR_REVIEW_ESCALATED: ("moderator_review_updates", True),
+    # In-app only: a failed batch can be noisy, and the uploader already gets the email.
+    UserNotification.EventType.MODERATOR_BATCH_FAILED: ("moderator_review_updates", False),
 }
 
 

@@ -40,6 +40,7 @@ class UserNotification(models.Model):
         LIVE_SESSION_ALERT = "live_session_alert", "Live session alert"
         MODERATOR_REVIEW_ASSIGNED = "moderator_review_assigned", "Moderator review assigned"
         MODERATOR_REVIEW_ESCALATED = "moderator_review_escalated", "Moderator review escalated"
+        MODERATOR_BATCH_FAILED = "moderator_batch_failed", "Organization batch failed"
 
     class Severity(models.TextChoices):
         INFO = "info", "Information"
