@@ -149,6 +149,18 @@ GET /api/images/batches/{batch_id}/progress/
 endpoints, so fetch them with the Authorization header (not a bare `<img src>`;
 use fetch with a blob, or a short-lived approach agreed with the backend).
 
+**Thumbnails.** Never draw a gallery from `download_url`: originals can be
+hundreds of megabytes. Each image in the list carries `thumbnail_url`, which
+serves a small JPEG (`GET /api/images/{id}/thumbnail/`, optional `?size=256`
+default or `?size=1024`; any other size is a 400). The first request for a size
+generates it (about 0.1 to 0.8 seconds for a large photo) and every later one
+is served from the cache, so the first paint of a big gallery can be slower than
+the next. It is a normal protected endpoint: fetch it with the Authorization
+header and use a blob URL, exactly like a download. Use 256 for tiles and 1024
+for a lightbox, then `download_url` only for the real file. The response carries
+`Cache-Control: private, max-age=3600`. Rejected images have no thumbnail
+(`thumbnail_url` is `null`).
+
 **Quality, faces, duplicates.** Each image has read endpoints:
 `/api/quality/images/{image_id}/`, `/api/validation/images/{image_id}/`,
 `/api/duplicates/images/{image_id}/`. A decision is `accepted`, `rejected` or
@@ -228,13 +240,14 @@ dismissed (the API returns a 400).
 Photos are grouped into events by upload time. No face data is used.
 
 - `GET /api/events/` lists events, newest first (paginated). Each has `id`,
-  `start`, `end`, `photo_count`, `cover_image_id` and `cover_download_url`.
+  `start`, `end`, `photo_count`, `cover_image_id`, `cover_download_url` and
+  `cover_thumbnail_url`.
 - `GET /api/events/{id}/` shows one event; `GET /api/events/{id}/photos/` lists
-  its photos (paginated, oldest first) with `download_url` for each.
+  its photos (paginated, oldest first) with `thumbnail_url` and `download_url` for each.
 - The optional `gap_hours` query parameter (0.25-168) sets how long a silence
   starts a new event. Send the same value on every call, because event ids
   depend on it. Omit it to use the server default (6 hours).
-- The cover is the original photo, not a small thumbnail; scale it in the UI.
+- Use `cover_thumbnail_url` for the tile; `cover_download_url` is the full original.
 - Event ids are not permanent: a photo that is not the first of its event is
   not a valid id. Always take ids from the list response.
 

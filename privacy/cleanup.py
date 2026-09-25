@@ -41,7 +41,7 @@ TEMP_ARCHIVE_PATTERNS = ("facecloud-package-*.zip", "facecloud-identity-export-*
 MEDIA_SUBDIRECTORIES = (
     "originals", "preprocessed", "enhanced", "edited",
     "download-packages", "identity-exports", "reports", "comparisons",
-    "organization-exports", "moderator-reports", "collages",
+    "organization-exports", "moderator-reports", "collages", "thumbnails",
 )
 
 
