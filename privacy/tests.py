@@ -712,6 +712,7 @@ class PrivacyChecksTests(SimpleTestCase):
     @override_settings(
         SECRET_KEY="s" * 40, IDENTITY_EMBEDDING_KEY="k" * 40,
         BIOMETRIC_CONSENT_REQUIRED=True, FACIAL_DATA_RETENTION_DAYS=365,
+        IDENTITY_EMBEDDING_PREVIOUS_KEYS={},
     )
     def test_a_fully_configured_deployment_has_no_findings(self):
         self.assertEqual(privacy_deployment_check(None), [])
@@ -719,6 +720,7 @@ class PrivacyChecksTests(SimpleTestCase):
     @override_settings(
         SECRET_KEY="s" * 40, IDENTITY_EMBEDDING_KEY="short-key",
         BIOMETRIC_CONSENT_REQUIRED=False, FACIAL_DATA_RETENTION_DAYS=0,
+        IDENTITY_EMBEDDING_PREVIOUS_KEYS={},
     )
     def test_weak_or_missing_controls_are_warned_about(self):
         ids = {issue.id for issue in privacy_deployment_check(None)}
