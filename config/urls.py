@@ -30,6 +30,7 @@ urlpatterns = [
     path("api/auth/", include("accounts.urls")),
     path("api/user/", include("accounts.user_urls")),
     path("api/images/", include("uploads.urls")),
+    path("api/images/", include("thumbnails.urls")),
     path("api/enhancements/", include("enhancement.urls")),
     path("api/validation/", include("validation.urls")),
     path("api/quality/", include("quality_control.urls")),

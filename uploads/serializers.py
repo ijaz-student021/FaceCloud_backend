@@ -41,6 +41,7 @@ class PreprocessImageRequestSerializer(serializers.Serializer):
 
 class ImageUploadSerializer(serializers.ModelSerializer):
     download_url = serializers.SerializerMethodField()
+    thumbnail_url = serializers.SerializerMethodField()
     preprocessing = serializers.SerializerMethodField()
 
     class Meta:
@@ -48,7 +49,7 @@ class ImageUploadSerializer(serializers.ModelSerializer):
         fields = [
             "id", "batch", "original_name", "file_extension", "mime_type",
             "file_size", "width", "height", "checksum_sha256", "status",
-            "rejection_reason", "download_url", "preprocessing", "created_at",
+            "rejection_reason", "download_url", "thumbnail_url", "preprocessing", "created_at",
         ]
 
     def get_download_url(self, obj) -> str | None:
@@ -56,6 +57,13 @@ class ImageUploadSerializer(serializers.ModelSerializer):
             return None
         request = self.context.get("request")
         path = f"/api/images/{obj.pk}/download/"
+        return request.build_absolute_uri(path) if request else path
+
+    def get_thumbnail_url(self, obj) -> str | None:
+        if obj.status != "uploaded" or not obj.original_file:
+            return None
+        request = self.context.get("request")
+        path = f"/api/images/{obj.pk}/thumbnail/"
         return request.build_absolute_uri(path) if request else path
 
     @extend_schema_field(ImagePreprocessingResultSerializer(allow_null=True))

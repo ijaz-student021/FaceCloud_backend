@@ -75,6 +75,7 @@ INSTALLED_APPS = [
     "sharing",
     "events",
     "collages",
+    "thumbnails",
     "organizations",
     "moderation",
 ]
@@ -643,6 +644,15 @@ SHARE_LINK_MAX_ACTIVE_PER_USER = env.int("SHARE_LINK_MAX_ACTIVE_PER_USER", defau
 SHARE_LINK_RETENTION_DAYS = env.int("SHARE_LINK_RETENTION_DAYS", default=30)
 
 # Organizations (Feature 46): how long an invitation link stays acceptable.
+# Photo thumbnails (generated on first request, then cached): allowed longest
+# edges in pixels (the first is the default) and the JPEG quality.
+THUMBNAIL_SIZES = tuple(int(size) for size in env.list("THUMBNAIL_SIZES", default=["256", "1024"]))
+THUMBNAIL_JPEG_QUALITY = env.int("THUMBNAIL_JPEG_QUALITY", default=80)
+if not THUMBNAIL_SIZES or any(not 32 <= size <= 4096 for size in THUMBNAIL_SIZES):
+    raise ImproperlyConfigured("THUMBNAIL_SIZES must list sizes between 32 and 4096 pixels.")
+if not 30 <= THUMBNAIL_JPEG_QUALITY <= 95:
+    raise ImproperlyConfigured("THUMBNAIL_JPEG_QUALITY must be between 30 and 95.")
+
 # Feature 49: hours a generated collage stays downloadable.
 COLLAGE_TTL_HOURS = env.int("COLLAGE_TTL_HOURS", default=72)
 # Feature 48: hours between two photos that starts a new event in the timeline.
@@ -769,6 +779,7 @@ REST_FRAMEWORK = {
         "report_generation": "60/hour",
         "download_package": "30/hour",
         "collage": "20/hour",
+        "thumbnail": "6000/hour",
         "notification_action": "300/hour",
         "admin_analytics": "120/hour",
         "admin_batch_retry": "60/hour",

@@ -138,5 +138,6 @@ class EventApiTests(EventTestCase):
         self.photo(self.owner, 0)
         event = self.client.get(reverse("event-list")).data["results"][0]
         self.assertEqual(
-            set(event), {"id", "start", "end", "photo_count", "cover_image_id", "cover_download_url"},
+            set(event),
+            {"id", "start", "end", "photo_count", "cover_image_id", "cover_download_url", "cover_thumbnail_url"},
         )

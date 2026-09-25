@@ -950,7 +950,8 @@ consumer photo apps.
   `EVENT_GAP_HOURS` (6) and a caller may pass `gap_hours` (0.25-168); use the
   same value for the list, detail and photos calls.
 - Not built: organization-wide events (owner-scoped only), user-editable event
-  titles, and a real thumbnail (the cover is the original photo's download URL)
+  titles. Each event and photo now also carries a `thumbnail_url` (see the thumbnail
+  service), so a frontend never has to load the original to draw a tile
 
 **Facial data usage: none.** Event grouping only reads upload timestamps —
 no face detection, embedding, or identity data is read or written. Per

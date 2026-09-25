@@ -98,6 +98,7 @@ privacy/           consent, erasure, retention, personal and organization export
 sharing/           expiring, revocable share links
 events/            automatic event/timeline grouping of a user's photos
 collages/          face-aware photo collages from an event or a person
+thumbnails/        cached, encrypted-at-rest JPEG previews of uploaded photos
 reports/  downloads/  notifications/  activity/  operations/
 scripts/           worker launcher, dataset audit, model training and export
 notebooks/         model training notebooks
