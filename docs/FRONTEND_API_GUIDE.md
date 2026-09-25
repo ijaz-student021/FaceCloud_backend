@@ -152,11 +152,12 @@ use fetch with a blob, or a short-lived approach agreed with the backend).
 **Thumbnails.** Never draw a gallery from `download_url`: originals can be
 hundreds of megabytes. Each image in the list carries `thumbnail_url`, which
 serves a small JPEG (`GET /api/images/{id}/thumbnail/`, optional `?size=256`
-default or `?size=1024`; any other size is a 400). The first request for a size
+default or `?size=1024`; any other size is a 400). The 256 size is normally
+already made in the background right after upload; if not, the first request
 generates it (about 0.1 to 0.8 seconds for a large photo) and every later one
-is served from the cache, so the first paint of a big gallery can be slower than
-the next. It is a normal protected endpoint: fetch it with the Authorization
-header and use a blob URL, exactly like a download. Use 256 for tiles and 1024
+is served from the cache. The 1024 size is made the first time it is asked for.
+It is a normal protected endpoint: fetch it with the Authorization header and
+use a blob URL, exactly like a download. Use 256 for tiles and 1024
 for a lightbox, then `download_url` only for the real file. The response carries
 `Cache-Control: private, max-age=3600`. Rejected images have no thumbnail
 (`thumbnail_url` is `null`).
