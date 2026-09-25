@@ -868,7 +868,11 @@ def _edge_aware_denoise(image, strength):
     enough to clear that grain.
     """
     strong = cv2.fastNlMeansDenoisingColored(image, None, strength, strength, 7, 21)
-    edge_strength = _gradient_edge_strength(image)
+    # Find edges on the denoised candidate. On the noisy input, grain itself
+    # produces gradients everywhere, so almost nothing looked flat and most of
+    # the noise survived at any strength (a brightened night photo kept ~80% of
+    # its grain). Real edges are still there once the grain is gone.
+    edge_strength = _gradient_edge_strength(strong)
     denoise_weight = (1.0 - edge_strength) ** 2.0
     denoise_weight = cv2.merge([denoise_weight] * 3).astype(np.float32)
     blended = (
@@ -899,7 +903,10 @@ def adaptive_denoise_stage(context):
         strength = int(context.policy.get("denoise", 0))
         reason = "feature_flag_disabled_legacy_policy"
 
-    if "severe_blur" in context.input_quality["defects"]:
+    # Judge blur on the brightened image. A near-black frame always measures as
+    # "severe blur" (almost no Laplacian variance), which used to switch denoising
+    # off for exactly the night photos that come out grainiest.
+    if "severe_blur" in context.post_exposure_noise["quality"]["defects"]:
         strength = 0
         reason = "severe_blur_protection"
 
