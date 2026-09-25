@@ -119,8 +119,8 @@ def process_identity_analysis(analysis_id):
             crop = provider.prepare_face(image, box, landmarks)
             vector = provider.validate_embedding(provider.embed(crop))
             prepared.append((index, face, vector))
-        if not prepared:
-            raise ValidationError("No validated faces are available for identity analysis.")
+        # A photo with no detectable face is a normal result, not an error: the
+        # analysis completes with zero faces (and clears any faces it held before).
 
         with transaction.atomic():
             get_user_model().objects.select_for_update().get(pk=analysis.owner_id)

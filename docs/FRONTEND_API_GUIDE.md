@@ -119,8 +119,10 @@ POST /api/images/upload/zip/       multipart, field: file
 
 Every upload creates a **batch** (a single image is a batch of one). Files that
 fail validation are rejected individually; check `rejected_files` and each
-image's status rather than assuming all succeeded. Only JPG and PNG are
-accepted.
+image's status rather than assuming all succeeded. Accepted formats are JPG/JPEG,
+PNG, WebP, BMP, TIFF and static GIF (an animated GIF is rejected). The file's
+extension must match its real content, and the size and pixel limits in
+`.env.example` apply.
 
 **Following progress.** Processing runs in the background. Poll:
 
@@ -202,7 +204,9 @@ values for the full-resolution server render.
 
 ## 5. People (identity groups)
 
-Faces are grouped into "person folders".
+Faces are grouped into "person folders". A photo with no detectable face is
+analysed as `completed` with `face_count` 0 (not `failed`), so do not show an
+error for it.
 
 - **Consent first.** Face grouping only runs for users who granted biometric
   consent. `GET /api/privacy/consents/` returns the current state and policy
