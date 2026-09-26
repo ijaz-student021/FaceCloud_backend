@@ -31,10 +31,10 @@ each documented in its PR/commit message rather than silently applied:
   the code's own exemption for `reject` (a real, if previously unreachable,
   inconsistency) -- corrected in the same change (`identities.0006`).
 
-- Phase F: only two report types (review-summary, moderator-activity) rather
-  than the originally-listed six -- `reports/renderers.py`'s CSV/PDF
-  rendering is hard-coded to a per-image row shape, so more types means
-  proportionally more new code, not more reuse.
+- Phase F: shipped with two report types (review-summary, moderator-activity)
+  because `reports/renderers.py`'s CSV/PDF rendering is hard-coded to a
+  per-image row shape; the other four were added afterwards on a shared
+  `{summary, rows}` renderer (see above).
 - Phase G: `identities.management.merge_groups()` got the same
   reviewer/actor split `review_membership()` already has, for the same
   reason -- a moderator merging groups on the content owner's behalf must
@@ -49,10 +49,17 @@ preference and is never emailed. The key includes the batch's retry count, so a
 failure after a retry alerts again while a repeated check of the same failure
 does not. Tests: `moderation/test_batch_failure_alerts.py`.
 
+Four more types were added on 2026-09-25, so there are now six: `rejection_reasons` (why photos were
+rejected or sent to review, most common reason first), `quality_scores` (mean overall and sub-scores and a
+0-100 distribution), `batches` (the organization's upload batches: status counts, file totals, retries) and
+`duplicate_decisions` (suspected duplicates by match type and decision). They share the
+`{summary, rows}` shape and the same async job, and none reads facial data: no embeddings, identity groups,
+face-similarity values or usernames (a test scans every payload for those words). Tests:
+`moderation/test_more_reports.py`.
+
 Still open: deadline/SLA alerts,
 reprocessing at a different enhancement level (doesn't exist anywhere in
-the codebase, owner-facing or otherwise), rejection-reason/quality-score/
-batch/duplicate-decision report types, and the frontend (no frontend repo
+the codebase, owner-facing or otherwise), and the frontend (no frontend repo
 in this workspace).
 
 ## 2. Roles and responsibilities
@@ -527,8 +534,8 @@ another organization's users, images, metrics, or facial data.
 - [x] Moderator notifications implemented (2026-09-23, assignment + escalation
       and batch failure -- only deadline/SLA is open, see T-007)
 - [x] Reports and exports implemented (2026-09-23, review-summary and
-      moderator-activity only -- rejection-reason, quality-score, batch, and
-      duplicate-decision report types are open, see T-007)
+      moderator-activity first; rejection-reason, quality-score, batch and
+      duplicate-decision types added 2026-09-25, see T-007)
 - [x] Immutable audit events implemented (2026-09-22/23, membership +
       moderator-review actions)
 - [x] Automated security tests passed (2026-09-23, `organizations/tests.py`

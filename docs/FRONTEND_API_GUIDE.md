@@ -359,8 +359,11 @@ GET  .../moderator/dashboard/               counts for the overview cards
 - Batch actions: `GET .../moderator/batches/?processing_status=`,
   `POST .../moderator/batches/{id}/retry/` and `/cancel/`.
 - Reports: `POST .../moderator/reports/ {report_type, format}` with
-  `report_type` `review_summary` or `moderator_activity`; then the same
-  poll-and-download lifecycle as section 6.
+  `report_type` one of `review_summary`, `moderator_activity`, `rejection_reasons`,
+  `quality_scores`, `batches` or `duplicate_decisions` (and `format` `json`, `csv` or
+  `pdf`); then the same poll-and-download lifecycle as section 6. Every report has a
+  `summary` (totals and breakdowns, good for a chart) and up to 200 `rows`. None of
+  them contains facial data.
 
 ## 8. Notifications
 
@@ -413,8 +416,7 @@ hide these routes, but never rely on that for security.
 
 - There is no websocket/server-sent events channel; use polling.
 - Live camera features are not implemented.
-- Deadline/SLA alerts for moderators and extra moderator report types are not
-  implemented.
+- Deadline/SLA alerts for moderators are not implemented.
 
 When in doubt about a field name or enum, open `/api/docs/`. The schema is
 generated from the code and validated with zero warnings in CI.

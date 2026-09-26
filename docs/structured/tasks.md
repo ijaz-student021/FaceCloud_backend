@@ -192,8 +192,9 @@
   original Phase C note. Still open, flagged throughout rather than
   claimed done: deadline/SLA alerts (batch-failure alerts done 2026-09-25),
   reprocessing at a different enhancement level,
-  rejection-reason/quality-score/batch/duplicate-decision report types, and
-  the frontend (no frontend repo in this workspace).
+  the frontend (no frontend repo in this workspace). The four report types
+  listed earlier as open (rejection-reason, quality-score, batch,
+  duplicate-decision) were added 2026-09-25 on the shared renderer.
 - Organization-scoped queues and decisions — Done for all three review
   sources (quality, duplicate, identity)
 - Corrections, reasons, and complete audit history — Done (every decision/

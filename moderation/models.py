@@ -109,6 +109,10 @@ class ModeratorReport(models.Model):
     class ReportType(models.TextChoices):
         REVIEW_SUMMARY = "review_summary", "Review summary"
         MODERATOR_ACTIVITY = "moderator_activity", "Moderator activity"
+        REJECTION_REASONS = "rejection_reasons", "Rejection reasons"
+        QUALITY_SCORES = "quality_scores", "Quality scores"
+        BATCHES = "batches", "Batches"
+        DUPLICATE_DECISIONS = "duplicate_decisions", "Duplicate decisions"
 
     class Format(models.TextChoices):
         JSON = "json", "JSON"
