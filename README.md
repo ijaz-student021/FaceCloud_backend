@@ -334,6 +334,7 @@ Then run `python manage.py check --deploy` for Django's own checks.
 - [`docs/FEATURES.md`](docs/FEATURES.md): feature catalogue and status
 - [`docs/SECURITY_AND_PERFORMANCE_REVIEW.md`](docs/SECURITY_AND_PERFORMANCE_REVIEW.md): dependency audit, static analysis and performance findings, and how to repeat them
 - [`docs/FRONTEND_API_GUIDE.md`](docs/FRONTEND_API_GUIDE.md): how a frontend uses the API (auth, upload and polling, thumbnails, enhancement, people, events, collages, sharing, organizations, moderator area, notifications)
+- [`docs/GPU_SESSION_RUNBOOK.md`](docs/GPU_SESSION_RUNBOOK.md): preparing, running and deciding a GPU evaluation session (preflight, model manifest, stage comparison)
 - [`docs/API_ERRORS.md`](docs/API_ERRORS.md): error shapes the frontend can rely on
 - [`docs/features`](docs/features): per-feature design, verification and limits
 - [`docs/structured`](docs/structured): architecture, decisions, tasks
