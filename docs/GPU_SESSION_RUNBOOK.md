@@ -18,13 +18,13 @@ as part of the session.
 | # | Item | Why | State on 2026-09-26 |
 |---|---|---|---|
 | 1 | Model files (`.runtime/models`, 11 files, ~1 GB (992 MB)) | Every stage loads local, checksum-pinned weights; runtime downloads are refused | All present. The 8 checksums pinned in settings all match (two older models have none pinned). |
-| 2 | Model manifest | Proves the copy on the GPU box is byte-identical | `docs/gpu/model_manifest.json` is committed (11 files). |
-| 3 | **GFPGAN detector and parser weights** | GFPGAN refuses to run without them, and will not download them | **Missing.** `gfpgan/weights/detection_Resnet50_Final.pth` and `parsing_parsenet.pth` are not on this machine. Only needed for the GFPGAN step. |
+| 2 | Model manifest | Proves the copy on the GPU box is byte-identical | `docs/gpu/model_manifest.json` is committed (13 files: 11 models plus the 2 GFPGAN weights). |
+| 3 | **GFPGAN detector and parser weights** | GFPGAN refuses to run without them, and will not download them | **Done 2026-09-26.** `gfpgan/weights/detection_Resnet50_Final.pth` (109 MB) and `parsing_parsenet.pth` (85 MB) are in place and both match their pinned SHA-256. Only needed for the GFPGAN step. |
 | 4 | Evaluation sample | The same photos must go through every configuration | `evaluate_gpu_stages.py --export-sample` copies 60 dark photos and 20 face photos (47 MB, not the 4.1 GB `Dataset/`). |
 | 5 | Consent for the face photos | The photos go to a rented machine, and GFPGAN stays disabled until a consented evaluation set passes QA | **Your call.** Confirm the `People/` photos may be used, and use only those. |
 | 6 | Redis locally | Not needed for the session, but your local server cannot run background jobs without it | Not running here. Use `CELERY_TASK_ALWAYS_EAGER=True` or start Redis. |
 
-**Getting the two GFPGAN weight files (item 3).** They are the public `facexlib`
+**The two GFPGAN weight files (item 3) are already in place here**; the note below is for re-creating them on another machine. They are the public `facexlib`
 face-detection and face-parsing checkpoints. I have not verified a download source
 from here, so obtain them yourself and put both in `gfpgan/weights/`. You can prove
 they are the right files: their SHA-256 values are pinned in `.env.example`
@@ -75,7 +75,7 @@ python scripts/gpu_preflight.py --expect-gpu --gpu-smoke
 every model file and its checksum, which stages are on, PostgreSQL, Redis and disk
 space. Do not continue until it prints `Result: PASS` or only warnings you understand.
 Here it currently reports FAIL for "no CUDA" and "Redis unreachable" (expected on this
-machine) and WARN for the two missing GFPGAN weights.
+machine); every model file passes its checksum.
 
 **GFPGAN needs its own environment** (its old dependency stack conflicts with the main
 one), as described in `docs/features/10-12-image-enhancement.md`:
