@@ -21,7 +21,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import Count, Q
+from django.db.models import Avg, Count, Q, Sum
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import APIException, ValidationError
@@ -30,6 +30,7 @@ from duplicates.models import DuplicateMatch
 from organizations.models import OrganizationAuditEvent, OrganizationMembership
 from organizations.services import get_active_membership, record_audit_event
 from quality_control.models import ImageQualityDecision
+from uploads.models import UploadBatch
 from uploads.services import cancel_batch, retry_batch
 
 from .models import ModeratorReport, ModeratorReview
@@ -277,13 +278,15 @@ def dashboard_summary(organization):
 
 # -- Org-scoped reports (T-007 Phase F) --------------------------------------
 #
-# Only two report types, deliberately: reports/renderers.py's CSV/PDF
-# rendering is hard-coded to a per-image row shape, so a report type outside
-# that shape needs its own renderer (see moderation/renderers.py) rather than
-# reusing reports/ wholesale. review-summary and moderator-activity are the
-# two most directly useful given what ModeratorReview/OrganizationAuditEvent
-# already track; rejection-reason, quality-score, batch, and
-# duplicate-decision reports are explicitly deferred.
+# reports/renderers.py's CSV/PDF rendering is hard-coded to a per-image row
+# shape, so these reports have their own renderer (moderation/renderers.py) and
+# share one {summary, rows} shape. Six types: review summary, moderator
+# activity, rejection reasons, quality scores, batches and duplicate decisions.
+# None of them reads facial data: they use decisions, scores, counts and the
+# hash-based duplicate match type, never embeddings, identity groups or
+# face-similarity values.
+
+REPORT_ROW_LIMIT = 200
 
 _ORGANIZATION_AUDIT_ACTIONS_FOR_ACTIVITY = [
     OrganizationAuditEvent.Action.MODERATOR_REVIEW_DECIDED,
@@ -356,9 +359,153 @@ def build_moderator_activity_payload(organization):
     }
 
 
+def _report_envelope(organization, report_type, summary, rows):
+    return {
+        "format_version": 1,
+        "report_type": report_type,
+        "generated_at": timezone.now().isoformat(),
+        "organization": {"id": organization.pk, "name": organization.name},
+        "summary": summary,
+        "rows": rows,
+        "row_count": len(rows),
+    }
+
+
+def _organization_quality_decisions(organization):
+    return ImageQualityDecision.objects.filter(
+        image__batch__organization=organization, status=ImageQualityDecision.Status.COMPLETED,
+    )
+
+
+def build_rejection_reasons_payload(organization):
+    """Why photos were rejected or sent to review, most common reason first."""
+    flagged = _organization_quality_decisions(organization).filter(
+        decision__in=[ImageQualityDecision.Decision.REJECTED, ImageQualityDecision.Decision.NEEDS_REVIEW],
+    )
+    reasons = Counter(
+        reason
+        for reason_list in flagged.values_list("rejection_reasons", flat=True)
+        for reason in (reason_list or [])
+        if isinstance(reason, str)
+    )
+    rows = [
+        {
+            "image_id": row["image_id"], "decision": row["decision"],
+            "reasons": ", ".join(str(item) for item in (row["rejection_reasons"] or [])),
+            "decided_at": row["updated_at"].isoformat(),
+        }
+        for row in flagged.order_by("-updated_at").values(
+            "image_id", "decision", "rejection_reasons", "updated_at",
+        )[:REPORT_ROW_LIMIT]
+    ]
+    summary = {
+        "flagged_photos": flagged.count(),
+        "by_decision": dict(Counter(flagged.values_list("decision", flat=True))),
+        "reasons": dict(reasons.most_common()),
+    }
+    return _report_envelope(organization, ModeratorReport.ReportType.REJECTION_REASONS, summary, rows)
+
+
+QUALITY_SCORE_BUCKETS = ((0, 20), (20, 40), (40, 60), (60, 80), (80, 101))
+QUALITY_SUBSCORES = (
+    "brightness_score", "sharpness_score", "contrast_score", "noise_score", "exposure_score", "resolution_score",
+)
+
+
+def _rounded(value):
+    return round(value, 1) if value is not None else None
+
+
+def build_quality_scores_payload(organization):
+    """How good the organization's photos are: averages and a score distribution."""
+    decisions = _organization_quality_decisions(organization).filter(overall_score__isnull=False)
+    averages = decisions.aggregate(overall=Avg("overall_score"), **{name: Avg(name) for name in QUALITY_SUBSCORES})
+    buckets = decisions.aggregate(**{
+        f"b{low}": Count("id", filter=Q(overall_score__gte=low, overall_score__lt=high))
+        for low, high in QUALITY_SCORE_BUCKETS
+    })
+    rows = [
+        {
+            "image_id": row["image_id"], "decision": row["decision"],
+            **{name: _rounded(row[name]) for name in ("overall_score", *QUALITY_SUBSCORES)},
+            "scored_at": row["updated_at"].isoformat(),
+        }
+        for row in decisions.order_by("-updated_at").values(
+            "image_id", "decision", "overall_score", *QUALITY_SUBSCORES, "updated_at",
+        )[:REPORT_ROW_LIMIT]
+    ]
+    summary = {
+        "scored_photos": decisions.count(),
+        "mean_overall_score": _rounded(averages["overall"]),
+        "mean_subscores": {name: _rounded(averages[name]) for name in QUALITY_SUBSCORES},
+        "score_distribution": {f"{low}-{min(high, 100)}": buckets[f"b{low}"] for low, high in QUALITY_SCORE_BUCKETS},
+        "by_decision": dict(Counter(decisions.values_list("decision", flat=True))),
+    }
+    return _report_envelope(organization, ModeratorReport.ReportType.QUALITY_SCORES, summary, rows)
+
+
+def build_batches_payload(organization):
+    """The organization's upload batches and how they finished."""
+    batches = UploadBatch.objects.filter(organization=organization)
+    totals = batches.aggregate(
+        files=Sum("total_files"), accepted=Sum("accepted_files"), rejected=Sum("rejected_files"),
+        processing_failed=Sum("processing_failed_files"), retries=Sum("retry_count"),
+    )
+    rows = [
+        {
+            "batch_id": row["id"], "upload_type": row["upload_type"], "processing_status": row["processing_status"],
+            "total_files": row["total_files"], "accepted_files": row["accepted_files"],
+            "rejected_files": row["rejected_files"], "processing_failed_files": row["processing_failed_files"],
+            "retry_count": row["retry_count"], "created_at": row["created_at"].isoformat(),
+        }
+        for row in batches.order_by("-created_at").values(
+            "id", "upload_type", "processing_status", "total_files", "accepted_files", "rejected_files",
+            "processing_failed_files", "retry_count", "created_at",
+        )[:REPORT_ROW_LIMIT]
+    ]
+    summary = {
+        "total_batches": batches.count(),
+        "by_processing_status": dict(Counter(batches.values_list("processing_status", flat=True))),
+        "total_files": totals["files"] or 0,
+        "accepted_files": totals["accepted"] or 0,
+        "rejected_files": totals["rejected"] or 0,
+        "processing_failed_files": totals["processing_failed"] or 0,
+        "retries": totals["retries"] or 0,
+    }
+    return _report_envelope(organization, ModeratorReport.ReportType.BATCHES, summary, rows)
+
+
+def build_duplicate_decisions_payload(organization):
+    """Suspected duplicates and what was decided about them (hash-based, no faces)."""
+    matches = DuplicateMatch.objects.filter(source_image__batch__organization=organization)
+    rows = [
+        {
+            "match_id": row["id"], "source_image_id": row["source_image_id"],
+            "matched_image_id": row["matched_image_id"], "match_type": row["match_type"],
+            "similarity_score": round(row["similarity_score"], 3), "review_status": row["review_status"],
+            "created_at": row["created_at"].isoformat(),
+        }
+        for row in matches.order_by("-created_at").values(
+            "id", "source_image_id", "matched_image_id", "match_type", "similarity_score",
+            "review_status", "created_at",
+        )[:REPORT_ROW_LIMIT]
+    ]
+    summary = {
+        "total_matches": matches.count(),
+        "by_review_status": dict(Counter(matches.values_list("review_status", flat=True))),
+        "by_match_type": dict(Counter(matches.values_list("match_type", flat=True))),
+        "awaiting_decision": matches.filter(review_status=DuplicateMatch.ReviewStatus.SUSPECTED).count(),
+    }
+    return _report_envelope(organization, ModeratorReport.ReportType.DUPLICATE_DECISIONS, summary, rows)
+
+
 _REPORT_PAYLOAD_BUILDERS = {
     ModeratorReport.ReportType.REVIEW_SUMMARY: build_review_summary_payload,
     ModeratorReport.ReportType.MODERATOR_ACTIVITY: build_moderator_activity_payload,
+    ModeratorReport.ReportType.REJECTION_REASONS: build_rejection_reasons_payload,
+    ModeratorReport.ReportType.QUALITY_SCORES: build_quality_scores_payload,
+    ModeratorReport.ReportType.BATCHES: build_batches_payload,
+    ModeratorReport.ReportType.DUPLICATE_DECISIONS: build_duplicate_decisions_payload,
 }
 
 
