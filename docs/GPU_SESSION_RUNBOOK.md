@@ -21,7 +21,7 @@ as part of the session.
 | 2 | Model manifest | Proves the copy on the GPU box is byte-identical | `docs/gpu/model_manifest.json` is committed (13 files: 11 models plus the 2 GFPGAN weights). |
 | 3 | **GFPGAN detector and parser weights** | GFPGAN refuses to run without them, and will not download them | **Done 2026-09-26.** `gfpgan/weights/detection_Resnet50_Final.pth` (109 MB) and `parsing_parsenet.pth` (85 MB) are in place and both match their pinned SHA-256. Only needed for the GFPGAN step. |
 | 4 | Evaluation sample | The same photos must go through every configuration | `evaluate_gpu_stages.py --export-sample` copies 60 dark photos and 20 face photos (47 MB, not the 4.1 GB `Dataset/`). |
-| 5 | Consent for the face photos | The photos go to a rented machine, and GFPGAN stays disabled until a consented evaluation set passes QA | **Your call.** Confirm the `People/` photos may be used, and use only those. |
+| 5 | Consent for the face photos | The photos go to a rented machine, and GFPGAN stays disabled until a consented evaluation set passes QA | **Your call.** Confirm the `People/` photos may be used, and use only those. The Generated Photos academic dataset (synthetic faces, no consent issue) may also go to the rented machine: its provider allows it "as long as you have control over it and delete the files afterward" (see [DATASET_TERMS.md](DATASET_TERMS.md)). |
 | 6 | Redis locally | Not needed for the session, but your local server cannot run background jobs without it | Not running here. Use `CELERY_TASK_ALWAYS_EAGER=True` or start Redis. |
 
 **The two GFPGAN weight files (item 3) are already in place here**; the note below is for re-creating them on another machine. They are the public `facexlib`
@@ -160,7 +160,7 @@ afterwards to confirm the whole journey still works.
 ## 7. Afterwards and tear-down
 
 1. Copy `.runtime/gpu_eval/<run>/` back to this machine.
-2. Delete the instance's disk. It held the face photos and your `.env` keys.
+2. Delete the instance's disk. It held the face photos, **the Generated Photos dataset (its terms require deleting it afterwards)** and your `.env` keys.
 3. Add the measured results to `docs/features/10-12-image-enhancement.md`, as the denoise and
    colour sections there do. Do not commit any photo or output image of a person; `.runtime/`
    is ignored by Git.
@@ -176,3 +176,4 @@ afterwards to confirm the whole journey still works.
 - **Torch versions differ between the two environments** by design (main 2.14.0, GFPGAN 2.1.2).
   Do not install one environment's requirements into the other.
 - **Face photos on rented hardware.** Use only consented photos and delete the disk afterwards.
+- **The Generated Photos dataset** may be copied only to a machine you alone control, and must be deleted there when the session ends. Never commit it, never share it, and do not show individual images to others without asking the provider (`DATASET_TERMS.md`).
