@@ -1,0 +1,53 @@
+{
+  "generated_at": "2026-09-26T08:23:19+00:00",
+  "note": "File names, sizes and SHA-256 checksums only. The model files themselves are not in Git.",
+  "roots": {
+    "models": {
+      "colorization_siggraph17.pth": {
+        "size": 136787426,
+        "sha256": "df00044c0a4d7c3edcecf6f75437ce346a66e7a42612d9b968e1a7e17dbc6f66"
+      },
+      "EDSR_x2.pb": {
+        "size": 38490162,
+        "sha256": "585623221baa070279a0d1e7e113a4c3faba0f318ca7fdd9a65d9afc0763d9b4"
+      },
+      "face_recognition_sface_2021dec.onnx": {
+        "size": 38696353,
+        "sha256": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
+      },
+      "facecloud_curve_best_opencv.onnx": {
+        "size": 320095,
+        "sha256": "f4805a622e9a026cd2d4abc89e5c551ab972d9d910bf14063ef06579b5f9a220"
+      },
+      "gfpgan/GFPGANv1.4.pth": {
+        "size": 348632874,
+        "sha256": "e2cd4703ab14f4d01fd1383a8a8b266f9a5833dacee8e6a79d3bf21a1b6be5ad"
+      },
+      "NAFNet-GoPro-width64.pth": {
+        "size": 271778961,
+        "sha256": "329d3ab4077b8d6b7ff61de376e483714667960bf85be027bf4335cda701196f"
+      },
+      "PureScale_2x.pth": {
+        "size": 22328007,
+        "sha256": "c8fb698766f502be6409cf3cee1a69d63381c6eebf3ff5de7df6ed87f6c9a5cb"
+      },
+      "PureVision_1x.pth": {
+        "size": 67120607,
+        "sha256": "3c3bec2111d0f7c3926f3171f37ce28e72502b744e084c566d8960c06a6a06a3"
+      },
+      "RealESRGAN_x4plus.pth": {
+        "size": 67040989,
+        "sha256": "4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1"
+      },
+      "yunet_s_dynamic.onnx": {
+        "size": 237823,
+        "sha256": "daede24002cc8590f457998cc5e6c9e8b82f45f6bd969506a8913cd4ed10a2d3"
+      },
+      "zero_dce_epoch99.onnx": {
+        "size": 320301,
+        "sha256": "e5cb6f921c7997f89105f6aa86242f30ff3f5379f5c6cd5282eb2aada14dae14"
+      }
+    },
+    "gfpgan_weights": {}
+  }
+}
