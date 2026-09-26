@@ -33,6 +33,36 @@ project. Their replies, in summary:
 The original emails are kept by the project owner as proof of these terms. If anything
 here differs from those emails, the emails win.
 
+## The dataset's own terms (its `Readme.txt`)
+
+The download includes a terms file. In summary:
+
+- It may be used and adapted for any research purpose, provided we (a) cite it in the paper
+  and (b) link to the Generated Photos website when publishing the paper, results or a related
+  article. Their example attribution line: `Academic Dataset by Generated Photos
+  https://generated.photos/datasets`.
+- It may be **redistributed within the university**, indicating any changes made and making
+  sure the fellow student or teacher receiving it knows the terms.
+- The photos are 100% synthetic, model-released and royalty-free, usable for any research
+  purpose that does not break the law.
+- They would appreciate hearing about the research outcome.
+
+This is more permissive than the provider's later email ("not transferred or made publicly
+available"). Until the provider says otherwise, follow the stricter reading: sharing inside
+the university is allowed by the terms file only with those two conditions, so ask first.
+
+## What is in the download
+
+- `generated.photos/`: the JPG images (256x256).
+- `generated.photos_metadata/`: one JSON file per image with **face landmarks** (mouth,
+  eyebrows, eyes, nose, jaw) and attributes (head pose, gender, makeup, emotion, facial hair,
+  hair, occlusion, ethnicity, eye colour, smile, age). Not every image has a metadata file, so
+  check coverage before relying on it. The landmarks are ground truth for checking our face
+  detector's landmark accuracy.
+- The copy on this project's machine was placed at `faceimage/` in the repository root, which
+  Git does not ignore by default. It is excluded locally (`.git/info/exclude`); move it to
+  `Dataset/generated_photos/` (already git-ignored) or outside OneDrive-synced folders.
+
 ## Rules for this project
 
 | Do | Do not |
