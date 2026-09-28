@@ -10,7 +10,9 @@ from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from . import lockout
-from .services import record_auth_event
+from .services import (dashboard_for_user, has_active_two_factor,
+                       issue_login_tokens, make_two_factor_login_challenge,
+                       record_auth_event)
 
 User = get_user_model()
 
@@ -79,11 +81,7 @@ class FaceCloudTokenObtainPairSerializer(serializers.Serializer):
 
     @staticmethod
     def get_dashboard(user):
-        if user.is_superuser or user.role == "admin":
-            return "admin"
-        if user.role == "moderator":
-            return "moderator"
-        return "user"
+        return dashboard_for_user(user)
 
     def validate(self, attrs):
         request = self.context.get("request")
@@ -126,18 +124,14 @@ class FaceCloudTokenObtainPairSerializer(serializers.Serializer):
         if user and user.is_suspended:
             record_auth_event("login_failed", request, user, identifier, {"reason": "account_suspended"})
             raise serializers.ValidationError({"detail": "This account is suspended."})
-        token = RefreshToken.for_user(user)
-        token["role"] = user.role
-        token["token_version"] = user.token_version
-        dashboard = self.get_dashboard(user)
+        if has_active_two_factor(user):
+            record_auth_event("login", request, user, identifier, {"stage": "password_verified_awaiting_two_factor"})
+            return {
+                "two_factor_required": True,
+                "login_token": make_two_factor_login_challenge(user),
+            }
         record_auth_event("login", request, user, identifier)
-        return {
-            "refresh": str(token),
-            "access": str(token.access_token),
-            "user": UserSerializer(user).data,
-            "role": user.role,
-            "dashboard": dashboard,
-        }
+        return issue_login_tokens(user)
 
 
 class FaceCloudTokenRefreshSerializer(TokenRefreshSerializer):
@@ -256,3 +250,35 @@ class AdminUserSerializer(serializers.ModelSerializer):
         if attrs.get("is_suspended") is False:
             attrs["suspension_reason"] = ""
         return attrs
+
+
+# -- Two-factor authentication -----------------------------------------------
+
+class TwoFactorSetupResponseSerializer(serializers.Serializer):
+    secret = serializers.CharField(help_text="For manual entry if the app cannot scan a QR code.")
+    otpauth_uri = serializers.CharField(help_text="Render this as a QR code for an authenticator app to scan.")
+
+
+class TwoFactorCodeSerializer(serializers.Serializer):
+    code = serializers.CharField(help_text="A 6-digit code from the authenticator app, or an unused recovery code.")
+
+
+class TwoFactorCodesResponseSerializer(serializers.Serializer):
+    recovery_codes = serializers.ListField(
+        child=serializers.CharField(),
+        help_text="Shown once. Store these somewhere safe; they are not retrievable again.",
+    )
+
+
+class TwoFactorStatusSerializer(serializers.Serializer):
+    enabled = serializers.BooleanField()
+
+
+class TwoFactorLoginVerifySerializer(serializers.Serializer):
+    login_token = serializers.CharField()
+    code = serializers.CharField()
+
+
+class TwoFactorRequiredResponseSerializer(serializers.Serializer):
+    two_factor_required = serializers.BooleanField()
+    login_token = serializers.CharField()

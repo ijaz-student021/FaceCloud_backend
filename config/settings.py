@@ -770,6 +770,7 @@ REST_FRAMEWORK = {
         "user": "1000/hour",
         "registration": "10/hour",
         "login": "20/hour",
+        "two_factor": "20/hour",
         "token_refresh": "60/hour",
         "verification": "10/hour",
         "verification_status": "60/hour",
@@ -852,6 +853,18 @@ LOGIN_LOCK_THRESHOLD = env.int("LOGIN_LOCK_THRESHOLD", default=5)
 LOGIN_LOCK_BASE_SECONDS = env.int("LOGIN_LOCK_BASE_SECONDS", default=30)
 LOGIN_LOCK_MAX_SECONDS = env.int("LOGIN_LOCK_MAX_SECONDS", default=900)
 LOGIN_FAILURE_WINDOW_SECONDS = env.int("LOGIN_FAILURE_WINDOW_SECONDS", default=900)
+
+# Two-factor authentication (accounts/totp.py, accounts/two_factor_crypto.py).
+# A blank value must not become an empty key (as with IDENTITY_EMBEDDING_KEY
+# above); production requires a dedicated 32+ character secret here, never
+# DJANGO_SECRET_KEY or the embedding/image keys -- rotating one must never lock
+# or expose another.
+TWO_FACTOR_SECRET_KEY = env("TWO_FACTOR_SECRET_KEY", default="").strip() or SECRET_KEY
+TWO_FACTOR_ISSUER = env("TWO_FACTOR_ISSUER", default="FaceCloud")
+TWO_FACTOR_RECOVERY_CODE_COUNT = env.int("TWO_FACTOR_RECOVERY_CODE_COUNT", default=10)
+# Minutes a "password verified, enter your code" challenge stays valid before
+# the user must sign in again from the start.
+TWO_FACTOR_LOGIN_CHALLENGE_MINUTES = env.int("TWO_FACTOR_LOGIN_CHALLENGE_MINUTES", default=5)
 
 PUBLIC_BACKEND_URL = os.environ.get("PUBLIC_BACKEND_URL", "http://127.0.0.1:8000")
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://127.0.0.1:3000")

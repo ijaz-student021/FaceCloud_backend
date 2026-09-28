@@ -51,6 +51,14 @@ def secrets_rule(cfg):
             problems.append(
                 "IMAGE_ENCRYPTION_KEY must differ from DJANGO_SECRET_KEY and IDENTITY_EMBEDDING_KEY."
             )
+    two_factor = cfg.get("TWO_FACTOR_SECRET_KEY")
+    if two_factor == cfg.get("SECRET_KEY"):
+        problems.append(
+            "TWO_FACTOR_SECRET_KEY must be set to its own secret; it currently falls back to "
+            "DJANGO_SECRET_KEY, so rotating one would lock or expose the other."
+        )
+    else:
+        problems += _secret_problems("TWO_FACTOR_SECRET_KEY", two_factor, MIN_KEY_LENGTH)
     return problems
 
 

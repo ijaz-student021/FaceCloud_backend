@@ -21,6 +21,7 @@ def good_config():
         "IDENTITY_EMBEDDING_KEY": random_secret(48),
         "IMAGE_ENCRYPTION_ENABLED": True,
         "IMAGE_ENCRYPTION_KEY": random_secret(48),
+        "TWO_FACTOR_SECRET_KEY": random_secret(48),
         "ALLOWED_HOSTS": ["api.facecloud-app.net"],
         "CORS_ALLOW_ALL_ORIGINS": False,
         "CORS_ALLOWED_ORIGINS": ["https://app.facecloud-app.net"],
@@ -63,6 +64,11 @@ class GuardRuleTests(SimpleTestCase):
         key = random_secret()
         self.assertFlags("IDENTITY_EMBEDDING_KEY must be set to its own secret", SECRET_KEY=key, IDENTITY_EMBEDDING_KEY=key)
         self.assertFlags("IDENTITY_EMBEDDING_KEY must be at least", IDENTITY_EMBEDDING_KEY="tooshort")
+
+    def test_the_two_factor_key_must_be_its_own_secret(self):
+        key = random_secret()
+        self.assertFlags("TWO_FACTOR_SECRET_KEY must be set to its own secret", SECRET_KEY=key, TWO_FACTOR_SECRET_KEY=key)
+        self.assertFlags("TWO_FACTOR_SECRET_KEY must be at least", TWO_FACTOR_SECRET_KEY="tooshort")
 
     def test_image_encryption_is_mandatory_with_a_distinct_strong_key(self):
         self.assertFlags("IMAGE_ENCRYPTION_ENABLED must be True", IMAGE_ENCRYPTION_ENABLED=False)
@@ -181,6 +187,7 @@ class StartupRefusalTests(SimpleTestCase):
             "IDENTITY_EMBEDDING_KEY": random_secret(48),
             "IMAGE_ENCRYPTION_ENABLED": "True",
             "IMAGE_ENCRYPTION_KEY": random_secret(48),
+            "TWO_FACTOR_SECRET_KEY": random_secret(48),
             "BIOMETRIC_CONSENT_REQUIRED": "True",
             "FACIAL_DATA_RETENTION_DAYS": "365",
         }

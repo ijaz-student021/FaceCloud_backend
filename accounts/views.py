@@ -14,6 +14,7 @@ from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import (
     OpenApiExample,
     OpenApiParameter,
+    PolymorphicProxySerializer,
     extend_schema,
     extend_schema_view,
     inline_serializer,
@@ -42,16 +43,28 @@ from .serializers import (
     ProfileUpdateSerializer,
     RegisterSerializer,
     ResendVerificationSerializer,
+    TwoFactorCodeSerializer,
+    TwoFactorCodesResponseSerializer,
+    TwoFactorLoginVerifySerializer,
+    TwoFactorRequiredResponseSerializer,
+    TwoFactorSetupResponseSerializer,
+    TwoFactorStatusSerializer,
     UserSerializer,
     VerifyRegistrationSerializer,
 )
 from .services import (
+    confirm_two_factor,
+    disable_two_factor,
     generate_verification_code,
     mask_email,
     record_auth_event,
+    regenerate_recovery_codes,
     send_password_reset_email,
     send_signup_verification_code,
     send_verification_email,
+    setup_two_factor,
+    two_factor_status,
+    verify_two_factor_login,
 )
 
 User = get_user_model()
@@ -191,9 +204,21 @@ class RegisterView(APIView):
 @extend_schema_view(
     post=extend_schema(
         summary="Log in",
-        description="Provide exactly one of identifier, username or email, plus the password.",
+        description=(
+            "Provide exactly one of identifier, username or email, plus the password. "
+            "When the account has two-factor authentication enabled this returns "
+            "`two_factor_required` and a `login_token` instead of tokens -- "
+            "POST that to `/api/auth/2fa/verify/` with a code to finish signing in."
+        ),
         request=FaceCloudTokenObtainPairSerializer,
-        responses={200: LoginResponseSerializer, 400: OpenApiTypes.OBJECT},
+        responses={
+            200: PolymorphicProxySerializer(
+                component_name="LoginResult",
+                serializers=[LoginResponseSerializer, TwoFactorRequiredResponseSerializer],
+                resource_type_field_name=None,
+            ),
+            400: OpenApiTypes.OBJECT,
+        },
         examples=[
             OpenApiExample(
                 "Log in with an email", value={"email": "alice@example.com", "password": "A-long-unique-passphrase-7"},
@@ -204,12 +229,111 @@ class RegisterView(APIView):
                 value={"detail": ["Invalid username/email or password."]},
                 response_only=True, status_codes=["400"],
             ),
+            OpenApiExample(
+                "Two-factor authentication is enabled",
+                value={"two_factor_required": True, "login_token": "opaque-signed-token"},
+                response_only=True, status_codes=["200"],
+            ),
         ],
     )
 )
 class FaceCloudTokenObtainPairView(TokenObtainPairView):
     serializer_class = FaceCloudTokenObtainPairSerializer
     throttle_scope = "login"
+
+
+@extend_schema_view(
+    post=extend_schema(
+        summary="Finish logging in with a two-factor code",
+        description="Exchange the login_token from a password-verified login plus a device code (or recovery code) for real tokens.",
+        request=TwoFactorLoginVerifySerializer,
+        responses={200: LoginResponseSerializer, 400: OpenApiTypes.OBJECT, 429: OpenApiTypes.OBJECT},
+    )
+)
+class TwoFactorLoginVerifyView(APIView):
+    permission_classes = [permissions.AllowAny]
+    throttle_scope = "login"
+
+    def post(self, request):
+        payload = TwoFactorLoginVerifySerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        result = verify_two_factor_login(
+            payload.validated_data["login_token"], payload.validated_data["code"], request=request,
+        )
+        return Response(result)
+
+
+class TwoFactorSetupView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "two_factor"
+
+    @extend_schema(
+        summary="Start two-factor setup",
+        description="Generates a new secret, not yet enforced at login until confirmed with a real code.",
+        request=None,
+        responses={200: TwoFactorSetupResponseSerializer, 400: OpenApiTypes.OBJECT},
+    )
+    def post(self, request):
+        return Response(setup_two_factor(request.user))
+
+
+class TwoFactorConfirmView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "two_factor"
+
+    @extend_schema(
+        summary="Confirm two-factor setup",
+        description="Proves one real code from the device, turns two-factor on, and returns one-time recovery codes.",
+        request=TwoFactorCodeSerializer,
+        responses={200: TwoFactorCodesResponseSerializer, 400: OpenApiTypes.OBJECT},
+    )
+    def post(self, request):
+        payload = TwoFactorCodeSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        codes = confirm_two_factor(request.user, payload.validated_data["code"], request=request)
+        return Response({"recovery_codes": codes})
+
+
+class TwoFactorStatusView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(summary="Whether two-factor authentication is enabled", responses={200: TwoFactorStatusSerializer})
+    def get(self, request):
+        return Response(two_factor_status(request.user))
+
+
+class TwoFactorDisableView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "two_factor"
+
+    @extend_schema(
+        summary="Disable two-factor authentication",
+        description="Requires a current device code or an unused recovery code -- a signed-in session alone is not enough.",
+        request=TwoFactorCodeSerializer,
+        responses={204: None, 400: OpenApiTypes.OBJECT, 429: OpenApiTypes.OBJECT},
+    )
+    def post(self, request):
+        payload = TwoFactorCodeSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        disable_two_factor(request.user, payload.validated_data["code"], request=request)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class TwoFactorRecoveryCodesView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "two_factor"
+
+    @extend_schema(
+        summary="Regenerate recovery codes",
+        description="Invalidates every existing recovery code and issues a fresh set, proven by a live device code.",
+        request=TwoFactorCodeSerializer,
+        responses={200: TwoFactorCodesResponseSerializer, 400: OpenApiTypes.OBJECT, 429: OpenApiTypes.OBJECT},
+    )
+    def post(self, request):
+        payload = TwoFactorCodeSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        codes = regenerate_recovery_codes(request.user, payload.validated_data["code"], request=request)
+        return Response({"recovery_codes": codes})
 
 
 class FaceCloudTokenRefreshView(TokenRefreshView):
