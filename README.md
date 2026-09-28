@@ -24,7 +24,7 @@ feature catalogue and status table; this README does not duplicate it.
 
 | Area | Summary |
 |---|---|
-| Accounts | Pending registration with six-digit email verification, JWT login with refresh rotation, per-account login backoff, password reset, logout from all devices, admin / moderator / user roles, suspension, audit trail |
+| Accounts | Pending registration with six-digit email verification, JWT login with refresh rotation, optional two-factor authentication (TOTP, recovery codes), per-account login backoff, password reset, logout from all devices, admin / moderator / user roles, suspension, audit trail |
 | Uploads | Single, multiple and ZIP upload; content-based validation of JPG, PNG, WebP, BMP, TIFF and static GIF; ZIP-slip and ZIP-bomb protection; UUID storage paths; owner-only access |
 | Gallery | Automatic event/timeline grouping of a user's photos, face-aware collages from an event or a person (asynchronous, consent-gated for person collages), and cached, encrypted JPEG thumbnails so a gallery never loads full originals |
 | Quality control | Sharpness, exposure, contrast, noise and resolution scoring with explainable accept / review / reject decisions |
