@@ -1018,35 +1018,46 @@ rule.**
   only the crop coordinates and, for a person collage, the group's display
   name.
 
-### Feature 50: Face-based visual search — Backlog
+### Feature 50: Face-based visual search — Done (backend)
 
 Lets a user upload or capture a query photo and find their own photos that
 contain the same face -- "search by a photo" rather than by text.
 
-- Detect and embed the largest (or all) face(s) in the uploaded query image
-- Compare the query embedding against the searching user's own identity
-  group centroids (reusing `identities.providers`/`_choose_group`'s
-  similarity approach, not a new algorithm) and return matching photos
-- Never persist the query image or its embedding beyond the request
+- `POST /api/identities/search/` (multipart, field `query_image`) in the
+  existing `identities` app -- no new app or model, since nothing is stored.
+  Detects the largest confident face in the query photo, embeds it, and
+  compares it against the searching user's own ACTIVE identity groups' centroids
+  using the exact same similarity function and `IDENTITY_MATCH_THRESHOLD` as
+  `_choose_group` -- not a new algorithm or a new threshold, so "found a match"
+  means the same thing here as everywhere else in `identities/`. Returns every
+  group at or above the threshold (best first; usually zero or one, more only
+  when the same person's faces were split across ungrouped groups), each with
+  its matching photos (`thumbnail_url`/`download_url` included).
+- The query image is decoded, embedded, compared, and the embedding immediately
+  discarded within the request -- never written to a `protected_*` field, never
+  in the response body (17 tests, including one that scans the response for
+  "embedding"/"centroid" text and one that asserts no new `IdentityFace` row
+  is created).
 
 **Facial data usage: this is the one feature here that introduces genuinely
 new biometric processing, and it needs its own consent gate.** Unlike
 Features 48/49, computing an embedding from a freshly uploaded query image
 is new biometric processing in Feature 41's sense (it derives data that can
-recognise a person), so it must be gated behind the same
+recognise a person), so it is gated behind the same
 `BIOMETRIC_CONSENT_REQUIRED`/`biometric_processing_allowed` check that
 identity analysis already uses -- not a new, separate consent flag. Two
 additional rules follow directly from Feature 41's existing "never exported"
-guarantee for embeddings/centroids:
+guarantee for embeddings/centroids, both implemented as described:
 - The query embedding is computed, compared, and discarded within the
   request/job -- it is never written to a `protected_*` field or any other
   persistent store, since it was never consented to as stored biometric data,
   only as a one-time comparison.
-- Results are scoped to the searching user's own (and, once organization-
-  scoped search exists, their active organization's) identity data only --
-  this feature must reuse the existing owner/organization isolation rules
-  already enforced everywhere else in `identities`/`moderation`, never a
-  platform-wide face search across accounts.
+- Results are scoped to the searching user's own identity data only (tested:
+  another owner's matching group, and an ARCHIVED/MERGED group, are never
+  returned). Organization-scoped search is not built -- there is no
+  organization-wide identity search anywhere else in `identities`/`moderation`
+  to extend yet, and adding one is a separate decision, not implied by this.
+  Never a platform-wide search across accounts.
 
 ## 14. Optional future extensions
 
