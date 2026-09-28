@@ -106,6 +106,15 @@ python scripts/evaluate_gpu_stages.py --configs baseline,gfpgan --images-dir gpu
 
 # D. Everything together
 python scripts/evaluate_gpu_stages.py --configs baseline,combo --images-dir gpu_sample/images --count 60
+
+# E. Reference-quality: does enhancement recover the TRUE original face, on a bigger
+# sample than the CPU smoke test could afford (see docs/features/reference-quality-evaluation.md
+# for the CPU baseline this compares against -- a real, repeatable finding: on darkened+
+# blurred synthetic faces, identity similarity was 0.24-0.52, every one below the 0.80
+# threshold, with GFPGAN/PureVision/HD restoration all disabled)
+python scripts/evaluate_reference_quality.py --images-dir gpu_sample/faces --count 40 --pair-count 200
+# then repeat with GFPGAN_ENABLED=True (and the others) in .env to see whether any of
+# them close the gap found on CPU
 ```
 
 Configurations: `baseline` (today's defaults), `purevision`, `purescale`, `hd`,
