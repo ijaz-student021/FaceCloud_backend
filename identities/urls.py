@@ -9,11 +9,13 @@ from .views import (IdentityAssignmentReviewView, IdentityChangeListView,
                     IdentityGroupListView, IdentityGroupMergeView,
                     IdentityGroupProfileView, IdentityGroupRenameView,
                     IdentityImageAnalysisView, IdentityMembershipMoveView,
-                    IdentityMembershipRemoveView, IdentityReviewListView)
+                    IdentityMembershipRemoveView, IdentityReviewListView,
+                    IdentityVisualSearchView)
 
 app_name = "identities"
 urlpatterns = [
     path("images/<int:image_id>/", IdentityImageAnalysisView.as_view(), name="image-analysis"),
+    path("search/", IdentityVisualSearchView.as_view(), name="visual-search"),
     path("groups/", IdentityGroupListView.as_view(), name="group-list"),
     path("groups/<int:pk>/", IdentityGroupDetailView.as_view(), name="group-detail"),
     path("groups/<int:pk>/rename/", IdentityGroupRenameView.as_view(), name="group-rename"),

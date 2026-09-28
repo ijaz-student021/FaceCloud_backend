@@ -230,6 +230,16 @@ error for it.
 - Change history (renames, merges, moves, reviews): `GET /api/identities/history/`.
   There is no one-click undo endpoint; to reverse a change, use the opposite
   operation (for example move a face back).
+- **Search by photo.** `POST /api/identities/search/` (multipart, field
+  `query_image`) finds the caller's own photos that contain the face in the
+  uploaded photo. Needs biometric consent, same as the rest of this section.
+  Response: `{faces_detected, matches: [{group_id, display_name, similarity,
+  photo_count, photos: [{id, original_name, thumbnail_url, download_url}]}]}`.
+  `faces_detected: false` means no face was found in the uploaded photo at all
+  (show "no face found"); `faces_detected: true` with an empty `matches` list
+  means a face was found but it doesn't match anyone in the account yet (show
+  "no matches"). The query photo and its embedding are never stored anywhere;
+  do not expect a way to look up a past search.
 - Per-folder ZIP export is async: `POST .../groups/{group_id}/exports/`, poll
   `GET /api/identities/exports/{id}/`, then `.../download/`.
 

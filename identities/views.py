@@ -3,7 +3,8 @@ from django.shortcuts import get_object_or_404
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, permissions, status
-from rest_framework.exceptions import APIException
+from rest_framework.exceptions import APIException, ValidationError
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -26,8 +27,10 @@ from .serializers import (IdentityAnalysisSerializer, IdentityAnalyzeRequestSeri
                           IdentityMembershipSerializer, IdentityMergeSerializer,
                           IdentityMoveSerializer, IdentityProfileSerializer,
                           IdentityReasonSerializer, IdentityRenameSerializer,
-                          IdentityReviewRequestSerializer)
-from .services import enqueue_identity_analysis, review_membership
+                          IdentityReviewRequestSerializer,
+                          IdentitySearchResponseSerializer)
+from .services import (enqueue_identity_analysis, group_member_photos,
+                       review_membership, search_by_face)
 
 
 class IdentityExportNotReady(APIException):
@@ -60,6 +63,38 @@ class IdentityImageAnalysisView(APIView):
         payload.is_valid(raise_exception=True)
         analysis = enqueue_identity_analysis(image, force=payload.validated_data["force"])
         return Response(IdentityAnalysisSerializer(analysis).data, status=status.HTTP_202_ACCEPTED)
+
+
+class IdentityVisualSearchView(APIView):
+    """Feature 50: search the owner's own photos by uploading a face photo."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+    throttle_scope = "identity_search"
+
+    @extend_schema(
+        request={"multipart/form-data": {"type": "object", "properties": {
+            "query_image": {"type": "string", "format": "binary"},
+        }}},
+        responses={200: IdentitySearchResponseSerializer, 400: OpenApiTypes.OBJECT},
+    )
+    def post(self, request):
+        uploaded = request.FILES.get("query_image")
+        if uploaded is None:
+            raise ValidationError({"query_image": "Select a photo to search with."})
+        result = search_by_face(request.user, uploaded)
+        matches = []
+        for item in result["matches"]:
+            photos = list(group_member_photos(item["group"]))
+            matches.append({
+                "group_id": item["group"].pk,
+                "display_name": item["group"].display_name,
+                "similarity": round(item["similarity"], 4),
+                "photo_count": len(photos),
+                "photos": photos,
+            })
+        payload = {"faces_detected": result["faces_detected"], "matches": matches}
+        return Response(IdentitySearchResponseSerializer(payload, context={"request": request}).data)
 
 
 class IdentityGroupListView(generics.ListAPIView):

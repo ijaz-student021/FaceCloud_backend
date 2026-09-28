@@ -288,7 +288,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 47 | Gallery-editor frontend integration | Next | T-034 |
 | 48 | Automatic event/timeline grouping | Done, backend (no face data involved -- see `FEATURES.md`) | T-035 |
 | 49 | AI-generated photo collages (face-aware smart crop) | Done, backend (face-box crop needs no consent; person-specific collage reuses existing identity consent gate -- see `FEATURES.md`) | T-036 |
-| 50 | Face-based visual search | Backlog (new biometric processing -- must reuse `biometric_processing_allowed`, query embedding never persisted -- see `FEATURES.md`) | T-037 |
+| 50 | Face-based visual search | Done, backend (new biometric processing, consent-gated, query embedding never persisted -- see `FEATURES.md`) | T-037 |
 
 ### Register workstreams
 

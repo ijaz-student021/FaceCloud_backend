@@ -29,7 +29,7 @@ feature catalogue and status table; this README does not duplicate it.
 | Gallery | Automatic event/timeline grouping of a user's photos, face-aware collages from an event or a person (asynchronous, consent-gated for person collages), and cached, encrypted JPEG thumbnails so a gallery never loads full originals |
 | Quality control | Sharpness, exposure, contrast, noise and resolution scoring with explainable accept / review / reject decisions |
 | Enhancement | Adaptive pipeline: Zero-DCE exposure, adaptive denoise, EDSR / NAFNet / Real-ESRGAN / PureScale / PureVision restoration, guarded GFPGAN face restoration, sharpening, colorization, bounded colour recovery for very dark photos, style presets and sliders, final output-contract validation |
-| Identity | YuNet face detection, SFace embeddings, identity grouping, a guard that rejects enhancements that change who a face looks like, ZIP export per identity |
+| Identity | YuNet face detection, SFace embeddings, identity grouping, a guard that rejects enhancements that change who a face looks like, ZIP export per identity, consent-gated search by photo |
 | Organizations | Multi-tenant workspaces: owner / moderator / member roles, hashed-token invitations, protected-owner and last-owner rules, an immutable per-organization audit trail, organization-wide data export |
 | Moderation | Organization-scoped review queue for uncertain AI decisions (quality, duplicate, identity), decision write-back to the underlying record, assignment, escalation and batch-failure notifications, batch retry / cancel, organization reports, duplicate-group merging, and automatic release of a removed or demoted moderator's open reviews |
 | Privacy | Biometric consent history, verified erasure, retention purge, personal and organization-wide data export, AES-256-GCM encryption of embeddings and stored images with key rotation, temporary-file cleanup |
@@ -92,7 +92,7 @@ validation/        face detection and validation
 quality_control/   quality scoring and decisions
 enhancement/       enhancement pipeline, model adapters, identity guard
 duplicates/        perceptual-hash duplicate detection
-identities/        face embeddings, identity groups, encrypted storage
+identities/        face embeddings, identity groups, encrypted storage, search by photo
 organizations/     multi-tenant workspaces, membership, invitations, audit trail
 moderation/        organization-scoped review queue, decisions, reports, batch actions
 privacy/           consent, erasure, retention, personal and organization export, cleanup

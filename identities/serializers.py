@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from uploads.models import ImageUpload
+
 from .models import (IdentityAnalysis, IdentityChange, IdentityGroup,
                      IdentityGroupExport, IdentityMembership)
 
@@ -115,3 +117,35 @@ class IdentityGroupExportSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         path = f"/api/identities/exports/{obj.pk}/download/"
         return request.build_absolute_uri(path) if request else path
+
+
+class IdentitySearchPhotoSerializer(serializers.ModelSerializer):
+    thumbnail_url = serializers.SerializerMethodField()
+    download_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ImageUpload
+        fields = ("id", "original_name", "thumbnail_url", "download_url")
+
+    def _absolute(self, path):
+        request = self.context.get("request")
+        return request.build_absolute_uri(path) if request else path
+
+    def get_thumbnail_url(self, obj) -> str:
+        return self._absolute(f"/api/images/{obj.pk}/thumbnail/")
+
+    def get_download_url(self, obj) -> str:
+        return self._absolute(f"/api/images/{obj.pk}/download/")
+
+
+class IdentitySearchMatchSerializer(serializers.Serializer):
+    group_id = serializers.IntegerField()
+    display_name = serializers.CharField()
+    similarity = serializers.FloatField()
+    photo_count = serializers.IntegerField()
+    photos = IdentitySearchPhotoSerializer(many=True)
+
+
+class IdentitySearchResponseSerializer(serializers.Serializer):
+    faces_detected = serializers.BooleanField(help_text="Whether a face was found in the query photo at all.")
+    matches = IdentitySearchMatchSerializer(many=True)

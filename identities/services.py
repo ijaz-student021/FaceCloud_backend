@@ -14,6 +14,7 @@ from rest_framework.exceptions import ValidationError
 from organizations.services import get_default_organization
 from uploads.models import ImagePreprocessingResult, UploadBatch
 from validation.models import FaceValidationResult
+from validation.services import get_face_detector
 
 from .models import IdentityAnalysis, IdentityFace, IdentityGroup, IdentityMembership
 from .providers import get_identity_provider
@@ -74,8 +75,91 @@ def _choose_group(owner, provider, vector):
     return "review", best_group, best_score, second_score
 
 
+def group_member_photos(group):
+    """The owner's uploaded photos currently in ``group`` (the same membership states its centroid uses)."""
+    from uploads.models import ImageUpload
+
+    face_ids = group.memberships.filter(state__in=_confirmed_states()).values_list("identity_face__image_id", flat=True)
+    return ImageUpload.objects.filter(pk__in=face_ids, owner=group.owner_id, status="uploaded").order_by("-created_at")
+
+
 def _batch_cancellation_requested(batch_id):
     return UploadBatch.objects.filter(pk=batch_id, cancellation_requested=True).exists()
+
+
+def _largest_face(image, detector):
+    """The biggest confident, alignable face in ``image``, or ``None``."""
+    detection = detector.detect(image)
+    candidates = [
+        (box[2] * box[3], box, landmarks)
+        for box, landmarks in zip(detection.boxes, detection.landmarks)
+        if landmarks and len(landmarks) == 5
+    ]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    _area, box, landmarks = candidates[0]
+    return box, landmarks
+
+
+def search_by_face(owner, uploaded_file):
+    """Feature 50: the owner's own photos that contain the same face as a query photo.
+
+    Computing an embedding from a freshly uploaded query image is new biometric
+    processing (Feature 41), so it is gated behind the same consent check identity
+    analysis uses -- not a separate flag. The embedding is computed, compared, and
+    discarded within this call: it is never written to a ``protected_*`` field or any
+    other persistent store, only consented to as a one-time comparison.
+
+    Reuses ``_choose_group``'s exact similarity function and ``IDENTITY_MATCH_THRESHOLD``
+    (not a new algorithm or a new threshold), so "found a match" here means the same
+    thing it does everywhere else in this app. Only the owner's own ACTIVE groups are
+    ever considered -- never another user's.
+
+    Returns ``{"faces_detected": bool, "matches": [{"group": IdentityGroup, "similarity": float}, ...]}``,
+    matches best first, for every group scoring at or above the match threshold
+    (usually zero or one group; more than one means the owner's own faces were split
+    across groups that have not been merged). ``faces_detected`` is ``False`` only
+    when no face was found in the query photo at all, distinct from a face being
+    found but matching nothing.
+    """
+    from privacy.services import biometric_processing_allowed
+
+    if not biometric_processing_allowed(owner):
+        raise ValidationError("Biometric consent is required before face search.")
+    provider = get_identity_provider()
+    provider.healthcheck()
+    detector = get_face_detector()
+
+    payload = uploaded_file.read()
+    image = cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValidationError({"query_image": "The image could not be decoded safely."})
+    found = _largest_face(image, detector)
+    if found is None:
+        return {"faces_detected": False, "matches": []}
+    box, landmarks = found
+    x, y, width, height = box
+    crop = provider.prepare_face(image, {"x": x, "y": y, "width": width, "height": height}, landmarks)
+    vector = provider.validate_embedding(provider.embed(crop))
+
+    groups = (
+        IdentityGroup.objects.filter(
+            owner=owner, state=IdentityGroup.State.ACTIVE,
+            provider=provider.name, embedding_dimension=provider.dimension,
+        )
+        .exclude(protected_centroid=b"")
+        .order_by("-updated_at")[: settings.IDENTITY_MAX_CANDIDATE_GROUPS]
+    )
+    scored = sorted(
+        (
+            (provider.similarity(vector, reveal_embedding(group.protected_centroid, group.embedding_dimension)), group)
+            for group in groups
+        ),
+        key=lambda item: item[0], reverse=True,
+    )
+    matches = [{"group": group, "similarity": score} for score, group in scored if score >= settings.IDENTITY_MATCH_THRESHOLD]
+    return {"faces_detected": True, "matches": matches}
 
 
 def process_identity_analysis(analysis_id):
