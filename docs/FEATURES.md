@@ -687,8 +687,10 @@ are now complete too. See
 - Upload and processing monitoring — Complete (failed-batch list, cross-kind failed-job list)
 - Failed-job management — Complete for upload batches (admin retry, reusing the owner-facing logic); read-only visibility for every other job kind
 - System-wide audit views — Complete (combined AuthEvent + ActivityEvent feed)
-- Storage and threshold configuration, moderator monitoring — deliberately not
-  built; see the doc's "Deliberately not built" section
+- Platform-wide moderator monitoring — Complete (totals, organizations needing
+  attention, moderator workload, built now that Feature 27's review queue exists)
+- Storage and threshold configuration — deliberately not built; see the doc's
+  "Deliberately not built" section
 - Frontend admin pages — remain
 
 ### Feature 34: System health page - Backend complete; frontend page planned

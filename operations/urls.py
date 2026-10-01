@@ -4,6 +4,7 @@ from .views import (
     AdminAnalyticsView,
     AdminAuditView,
     AdminBatchRetryView,
+    AdminModerationOverviewView,
     FailedBatchListView,
     FailedJobListView,
     QueueStatusView,
@@ -21,5 +22,6 @@ urlpatterns = [
     path("batches/<int:batch_id>/retry/", AdminBatchRetryView.as_view(), name="admin-batch-retry"),
     path("jobs/failed/", FailedJobListView.as_view(), name="failed-jobs"),
     path("audit/", AdminAuditView.as_view(), name="admin-audit"),
+    path("moderation/", AdminModerationOverviewView.as_view(), name="admin-moderation-overview"),
 ]
 
