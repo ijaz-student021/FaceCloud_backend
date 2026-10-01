@@ -14,6 +14,6 @@ drf-spectacular
 django-cors-headers
 django-environ
 reportlab
-cryptography>=46
+cryptography>=50.0.1
 gunicorn
 # boto3 and django-storages return with Feature 43 (private cloud storage).
