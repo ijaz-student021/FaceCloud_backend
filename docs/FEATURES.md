@@ -868,13 +868,20 @@ Maintains stable integration contracts and implementation documentation.
 
 Protects completed behavior from regression as the platform grows.
 
-- 598 authentication, upload, preprocessing, enhancement, validation, quality,
+- 1053 authentication, upload, preprocessing, enhancement, validation, quality,
   duplicate-detection, dashboard, report, download, ownership, cleanup, and queue tests
   passing against PostgreSQL
 - Django system and migration-drift checks
 - Security, ownership, ZIP, and cleanup tests
 - Manual registration, token, profile, and real upload verification
-- Planned enhancement, face, queue, moderator, storage, and live-load tests
+- Load/performance testing — Done (`docs/features/45-load-performance-testing.md`):
+  a reusable Locust harness (`loadtest/locustfile.py`) plus a deterministic
+  account seeder (`seed_loadtest_users`, DEBUG-only), with one real baseline
+  run's numbers recorded. Sustained/soak testing, a CI-gated performance
+  budget, and GPU-pipeline load testing remain open (see that doc's
+  "Deliberately not built")
+- Planned enhancement, face, queue, and moderator load tests (GPU-dependent;
+  see the load-testing doc)
 
 ### Feature 46: Organization and tenant management — In progress (T-008 Phases A-C complete, 2026-09-23)
 

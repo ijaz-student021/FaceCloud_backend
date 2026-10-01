@@ -287,7 +287,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 41 | Consent, retention, encryption, export and erasure | Backend done (2026-09-19, org-wide export added 2026-09-23), incl. AES-GCM key rotation, temp/orphan cleanup and beat scheduling; frontend remains | T-006 |
 | 43 | Private cloud/object storage | Backlog | T-031 |
 | 44 | OpenAPI schema for every APIView | Done (2026-09-19): zero schema warnings (enforced by a test), examples on the core flows, `docs/API_ERRORS.md` | T-032 |
-| 45 | Load, performance, camera and integration QA | Continuous | T-033 |
+| 45 | Load, performance, camera and integration QA | Continuous; load/performance harness + baseline done (2026-10-01, `docs/features/45-load-performance-testing.md`) | T-033 |
 | 46 | Organization and tenant management | In progress (Phases A+B done 2026-09-22, C done 2026-09-23) | T-008 |
 | 47 | Gallery-editor frontend integration | Next | T-034 |
 | 48 | Automatic event/timeline grouping | Done, backend (no face data involved -- see `FEATURES.md`) | T-035 |
