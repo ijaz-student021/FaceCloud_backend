@@ -230,12 +230,16 @@
 - Tenant membership and moderator assignment — Done (Phase A)
 - Tenant-scoped queries, storage, reports, embeddings, and policies — Partial
   (Phase C's `ModeratorReview` is the first org-scoped query surface, covering
-  quality/duplicate/identity review queues and a dashboard; reports, storage
-  quotas, and embedding-level policies are still open). Removing, suspending or
-  demoting a moderator now returns their open reviews to the queue
-  (`moderation.services.release_open_reviews`, 2026-09-25)
+  quality/duplicate/identity review queues and a dashboard; storage quotas and
+  embedding-level policies are still open; `downloads`/`reports` isolation is
+  done, see below). Removing, suspending or demoting a moderator now returns
+  their open reviews to the queue (`moderation.services.release_open_reviews`,
+  2026-09-25)
 - Automated cross-tenant isolation tests — Done for organization/membership APIs
-  (Phase A) and moderator review APIs (Phase C, `moderation/tests.py`)
+  (Phase A), moderator review APIs (Phase C, `moderation/tests.py`), and
+  downloads/reports (2026-10-01, `downloads/test_organization_isolation.py`,
+  `reports/test_organization_isolation.py`: an organization's own owner or
+  moderator cannot see a member's personal downloads or reports)
 
 ## 4. Platform and frontend tasks
 
