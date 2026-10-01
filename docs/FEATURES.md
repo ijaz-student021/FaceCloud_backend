@@ -909,7 +909,7 @@ membership, moderation, and data access. See the full design in
   isolated and tested — `OrganizationIsolationTests`,
   `ModeratorReviewIsolationTests`; general content isolation beyond the
   review workflow is open)
-- Queryset, object-permission, download, report, and background-task tenant isolation — Partial (done for `ModeratorReview`; download/report/background-task isolation is open)
+- Queryset, object-permission, download, report, and background-task tenant isolation — Done (`ModeratorReview`'s was done in Phase C; `downloads`/`reports` are personal, owner-scoped resources, never reachable through any organization-scoped URL, and `OrganizationMembershipGrantsNo*AccessTests` in both apps now prove an organization's own owner or moderator role still cannot see a member's downloads or reports through any endpoint. The two background tasks that generate them, `downloads.tasks.process_download_package` and `reports.tasks.process_processing_report`, look up one already-owner-scoped row by its primary key and never run a cross-tenant query, so there is no separate task-level isolation surface to test beyond what the views already guard)
 - Organization audit history — Done (`OrganizationAuditEvent`, immutable, written
   by every membership/invitation mutation)
 - Safe backfill of existing users and content into personal organizations — Done
