@@ -12,7 +12,7 @@ redis
 django-celery-results
 boto3
 django-storages
-opencv-contrib-python-headless==4.10.0.84
+opencv-contrib-python-headless==5.0.0.93
 opencv-python==4.10.0.84
 numpy==2.5.3
 Pillow
