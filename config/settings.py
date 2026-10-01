@@ -37,7 +37,11 @@ SECRET_KEY = os.environ.get(
 )
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get("DJANGO_DEBUG", "True").lower() == "true"
+# Fails closed: an omitted DJANGO_DEBUG (e.g. platform env vars set directly,
+# skipping .env.example) must never silently start the app in debug mode.
+# Every local/CI setup already sets this explicitly, so the safe default
+# costs nothing there.
+DEBUG = os.environ.get("DJANGO_DEBUG", "False").lower() == "true"
 
 # (An unsafe SECRET_KEY with DEBUG off is refused by config/production_guard.py at
 # the end of this file, together with every other production problem.)

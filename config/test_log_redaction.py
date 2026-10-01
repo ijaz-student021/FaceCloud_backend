@@ -42,6 +42,20 @@ class RedactFunctionTests(SimpleTestCase):
             with self.subTest(text=text):
                 self.assertEqual(redact(text), text)
 
+    def test_an_email_change_verification_link_has_both_segments_redacted(self):
+        uidb64 = "MQ"
+        cases = {
+            f"/api/auth/verify-email/change/{uidb64}/{TOKEN}/": f"/api/auth/verify-email/change/{REDACTED}",
+            f"Not Found: /api/auth/verify-email/change/{uidb64}/{TOKEN}/": f"Not Found: /api/auth/verify-email/change/{REDACTED}",
+            f"/api/auth/verify-email/change/{uidb64}/{TOKEN}?x=1": f"/api/auth/verify-email/change/{REDACTED}?x=1",
+            f'"GET /api/auth/verify-email/change/{uidb64}/{TOKEN}/ HTTP/1.1" 200 512': f'"GET /api/auth/verify-email/change/{REDACTED} HTTP/1.1" 200 512',
+        }
+        for original, expected in cases.items():
+            with self.subTest(original=original):
+                self.assertEqual(redact(original), expected)
+                self.assertNotIn(uidb64, redact(original))
+                self.assertNotIn(TOKEN, redact(original))
+
 
 class LogRecordRedactionTests(SimpleTestCase):
     """The factory is installed when settings load, so these use real loggers."""
