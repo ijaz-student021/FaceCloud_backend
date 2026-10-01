@@ -15,6 +15,7 @@ from uploads.services import BatchHasNoFailedImages, BatchRetryLimitReached, ret
 from .analytics import InvalidAnalyticsFilter, build_admin_analytics
 from .audit import InvalidAuditFilter, build_audit_feed
 from .jobs import InvalidJobKind, list_failed_jobs, queue_status
+from .moderation_overview import InvalidModerationOverviewFilter, build_admin_moderation_overview
 from .serializers import AdminFailedBatchSerializer
 from .services import UNAVAILABLE, build_system_health
 
@@ -157,5 +158,28 @@ class AdminAuditView(APIView):
                 page=params.get("page", 1), page_size=params.get("page_size", 50),
             )
         except InvalidAuditFilter as error:
+            raise ValidationError({"detail": [str(error)]}) from error
+        return Response(payload)
+
+
+class AdminModerationOverviewView(APIView):
+    """Platform-wide moderation totals, organizations needing attention, and moderator workload (Feature 33)."""
+
+    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
+    throttle_scope = "admin_analytics"
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "stale_hours", OpenApiTypes.INT,
+                description="How old a still-open review must be to count as stale (default 48).",
+            ),
+        ],
+        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+    )
+    def get(self, request):
+        try:
+            payload = build_admin_moderation_overview(stale_hours=request.query_params.get("stale_hours"))
+        except InvalidModerationOverviewFilter as error:
             raise ValidationError({"detail": [str(error)]}) from error
         return Response(payload)
