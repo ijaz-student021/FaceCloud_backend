@@ -324,8 +324,9 @@ configuration is production-safe, and lists every problem at once
 6. **Privacy policy:** `BIOMETRIC_CONSENT_REQUIRED=True`. Also choose
    `FACIAL_DATA_RETENTION_DAYS`; `check --deploy` warns while it is 0.
 7. Run the worker and exactly one beat process, and serve with
-   `gunicorn config.wsgi -c gunicorn.conf.py` so share-link tokens are redacted
-   from its access log.
+   `gunicorn config.wsgi -c gunicorn.conf.py` so credential-bearing URLs
+   (share-link tokens, email-change verification links) are redacted from its
+   access log.
 
 Then run `python manage.py check --deploy` for Django's own checks.
 
