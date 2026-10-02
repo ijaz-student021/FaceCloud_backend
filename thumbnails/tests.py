@@ -227,12 +227,21 @@ class ConcurrencyTests(ThumbnailTestCase):
             )
             return result
 
+        folder = Path(settings.MEDIA_ROOT) / "users" / str(self.owner.pk) / "thumbnails"
+        # What the loser leaves behind is the point, so compare against the
+        # folder as it was. It is not empty to begin with on every database:
+        # the media root is shared by the whole run, and SQLite reuses a primary
+        # key after a rolled-back transaction, so an earlier test's user writes
+        # into this same path. PostgreSQL never reuses one, which is why an
+        # emptiness check happened to hold there and nowhere else.
+        before = sorted(folder.glob("*")) if folder.exists() else []
+
         with patch("thumbnails.services.render_thumbnail", side_effect=winner_appears_first):
             result = get_or_create_thumbnail(image, 256)
         self.assertEqual(result.file.name, f"users/{self.owner.pk}/thumbnails/winner.jpg")
         self.assertEqual(ImageThumbnail.objects.filter(image=image).count(), 1)
-        folder = Path(settings.MEDIA_ROOT) / "users" / str(self.owner.pk) / "thumbnails"
-        self.assertEqual(list(folder.glob("*")) if folder.exists() else [], [])
+        after = sorted(folder.glob("*")) if folder.exists() else []
+        self.assertEqual(after, before, "the losing request left its rendered file behind")
 
 
 class UrlExposureTests(ThumbnailTestCase):
