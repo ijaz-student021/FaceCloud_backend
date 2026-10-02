@@ -74,11 +74,15 @@ jobs:
       - run: pip install pip-audit bandit
       - name: Known vulnerabilities in dependencies
         run: pip-audit -r requirements.txt --progress-spinner off
+      # Every application package, not a hand-kept subset: the previous list had
+      # fallen behind and left moderation, organizations, collages, events and
+      # thumbnails unscanned.
       - name: Static analysis (medium and high severity)
         run: >-
-          bandit -r accounts uploads enhancement validation quality_control duplicates
-          identities reports downloads notifications operations activity privacy sharing
-          config scripts -x "*/tests.py,*/test_*.py,*/migrations" -ll
+          bandit -r accounts activity collages config downloads duplicates enhancement
+          events identities moderation notifications operations organizations privacy
+          quality_control reports sharing thumbnails uploads validation scripts
+          -x "*/tests.py,*/test_*.py,*/migrations" -ll
 
   production-config:
     name: Production configuration starts

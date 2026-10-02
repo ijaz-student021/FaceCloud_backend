@@ -26,8 +26,24 @@ urlpatterns = [
         views.ModeratorReviewAssignView.as_view(), name="review-assign",
     ),
     path(
+        "<int:organization_id>/moderator/reviews/<int:review_id>/claim/",
+        views.ModeratorReviewClaimView.as_view(), name="review-claim",
+    ),
+    path(
+        "<int:organization_id>/moderator/reviews/<int:review_id>/release/",
+        views.ModeratorReviewReleaseView.as_view(), name="review-release",
+    ),
+    path(
+        "<int:organization_id>/moderator/reviews/bulk-decision/",
+        views.ModeratorBulkDecisionView.as_view(), name="review-bulk-decision",
+    ),
+    path(
         "<int:organization_id>/moderator/dashboard/",
         views.ModeratorDashboardView.as_view(), name="dashboard",
+    ),
+    path(
+        "<int:organization_id>/moderator/metrics/",
+        views.ModeratorPerformanceView.as_view(), name="performance-metrics",
     ),
     path(
         "<int:organization_id>/moderator/batches/",

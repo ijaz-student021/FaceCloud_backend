@@ -27,6 +27,9 @@ EVENT_POLICY = {
     UserNotification.EventType.MODERATOR_REVIEW_ESCALATED: ("moderator_review_updates", True),
     # In-app only: a failed batch can be noisy, and the uploader already gets the email.
     UserNotification.EventType.MODERATOR_BATCH_FAILED: ("moderator_review_updates", False),
+    # A missed review deadline is worth an email: the whole point is that
+    # nobody noticed it in the queue.
+    UserNotification.EventType.MODERATOR_REVIEW_OVERDUE: ("moderator_review_updates", True),
 }
 
 
@@ -43,7 +46,7 @@ def _safe_metadata(metadata):
         if key in {
             "filename", "batch_id", "image_id", "report_id", "package_id",
             "status", "accepted", "rejected", "needs_review", "failed", "format",
-            "review_id", "organization_id", "source",
+            "review_id", "organization_id", "source", "due_at",
         } and isinstance(value, (str, int, float, bool, type(None))):
             safe[str(key)[:40]] = value
     return safe

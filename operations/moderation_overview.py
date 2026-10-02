@@ -8,6 +8,9 @@ role listing `AdminUserListView` already gives. Feature 27 is complete now
 `operations/analytics.py` aggregates enhancement data platform-wide -- nothing
 new is measured or recorded here.
 """
+from datetime import timedelta
+
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db.models import Count, Min, Q
 from django.utils import timezone
@@ -51,9 +54,14 @@ def build_admin_moderation_overview(*, stale_hours=None):
     surfaced that an organization's own dashboard cannot show them.
     """
     hours = _parse_stale_hours(stale_hours)
-    stale_cutoff = timezone.now() - timezone.timedelta(hours=hours)
+    now = timezone.now()
+    stale_cutoff = now - timezone.timedelta(hours=hours)
     reviews = ModeratorReview.objects.all()
     today = timezone.localdate()
+    # The same open set the org dashboard uses, so the service-level counts
+    # below mean platform-wide exactly what they mean per organization.
+    waiting = reviews.filter(status__in=OPEN_STATUSES, decided_at__isnull=True)
+    due_soon_cutoff = now + timedelta(hours=settings.MODERATION_SLA_DUE_SOON_HOURS)
 
     totals = {
         "pending": reviews.filter(status=ModeratorReview.Status.PENDING).count(),
@@ -64,6 +72,18 @@ def build_admin_moderation_overview(*, stale_hours=None):
         "rejected_total": reviews.filter(status=ModeratorReview.Status.REJECTED).count(),
         "corrected_total": reviews.filter(status=ModeratorReview.Status.CORRECTED).count(),
         "stale_open": reviews.filter(status__in=OPEN_STATUSES, created_at__lt=stale_cutoff).count(),
+        # Service levels, mirroring moderation.services.dashboard_summary so an
+        # administrator sees the same measure the organizations are held to.
+        "overdue": waiting.filter(due_at__isnull=False, due_at__lt=now).count(),
+        "due_soon": waiting.filter(
+            due_at__isnull=False, due_at__gte=now, due_at__lt=due_soon_cutoff,
+        ).count(),
+        "unassigned": waiting.filter(assigned_moderator__isnull=True).count(),
+        "claimed_now": waiting.filter(
+            claimed_by__isnull=False,
+            claimed_at__gt=now - timedelta(minutes=settings.MODERATION_CLAIM_MINUTES),
+        ).count(),
+        "sla_hours": settings.MODERATION_SLA_HOURS,
     }
 
     organizations = (
@@ -75,16 +95,26 @@ def build_admin_moderation_overview(*, stale_hours=None):
                 "moderator_reviews",
                 filter=Q(moderator_reviews__status__in=OPEN_STATUSES, moderator_reviews__created_at__lt=stale_cutoff),
             ),
+            overdue=Count(
+                "moderator_reviews",
+                filter=Q(
+                    moderator_reviews__status__in=OPEN_STATUSES,
+                    moderator_reviews__decided_at__isnull=True,
+                    moderator_reviews__due_at__isnull=False,
+                    moderator_reviews__due_at__lt=now,
+                ),
+            ),
             oldest_open_at=Min("moderator_reviews__created_at", filter=Q(moderator_reviews__status__in=OPEN_STATUSES)),
         )
         .filter(Q(pending__gt=0) | Q(in_review__gt=0) | Q(escalated__gt=0))
-        .order_by("-escalated", "-stale_open", "-pending")[:TOP_ORGANIZATIONS_LIMIT]
+        .order_by("-escalated", "-overdue", "-stale_open", "-pending")[:TOP_ORGANIZATIONS_LIMIT]
     )
     organization_rows = [
         {
             "organization_id": org.pk, "organization_name": org.name,
             "pending": org.pending, "in_review": org.in_review, "escalated": org.escalated,
-            "stale_open": org.stale_open, "oldest_open_at": org.oldest_open_at,
+            "stale_open": org.stale_open, "overdue": org.overdue,
+            "oldest_open_at": org.oldest_open_at,
         }
         for org in organizations
     ]

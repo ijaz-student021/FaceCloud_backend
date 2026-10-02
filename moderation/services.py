@@ -21,7 +21,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import Avg, Count, Q, Sum
+from django.db.models import Avg, Count, DurationField, ExpressionWrapper, F, Max, Min, Q, Sum
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import APIException, ValidationError
@@ -75,8 +75,36 @@ class ModerationConflict(APIException):
     default_detail = "This review is no longer open for a decision."
 
 
+class ReviewClaimedByAnother(ModerationConflict):
+    default_code = "review_claimed"
+    default_detail = "Another moderator is reviewing this right now."
+
+
+def _reject_if_held_by_another(locked, actor):
+    """Stop one moderator writing a decision over another's open claim.
+
+    Only a live claim blocks: an expired one is no claim at all, so work never
+    becomes permanently unreachable because somebody forgot to release it.
+    """
+    if locked.is_claimed_by_other(actor):
+        raise ReviewClaimedByAnother(
+            f"{locked.claimed_by.username} is reviewing this right now. "
+            "Their claim expires shortly if they do not finish."
+        )
+
+
 def _organization_for_image(image):
     return image.batch.organization
+
+
+def review_deadline(from_time=None):
+    """When a review created now must be decided by.
+
+    Computed here rather than as a model default so that the deadline of an
+    existing row never moves: a review keeps the deadline it was given even if
+    MODERATION_SLA_HOURS is changed afterwards.
+    """
+    return (from_time or timezone.now()) + timedelta(hours=settings.MODERATION_SLA_HOURS)
 
 
 def _get_or_create_review(*, organization, image, source, ai_recommendation, ai_confidence, **source_kwargs):
@@ -85,6 +113,7 @@ def _get_or_create_review(*, organization, image, source, ai_recommendation, ai_
     defaults = {
         "organization": organization, "image": image, "source": source,
         "ai_recommendation": ai_recommendation, "ai_confidence": ai_confidence,
+        "due_at": review_deadline(),
     }
     review, _ = ModeratorReview.objects.get_or_create(defaults=defaults, **source_kwargs)
     return review
@@ -125,6 +154,7 @@ def decide_review(*, review, actor, action, reason="", notes="", group_id=None, 
     locked = ModeratorReview.objects.select_for_update().get(pk=review.pk)
     if locked.decided_at is not None:
         raise ModerationConflict("This review has already been decided.")
+    _reject_if_held_by_another(locked, actor)
     locked.status = _REVIEW_STATUS_FOR_ACTION[action]
     locked.assigned_moderator = locked.assigned_moderator or actor
     locked.decision_reason = reason
@@ -132,6 +162,10 @@ def decide_review(*, review, actor, action, reason="", notes="", group_id=None, 
     if locked.status != ModeratorReview.Status.IN_REVIEW:
         locked.decided_by = actor
         locked.decided_at = timezone.now()
+        # A decided review is nobody's work in progress any more. "Hold" keeps
+        # the claim, because holding it is the point of that action.
+        locked.claimed_by = None
+        locked.claimed_at = None
     locked.save()
 
     if (
@@ -176,6 +210,11 @@ def release_open_reviews(*, organization, user):
     longer act on them. A review that was being worked on returns to
     ``pending``; an escalated one keeps its status so it still reaches an owner.
     Decided reviews are history and are never touched.
+
+    Any claim the same person was holding is dropped as well, including on
+    reviews that were never assigned to them -- a claim would otherwise keep
+    other moderators off a review for its full lifetime even though the person
+    holding it can no longer act on it.
     """
     queryset = ModeratorReview.objects.filter(
         organization=organization, assigned_moderator=user, status__in=OPEN_REVIEW_STATUSES,
@@ -185,6 +224,9 @@ def release_open_reviews(*, organization, user):
         ModeratorReview.objects.filter(
             pk__in=queryset.filter(status=ModeratorReview.Status.IN_REVIEW).values("pk"),
         ).update(status=ModeratorReview.Status.PENDING, updated_at=now)
+        ModeratorReview.objects.filter(
+            organization=organization, claimed_by=user, status__in=OPEN_REVIEW_STATUSES,
+        ).update(claimed_by=None, claimed_at=None, updated_at=now)
         return queryset.update(assigned_moderator=None, updated_at=now)
 
 
@@ -195,10 +237,16 @@ def escalate_review(*, review, actor, reason="", request=None):
     locked = ModeratorReview.objects.select_for_update().get(pk=review.pk)
     if locked.decided_at is not None:
         raise ModerationConflict("This review has already been decided.")
+    _reject_if_held_by_another(locked, actor)
     locked.status = ModeratorReview.Status.ESCALATED
     locked.assigned_moderator = locked.assigned_moderator or actor
     locked.decision_reason = reason
-    locked.save(update_fields=["status", "assigned_moderator", "decision_reason", "updated_at"])
+    # Escalating hands the review on to an owner, so it stops being held here.
+    locked.claimed_by = None
+    locked.claimed_at = None
+    locked.save(update_fields=[
+        "status", "assigned_moderator", "decision_reason", "claimed_by", "claimed_at", "updated_at",
+    ])
     record_audit_event(
         locked.organization, actor, OrganizationAuditEvent.Action.MODERATOR_REVIEW_ESCALATED,
         target_type="ModeratorReview", target_id=locked.pk, reason=reason, request=request,
@@ -238,6 +286,157 @@ def assign_review(*, review, actor, moderator, request=None):
     return locked
 
 
+@transaction.atomic
+def claim_review(*, review, actor, request=None):
+    """Take a review as the one you are working on now.
+
+    This is the soft lock that stops two moderators spending their time on the
+    same photo and then racing to record contradictory decisions. It is
+    deliberately not the same thing as assignment: assignment is a standing
+    allocation someone else can make for you, a claim is you saying "I have
+    this open" and lasts MODERATION_CLAIM_MINUTES.
+
+    Claiming an already-claimed review is a 409 rather than a silent takeover,
+    and re-claiming your own review simply extends it, so returning to a tab
+    you left open does not fail.
+    """
+    locked = ModeratorReview.objects.select_for_update().get(pk=review.pk)
+    if locked.decided_at is not None:
+        raise ModerationConflict("This review has already been decided.")
+    _reject_if_held_by_another(locked, actor)
+    locked.claimed_by = actor
+    locked.claimed_at = timezone.now()
+    locked.assigned_moderator = locked.assigned_moderator or actor
+    # Picking a review up is what "in review" means. An escalated review keeps
+    # its status so it stays visible to owners as escalated while being worked.
+    if locked.status == ModeratorReview.Status.PENDING:
+        locked.status = ModeratorReview.Status.IN_REVIEW
+    locked.save(update_fields=[
+        "claimed_by", "claimed_at", "assigned_moderator", "status", "updated_at",
+    ])
+    record_audit_event(
+        locked.organization, actor, OrganizationAuditEvent.Action.MODERATOR_REVIEW_CLAIMED,
+        target_type="ModeratorReview", target_id=locked.pk,
+        new_value={"claimed_until": locked.claim_expires_at.isoformat()}, request=request,
+    )
+    return locked
+
+
+@transaction.atomic
+def release_review_claim(*, review, actor, is_owner=False, request=None):
+    """Give a claimed review back to the queue.
+
+    The moderator holding it can always release it. An owner can release
+    somebody else's claim too, which is the manual way out of the case the
+    expiry already handles automatically. Anyone else gets a 409 rather than
+    silently doing nothing, so a stale screen does not look like it worked.
+    """
+    locked = ModeratorReview.objects.select_for_update().get(pk=review.pk)
+    if locked.claimed_by_id is None:
+        raise ModerationConflict("This review is not claimed.")
+    if locked.claimed_by_id != actor.pk and not is_owner:
+        raise ReviewClaimedByAnother(
+            f"{locked.claimed_by.username} holds this review; only they or an "
+            "organization owner can release it."
+        )
+    previous_holder = locked.claimed_by_id
+    locked.claimed_by = None
+    locked.claimed_at = None
+    if locked.status == ModeratorReview.Status.IN_REVIEW:
+        locked.status = ModeratorReview.Status.PENDING
+    locked.save(update_fields=["claimed_by", "claimed_at", "status", "updated_at"])
+    record_audit_event(
+        locked.organization, actor, OrganizationAuditEvent.Action.MODERATOR_REVIEW_RELEASED,
+        target_type="ModeratorReview", target_id=locked.pk,
+        previous_value={"claimed_by": previous_holder}, request=request,
+    )
+    return locked
+
+
+BULK_ACTIONS = ("approve", "reject", "escalate")
+
+
+def bulk_decide_reviews(*, organization, actor, review_ids, action, reason="", notes="", request=None):
+    """Apply one decision to many reviews, reporting each one's outcome.
+
+    Only approve, reject and escalate are offered. "Correct" is left out on
+    purpose: correcting an identity review means choosing which person folder
+    the face belongs to, which is a per-photo judgement and cannot honestly be
+    answered once for a selection.
+
+    Each review is decided in its own transaction by the same decide_review()
+    the single-review endpoint uses, so write-back, the audit trail and the
+    claim lock all behave identically. One review that cannot be decided --
+    already decided, or held by another moderator -- is reported in ``failed``
+    and does not roll back the rest, because a moderator who selected thirty
+    photos should not lose twenty-nine of them to one stale row.
+    """
+    if action not in BULK_ACTIONS:
+        raise ValidationError({"action": f"Bulk actions are limited to {', '.join(BULK_ACTIONS)}."})
+    unique_ids = list(dict.fromkeys(review_ids))
+    if not unique_ids:
+        raise ValidationError({"review_ids": "Select at least one review."})
+    if len(unique_ids) > settings.MODERATION_BULK_MAX_REVIEWS:
+        raise ValidationError({
+            "review_ids": f"At most {settings.MODERATION_BULK_MAX_REVIEWS} reviews can be decided at once.",
+        })
+
+    found = {
+        review.pk: review
+        for review in ModeratorReview.objects.filter(organization=organization, pk__in=unique_ids)
+    }
+    succeeded, failed = [], []
+    for review_id in unique_ids:
+        review = found.get(review_id)
+        if review is None:
+            # Not 404: the request as a whole is valid, this one row is not
+            # part of this organization (or no longer exists at all).
+            failed.append({"review_id": review_id, "detail": "No such review in this organization."})
+            continue
+        try:
+            if action == "escalate":
+                decided = escalate_review(review=review, actor=actor, reason=reason, request=request)
+            else:
+                decided = decide_review(
+                    review=review, actor=actor, action=action, reason=reason, notes=notes, request=request,
+                )
+        except (ModerationConflict, ValidationError) as error:
+            failed.append({"review_id": review_id, "detail": _error_detail(error)})
+        else:
+            succeeded.append(decided.pk)
+
+    record_audit_event(
+        organization, actor, OrganizationAuditEvent.Action.MODERATOR_BULK_DECISION,
+        target_type="ModeratorReview",
+        new_value={
+            "action": action, "requested": len(unique_ids),
+            "succeeded": succeeded, "failed_count": len(failed),
+        },
+        reason=reason, request=request,
+    )
+    return {
+        "action": action,
+        "requested": len(unique_ids),
+        "succeeded": succeeded,
+        "succeeded_count": len(succeeded),
+        "failed": failed,
+        "failed_count": len(failed),
+    }
+
+
+def _error_detail(error):
+    """One readable sentence out of a DRF exception, whatever shape it carries."""
+    detail = getattr(error, "detail", None)
+    if isinstance(detail, dict):
+        for value in detail.values():
+            if isinstance(value, list) and value:
+                return str(value[0])
+            return str(value)
+    if isinstance(detail, list) and detail:
+        return str(detail[0])
+    return str(detail) if detail else str(error)
+
+
 def retry_batch_for_organization(*, batch, actor, request=None):
     """Retry a batch on a moderator's behalf, reusing uploads.services.retry_batch exactly.
 
@@ -262,9 +461,25 @@ def cancel_batch_for_organization(*, batch, actor, request=None):
     return updated
 
 
+def open_reviews(organization):
+    """Every review in the organization still waiting for a decision."""
+    return ModeratorReview.objects.filter(
+        organization=organization, status__in=OPEN_REVIEW_STATUSES, decided_at__isnull=True,
+    )
+
+
+def overdue_reviews(organization, now=None):
+    now = now or timezone.now()
+    return open_reviews(organization).filter(due_at__isnull=False, due_at__lt=now)
+
+
 def dashboard_summary(organization):
     today = timezone.localdate()
+    now = timezone.now()
     reviews = ModeratorReview.objects.filter(organization=organization)
+    waiting = open_reviews(organization)
+    due_soon_cutoff = now + timedelta(hours=settings.MODERATION_SLA_DUE_SOON_HOURS)
+    oldest_created = waiting.aggregate(oldest=Min("created_at"))["oldest"]
     return {
         "pending": reviews.filter(status=ModeratorReview.Status.PENDING).count(),
         "in_review": reviews.filter(status=ModeratorReview.Status.IN_REVIEW).count(),
@@ -273,7 +488,138 @@ def dashboard_summary(organization):
         "approved_total": reviews.filter(status=ModeratorReview.Status.APPROVED).count(),
         "rejected_total": reviews.filter(status=ModeratorReview.Status.REJECTED).count(),
         "corrected_total": reviews.filter(status=ModeratorReview.Status.CORRECTED).count(),
+        # Service levels. "Due soon" excludes anything already overdue so the
+        # two numbers can be read side by side without double-counting.
+        "overdue": waiting.filter(due_at__isnull=False, due_at__lt=now).count(),
+        "due_soon": waiting.filter(
+            due_at__isnull=False, due_at__gte=now, due_at__lt=due_soon_cutoff,
+        ).count(),
+        "unassigned": waiting.filter(assigned_moderator__isnull=True).count(),
+        "claimed_now": waiting.filter(
+            claimed_by__isnull=False,
+            claimed_at__gt=now - timedelta(minutes=settings.MODERATION_CLAIM_MINUTES),
+        ).count(),
+        "oldest_open_age_hours": (
+            round((now - oldest_created).total_seconds() / 3600, 2) if oldest_created else None
+        ),
+        "sla_hours": settings.MODERATION_SLA_HOURS,
     }
+
+
+# -- Per-moderator performance (T-009) ---------------------------------------
+
+
+def _decision_latency_expression():
+    """How long a review took, as a database-side duration.
+
+    Measured from creation rather than from assignment or claim: what matters
+    to whoever uploaded the photo is how long they waited, not how much of
+    that wait was queueing.
+    """
+    return ExpressionWrapper(F("decided_at") - F("created_at"), output_field=DurationField())
+
+
+def _hours(duration):
+    return round(duration.total_seconds() / 3600, 2) if duration is not None else None
+
+
+def moderator_metrics(organization, days=30, now=None):
+    """Throughput, speed and timeliness per moderator over a window.
+
+    Counts only decided reviews, because an undecided one says nothing about
+    the person it is assigned to yet; the open queue is the dashboard's job.
+    ``on_time`` means decided before the review's deadline -- a review with no
+    deadline (created before deadlines existed) counts as neither on time nor
+    late, so the two never add up to more than the total but are never wrong.
+    """
+    now = now or timezone.now()
+    since = now - timedelta(days=days)
+    decided = ModeratorReview.objects.filter(
+        organization=organization, decided_by__isnull=False, decided_at__gte=since,
+    )
+    latency = _decision_latency_expression()
+    rows = []
+    per_moderator = (
+        decided.values("decided_by_id", "decided_by__username")
+        .annotate(
+            decided_count=Count("id"),
+            approved=Count("id", filter=Q(status=ModeratorReview.Status.APPROVED)),
+            rejected=Count("id", filter=Q(status=ModeratorReview.Status.REJECTED)),
+            corrected=Count("id", filter=Q(status=ModeratorReview.Status.CORRECTED)),
+            on_time=Count("id", filter=Q(due_at__isnull=False, decided_at__lte=F("due_at"))),
+            late=Count("id", filter=Q(due_at__isnull=False, decided_at__gt=F("due_at"))),
+            average_decision_time=Avg(latency),
+            slowest_decision_time=Max(latency),
+        )
+        .order_by("-decided_count", "decided_by__username")
+    )
+    for row in per_moderator:
+        measured = row["on_time"] + row["late"]
+        rows.append({
+            "moderator_id": row["decided_by_id"],
+            "username": row["decided_by__username"],
+            "decided_count": row["decided_count"],
+            "approved": row["approved"],
+            "rejected": row["rejected"],
+            "corrected": row["corrected"],
+            "on_time": row["on_time"],
+            "late": row["late"],
+            "on_time_rate": round(row["on_time"] / measured, 4) if measured else None,
+            "average_decision_hours": _hours(row["average_decision_time"]),
+            "slowest_decision_hours": _hours(row["slowest_decision_time"]),
+        })
+
+    totals = decided.aggregate(
+        decided_count=Count("id"),
+        on_time=Count("id", filter=Q(due_at__isnull=False, decided_at__lte=F("due_at"))),
+        late=Count("id", filter=Q(due_at__isnull=False, decided_at__gt=F("due_at"))),
+        average_decision_time=Avg(latency),
+    )
+    measured_total = totals["on_time"] + totals["late"]
+    return {
+        "window_days": days,
+        "since": since.isoformat(),
+        "sla_hours": settings.MODERATION_SLA_HOURS,
+        "moderators": rows,
+        "totals": {
+            "decided_count": totals["decided_count"],
+            "on_time": totals["on_time"],
+            "late": totals["late"],
+            "on_time_rate": round(totals["on_time"] / measured_total, 4) if measured_total else None,
+            "average_decision_hours": _hours(totals["average_decision_time"]),
+            "open_now": open_reviews(organization).count(),
+            "overdue_now": overdue_reviews(organization, now).count(),
+        },
+    }
+
+
+def flag_overdue_reviews(now=None):
+    """Report every open review that has passed its deadline, once each.
+
+    ``sla_breached_at`` is stamped in the same pass, so a review that stays
+    late for days alerts on the first run and then stops. Run by the
+    moderation.flag_sla_breaches beat task.
+    """
+    from notifications.events import notify_moderator_review_overdue
+
+    now = now or timezone.now()
+    breached = ModeratorReview.objects.filter(
+        status__in=OPEN_REVIEW_STATUSES, decided_at__isnull=True,
+        due_at__isnull=False, due_at__lt=now, sla_breached_at__isnull=True,
+    ).select_related("assigned_moderator")
+    flagged = 0
+    for review in breached.iterator():
+        # Stamped first, and only the still-unstamped row is updated, so two
+        # overlapping runs of the beat task cannot both notify for one review.
+        claimed = ModeratorReview.objects.filter(
+            pk=review.pk, sla_breached_at__isnull=True,
+        ).update(sla_breached_at=now, updated_at=now)
+        if not claimed:
+            continue
+        review.sla_breached_at = now
+        notify_moderator_review_overdue(review)
+        flagged += 1
+    return flagged
 
 
 # -- Org-scoped reports (T-007 Phase F) --------------------------------------

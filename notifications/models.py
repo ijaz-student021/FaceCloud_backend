@@ -41,6 +41,7 @@ class UserNotification(models.Model):
         MODERATOR_REVIEW_ASSIGNED = "moderator_review_assigned", "Moderator review assigned"
         MODERATOR_REVIEW_ESCALATED = "moderator_review_escalated", "Moderator review escalated"
         MODERATOR_BATCH_FAILED = "moderator_batch_failed", "Organization batch failed"
+        MODERATOR_REVIEW_OVERDUE = "moderator_review_overdue", "Moderator review overdue"
 
     class Severity(models.TextChoices):
         INFO = "info", "Information"
