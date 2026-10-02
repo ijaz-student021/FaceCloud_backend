@@ -167,6 +167,39 @@ class BuildAdminModerationOverviewTests(TestCase):
         self.assertEqual(build_admin_moderation_overview(stale_hours=None)["stale_hours"], 48)
         self.assertEqual(build_admin_moderation_overview(stale_hours="")["stale_hours"], 48)
 
+    def test_the_platform_totals_count_reviews_past_their_deadline(self):
+        late = self.make_review(ModeratorReview.Status.PENDING)
+        ModeratorReview.objects.filter(pk=late.pk).update(
+            due_at=timezone.now() - timezone.timedelta(hours=3),
+        )
+        in_time = self.make_review(ModeratorReview.Status.PENDING)
+        ModeratorReview.objects.filter(pk=in_time.pk).update(
+            due_at=timezone.now() + timezone.timedelta(hours=10),
+        )
+
+        self.assertEqual(build_admin_moderation_overview()["totals"]["overdue"], 1)
+
+    def test_a_decided_review_is_not_counted_as_overdue_platform_wide(self):
+        decided = self.make_review(ModeratorReview.Status.APPROVED, decided_at=timezone.now())
+        ModeratorReview.objects.filter(pk=decided.pk).update(
+            due_at=timezone.now() - timezone.timedelta(days=2),
+        )
+
+        self.assertEqual(build_admin_moderation_overview()["totals"]["overdue"], 0)
+
+    def test_each_organization_row_reports_its_own_overdue_count(self):
+        late = self.make_review(ModeratorReview.Status.PENDING)
+        ModeratorReview.objects.filter(pk=late.pk).update(
+            due_at=timezone.now() - timezone.timedelta(hours=3),
+        )
+
+        row = next(
+            row for row in build_admin_moderation_overview()["organizations_needing_attention"]
+            if row["organization_id"] == self.organization.pk
+        )
+
+        self.assertEqual(row["overdue"], 1)
+
     def test_agrees_with_the_organizations_own_dashboard_summary(self):
         self.make_review(ModeratorReview.Status.PENDING)
         self.make_review(ModeratorReview.Status.IN_REVIEW)
@@ -175,7 +208,12 @@ class BuildAdminModerationOverviewTests(TestCase):
         org_summary = dashboard_summary(self.organization)
         platform_totals = build_admin_moderation_overview()["totals"]
 
-        for key in org_summary:
+        # Every count the organization dashboard reports, the platform view
+        # reports the same way. "oldest_open_age_hours" is excluded because it
+        # is an age measured from the moment it is asked for, so the two calls
+        # above would legitimately differ in the last decimal; the platform view
+        # reports the absolute "oldest_open_at" per organization instead.
+        for key in set(org_summary) - {"oldest_open_age_hours"}:
             self.assertEqual(platform_totals[key], org_summary[key], key)
 
 

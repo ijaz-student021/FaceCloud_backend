@@ -374,14 +374,22 @@ state and put it in the URL; changing it client-side grants nothing.
 **Moderator review queue** (owner or moderator):
 
 ```text
-GET  .../moderator/reviews/?status=&source=      the queue (source: quality | duplicate | identity)
+GET  .../moderator/reviews/?status=&source=&overdue=&assignment=&ordering=
 GET  .../moderator/reviews/{id}/
 POST .../moderator/reviews/{id}/decision/   {action, reason?, notes?, group_id?}
 POST .../moderator/reviews/{id}/assign/     {moderator_id}
 POST .../moderator/reviews/{id}/escalate/   {reason?}
+POST .../moderator/reviews/{id}/claim/      take the review (soft lock)
+POST .../moderator/reviews/{id}/release/    give it back to the queue
+POST .../moderator/reviews/bulk-decision/   {review_ids[], action, reason?, notes?}
 POST .../moderator/reviews/{id}/merge-identity-groups/  {source_group_id?, target_group_id?, reason?}
 GET  .../moderator/dashboard/               counts for the overview cards
+GET  .../moderator/metrics/?days=30         per-moderator performance
 ```
+
+Queue filters: `source` is `quality | duplicate | identity`, `overdue=true`
+narrows to reviews past their deadline, `assignment` is `mine` or `unassigned`,
+and `ordering=due_at` works to the deadline first (reviews without one last).
 
 - `action` is `approve`, `reject`, `correct` or `keep_in_review`. For identity
   reviews `correct` with a `group_id` reassigns to that folder, without one it
@@ -389,6 +397,38 @@ GET  .../moderator/dashboard/               counts for the overview cards
 - Merging groups is only for duplicate reviews. If either side maps to several
   groups the API returns 400 listing `candidates`; let the moderator pick and
   resend with explicit group ids.
+
+**Deadlines.** Every review carries `due_at` and a derived `is_overdue`. The
+dashboard adds `overdue`, `due_soon`, `unassigned`, `claimed_now`,
+`oldest_open_age_hours` and the configured `sla_hours`, so the overview cards
+can show the service level without a second request. A review that passes its
+deadline while still undecided produces one `moderator_review_overdue`
+notification -- once, not on every check -- to its assigned moderator, or to the
+owners and moderators when nobody has picked it up.
+
+**Claiming.** `claim/` holds a review for the moderator so two people do not
+work the same photo: the response carries `claimed_by`, `is_claimed` and
+`claim_expires_at`. While someone holds a review, another moderator's
+`decision/` or `escalate/` answers **409** with code `review_claimed`. The hold
+expires on its own, so nothing is ever stranded; claiming your own review again
+simply extends it. `release/` returns it to the queue -- the holder can always
+release, and an organization owner can release somebody else's hold.
+
+**Bulk decisions.** `bulk-decision/` takes up to 50 `review_ids` with `action`
+`approve`, `reject` or `escalate` (`correct` is not available in bulk because it
+needs a per-photo choice of person folder). The response is **200** with
+`succeeded`, `succeeded_count`, `failed` (`[{review_id, detail}]`) and
+`failed_count`: rows that were already decided, held by another moderator, or
+not in this organization are reported individually and do **not** fail the rest,
+so show per-row outcomes rather than one success or error.
+
+**Performance.** `metrics/?days=30` returns `moderators[]` with
+`decided_count`, `approved`, `rejected`, `corrected`, `on_time`, `late`,
+`on_time_rate`, `average_decision_hours` and `slowest_decision_hours`, plus
+`totals` including `open_now` and `overdue_now`. Decision time is measured from
+when the review arrived, not from when it was assigned. A review with no
+deadline counts as neither on time nor late, so `on_time_rate` is `null` when
+nothing measurable was decided.
 - Batch actions: `GET .../moderator/batches/?processing_status=`,
   `POST .../moderator/batches/{id}/retry/` and `/cancel/`.
 - Reports: `POST .../moderator/reports/ {report_type, format}` with
@@ -449,7 +489,6 @@ hide these routes, but never rely on that for security.
 
 - There is no websocket/server-sent events channel; use polling.
 - Live camera features are not implemented.
-- Deadline/SLA alerts for moderators are not implemented.
 
 When in doubt about a field name or enum, open `/api/docs/`. The schema is
 generated from the code and validated with zero warnings in CI.

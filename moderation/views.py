@@ -1,7 +1,10 @@
+from django.conf import settings
+from django.db.models import F
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import generics, status
 from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.response import Response
@@ -9,6 +12,7 @@ from rest_framework.views import APIView
 
 from identities.serializers import IdentityGroupSerializer
 from operations.serializers import AdminFailedBatchSerializer
+from organizations.models import OrganizationMembership
 from organizations.permissions import OrganizationScopedMixin
 from uploads.models import UploadBatch
 from uploads.services import BatchHasNoFailedImages, BatchRetryLimitReached
@@ -16,23 +20,31 @@ from uploads.services import BatchHasNoFailedImages, BatchRetryLimitReached
 from .models import ModeratorReport, ModeratorReview
 from .serializers import (
     ModeratorAssignSerializer,
+    ModeratorBulkDecisionSerializer,
+    ModeratorBulkResultSerializer,
     ModeratorDashboardSerializer,
     ModeratorDecisionSerializer,
     ModeratorDuplicateGroupMergeSerializer,
     ModeratorEscalateSerializer,
+    ModeratorPerformanceSerializer,
     ModeratorReportCreateSerializer,
     ModeratorReportSerializer,
     ModeratorReviewSerializer,
 )
 from .services import (
+    OPEN_REVIEW_STATUSES,
     assign_review,
+    bulk_decide_reviews,
     cancel_batch_for_organization,
+    claim_review,
     dashboard_summary,
     decide_review,
     enqueue_moderator_report,
     escalate_review,
     expire_moderator_report_if_needed,
     merge_duplicate_identity_groups,
+    moderator_metrics,
+    release_review_claim,
     retry_batch_for_organization,
 )
 
@@ -42,6 +54,27 @@ ERROR_RESPONSES = {
 }
 
 
+def _is_true(value):
+    return str(value).lower() in {"1", "true", "yes"}
+
+
+@extend_schema(
+    parameters=[
+        OpenApiParameter("status", str, description="Filter by review status."),
+        OpenApiParameter("source", str, description="Filter by what raised the review."),
+        OpenApiParameter(
+            "overdue", bool,
+            description="Only reviews still undecided after their review deadline.",
+        ),
+        OpenApiParameter(
+            "assignment", str,
+            description=(
+                "'mine' for reviews assigned to you, 'unassigned' for reviews nobody owns yet."
+            ),
+        ),
+        OpenApiParameter("ordering", str, description="'due_at' to work to the deadline first."),
+    ],
+)
 class ModeratorReviewListView(OrganizationScopedMixin, generics.ListAPIView):
     require_owner_or_moderator = True
     serializer_class = ModeratorReviewSerializer
@@ -49,13 +82,27 @@ class ModeratorReviewListView(OrganizationScopedMixin, generics.ListAPIView):
     def get_queryset(self):
         queryset = ModeratorReview.objects.filter(
             organization_id=self.kwargs["organization_id"],
-        ).select_related("assigned_moderator", "decided_by")
+        ).select_related("assigned_moderator", "decided_by", "claimed_by")
         status_filter = self.request.query_params.get("status")
         if status_filter:
             queryset = queryset.filter(status=status_filter)
         source_filter = self.request.query_params.get("source")
         if source_filter:
             queryset = queryset.filter(source=source_filter)
+        if _is_true(self.request.query_params.get("overdue")):
+            queryset = queryset.filter(
+                status__in=OPEN_REVIEW_STATUSES, decided_at__isnull=True,
+                due_at__isnull=False, due_at__lt=timezone.now(),
+            )
+        assignment = self.request.query_params.get("assignment")
+        if assignment == "mine":
+            queryset = queryset.filter(assigned_moderator=self.request.user)
+        elif assignment == "unassigned":
+            queryset = queryset.filter(assigned_moderator__isnull=True)
+        if self.request.query_params.get("ordering") == "due_at":
+            # Nulls last: a review with no deadline must not jump the queue
+            # ahead of one that has a real deadline today.
+            queryset = queryset.order_by(F("due_at").asc(nulls_last=True), "created_at")
         return queryset
 
 
@@ -125,6 +172,117 @@ class ModeratorReviewAssignView(OrganizationScopedMixin, APIView):
             request=request,
         )
         return Response(ModeratorReviewSerializer(assigned).data)
+
+
+class ModeratorReviewClaimView(OrganizationScopedMixin, APIView):
+    """Take a review as the one you are working on now (a short soft lock)."""
+
+    require_owner_or_moderator = True
+
+    @extend_schema(
+        request=None,
+        responses={200: ModeratorReviewSerializer, **ERROR_RESPONSES},
+        summary="Claim a review",
+        description=(
+            "Holds the review for MODERATION_CLAIM_MINUTES so two moderators do "
+            "not work the same photo. Answers 409 when another moderator holds "
+            "it; claiming your own again extends the hold."
+        ),
+    )
+    def post(self, request, organization_id, review_id):
+        review = get_object_or_404(ModeratorReview, pk=review_id, organization_id=organization_id)
+        claimed = claim_review(review=review, actor=request.user, request=request)
+        return Response(ModeratorReviewSerializer(claimed).data)
+
+
+class ModeratorReviewReleaseView(OrganizationScopedMixin, APIView):
+    """Give a claimed review back to the queue."""
+
+    require_owner_or_moderator = True
+
+    @extend_schema(
+        request=None,
+        responses={200: ModeratorReviewSerializer, **ERROR_RESPONSES},
+        summary="Release a claimed review",
+        description=(
+            "The moderator holding the review can release it; an organization "
+            "owner can also release somebody else's claim."
+        ),
+    )
+    def post(self, request, organization_id, review_id):
+        review = get_object_or_404(ModeratorReview, pk=review_id, organization_id=organization_id)
+        released = release_review_claim(
+            review=review, actor=request.user,
+            is_owner=self.active_membership.role == OrganizationMembership.Role.OWNER,
+            request=request,
+        )
+        return Response(ModeratorReviewSerializer(released).data)
+
+
+class ModeratorBulkDecisionView(OrganizationScopedMixin, APIView):
+    """One decision across a selection of reviews, reporting each outcome."""
+
+    require_owner_or_moderator = True
+    throttle_scope = "org_bulk_moderation"
+
+    @extend_schema(
+        request=ModeratorBulkDecisionSerializer,
+        responses={200: ModeratorBulkResultSerializer, **ERROR_RESPONSES},
+        summary="Approve, reject or escalate many reviews at once",
+        description=(
+            "Each review is decided individually, so a row that is already "
+            "decided or held by another moderator is reported under `failed` "
+            "while the rest still go through. 'Correct' is not available in "
+            "bulk because it needs a per-photo choice of person folder."
+        ),
+    )
+    def post(self, request, organization_id):
+        serializer = ModeratorBulkDecisionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        result = bulk_decide_reviews(
+            organization=self.organization, actor=request.user,
+            review_ids=serializer.validated_data["review_ids"],
+            action=serializer.validated_data["action"],
+            reason=serializer.validated_data.get("reason", ""),
+            notes=serializer.validated_data.get("notes", ""),
+            request=request,
+        )
+        return Response(ModeratorBulkResultSerializer(result).data)
+
+
+class ModeratorPerformanceView(OrganizationScopedMixin, APIView):
+    """Throughput, speed and timeliness per moderator over a window."""
+
+    require_owner_or_moderator = True
+    throttle_scope = "org_moderation_metrics"
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "days", int,
+                description="Window to measure, 1 to MODERATION_METRICS_MAX_DAYS. Defaults to 30.",
+            ),
+        ],
+        responses={200: ModeratorPerformanceSerializer, **ERROR_RESPONSES},
+        summary="Per-moderator performance",
+    )
+    def get(self, request, organization_id):
+        days = self._window_days(request)
+        return Response(ModeratorPerformanceSerializer(moderator_metrics(self.organization, days)).data)
+
+    def _window_days(self, request):
+        raw = request.query_params.get("days")
+        if raw in (None, ""):
+            return 30
+        try:
+            days = int(raw)
+        except (TypeError, ValueError):
+            raise ValidationError({"days": "Must be a whole number of days."}) from None
+        if not 1 <= days <= settings.MODERATION_METRICS_MAX_DAYS:
+            raise ValidationError({
+                "days": f"Must be between 1 and {settings.MODERATION_METRICS_MAX_DAYS}.",
+            })
+        return days
 
 
 class ModeratorDashboardView(OrganizationScopedMixin, APIView):

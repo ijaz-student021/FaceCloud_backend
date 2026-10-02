@@ -137,6 +137,9 @@ class OrganizationAuditEvent(models.Model):
         BATCH_RETRIED_BY_MODERATOR = "batch_retried_by_moderator", "Batch retried by moderator"
         BATCH_CANCELLED_BY_MODERATOR = "batch_cancelled_by_moderator", "Batch cancelled by moderator"
         IDENTITY_GROUPS_MERGED_BY_MODERATOR = "identity_groups_merged_by_moderator", "Identity groups merged by moderator"
+        MODERATOR_REVIEW_CLAIMED = "moderator_review_claimed", "Moderator review claimed"
+        MODERATOR_REVIEW_RELEASED = "moderator_review_released", "Moderator review released"
+        MODERATOR_BULK_DECISION = "moderator_bulk_decision", "Moderator bulk decision"
 
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="audit_events",

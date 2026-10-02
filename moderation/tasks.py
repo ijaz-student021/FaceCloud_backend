@@ -9,7 +9,12 @@ from django.utils import timezone
 
 from .models import ModeratorReport
 from .renderers import render_moderator_report
-from .services import build_moderator_report_payload, expire_due_moderator_reports, moderator_report_expiration_time
+from .services import (
+    build_moderator_report_payload,
+    expire_due_moderator_reports,
+    flag_overdue_reviews,
+    moderator_report_expiration_time,
+)
 
 TRANSIENT_INFRASTRUCTURE_ERRORS = (OperationalError, InterfaceError)
 
@@ -106,3 +111,16 @@ def generate_moderator_report_task(self, report_id):
 )
 def cleanup_moderator_reports_task():
     return {"expired_reports": expire_due_moderator_reports()}
+
+
+@shared_task(
+    name="moderation.flag_sla_breaches",
+    autoretry_for=TRANSIENT_INFRASTRUCTURE_ERRORS,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    max_retries=3,
+)
+def flag_sla_breaches_task():
+    """Notify on reviews that have passed their deadline. Safe to run repeatedly."""
+    return {"flagged_reviews": flag_overdue_reviews()}

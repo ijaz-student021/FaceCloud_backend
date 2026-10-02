@@ -57,10 +57,48 @@ rejected or sent to review, most common reason first), `quality_scores` (mean ov
 face-similarity values or usernames (a test scans every payload for those words). Tests:
 `moderation/test_more_reports.py`.
 
-Still open: deadline/SLA alerts,
-reprocessing at a different enhancement level (doesn't exist anywhere in
-the codebase, owner-facing or otherwise), and the frontend (no frontend repo
-in this workspace).
+Queue operations were completed on 2026-10-02 (T-009), closing the last
+moderator-side gap:
+
+- **Review deadlines (SLA).** Every review is stamped with a `due_at` when it is
+  created, from `MODERATION_SLA_HOURS` (default 24). The deadline never moves
+  afterwards, even if the setting changes, so a review is always judged against
+  the service level it was accepted under. The dashboard reports `overdue`,
+  `due_soon`, `unassigned`, `claimed_now` and `oldest_open_age_hours`, the queue
+  takes `?overdue=true` and `?ordering=due_at`, and the
+  `moderation.flag_sla_breaches` beat task sends one `moderator_review_overdue`
+  notification per late review -- to its assigned moderator, or to the owners and
+  moderators when nobody has picked it up. A decided review is never overdue
+  however late the decision was; lateness after the fact is a metrics question.
+- **Claim soft lock.** `claim/` holds a review for `MODERATION_CLAIM_MINUTES`
+  (default 15) so two moderators do not spend their afternoon on the same photo
+  and then race to record contradictory decisions. Deliberately separate from
+  assignment: assignment is a standing allocation somebody else can make for
+  you, a claim is "I have this open now". It expires on its own, so work is
+  never stranded by a moderator who closed their laptop mid-decision; `release/`
+  returns it early, and an owner can release somebody else's hold. Losing
+  moderator rights drops the claim along with the assignment.
+- **Bulk decisions.** `bulk-decision/` applies approve, reject or escalate to up
+  to `MODERATION_BULK_MAX_REVIEWS` (default 50) reviews. Each row is decided by
+  the same `decide_review()` the single endpoint uses -- identical write-back,
+  audit trail and claim lock -- and each row succeeds or fails on its own, so one
+  stale row does not cost a moderator the other forty-nine. `correct` is not
+  offered in bulk: choosing which person folder a face belongs to is a per-photo
+  judgement that cannot honestly be answered once for a selection.
+- **Per-moderator performance.** `metrics/?days=30` reports throughput by
+  outcome, `on_time`/`late` against each review's own deadline, `on_time_rate`,
+  and average and slowest decision time measured from when the review arrived
+  rather than from when it was assigned -- what the person who uploaded the photo
+  waited is the whole wait, not just the part somebody was working on. The
+  platform-wide admin overview (`operations/moderation_overview.py`) carries the
+  same service-level counts, per organization and in total.
+
+Tests: `moderation/test_sla_and_claims.py` (49) and
+`moderation/test_bulk_and_metrics.py` (43).
+
+Still open: reprocessing at a different enhancement level (doesn't exist
+anywhere in the codebase, owner-facing or otherwise), and the frontend (no
+frontend repo in this workspace).
 
 ## 2. Roles and responsibilities
 
@@ -267,6 +305,10 @@ they'd have copied from.
 | GET | `/api/moderator/reviews/{id}/` | Organization moderator | Review details |
 | POST | `/api/moderator/reviews/{id}/decision/` | Assigned moderator | Submit decision |
 | POST | `/api/moderator/reviews/{id}/escalate/` | Assigned moderator | Escalate case |
+| POST | `/api/moderator/reviews/{id}/claim/` | Owner or moderator | Take the review (soft lock) |
+| POST | `/api/moderator/reviews/{id}/release/` | Holder or owner | Return it to the queue |
+| POST | `/api/moderator/reviews/bulk-decision/` | Owner or moderator | Decide a selection at once |
+| GET | `/api/moderator/metrics/` | Owner or moderator | Per-moderator performance |
 | GET | `/api/organizations/{id}/audit/` | Owner or moderator | Audit history |
 
 The final contract will be frozen during implementation and published through
@@ -532,7 +574,9 @@ another organization's users, images, metrics, or facial data.
       `moderation.services.groups_for_duplicate_match()` resolves which
       identity groups a duplicate match's two images belong to)
 - [x] Moderator notifications implemented (2026-09-23, assignment + escalation
-      and batch failure -- only deadline/SLA is open, see T-007)
+      and batch failure; deadline/SLA alerts added 2026-10-02, see T-009)
+- [x] Review deadlines, claim soft lock, bulk decisions and per-moderator
+      performance metrics implemented (2026-10-02, T-009)
 - [x] Reports and exports implemented (2026-09-23, review-summary and
       moderator-activity first; rejection-reason, quality-score, batch and
       duplicate-decision types added 2026-09-25, see T-007)

@@ -1,9 +1,11 @@
 import uuid
+from datetime import timedelta
 
 from django.conf import settings
 from django.db import models
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
+from django.utils import timezone
 
 
 class ModeratorReview(models.Model):
@@ -57,6 +59,21 @@ class ModeratorReview(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
         related_name="assigned_moderator_reviews",
     )
+    # A claim is a short self-service lock, separate from assignment: assignment
+    # says whose work this is, a claim says someone has it open right now. It
+    # expires on its own (MODERATION_CLAIM_MINUTES) so a review is never
+    # stranded by a moderator who walked away mid-decision.
+    claimed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="claimed_moderator_reviews",
+    )
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    # The service-level deadline, stamped when the review is created. Null on
+    # rows that predate deadline tracking, which therefore never count as
+    # overdue rather than counting as infinitely overdue.
+    due_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    # Set when the deadline was reported, so one late review alerts once.
+    sla_breached_at = models.DateTimeField(null=True, blank=True)
     decision_reason = models.TextField(blank=True)
     decision_notes = models.TextField(blank=True)
     decided_by = models.ForeignKey(
@@ -68,7 +85,12 @@ class ModeratorReview(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
-        indexes = [models.Index(fields=["organization", "status", "-created_at"])]
+        indexes = [
+            models.Index(fields=["organization", "status", "-created_at"]),
+            # Serves both the overdue queue filter and the beat task that looks
+            # for undecided reviews past their deadline.
+            models.Index(fields=["organization", "status", "due_at"]),
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=["quality_decision"], condition=models.Q(quality_decision__isnull=False),
@@ -83,6 +105,46 @@ class ModeratorReview(models.Model):
                 name="moderation_unique_identity_review",
             ),
         ]
+
+    @property
+    def is_open(self):
+        """True while the review still needs a decision."""
+        return self.decided_at is None
+
+    @property
+    def claim_expires_at(self):
+        if self.claimed_at is None:
+            return None
+        return self.claimed_at + timedelta(minutes=settings.MODERATION_CLAIM_MINUTES)
+
+    def active_claim_expiry(self, now=None):
+        """When the current claim runs out, or None if nothing holds this review.
+
+        Returns None for an expired claim as well as for no claim at all, so a
+        caller can treat "free to take" as one case.
+        """
+        expires_at = self.claim_expires_at
+        if self.claimed_by_id is None or expires_at is None:
+            return None
+        now = now or timezone.now()
+        return expires_at if expires_at > now else None
+
+    def is_claimed(self, now=None):
+        return self.active_claim_expiry(now) is not None
+
+    def is_claimed_by_other(self, user, now=None):
+        return self.is_claimed(now) and self.claimed_by_id != getattr(user, "pk", None)
+
+    def is_overdue(self, now=None):
+        """Past its deadline and still undecided.
+
+        A decided review is never overdue, however late the decision was --
+        lateness after the fact is a metrics question (see
+        moderation.services.moderator_metrics), not a queue one.
+        """
+        if self.due_at is None or not self.is_open:
+            return False
+        return self.due_at < (now or timezone.now())
 
     def __str__(self):
         return f"{self.source} review {self.pk} for org {self.organization_id}"

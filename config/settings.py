@@ -592,6 +592,33 @@ ORGANIZATION_EXPORT_TTL_HOURS = env.int("ORGANIZATION_EXPORT_TTL_HOURS", default
 # Moderator reports (T-007 Phase F): how long a generated report file stays
 # downloadable before the periodic cleanup removes it.
 MODERATOR_REPORT_TTL_HOURS = env.int("MODERATOR_REPORT_TTL_HOURS", default=24)
+# Moderation queue service levels (T-009): hours a review may stay undecided
+# before it counts as overdue, and how close to that deadline counts as "due
+# soon" on the dashboard. A review already past its deadline is reported once,
+# by the moderation.flag_sla_breaches beat task.
+MODERATION_SLA_HOURS = env.int("MODERATION_SLA_HOURS", default=24)
+MODERATION_SLA_DUE_SOON_HOURS = env.int("MODERATION_SLA_DUE_SOON_HOURS", default=4)
+# How long one moderator's claim on a review holds other moderators off. A
+# claim is a soft lock on purpose: it expires on its own, so a review is never
+# stranded by someone who closed their laptop mid-decision.
+MODERATION_CLAIM_MINUTES = env.int("MODERATION_CLAIM_MINUTES", default=15)
+# Most reviews one bulk decision may cover. Each row is still decided
+# individually, so this bounds the request's work, not its correctness.
+MODERATION_BULK_MAX_REVIEWS = env.int("MODERATION_BULK_MAX_REVIEWS", default=50)
+# Longest window the per-moderator metrics endpoint will look back over.
+MODERATION_METRICS_MAX_DAYS = env.int("MODERATION_METRICS_MAX_DAYS", default=365)
+if MODERATION_SLA_HOURS < 1:
+    raise ImproperlyConfigured("MODERATION_SLA_HOURS must be at least 1 hour.")
+if not 0 <= MODERATION_SLA_DUE_SOON_HOURS <= MODERATION_SLA_HOURS:
+    raise ImproperlyConfigured(
+        "MODERATION_SLA_DUE_SOON_HOURS must be between 0 and MODERATION_SLA_HOURS."
+    )
+if MODERATION_CLAIM_MINUTES < 1:
+    raise ImproperlyConfigured("MODERATION_CLAIM_MINUTES must be at least 1 minute.")
+if not 1 <= MODERATION_BULK_MAX_REVIEWS <= 500:
+    raise ImproperlyConfigured("MODERATION_BULK_MAX_REVIEWS must be between 1 and 500.")
+if MODERATION_METRICS_MAX_DAYS < 1:
+    raise ImproperlyConfigured("MODERATION_METRICS_MAX_DAYS must be at least 1 day.")
 # Leftover ZIP build files in the system temp directory older than this are
 # removed. Must exceed CELERY_TASK_TIME_LIMIT or a build in progress could be
 # deleted (checked at startup).
@@ -688,6 +715,10 @@ CELERY_BEAT_SCHEDULE = {
     "expire-moderator-reports": {
         "task": "moderation.cleanup_reports",
         "schedule": crontab(minute=50, hour="*/2"),
+    },
+    "flag-overdue-reviews": {
+        "task": "moderation.flag_sla_breaches",
+        "schedule": crontab(minute=40),
     },
     "expire-identity-exports": {
         "task": "identities.cleanup_expired_exports",
@@ -802,6 +833,8 @@ REST_FRAMEWORK = {
         "org_export": "10/hour",
         "org_batch_action": "60/hour",
         "org_report": "20/hour",
+        "org_bulk_moderation": "60/hour",
+        "org_moderation_metrics": "120/hour",
     },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }

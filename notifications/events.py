@@ -180,6 +180,53 @@ def notify_moderators_batch_failed(batch):
     return notifications
 
 
+def notify_moderator_review_overdue(review):
+    """Tell whoever can act on a review that it has passed its deadline.
+
+    Goes to the assigned moderator when there is one -- an overdue review that
+    belongs to somebody is their problem to answer for. An unassigned one goes
+    to the organization's owners and moderators instead, because nobody has
+    picked it up and that is exactly what makes it late.
+    """
+    from organizations.models import OrganizationMembership
+
+    if review.assigned_moderator_id is not None:
+        recipients = [review.assigned_moderator]
+    else:
+        recipients = [
+            membership.user
+            for membership in OrganizationMembership.objects.filter(
+                organization_id=review.organization_id,
+                role__in=[OrganizationMembership.Role.OWNER, OrganizationMembership.Role.MODERATOR],
+                status=OrganizationMembership.Status.ACTIVE,
+            ).select_related("user")
+        ]
+    notifications = []
+    for recipient in recipients:
+        notification, _ = create_user_notification(
+            recipient=recipient,
+            event_type=UserNotification.EventType.MODERATOR_REVIEW_OVERDUE,
+            idempotency_key=f"review:{review.pk}:overdue:{recipient.pk}",
+            title="A review is overdue",
+            message=(
+                f"A {review.get_source_display().lower()} review passed its "
+                "review deadline and is still waiting for a decision."
+            ),
+            severity=UserNotification.Severity.WARNING,
+            resource_type="moderator_review",
+            resource_id=review.pk,
+            action_path="/moderator/queue",
+            metadata={
+                "review_id": review.pk, "organization_id": review.organization_id,
+                "source": review.source,
+                "due_at": review.due_at.isoformat() if review.due_at else None,
+            },
+        )
+        if notification:
+            notifications.append(notification)
+    return notifications
+
+
 def notify_enhancement_result(result):
     image = result.image
     if result.status == "completed":
