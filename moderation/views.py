@@ -14,6 +14,7 @@ from identities.serializers import IdentityGroupSerializer
 from operations.serializers import AdminFailedBatchSerializer
 from organizations.models import OrganizationMembership
 from organizations.permissions import OrganizationScopedMixin
+from thumbnails.services import ThumbnailUnavailable, allowed_sizes, default_size, get_or_create_thumbnail
 from uploads.models import UploadBatch
 from uploads.services import BatchHasNoFailedImages, BatchRetryLimitReached
 
@@ -82,7 +83,7 @@ class ModeratorReviewListView(OrganizationScopedMixin, generics.ListAPIView):
     def get_queryset(self):
         queryset = ModeratorReview.objects.filter(
             organization_id=self.kwargs["organization_id"],
-        ).select_related("assigned_moderator", "decided_by", "claimed_by")
+        ).select_related("assigned_moderator", "decided_by", "claimed_by", "image")
         status_filter = self.request.query_params.get("status")
         if status_filter:
             queryset = queryset.filter(status=status_filter)
@@ -113,6 +114,67 @@ class ModeratorReviewDetailView(OrganizationScopedMixin, APIView):
     def get(self, request, organization_id, review_id):
         review = get_object_or_404(ModeratorReview, pk=review_id, organization_id=organization_id)
         return Response(ModeratorReviewSerializer(review).data)
+
+
+class ModeratorReviewImageView(OrganizationScopedMixin, APIView):
+    """The photo behind a review, as a thumbnail.
+
+    A moderator cannot judge a photo they cannot see, so this exists -- but it
+    is the narrowest access that makes the decision possible, not general
+    access to the organization's images:
+
+    * It is keyed by **review**, not by image. A moderator can only see photos
+      they have actually been asked to judge; an image with no review in this
+      organization has no URL here at all.
+    * It serves **thumbnails only**, at the configured sizes. Judging blur,
+      lighting, framing and whether a face is even present does not need the
+      original, and not serving the original means a moderation role cannot be
+      used to pull people's photos out of the system.
+    * Organization scope and the owner/moderator role are enforced by
+      OrganizationScopedMixin, exactly as for the review itself, so losing the
+      role closes this off at the same moment it closes off the review.
+
+    Views are not written to the audit log. A thumbnail is fetched every time
+    the queue renders, so logging each one would bury the membership and
+    decision history that log exists for; who worked a review is already
+    recorded by its claim and its decision.
+    """
+
+    require_owner_or_moderator = True
+    throttle_scope = "thumbnail"
+
+    @extend_schema(
+        parameters=[OpenApiParameter(
+            "size", int, required=False,
+            description="Longest edge in pixels. Must be one of the configured sizes (default 256, also 1024).",
+        )],
+        responses={200: OpenApiTypes.BINARY, **ERROR_RESPONSES},
+        summary="The photo behind a review, as a thumbnail",
+    )
+    def get(self, request, organization_id, review_id):
+        size = self._requested_size(request)
+        review = get_object_or_404(
+            ModeratorReview.objects.select_related("image"),
+            pk=review_id, organization_id=organization_id,
+        )
+        try:
+            thumbnail = get_or_create_thumbnail(review.image, size)
+        except ThumbnailUnavailable as error:
+            return Response({"detail": str(error)}, status=status.HTTP_404_NOT_FOUND)
+        response = FileResponse(thumbnail.file.open("rb"), content_type="image/jpeg")
+        # A photo never changes after upload, so this browser can reuse it.
+        response["Cache-Control"] = "private, max-age=3600"
+        return response
+
+    def _requested_size(self, request):
+        raw = request.query_params.get("size", "")
+        if raw == "":
+            return default_size()
+        if not raw.isdigit() or int(raw) not in allowed_sizes():
+            raise ValidationError(
+                {"size": f"Choose one of: {', '.join(str(size) for size in allowed_sizes())}."}
+            )
+        return int(raw)
 
 
 class ModeratorReviewDecisionView(OrganizationScopedMixin, APIView):

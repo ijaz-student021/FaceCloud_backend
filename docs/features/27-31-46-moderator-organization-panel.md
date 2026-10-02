@@ -70,6 +70,20 @@ moderator-side gap:
   notification per late review -- to its assigned moderator, or to the owners and
   moderators when nobody has picked it up. A decided review is never overdue
   however late the decision was; lateness after the fact is a metrics question.
+- **The photo behind a review.** Added 2026-10-02 after the frontend work made
+  the gap obvious: thumbnails were owner-only, so a moderator was being asked to
+  judge a photo they could not see. `reviews/{id}/image/` fixes that with the
+  narrowest access that makes the decision possible -- keyed by review rather
+  than by image (so only photos someone has actually been asked to judge have a
+  URL at all), thumbnails only at the configured sizes (judging blur, lighting,
+  framing and whether a face is present does not need the original, and not
+  serving the original means a moderation role cannot be used to pull people's
+  photos out of the system), and gated by the same organization scope and
+  owner/moderator role as the review, so losing the role closes it at the same
+  moment. Views are not written to the audit log: a thumbnail is fetched every
+  time the queue renders, so logging each one would bury the membership and
+  decision history that log exists for, and who worked a review is already
+  recorded by its claim and its decision.
 - **Claim soft lock.** `claim/` holds a review for `MODERATION_CLAIM_MINUTES`
   (default 15) so two moderators do not spend their afternoon on the same photo
   and then race to record contradictory decisions. Deliberately separate from
@@ -93,8 +107,9 @@ moderator-side gap:
   platform-wide admin overview (`operations/moderation_overview.py`) carries the
   same service-level counts, per organization and in total.
 
-Tests: `moderation/test_sla_and_claims.py` (49) and
-`moderation/test_bulk_and_metrics.py` (43).
+Tests: `moderation/test_sla_and_claims.py` (49),
+`moderation/test_bulk_and_metrics.py` (43) and
+`moderation/test_review_image.py` (19).
 
 Still open: reprocessing at a different enhancement level (doesn't exist
 anywhere in the codebase, owner-facing or otherwise), and the frontend (no
@@ -305,6 +320,7 @@ they'd have copied from.
 | GET | `/api/moderator/reviews/{id}/` | Organization moderator | Review details |
 | POST | `/api/moderator/reviews/{id}/decision/` | Assigned moderator | Submit decision |
 | POST | `/api/moderator/reviews/{id}/escalate/` | Assigned moderator | Escalate case |
+| GET | `/api/moderator/reviews/{id}/image/` | Owner or moderator | The photo, as a thumbnail |
 | POST | `/api/moderator/reviews/{id}/claim/` | Owner or moderator | Take the review (soft lock) |
 | POST | `/api/moderator/reviews/{id}/release/` | Holder or owner | Return it to the queue |
 | POST | `/api/moderator/reviews/bulk-decision/` | Owner or moderator | Decide a selection at once |

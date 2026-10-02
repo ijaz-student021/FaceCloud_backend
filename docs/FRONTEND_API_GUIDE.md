@@ -379,6 +379,7 @@ GET  .../moderator/reviews/{id}/
 POST .../moderator/reviews/{id}/decision/   {action, reason?, notes?, group_id?}
 POST .../moderator/reviews/{id}/assign/     {moderator_id}
 POST .../moderator/reviews/{id}/escalate/   {reason?}
+GET  .../moderator/reviews/{id}/image/?size=  the photo, as a thumbnail
 POST .../moderator/reviews/{id}/claim/      take the review (soft lock)
 POST .../moderator/reviews/{id}/release/    give it back to the queue
 POST .../moderator/reviews/bulk-decision/   {review_ids[], action, reason?, notes?}
@@ -405,6 +406,18 @@ can show the service level without a second request. A review that passes its
 deadline while still undecided produces one `moderator_review_overdue`
 notification -- once, not on every check -- to its assigned moderator, or to the
 owners and moderators when nobody has picked it up.
+
+**Seeing the photo.** `image/` serves the photo behind a review as a JPEG
+thumbnail (`size` 256 by default, 1024 also configured; a photo is never
+enlarged). It is keyed by **review**, not by image, so a moderator can only see
+photos they have actually been asked to judge, and it serves thumbnails only --
+there is no way to pull the original through a moderation role. The same
+organization scope and owner/moderator role as the review apply, so losing the
+role closes it at the same moment. It needs the `Authorization` header like any
+other call, so load it with `fetch` and `URL.createObjectURL` rather than
+putting the path straight in `<img src>`; remember to revoke the object URL.
+Each review also carries `image_name`, the photo's own filename, so a queue row
+is recognisable before its thumbnail arrives.
 
 **Claiming.** `claim/` holds a review for the moderator so two people do not
 work the same photo: the response carries `claimed_by`, `is_claimed` and
