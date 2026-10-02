@@ -39,6 +39,11 @@ class ModeratorReview(models.Model):
     source = models.CharField(max_length=16, choices=Source.choices)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
     ai_recommendation = models.CharField(max_length=32, blank=True)
+    # Always a percentage, 0 to 100, whatever raised the review. The three
+    # sources do not agree among themselves -- a quality score and a duplicate
+    # similarity are already 0-100, an identity similarity is 0-1 -- so
+    # services.py normalises on the way in rather than leaving one field
+    # holding two different units for a reader to guess between.
     ai_confidence = models.FloatField(null=True, blank=True)
     # Exactly one of these is set, matching `source`. Kept as three specific
     # FKs rather than a generic relation so each is a real, queryable,

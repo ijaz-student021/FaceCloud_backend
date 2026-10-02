@@ -394,6 +394,10 @@ Queue filters: `source` is `quality | duplicate | identity`, `overdue=true`
 narrows to reviews past their deadline, `assignment` is `mine` or `unassigned`,
 and `ordering=due_at` works to the deadline first (reviews without one last).
 
+- `ai_confidence` is a **percentage, 0 to 100**, whatever raised the review.
+  The three sources do not agree among themselves underneath — a quality score
+  and a duplicate similarity are already 0-100, an identity similarity is 0-1 —
+  so the backend normalises on the way in. Render it directly; do not multiply.
 - `action` is `approve`, `reject`, `correct` or `keep_in_review`. For identity
   reviews `correct` with a `group_id` reassigns to that folder, without one it
   starts a new folder. A decided review returns **409** on a second decision.

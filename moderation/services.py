@@ -137,12 +137,24 @@ def create_review_for_duplicate_match(match):
     )
 
 
+def _as_percentage(fraction):
+    """An identity similarity (0-1) as the percentage ModeratorReview stores.
+
+    Quality scores and duplicate similarities are already 0-100; identity
+    matching works in fractions. Converting here keeps ModeratorReview's
+    ai_confidence one unit, so a queue can render it without first asking which
+    of the three sources it came from.
+    """
+    return None if fraction is None else fraction * 100
+
+
 def create_review_for_identity_membership(membership):
     image = membership.identity_face.image
     return _get_or_create_review(
         organization=_organization_for_image(image), image=image,
         source=ModeratorReview.Source.IDENTITY,
-        ai_recommendation=membership.decision_method, ai_confidence=membership.similarity_score,
+        ai_recommendation=membership.decision_method,
+        ai_confidence=_as_percentage(membership.similarity_score),
         identity_membership=membership,
     )
 
