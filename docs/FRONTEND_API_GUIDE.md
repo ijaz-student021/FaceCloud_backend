@@ -425,8 +425,8 @@ the batch (they get their own `batch_completed`).
 
 ## 10. Admin pages (role `admin` only)
 
-`/api/system/health/`, `/queue/`, `/analytics/`, `/audit/`, `/batches/failed/`,
-`POST /api/system/batches/{id}/retry/`, `/jobs/failed/`,
+`/api/system/health/`, `/queue/`, `/analytics/`, `/audit/`, `/moderation/`,
+`/batches/failed/`, `POST /api/system/batches/{id}/retry/`, `/jobs/failed/`,
 `GET /api/user/admin/users/` and `PATCH /api/user/admin/users/{id}/`,
 `GET /api/privacy/audit/`. A non-admin gets 403; use the `role` from login to
 hide these routes, but never rely on that for security.
