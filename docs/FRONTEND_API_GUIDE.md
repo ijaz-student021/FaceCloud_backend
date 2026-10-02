@@ -170,7 +170,9 @@ GET /api/images/batches/{batch_id}/progress/
 
 **Listing.** `GET /api/images/my/` (paginated) is the gallery view,
 `GET /api/images/batches/` lists batches, `GET /api/images/{id}/` and
-`GET /api/images/{id}/download/` fetch one image. Downloads are protected
+`GET /api/images/{id}/download/` fetch one image. The single-image response is
+the **same shape** as a row in `my/` — including `display_status`, the quality
+decision and its reasons — so one screen's type works for both. Downloads are protected
 endpoints, so fetch them with the Authorization header (not a bare `<img src>`;
 use fetch with a blob, or a short-lived approach agreed with the backend).
 
