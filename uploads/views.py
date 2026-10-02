@@ -172,6 +172,49 @@ class MyImagesPagination(PageNumberPagination):
 ACTIVE_IDENTITY_STATES = ("auto_matched", "new_group", "confirmed")
 
 
+def my_images_queryset(user):
+    """One image row with everything MyImageSerializer reports, without N+1.
+
+    Shared by the gallery and the single-image view so the two cannot drift
+    apart again: the detail view used to answer with a thinner serializer, so a
+    photo's own page could not say whether it had been accepted -- the one
+    thing the person who uploaded it most wants to know.
+    """
+    latest = ImageEnhancementResult.objects.filter(image_id=OuterRef("pk")).order_by("-created_at")
+    enhancement_results = ImageEnhancementResult.objects.order_by("-created_at")
+    return (
+        ImageUpload.objects.filter(owner=user)
+        .select_related(
+            "batch", "preprocessing_result", "face_validation",
+            "quality_decision", "duplicate_analysis",
+            "identity_analysis",
+        )
+        .prefetch_related(
+            Prefetch(
+                "enhancement_results",
+                queryset=enhancement_results.prefetch_related("edit_versions"),
+                to_attr="ordered_enhancement_results",
+            ),
+            # Identity groups per image in two queries total, not one per image.
+            # Only ids are needed, so the encrypted embedding is not loaded.
+            Prefetch(
+                "identity_faces",
+                queryset=IdentityFace.objects.only("id", "image").prefetch_related(
+                    Prefetch(
+                        "memberships",
+                        queryset=IdentityMembership.objects.filter(
+                            state__in=ACTIVE_IDENTITY_STATES,
+                        ).select_related("identity_group"),
+                        to_attr="active_memberships",
+                    )
+                ),
+                to_attr="prefetched_identity_faces",
+            ),
+        )
+        .annotate(latest_enhancement_status=Subquery(latest.values("status")[:1]))
+    )
+
+
 class MyImageListView(generics.ListAPIView):
     serializer_class = MyImageSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -189,39 +232,7 @@ class MyImageListView(generics.ListAPIView):
     }
 
     def get_queryset(self):
-        latest = ImageEnhancementResult.objects.filter(image_id=OuterRef("pk")).order_by("-created_at")
-        enhancement_results = ImageEnhancementResult.objects.order_by("-created_at")
-        queryset = (
-            ImageUpload.objects.filter(owner=self.request.user)
-            .select_related(
-                "batch", "preprocessing_result", "face_validation",
-                "quality_decision", "duplicate_analysis",
-                "identity_analysis",
-            )
-            .prefetch_related(
-                Prefetch(
-                    "enhancement_results",
-                    queryset=enhancement_results.prefetch_related("edit_versions"),
-                    to_attr="ordered_enhancement_results",
-                ),
-                # Identity groups per image in two queries total, not one per image.
-                # Only ids are needed, so the encrypted embedding is not loaded.
-                Prefetch(
-                    "identity_faces",
-                    queryset=IdentityFace.objects.only("id", "image").prefetch_related(
-                        Prefetch(
-                            "memberships",
-                            queryset=IdentityMembership.objects.filter(
-                                state__in=ACTIVE_IDENTITY_STATES,
-                            ).select_related("identity_group"),
-                            to_attr="active_memberships",
-                        )
-                    ),
-                    to_attr="prefetched_identity_faces",
-                ),
-            )
-            .annotate(latest_enhancement_status=Subquery(latest.values("status")[:1]))
-        )
+        queryset = my_images_queryset(self.request.user)
 
         search = self.request.query_params.get("search", "").strip()
         if search:
@@ -298,11 +309,19 @@ class MyImageListView(generics.ListAPIView):
 
 
 class ImageUploadDetailView(generics.RetrieveDestroyAPIView):
-    serializer_class = ImageUploadSerializer
+    """One image, in the same shape the gallery lists it in.
+
+    Deliberately the same serializer as MyImageListView: a photo's own page is
+    where someone goes to ask "was it accepted, and why not" -- which needs
+    ``display_status`` and the quality decision, neither of which the plain
+    upload serializer carries.
+    """
+
+    serializer_class = MyImageSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return ImageUpload.objects.filter(owner=self.request.user).select_related("batch", "preprocessing_result")
+        return my_images_queryset(self.request.user)
 
 
 class ImageDownloadView(APIView):
