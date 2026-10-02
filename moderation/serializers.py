@@ -14,6 +14,10 @@ class ModeratorReviewSerializer(serializers.ModelSerializer):
     decided_by = MemberUserSerializer(read_only=True)
     claimed_by = MemberUserSerializer(read_only=True)
     image_id = serializers.IntegerField(read_only=True)
+    # The photo's own name, so a row in the queue is recognisable without
+    # fetching the image first. The thumbnail itself is a separate request
+    # (ModeratorReviewImageView) because it is binary.
+    image_name = serializers.CharField(source="image.original_name", read_only=True)
     # Derived rather than stored, so a claim that has simply run out reads as
     # free in the queue without anything having to write to the row first.
     is_claimed = serializers.SerializerMethodField()
@@ -23,7 +27,7 @@ class ModeratorReviewSerializer(serializers.ModelSerializer):
     class Meta:
         model = ModeratorReview
         fields = [
-            "id", "organization", "image_id", "source", "status",
+            "id", "organization", "image_id", "image_name", "source", "status",
             "ai_recommendation", "ai_confidence", "assigned_moderator",
             "claimed_by", "is_claimed", "claim_expires_at",
             "due_at", "is_overdue", "sla_breached_at",

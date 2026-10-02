@@ -14,6 +14,10 @@ urlpatterns = [
         views.ModeratorReviewDetailView.as_view(), name="review-detail",
     ),
     path(
+        "<int:organization_id>/moderator/reviews/<int:review_id>/image/",
+        views.ModeratorReviewImageView.as_view(), name="review-image",
+    ),
+    path(
         "<int:organization_id>/moderator/reviews/<int:review_id>/decision/",
         views.ModeratorReviewDecisionView.as_view(), name="review-decision",
     ),
