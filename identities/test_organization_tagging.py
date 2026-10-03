@@ -16,6 +16,7 @@ from validation.models import FaceValidationResult
 
 from .models import IdentityAnalysis, IdentityGroup
 from .services import process_identity_analysis
+from privacy.testing import grant_face_consent
 
 User = get_user_model()
 
@@ -55,6 +56,10 @@ class GroupOrganizationTaggingTests(TestCase):
             face_validation=validation, status="queued", provider="test",
             policy_version="test-v1", task_id="task-1",
         )
+        # Facial processing sits behind recorded consent, and production
+        # requires it, so grant it here rather than relying on the flag
+        # being switched off on this machine.
+        grant_face_consent(self.owner)
 
     def test_a_freshly_created_group_is_tagged_with_the_owners_organization(self):
         with (

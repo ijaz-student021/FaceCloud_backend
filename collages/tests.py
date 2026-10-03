@@ -20,6 +20,7 @@ from .models import Collage
 from .rendering import render_collage
 from .services import expire_due_collages
 from .tasks import process_collage
+from privacy.testing import grant_face_consent, withdraw_face_consent, withdraw_face_consent
 
 User = get_user_model()
 
@@ -116,6 +117,10 @@ class CollageTestCase(TestCase):
         self.base = timezone.now() - timedelta(days=5)
         self.client = APIClient()
         self.client.force_authenticate(self.owner)
+        # Facial processing sits behind recorded consent, and production
+        # requires it, so grant it here rather than relying on the flag
+        # being switched off on this machine.
+        grant_face_consent(self.owner, self.other)
 
     def photo(self, owner, hours, *, faces=None, processed=True, color=None):
         pixels = np.full((240, 320, 3), color if color is not None else 60 + int(hours) % 150, dtype=np.uint8)
@@ -350,6 +355,7 @@ class PersonCollageTests(CollageTestCase):
 
     @override_settings(BIOMETRIC_CONSENT_REQUIRED=True)
     def test_without_consent_a_person_collage_is_refused(self):
+        withdraw_face_consent(self.owner)
         response, queue = self.create(source_type="person", group_id=self.group.pk)
         self.assertEqual(response.status_code, 400)
         self.assertIn("consent", str(response.data).lower())
@@ -358,6 +364,7 @@ class PersonCollageTests(CollageTestCase):
     def test_consent_withdrawn_before_the_job_runs_fails_the_job(self):
         response, _queue = self.create(source_type="person", group_id=self.group.pk)
         collage = Collage.objects.get(pk=response.data["id"])
+        withdraw_face_consent(self.owner)
         with override_settings(BIOMETRIC_CONSENT_REQUIRED=True):
             result = process_collage(collage.pk, collage.task_id)
         self.assertEqual(result.status, Collage.Status.FAILED)

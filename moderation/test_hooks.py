@@ -19,6 +19,7 @@ from uploads.models import ImagePreprocessingResult, ImageUpload, UploadBatch
 from validation.models import FaceValidationResult
 
 from .models import ModeratorReview
+from privacy.testing import grant_face_consent
 
 User = get_user_model()
 
@@ -137,6 +138,10 @@ class IdentityReviewHookTests(TestCase):
             face_validation=validation, status="queued", provider="test",
             policy_version="test-v1", task_id="task-1",
         )
+        # Facial processing sits behind recorded consent, and production
+        # requires it, so grant it here rather than relying on the flag
+        # being switched off on this machine.
+        grant_face_consent(self.owner)
 
     def test_an_ambiguous_match_creates_a_moderator_review(self):
         provider = MagicMock()
