@@ -462,6 +462,12 @@ YUNET_MODEL_PATH = env(
     default=str(BASE_DIR / ".runtime" / "models" / "yunet_s_dynamic.onnx"),
 )
 YUNET_MODEL_SHA256 = env("YUNET_MODEL_SHA256", default="")
+# A face is refused as too small only when it is both a small share of the
+# frame and too few pixels to work with. Measuring the share alone penalises a
+# better camera: the same portrait at a higher resolution has the same face in
+# more pixels but a smaller fraction of the frame. 160px on the shorter edge is
+# comfortably above what enhancement needs and below any real portrait.
+FACE_MIN_EDGE_PIXELS = env.int("FACE_MIN_EDGE_PIXELS", default=160)
 YUNET_SCORE_THRESHOLD = env.float("YUNET_SCORE_THRESHOLD", default=0.75)
 YUNET_NMS_THRESHOLD = env.float("YUNET_NMS_THRESHOLD", default=0.3)
 YUNET_TOP_K = env.int("YUNET_TOP_K", default=5000)
