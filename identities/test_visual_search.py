@@ -23,6 +23,7 @@ from .models import IdentityFace, IdentityGroup, IdentityMembership
 from .services import search_by_face
 from .storage import protect_embedding, reveal_embedding
 from .test_idempotency import make_provider
+from privacy.testing import grant_face_consent, withdraw_face_consent, withdraw_face_consent
 
 User = get_user_model()
 
@@ -53,6 +54,10 @@ class VisualSearchTestCase(TestCase):
         self.other = User.objects.create_user(username="search-other", email="search-other@example.com", password="Password!123", is_email_verified=True)
         self.client = APIClient()
         self.token(self.owner)
+        # Facial processing sits behind recorded consent, and production
+        # requires it, so grant it here rather than relying on the flag
+        # being switched off on this machine.
+        grant_face_consent(self.owner, self.other)
 
     def token(self, user):
         token = RefreshToken.for_user(user)
@@ -146,6 +151,7 @@ class SearchByFaceServiceTests(VisualSearchTestCase):
         self.assertEqual(result["matches"], [])
 
     def test_consent_is_required_before_search_runs(self):
+        withdraw_face_consent(self.owner)
         with override_settings(BIOMETRIC_CONSENT_REQUIRED=True):
             with self.assertRaises(ValidationError):
                 self.search()
@@ -213,6 +219,7 @@ class VisualSearchApiTests(VisualSearchTestCase):
         self.assertEqual(response.data["matches"][0]["photo_count"], 0)
 
     def test_without_consent_the_search_is_rejected(self):
+        withdraw_face_consent(self.owner)
         with override_settings(BIOMETRIC_CONSENT_REQUIRED=True):
             response = self.post()
         self.assertEqual(response.status_code, 400)

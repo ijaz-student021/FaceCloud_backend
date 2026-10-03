@@ -20,6 +20,7 @@ from .providers import IdentityEmbeddingProvider, SFaceOnnxProvider
 from .serializers import IdentityGroupSerializer
 from .services import _choose_group, _refresh_group, process_identity_analysis
 from .storage import protect_embedding, reveal_embedding
+from privacy.testing import grant_face_consent
 
 User = get_user_model()
 
@@ -393,6 +394,10 @@ class ProcessIdentityAnalysisCancellationTests(TestCase):
             owner=self.owner, image=self.image, preprocessing_result=self.preprocessing,
             face_validation=self.validation, status="pending", provider="test", policy_version="test-v1",
         )
+        # Facial processing sits behind recorded consent, and production
+        # requires it, so grant it here rather than relying on the flag
+        # being switched off on this machine.
+        grant_face_consent(self.owner)
 
     def test_cancellation_requested_between_faces_stops_before_the_next_embed_call(self):
         batch_pk = self.batch.pk

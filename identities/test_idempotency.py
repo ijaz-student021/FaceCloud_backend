@@ -39,6 +39,7 @@ from validation.models import FaceValidationResult
 from .models import IdentityAnalysis, IdentityFace, IdentityGroup, IdentityMembership
 from .services import process_identity_analysis
 from .tasks import analyze_image_identity_task
+from privacy.testing import grant_face_consent
 
 User = get_user_model()
 
@@ -83,6 +84,10 @@ class RecognitionJobIdempotencyTests(TestCase):
             face_validation=self.validation, status="queued", provider="test",
             policy_version="test-v1", task_id="task-1",
         )
+        # Facial processing sits behind recorded consent, and production
+        # requires it, so grant it here rather than relying on the flag
+        # being switched off on this machine.
+        grant_face_consent(self.owner)
 
     def process(self, provider):
         with (
