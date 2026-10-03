@@ -17,6 +17,26 @@ from .models import FaceValidationResult
 
 MIN_FACE_AREA_RATIO = 0.06
 MIN_GROUP_FACE_AREA_RATIO = 0.012
+
+
+def _face_is_usable(face, min_ratio):
+    """Whether a face is big enough to enhance.
+
+    Area ratio alone punishes a good camera: the same portrait shot at a higher
+    resolution has the same face in more pixels but a *smaller* share of the
+    frame, so a rule written only in percentages rejects the better photograph.
+    A real example from a phone portrait: a 495x590 face -- larger in pixels
+    than any other face in the set -- came to 3.9% of a 2386x3124 frame and was
+    refused as "too small".
+
+    So a face is too small only when it fails **both** measures: a small share
+    of the frame *and* too few pixels to work with. Either one on its own is
+    not evidence that the face cannot be enhanced.
+    """
+    if face["area_ratio"] >= min_ratio:
+        return True
+    shortest_edge = min(face["width"], face["height"])
+    return shortest_edge >= settings.FACE_MIN_EDGE_PIXELS
 MAX_SUPPORTED_FACES = 5
 CENTER_TOLERANCE = 0.28
 HAAR_DETECTOR_NAME = "opencv_haar_frontalface"
@@ -446,14 +466,14 @@ def validate_image_faces(image_upload):
         reason = "large_group_detected"
         message = "More than five faces were detected. Manual review is required."
     elif len(faces) >= 2:
-        if any(face["area_ratio"] < MIN_GROUP_FACE_AREA_RATIO for face in faces):
+        if any(not _face_is_usable(face, MIN_GROUP_FACE_AREA_RATIO) for face in faces):
             decision = FaceValidationResult.Decision.NEEDS_REVIEW
             reason = "group_face_too_small"
             message = "A group image was detected, but one or more faces are too small for reliable processing."
         else:
             decision = FaceValidationResult.Decision.ACCEPTED
             message = f"A valid group image containing {len(faces)} people was detected."
-    elif faces[0]["area_ratio"] < MIN_FACE_AREA_RATIO:
+    elif not _face_is_usable(faces[0], MIN_FACE_AREA_RATIO):
         decision = FaceValidationResult.Decision.REJECTED
         reason = "face_too_small"
         message = "The detected face is too small for reliable enhancement."
