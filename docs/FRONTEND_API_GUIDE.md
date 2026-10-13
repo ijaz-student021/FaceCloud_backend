@@ -203,6 +203,9 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}     -> 201
 
 - `level`: `auto` (default), `low`, `medium`, `high`.
 - `style`: `natural` (default), `dynamic`, `ai_max`.
+- `applied_parameters.no_correction_needed` is `true` when the photo had nothing to
+  correct and was left as it is; say that rather than showing an identical
+  before/after as an enhancement.
 - **`ai_max` and identity.** `natural` and `dynamic` restore faces only when the
   result can be checked against the original. `ai_max` skips that requirement.
   Say so where the user picks it, and on every result read these three fields:

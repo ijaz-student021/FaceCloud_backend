@@ -342,6 +342,12 @@ ADAPTIVE_DENOISE_STRENGTHS = tuple(
 # On the automatic level a bright photo lands on LOW, which normally leaves grain
 # alone. From this measured score up, it is denoised anyway.
 ADAPTIVE_DENOISE_AUTO_MIN_SCORE = env.float("ADAPTIVE_DENOISE_AUTO_MIN_SCORE", default=5.0)
+# ...and only when that detail is grain rather than texture: the ratio of
+# finest-band to next-band detail energy (see _noise_whiteness). Clean textured
+# photographs measured 0.5-1.0, photographs with added grain 1.4-3.9. Real sensor
+# noise is more correlated than the synthetic grain this was set with, so it may
+# read lower; lowering this makes the automatic level denoise more readily.
+ADAPTIVE_DENOISE_AUTO_MIN_WHITENESS = env.float("ADAPTIVE_DENOISE_AUTO_MIN_WHITENESS", default=1.25)
 # The company has confirmed a private commercial license for the supplied
 # checkpoint.  The artifact and license evidence remain outside source control.
 # Portable source defaults stay disabled because the licensed checkpoint is not

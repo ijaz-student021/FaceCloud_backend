@@ -195,3 +195,26 @@ context, decision, and consequences. Superseded decisions remain for history.
   should be re-checked on real night photographs. A deployment whose `.env`
   still lists the old `ADAPTIVE_DENOISE_*` values keeps the old ladder.
 
+## ADR-020 — A correction needs a measured defect
+
+- **Status:** Accepted
+- **Decision:** On the automatic level with the Natural style, exposure is
+  changed only when a lighting defect was measured and sharpening is applied
+  only when blur was measured; a photo with neither is returned unchanged
+  (`no_correction_needed`). A photo with JPEG blocking is never sharpened or
+  given local contrast, at any level or style. On the automatic level a
+  well-exposed photo is denoised only when its fine detail is spatially
+  uncorrelated (grain), not when it is texture. `plan.routing` lists each
+  decision with its reason. An explicit level or style is honoured as before.
+- **Evidence:** Real CPU processing, no learned model. Thresholds were set on
+  four photographs; the blockiness rule was then checked unchanged on eighteen
+  others. Across JPEG qualities 10-90 on those eighteen, mean SSIM change
+  relative to the input went from about -0.010 to 0.000 for well-lit photos
+  (all untouched) and from about -0.035 to -0.004 for compressed photos with a
+  lighting defect. The grain-versus-texture threshold was chosen with all
+  twenty-two images in view, so it has no held-out check.
+- **Consequence:** Nothing on this path *removes* compression artifacts; it only
+  stops amplifying them. A photo resized after compression has no 8-pixel grid
+  and is not recognised. Real sensor noise is more correlated than the synthetic
+  grain used, so the automatic level may leave some real grain alone.
+

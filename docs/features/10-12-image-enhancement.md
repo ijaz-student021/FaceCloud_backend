@@ -605,6 +605,25 @@ is not a correctly exposed image and their scores understate the result.
 What this does not cover: any learned model, real sensor noise, real motion
 blur, real group photographs, or skin tones beyond one subject.
 
+### Conservative routing (2026-10-13, ADR-020)
+
+The table above showed two regressions: compressed photos came out worse than
+they went in, and already-good photos were changed for no reason. Ablating the
+stages on 22 photographs (the four above plus 18 not used to design the fix)
+showed both came from sharpening and the local-contrast step being applied
+without a defect to justify them. After routing on measured defects, the same
+evaluation reads (mean SSIM to the clean photo):
+
+| Case | Input | Before routing | After routing |
+|---|---|---|---|
+| Already good | 1.000 | 0.976 | 0.981 (the two well-lit photos are untouched, 1.000) |
+| Compressed | 0.857 | 0.832 | 0.854 |
+| Noisy | 0.720 | 0.790 | 0.805 |
+| Dark | 0.520 | 0.712 | 0.715 |
+| Blurred | 0.791 | 0.792 | 0.791 |
+
+Still true: nothing here removes JPEG artifacts or blur. Those need a model.
+
 ## 19. Private GFPGAN v1.4 rollout checkpoint
 
 The company has confirmed that private commercial permission for the supplied

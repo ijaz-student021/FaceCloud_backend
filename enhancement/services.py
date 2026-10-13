@@ -817,6 +817,84 @@ def _is_near_grayscale(image):
     return float(np.mean(chroma)) <= settings.COLORIZATION_GRAYSCALE_CHROMA_THRESHOLD
 
 
+# JPEG codes 8x8 blocks, so heavy compression leaves a step every eighth pixel.
+# The ratio below is the strongest of the eight possible grid phases against the
+# typical one: about 1.0-1.2 on an uncompressed photo, 1.4 and up from roughly
+# quality 50 downward. Both axes must show it, so a striped or brick-like
+# subject is not mistaken for compression. Thresholds were set on four
+# photographs and then checked, unchanged, on eighteen others.
+_BLOCKINESS_STRONG_AXIS = 1.35
+_BLOCKINESS_WEAK_AXIS = 1.15
+_LIGHTING_DEFECTS = frozenset({"severe_low_light", "low_light", "overexposed_highlights", "low_contrast"})
+_BLUR_DEFECTS = frozenset({"severe_blur", "mild_blur"})
+
+
+def measure_compression_artifacts(image):
+    """Detect JPEG blocking: ``{"blockiness": [strong, weak], "detected": bool}``.
+
+    Sharpening and local-contrast enhancement both amplify block edges, so the
+    pipeline needs to know before it applies either. Every grid phase is tried,
+    so a crop or a rotation of a compressed photo is still recognised. A photo
+    resized after compression no longer has an 8-pixel grid and reads as clean,
+    which is the safe direction: it is simply processed as before.
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    ratios = []
+    for axis in (0, 1):
+        steps = np.abs(np.diff(gray, axis=axis)).mean(axis=1 - axis)
+        usable = (len(steps) // 8) * 8
+        if usable < 64:
+            return {"blockiness": [1.0, 1.0], "detected": False}
+        per_phase = steps[:usable].reshape(-1, 8).mean(axis=0)
+        ratios.append(float(per_phase.max() / max(float(np.median(per_phase)), 1e-3)))
+    strong, weak = max(ratios), min(ratios)
+    return {
+        "blockiness": [round(strong, 3), round(weak, 3)],
+        "detected": strong >= _BLOCKINESS_STRONG_AXIS and weak >= _BLOCKINESS_WEAK_AXIS,
+    }
+
+
+def _apply_conservative_routing(context):
+    """Switch off corrections that have no measured defect to correct.
+
+    Returns the list of decisions made, for the plan. Two rules:
+
+    * Compression artifacts: no sharpening and no local-contrast step, at any
+      level or style. Both make block edges more visible, and nothing on this
+      path removes them.
+    * On the automatic level with the Natural style, a correction needs a
+      defect: no lighting defect means no exposure change, no blur defect means
+      no sharpening. An explicit level or style is the user asking for the
+      correction and is honoured as before.
+    """
+    defects = set(context.input_quality["defects"])
+    policy = context.policy
+    decisions = []
+    compression = measure_compression_artifacts(context.source_image)
+    context.input_quality["compression_artifacts"] = compression
+    if compression["detected"]:
+        if policy.get("sharpen"):
+            policy["sharpen"] = 0
+            decisions.append({"stage": "sharpen", "decision": "skipped",
+                              "reason": "Compression artifacts: sharpening would emphasise block edges."})
+        if policy.get("use_clahe"):
+            policy["use_clahe"] = False
+            decisions.append({"stage": "exposure_enhancement", "decision": "local_contrast_off",
+                              "reason": "Compression artifacts: local contrast would emphasise block edges."})
+    automatic = (
+        context.requested_level == EnhancementLevel.AUTO and context.style == EnhancementStyle.NATURAL
+    )
+    if automatic and not (defects & _LIGHTING_DEFECTS):
+        policy["skip_exposure"] = True
+        decisions.append({"stage": "exposure_enhancement", "decision": "skipped",
+                          "reason": "No lighting defect was measured."})
+    if automatic and not (defects & _BLUR_DEFECTS) and policy.get("sharpen"):
+        policy["sharpen"] = 0
+        decisions.append({"stage": "sharpen", "decision": "skipped",
+                          "reason": "No blur was measured."})
+    return decisions
+
+
 def _planned_upscaler(defects, width, height):
     """The single upscaler this image is routed to, or ``None``.
 
@@ -877,11 +955,12 @@ def _build_processing_plan(context):
         "exposure_mode": context.policy.get("exposure_mode"),
         "steps": {
             "exposure": step(
-                True,
+                not context.policy.get("skip_exposure"),
                 "Low light: learned curves when available, otherwise the OpenCV correction."
                 if context.zero_dce["requested"]
                 else f"Lighting defects: {', '.join(lighting_defects)}." if lighting_defects
-                else "No lighting defect; only the gentle balanced correction for this level.",
+                else "No lighting defect was measured." if context.policy.get("skip_exposure")
+                else "No lighting defect; the requested level's balanced correction.",
             ),
             "denoise": step(
                 context.applied_level in {EnhancementLevel.MEDIUM, EnhancementLevel.HIGH}
@@ -944,7 +1023,10 @@ def analyze_original_stage(context):
         "applied": False,
         "fallback_reason": "",
     }
+    routing = _apply_conservative_routing(context)
     context.plan = _build_processing_plan(context)
+    context.plan["routing"] = routing
+    context.plan["compression_artifacts"] = context.input_quality["compression_artifacts"]["detected"]
     return context
 
 
@@ -975,6 +1057,9 @@ def exposure_enhancement_stage(context):
         return context
 
     policy = context.policy
+    if policy.get("skip_exposure"):
+        # Nothing about this photo's light was found wanting; leave it alone.
+        return context
     lab = cv2.cvtColor(source, cv2.COLOR_BGR2LAB)
     luminance, channel_a, channel_b = cv2.split(lab)
     corrected = cv2.LUT(luminance, _gamma_lut(policy["gamma"]))
@@ -1024,6 +1109,21 @@ def measure_post_exposure_noise_stage(context):
         "quality": quality,
     }
     return context
+
+
+def _noise_whiteness(image):
+    """How uncorrelated the finest detail is: fine-band over mid-band energy.
+
+    Sensor grain varies pixel to pixel, so nearly all of its energy is in the
+    finest band and the ratio is high (1.4 to 3.9 on photographs with added
+    grain). Real texture is correlated across neighbouring pixels and has as
+    much energy one octave down (0.5 to 1.0 on clean grass, gravel and brick).
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    fine_blur = cv2.GaussianBlur(gray, (0, 0), 1.0)
+    fine = float(np.median(np.abs(gray - fine_blur)))
+    mid = float(np.median(np.abs(fine_blur - cv2.GaussianBlur(gray, (0, 0), 2.5))))
+    return fine / max(mid, 0.25)
 
 
 def _adaptive_denoise_strength(noise_score):
@@ -1084,6 +1184,7 @@ def adaptive_denoise_stage(context):
     noise_score = context.post_exposure_noise["estimated_noise"]
     strength = 0
     reason = "not_required"
+    whiteness = None
 
     if enabled and context.applied_level in {
         EnhancementLevel.MEDIUM,
@@ -1099,8 +1200,15 @@ def adaptive_denoise_stage(context):
         # The automatic level follows exposure, so a bright but grainy photo
         # lands on LOW. Its noise is measured, not assumed: denoise it. An
         # explicitly chosen LOW still keeps the source's texture.
-        strength = _adaptive_denoise_strength(noise_score)
-        reason = "auto_level_visible_noise"
+        # The noise score cannot tell grain from fine texture (grass, gravel,
+        # fabric score as high as a noisy photo), so a well-exposed photo is
+        # denoised only when the detail is also spatially uncorrelated.
+        whiteness = _noise_whiteness(context.current_image)
+        if whiteness >= settings.ADAPTIVE_DENOISE_AUTO_MIN_WHITENESS:
+            strength = _adaptive_denoise_strength(noise_score)
+            reason = "auto_level_visible_noise"
+        else:
+            reason = "auto_level_fine_texture_not_noise"
     elif enabled:
         reason = "low_level_preserves_source_texture"
     else:
@@ -1126,6 +1234,7 @@ def adaptive_denoise_stage(context):
         "reason": reason,
         "method": "edge_aware_nlm_blend",
         "input_noise_score": noise_score,
+        "noise_whiteness": None if whiteness is None else round(whiteness, 3),
         "measurement_point": "after_guard_a",
         "breakpoints": list(settings.ADAPTIVE_DENOISE_BREAKPOINTS),
         "strengths": list(settings.ADAPTIVE_DENOISE_STRENGTHS),
@@ -1935,7 +2044,15 @@ def _run_stage(context, name, function, optional, attribute):
         context.restoration_reference = context.current_image
     context.stage_reports.append(_stage_report(
         context, name, optional, attribute, failed,
-        changed=context.current_image is not before,
+        # A guard returns a new array even when it kept every pixel, so identity
+        # alone would report a change that did not happen.
+        changed=(
+            context.current_image is not before
+            and (
+                context.current_image.shape != before.shape
+                or not np.array_equal(context.current_image, before)
+            )
+        ),
         duration_ms=round((time.perf_counter() - started) * 1000, 3),
     ))
 
@@ -2002,6 +2119,10 @@ def enhance_bgr(
     _run_stage(context, "validate_output", validate_output_stage, False, None)
 
     identity_verification = identity_verification_summary(context)
+    # True when every stage left the pixels alone: the photo had no defect this
+    # pipeline corrects. The output is then the source, re-encoded.
+    no_correction_needed = not any(entry["changed_pixels"] for entry in context.stage_reports)
+    context.plan["no_correction_needed"] = no_correction_needed
     # The restoration stage could not know the final verdict; record it now.
     context.face_restoration["identity_embedding_verified"] = bool(
         context.face_restoration.get("applied") and identity_verification["verified"]
@@ -2073,6 +2194,7 @@ def enhance_bgr(
         "quality_after": context.output_quality,
         "quality_after_measurement_point": "final_output",
         "plan": context.plan,
+        "no_correction_needed": no_correction_needed,
         "stage_reports": context.stage_reports,
         "identity_status": identity_verification["status"],
         "identity_verification": identity_verification,
