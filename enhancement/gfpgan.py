@@ -179,9 +179,40 @@ def _configure_nms_backend(torch):
         _NMS_BACKEND = "numpy_application_control_fallback"
 
 
+def _restore_removed_torchvision_module():
+    """Give BasicSR the one torchvision module it imports that no longer exists.
+
+    BasicSR 1.4.2 (which GFPGAN 1.3.8 depends on) imports ``rgb_to_grayscale``
+    from ``torchvision.transforms.functional_tensor``. torchvision removed that
+    private module in 0.17 and exposes the same function from
+    ``torchvision.transforms.functional``. Django 6 needs Python 3.12, for which
+    no torchvision older than 0.17 exists, so the old module cannot simply be
+    installed. Only the missing name is supplied, and only when it is missing.
+    """
+    import importlib
+    import sys
+    import types
+
+    name = "torchvision.transforms.functional_tensor"
+    if name in sys.modules:
+        return False
+    try:
+        importlib.import_module(name)
+        return False
+    except ImportError:
+        pass
+    from torchvision.transforms import functional
+
+    shim = types.ModuleType(name)
+    shim.rgb_to_grayscale = functional.rgb_to_grayscale
+    sys.modules[name] = shim
+    return True
+
+
 def _import_runtime():
     try:
         import torch
+        _restore_removed_torchvision_module()
         from gfpgan import GFPGANer
     except (ImportError, OSError) as error:
         raise GFPGANUnavailable(
