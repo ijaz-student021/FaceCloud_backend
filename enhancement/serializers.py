@@ -18,7 +18,15 @@ from .models import (
 
 class EnhancementRequestSerializer(serializers.Serializer):
     level = serializers.ChoiceField(choices=EnhancementLevel.choices, default=EnhancementLevel.AUTO)
-    style = serializers.ChoiceField(choices=EnhancementStyle.choices, default=EnhancementStyle.NATURAL)
+    style = serializers.ChoiceField(
+        choices=EnhancementStyle.choices, default=EnhancementStyle.NATURAL,
+        help_text=(
+            "`natural` and `dynamic` restore faces only when the result can be checked against "
+            "the original. `ai_max` skips that requirement: it may restore faces without a "
+            "verified identity check. The result says so in `identity_check_bypassed` and "
+            "`identity_notice`."
+        ),
+    )
 
 
 class WatermarkOptionsSerializer(serializers.Serializer):
@@ -97,12 +105,30 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
     standardized_download_url = serializers.SerializerMethodField()
     editor_url = serializers.SerializerMethodField()
     current_edit = serializers.SerializerMethodField()
+    identity_status = serializers.SerializerMethodField(
+        help_text=(
+            "`verified`: faces in the result were compared with the original and matched. "
+            "`inconclusive`: no reliable comparison was possible. `unavailable`: no check ran "
+            "(no consent, no identity model, or switched off). `failed`: compared and did not "
+            "match. Null until the result completes, and for results made before this field existed."
+        ),
+    )
+    identity_check_bypassed = serializers.SerializerMethodField(
+        help_text=(
+            "True when faces were generatively restored without a verified identity check, "
+            "which only AI Max (or an operator setting) allows. Show `identity_notice` to the user."
+        ),
+    )
+    identity_notice = serializers.SerializerMethodField(
+        help_text="A sentence for the user when identity was not verified under a bypass; otherwise empty.",
+    )
 
     class Meta:
         model = ImageEnhancementResult
         fields = [
             "id", "image", "batch_job", "requested_level", "applied_level",
             "requested_style", "status",
+            "identity_status", "identity_check_bypassed", "identity_notice",
             "output_name", "output_format", "output_width", "output_height",
             "output_file_size", "processing_duration_ms", "task_id", "applied_parameters",
             "failure_reason", "original_download_url", "standardized_download_url",
@@ -113,6 +139,21 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
     def _absolute(self, path):
         request = self.context.get("request")
         return request.build_absolute_uri(path) if request else path
+
+    def _identity(self, obj):
+        parameters = obj.applied_parameters if isinstance(obj.applied_parameters, dict) else {}
+        summary = parameters.get("identity_verification")
+        return summary if isinstance(summary, dict) else {}
+
+    def get_identity_status(self, obj) -> str | None:
+        parameters = obj.applied_parameters if isinstance(obj.applied_parameters, dict) else {}
+        return self._identity(obj).get("status") or parameters.get("identity_status")
+
+    def get_identity_check_bypassed(self, obj) -> bool:
+        return bool(self._identity(obj).get("face_restoration_unverified"))
+
+    def get_identity_notice(self, obj) -> str:
+        return str(self._identity(obj).get("notice") or "")
 
     def get_original_download_url(self, obj) -> str:
         return self._absolute(f"/api/images/{obj.image_id}/download/")

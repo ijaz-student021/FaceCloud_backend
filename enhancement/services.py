@@ -1422,6 +1422,62 @@ def _prepare_identity_reference(context):
     return state, reason
 
 
+BYPASS_AI_MAX = "ai_max_style"
+BYPASS_OPERATOR = "operator_setting"
+
+
+def _identity_requirement_bypass(context):
+    """Why face restoration may run without a verified identity, or ``""``.
+
+    Named so it can be reported: a result produced under a bypass must say so
+    rather than leave a reader to assume the usual check applied.
+    """
+    if not settings.GFPGAN_REQUIRE_IDENTITY_CHECK:
+        return BYPASS_OPERATOR
+    if context.style == EnhancementStyle.AI_MAX:
+        return BYPASS_AI_MAX
+    return ""
+
+
+def identity_verification_summary(context):
+    """One explicit statement of what was and was not verified about identity.
+
+    ``verified`` is true only when the saved image's faces were compared with
+    the source's and held. A check that was skipped, unavailable or bypassed is
+    never reported as verified.
+    """
+    status = identity_status(context.identity_guard)
+    verified = status == IDENTITY_VERIFIED
+    restored = bool(context.face_restoration.get("applied"))
+    bypass = _identity_requirement_bypass(context)
+    unverified_restoration = restored and not verified
+    notice = ""
+    if unverified_restoration:
+        cause = {
+            BYPASS_AI_MAX: "AI Max does not require an identity check",
+            BYPASS_OPERATOR: "this deployment does not require an identity check",
+        }.get(bypass, "the identity check did not confirm it")
+        notice = (
+            "Faces in this image were generatively restored without a verified "
+            f"identity check ({cause}; identity: {status}). A restored face may "
+            "not match the person in the original."
+        )
+    elif bypass == BYPASS_AI_MAX and not verified:
+        notice = (
+            f"AI Max does not require an identity check, and identity was not verified ({status})."
+        )
+    return {
+        "status": status,
+        "verified": verified,
+        "reason": context.identity_guard.get("fallback_reason", ""),
+        "required_for_face_restoration": not bypass,
+        "requirement_bypass": bypass or None,
+        "face_restoration_applied": restored,
+        "face_restoration_unverified": unverified_restoration,
+        "notice": notice,
+    }
+
+
 def _face_restoration_gate(context):
     """Refuse generative face restoration when identity cannot be checked.
 
@@ -1430,7 +1486,7 @@ def _face_restoration_gate(context):
     default modes do not run it. The explicit AI Max style is the user asking
     for the strongest result and is not gated.
     """
-    if not settings.GFPGAN_REQUIRE_IDENTITY_CHECK or context.style == EnhancementStyle.AI_MAX:
+    if _identity_requirement_bypass(context):
         return ""
     state, reason = _prepare_identity_reference(context)
     if state == "ready":
@@ -1463,6 +1519,10 @@ def face_restoration_stage(context):
             context.current_image,
             context.input_quality,
         )
+    if not refusal and metadata.get("enabled"):
+        metadata["identity_gate"] = {
+            BYPASS_AI_MAX: "bypassed_ai_max", BYPASS_OPERATOR: "not_enforced",
+        }.get(_identity_requirement_bypass(context), "passed")
     metadata["stage"] = "after_low_resolution_restoration"
     context.current_image = restored
     context.face_restoration = metadata
@@ -1941,6 +2001,13 @@ def enhance_bgr(
             _run_stage(context, *stage)
     _run_stage(context, "validate_output", validate_output_stage, False, None)
 
+    identity_verification = identity_verification_summary(context)
+    # The restoration stage could not know the final verdict; record it now.
+    context.face_restoration["identity_embedding_verified"] = bool(
+        context.face_restoration.get("applied") and identity_verification["verified"]
+    )
+    if identity_verification["face_restoration_unverified"]:
+        context.warnings.append(identity_verification["notice"])
     normalized_comparison = compare_image_quality(
         context.source_image,
         context.current_image,
@@ -2007,7 +2074,8 @@ def enhance_bgr(
         "quality_after_measurement_point": "final_output",
         "plan": context.plan,
         "stage_reports": context.stage_reports,
-        "identity_status": identity_status(context.identity_guard),
+        "identity_status": identity_verification["status"],
+        "identity_verification": identity_verification,
         "face_fidelity": context.face_fidelity,
         "quality_comparison": normalized_comparison,
         # Backward-compatible alias retained for clients that previously

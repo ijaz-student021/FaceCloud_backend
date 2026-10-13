@@ -144,6 +144,10 @@ context, decision, and consequences. Superseded decisions remain for history.
   embedded (consent, identity model, reliable detection), and its result is
   withdrawn if the final identity check is not `verified`. AI Max is exempt.
   Identity is recorded as `verified`, `inconclusive`, `unavailable` or `failed`.
+  The bypass is reported, not implied: `identity_verification` records
+  `requirement_bypass` (`ai_max_style` or `operator_setting`) and
+  `face_restoration_unverified`, and the result API exposes `identity_status`,
+  `identity_check_bypassed` and `identity_notice`.
 - **Consequence:** A deployment that enables GFPGAN without the identity model
   gets no face restoration outside AI Max. Embedding similarity shows a face
   stayed recognisably the same; it does not show restored detail is true detail.

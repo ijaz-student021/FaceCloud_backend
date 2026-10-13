@@ -203,6 +203,15 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}     -> 201
 
 - `level`: `auto` (default), `low`, `medium`, `high`.
 - `style`: `natural` (default), `dynamic`, `ai_max`.
+- **`ai_max` and identity.** `natural` and `dynamic` restore faces only when the
+  result can be checked against the original. `ai_max` skips that requirement.
+  Say so where the user picks it, and on every result read these three fields:
+  - `identity_status`: `verified` (faces were compared with the original and
+    matched), `inconclusive`, `unavailable` (no check ran) or `failed`. Only
+    `verified` means a check passed; never present the others as "verified".
+  - `identity_check_bypassed`: `true` when faces were generatively restored
+    without a verified check. Show a visible notice on that result.
+  - `identity_notice`: the sentence to show; empty when there is nothing to say.
 - The job is asynchronous. Poll `GET /api/enhancements/results/{id}/` until
   `status` is `completed` (or `failed`, with `failure_reason`). Other statuses:
   `pending, queued, processing, partial, cancelled`.
