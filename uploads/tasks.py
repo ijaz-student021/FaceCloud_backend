@@ -1,10 +1,16 @@
+import logging
+
 from celery import shared_task
+from celery.exceptions import SoftTimeLimitExceeded
 from django.db import transaction
 from django.db.utils import InterfaceError, OperationalError
 from django.utils import timezone
+from rest_framework.exceptions import ValidationError
 
 from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
 from .services import preprocess_image
+
+logger = logging.getLogger(__name__)
 
 # Transient infrastructure failures only (dropped DB connections). Business
 # and validation errors are handled per-image and must never retry.
@@ -53,6 +59,7 @@ def preprocess_batch_task(self, batch_id):
         .order_by("pk")
         .values_list("pk", flat=True)
     )
+    out_of_time = False
     for image_id in image_ids:
         if UploadBatch.objects.filter(pk=batch_id, cancellation_requested=True).exists():
             UploadBatch.objects.filter(pk=batch_id).update(
@@ -65,7 +72,18 @@ def preprocess_batch_task(self, batch_id):
             continue
         try:
             preprocess_image(image, requested_format="auto")
+        except SoftTimeLimitExceeded:
+            # The hard limit follows within minutes: stop here so the batch is
+            # recorded as partial instead of being killed mid-image.
+            logger.error("Preprocessing of batch %s exceeded the task time limit at image %s.", batch_id, image_id)
+            out_of_time = True
+            break
         except Exception as error:
+            if isinstance(error, ValidationError):
+                # An image the preprocessor refused: expected, and already explained.
+                logger.warning("Preprocessing of image %s was refused in batch %s: %s", image_id, batch_id, error)
+            else:
+                logger.exception("Preprocessing of image %s failed in batch %s.", image_id, batch_id)
             result, created = ImagePreprocessingResult.objects.get_or_create(
                 image=image,
                 defaults={"owner": image.owner, "requested_format": "auto"},
@@ -93,7 +111,11 @@ def preprocess_batch_task(self, batch_id):
         processing_status=final_status,
         processed_files=completed,
         processing_failed_files=failed,
-        processing_error="" if final_status != "failed" else "No accepted image was processed successfully.",
+        processing_error=(
+            "Processing ran out of time before every image was prepared. Retry the batch to finish."
+            if out_of_time
+            else "" if final_status != "failed" else "No accepted image was processed successfully."
+        ),
         processing_finished_at=timezone.now(),
     )
     return {

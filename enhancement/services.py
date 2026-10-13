@@ -15,9 +15,11 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
 from django.core.files.base import ContentFile
 from django.db import transaction
+from django.db.utils import InterfaceError, OperationalError
 from django.utils import timezone
 from rest_framework import status as http_status
 from rest_framework.exceptions import APIException, ValidationError
@@ -113,7 +115,11 @@ class EnhancementPipelineContext:
     applied_level: str = ""
     policy: dict = field(default_factory=dict)
     current_image: np.ndarray | None = None
-    final_guard_reference: np.ndarray | None = None
+    # The last accepted image before any restoration model (PureVision, EDSR,
+    # NAFNet, Real-ESRGAN, PureScale) ran. Guard B judges the final pixels
+    # against this, resized only for the comparison, so a model's own changes
+    # cannot hide by becoming the reference they are measured against.
+    restoration_reference: np.ndarray | None = None
     output_quality: dict = field(default_factory=dict)
     restoration: dict = field(default_factory=dict)
     hd_restoration: dict = field(default_factory=dict)
@@ -963,6 +969,7 @@ def adaptive_denoise_stage(context):
         "breakpoints": list(settings.ADAPTIVE_DENOISE_BREAKPOINTS),
         "strengths": list(settings.ADAPTIVE_DENOISE_STRENGTHS),
     }
+    context.restoration_reference = context.current_image
     return context
 
 
@@ -1026,9 +1033,6 @@ def low_resolution_restoration_stage(context):
     metadata["quality_at_stage"] = quality_at_stage
     context.current_image = restored
     context.restoration = metadata
-    # Guard B protects subsequent sharpening (and future restoration stages)
-    # against this safe, resolution-normalized reference.
-    context.final_guard_reference = restored.copy()
     return context
 
 
@@ -1085,10 +1089,14 @@ def hd_restoration_stage(context):
         metadata["input_dimensions"] = source_dimensions
         metadata["output_dimensions"] = [int(upscaled.shape[1]), int(upscaled.shape[0])]
         context.current_image = upscaled
-        context.final_guard_reference = upscaled.copy()
     except HDRestorationUnavailable as error:
         metadata["fallback_reason"] = str(error)
         context.warnings.append(str(error))
+        # The deblurred image already passed its own fidelity guard and sits on
+        # the source pixel grid, so it stays the result when only the upscale
+        # failed. ``applied`` remains False: no HD output grid was produced.
+        if metadata["deblur"]["applied"]:
+            context.current_image = working
     context.hd_restoration = metadata
     return context
 
@@ -1106,7 +1114,11 @@ def purescale_super_resolution_stage(context):
     """
     metadata = {
         "enabled": bool(settings.PURESCALE_ENABLED),
-        "requested": bool(settings.PURESCALE_ENABLED and not context.hd_restoration.get("applied")),
+        "requested": bool(
+            settings.PURESCALE_ENABLED
+            and not context.hd_restoration.get("applied")
+            and not context.restoration.get("applied")
+        ),
         "applied": False,
         "fallback_reason": "",
     }
@@ -1116,6 +1128,10 @@ def purescale_super_resolution_stage(context):
         return context
     if context.hd_restoration.get("applied"):
         metadata["fallback_reason"] = "HD restoration already produced a super-resolution candidate."
+        context.purescale = metadata
+        return context
+    if context.restoration.get("applied"):
+        metadata["fallback_reason"] = "EDSR already upscaled this image; a second upscaler would stack scale factors."
         context.purescale = metadata
         return context
     if context.input_quality["mean_luminance"] < settings.EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD:
@@ -1134,7 +1150,6 @@ def purescale_super_resolution_stage(context):
         metadata["input_dimensions"] = source_dimensions
         metadata["output_dimensions"] = [int(upscaled.shape[1]), int(upscaled.shape[0])]
         context.current_image = upscaled
-        context.final_guard_reference = upscaled.copy()
     except PureScaleUnavailable as error:
         metadata["fallback_reason"] = str(error)
         context.warnings.append(str(error))
@@ -1236,9 +1251,35 @@ def sharpen_stage(context):
     return context
 
 
+def _guard_b_reference(context):
+    """The pre-restoration image on the output grid, for comparison only.
+
+    When an upscaler changed the pixel grid the reference is a plain bicubic
+    resize of the last image accepted before restoration. It adds no detail of
+    its own, so anything a model changed in brightness, contrast, clipping or
+    colour shows up as a difference instead of being part of the baseline.
+    """
+    reference = context.restoration_reference
+    basis = "pre_restoration_output"
+    if reference is None:
+        reference = context.source_image
+        basis = "original_source"
+    output_height, output_width = context.current_image.shape[:2]
+    resized = reference.shape[:2] != (output_height, output_width)
+    if resized:
+        reference = cv2.resize(
+            reference, (output_width, output_height), interpolation=cv2.INTER_CUBIC,
+        )
+    return reference, {
+        "basis": basis,
+        "resized_for_comparison": resized,
+        "dimensions": [int(output_width), int(output_height)],
+    }
+
+
 def output_guard_b_stage(context):
     """Apply the final safety guard after denoise, EDSR, and sharpening."""
-    reference = context.final_guard_reference
+    reference, reference_metadata = _guard_b_reference(context)
     reference_quality = analyze_image_quality(reference)
     guarded, output_quality, metadata = _quality_guard(
         reference,
@@ -1248,6 +1289,7 @@ def output_guard_b_stage(context):
         learned_model=False,
     )
     metadata["stage"] = "final_output"
+    metadata["reference"] = reference_metadata
     context.current_image = guarded
     context.output_quality = output_quality
     context.quality_guards["guard_b"] = metadata
@@ -1277,10 +1319,9 @@ def validate_output_stage(context):
     ]
     expected_dimensions = source_dimensions
     source = "original_pixel_grid"
-    # At most one of these ever changes the pixel grid: hd_restoration_stage
-    # and purescale_super_resolution_stage are mutually exclusive (see their
-    # own docstrings), and low_resolution_restoration_stage (EDSR) only runs
-    # when HD restoration is disabled. PureVision never resizes.
+    # At most one of these ever changes the pixel grid: EDSR only runs when HD
+    # restoration is disabled, and PureScale refuses to run after either of
+    # them. PureVision and NAFNet never resize.
     if context.hd_restoration.get("applied"):
         expected_dimensions = list(context.hd_restoration["output_dimensions"])
         source = "bounded_hd_restoration_output_grid"
@@ -1458,6 +1499,13 @@ def enhance_bgr(
         context.source_image,
         context.current_image,
     )
+    # Colorization, the style preset and the identity guard all run after guard
+    # B, so its measurement is not the saved image's. Measure the final pixels
+    # (already done above when the grid is unchanged).
+    if context.current_image.shape[:2] == context.source_image.shape[:2]:
+        context.output_quality = normalized_comparison["after"]
+    else:
+        context.output_quality = analyze_image_quality(context.current_image)
     if context.zero_dce["requested"] and not context.zero_dce["applied"]:
         context.warnings.append(
             "Zero-DCE was requested for low light but was unavailable; "
@@ -1482,9 +1530,9 @@ def enhance_bgr(
         algorithm = f"{algorithm}+private_gfpgan_v1_4"
     if context.purevision["applied"]:
         algorithm = f"{algorithm}+purevision_rrdb_1x"
+    if context.hd_restoration["deblur"]["applied"]:
+        algorithm = f"{algorithm}+nafnet_gopro"
     if context.hd_restoration["applied"]:
-        if context.hd_restoration["deblur"]["applied"]:
-            algorithm = f"{algorithm}+nafnet_gopro"
         algorithm = f"{algorithm}+realesrgan_x4plus"
     if context.purescale["applied"]:
         algorithm = f"{algorithm}+purescale_safmn_2x"
@@ -1510,6 +1558,7 @@ def enhance_bgr(
         ),
         "quality_before": context.input_quality,
         "quality_after": context.output_quality,
+        "quality_after_measurement_point": "final_output",
         "quality_comparison": normalized_comparison,
         # Backward-compatible alias retained for clients that previously
         # consumed the single exposure guard. The complete two-guard contract
@@ -1599,6 +1648,28 @@ def _read_enhancement_source(result):
     return _read_standardized_image(result.preprocessing_result), "standardized_fallback"
 
 
+def _fit_pixel_budget(image):
+    """Reduce an oversized source to ENHANCEMENT_MAX_INPUT_PIXELS before enhancing.
+
+    Uploads may be far larger than the pipeline can process in bounded time and
+    memory (denoising alone is linear in pixels and holds several float copies).
+    Within the budget the original pixel grid is untouched.
+    """
+    height, width = image.shape[:2]
+    budget = int(settings.ENHANCEMENT_MAX_INPUT_PIXELS)
+    metadata = {
+        "maximum_input_pixels": budget,
+        "original_dimensions": [int(width), int(height)],
+        "reduced": False,
+    }
+    if budget <= 0 or width * height <= budget:
+        return image, metadata
+    scale = (budget / float(width * height)) ** 0.5
+    reduced_size = (max(1, int(width * scale)), max(1, int(height * scale)))
+    metadata.update({"reduced": True, "working_dimensions": list(reduced_size)})
+    return cv2.resize(image, reduced_size, interpolation=cv2.INTER_AREA), metadata
+
+
 def _encode_output(image, preprocessing):
     use_png = preprocessing.output_format == "png"
     extension = ".png" if use_png else ".jpg"
@@ -1683,6 +1754,32 @@ def create_enhancement_result(
     )
 
 
+# Dropped database connections: worth retrying, unlike a bad image.
+TRANSIENT_INFRASTRUCTURE_ERRORS = (OperationalError, InterfaceError)
+UNSAFE_FAILURE_REASON = "The image could not be enhanced safely."
+TIME_LIMIT_FAILURE_REASON = (
+    "Enhancement ran out of time before this image finished. You can start it again."
+)
+
+
+def _discard_stored_output(result, stored_name):
+    """Remove an output file written for a result that did not complete."""
+    if not stored_name:
+        return
+    try:
+        result.enhanced_file.storage.delete(stored_name)
+    except OSError:
+        logger.exception("Could not remove the abandoned output %s.", stored_name)
+
+
+def _mark_result_failed(result, started, reason):
+    result.status = EnhancementStatus.FAILED
+    result.failure_reason = reason
+    result.processing_duration_ms = max(1, round((time.perf_counter() - started) * 1000))
+    result.finished_at = timezone.now()
+    result.save(update_fields=["status", "failure_reason", "processing_duration_ms", "finished_at", "updated_at"])
+
+
 def process_enhancement_result(result):
     """Process one result and persist a separate enhanced output."""
     with transaction.atomic():
@@ -1705,12 +1802,21 @@ def process_enhancement_result(result):
     stored_name = None
     try:
         source, source_strategy = _read_enhancement_source(result)
+        source, pixel_budget = _fit_pixel_budget(source)
+        if pixel_budget["reduced"]:
+            source_strategy = "original_reduced_to_pixel_budget"
         from privacy.services import biometric_processing_allowed
         enhanced, applied_level, parameters = enhance_bgr(
             source, result.requested_level, style=result.requested_style,
             allow_biometric_processing=biometric_processing_allowed(result.owner),
         )
         parameters["source_resolution_strategy"] = source_strategy
+        parameters["input_pixel_budget"] = pixel_budget
+        if pixel_budget["reduced"]:
+            parameters["warnings"].append(
+                "The original is larger than the enhancement pixel budget, so it "
+                "was enhanced at a reduced size. The original file is unchanged."
+            )
         parameters["source_dimensions"] = [
             int(source.shape[1]), int(source.shape[0])
         ]
@@ -1747,24 +1853,27 @@ def process_enhancement_result(result):
         result.finished_at = timezone.now()
         result.save()
         return result
-    except ValidationError:
-        if stored_name:
-            result.enhanced_file.storage.delete(stored_name)
-        result.status = EnhancementStatus.FAILED
-        result.failure_reason = "The image could not be enhanced safely."
-        result.processing_duration_ms = max(1, round((time.perf_counter() - started) * 1000))
-        result.finished_at = timezone.now()
-        result.save(update_fields=["status", "failure_reason", "processing_duration_ms", "finished_at", "updated_at"])
+    except TRANSIENT_INFRASTRUCTURE_ERRORS:
+        # The database went away; the row cannot be updated now. The task retries,
+        # and its last attempt records the failure.
+        _discard_stored_output(result, stored_name)
         raise
-    except (cv2.error, OSError, ValueError) as error:
-        if stored_name:
-            result.enhanced_file.storage.delete(stored_name)
-        result.status = EnhancementStatus.FAILED
-        result.failure_reason = "The image could not be enhanced safely."
-        result.processing_duration_ms = max(1, round((time.perf_counter() - started) * 1000))
-        result.finished_at = timezone.now()
-        result.save(update_fields=["status", "failure_reason", "processing_duration_ms", "finished_at", "updated_at"])
-        raise ValidationError("The image could not be enhanced safely.") from error
+    except SoftTimeLimitExceeded:
+        _discard_stored_output(result, stored_name)
+        _mark_result_failed(result, started, TIME_LIMIT_FAILURE_REASON)
+        raise
+    except ValidationError:
+        _discard_stored_output(result, stored_name)
+        _mark_result_failed(result, started, UNSAFE_FAILURE_REASON)
+        raise
+    except Exception as error:
+        # Model runtimes fail in ways no fixed list covers (an out-of-memory
+        # RuntimeError, a MemoryError, a TypeError from a bad checkpoint). The
+        # user sees one safe sentence; the cause goes to the log.
+        logger.exception("Enhancement of result %s failed.", result.pk)
+        _discard_stored_output(result, stored_name)
+        _mark_result_failed(result, started, UNSAFE_FAILURE_REASON)
+        raise ValidationError(UNSAFE_FAILURE_REASON) from error
 
 
 EDITOR_CONTROL_NAMES = (

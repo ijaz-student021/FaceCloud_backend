@@ -327,6 +327,17 @@ flagged for a future face-restoration model and quality review.
 - Only one pending, queued, or processing enhancement is allowed per source image.
 - The uploaded original and standardized processing copy are never overwritten.
 
+### Task failure behaviour (2026-10)
+
+- Every unexpected failure is logged with its traceback; the user still sees one
+  safe sentence. Model-runtime errors (`RuntimeError`, `MemoryError`) mark the
+  result failed and remove any output file already written.
+- Dropped database connections are retried (three times, with backoff); only the
+  last attempt records a failure.
+- When the Celery soft time limit fires, a batch stops instead of starting more
+  images: unfinished results are failed with a reason that says to start again,
+  and the job is recorded as partial with that reason.
+
 ## 13. Curve-model implementation
 
 - The private FaceCloud curve model is trained independently and exported to ONNX.
@@ -406,6 +417,10 @@ Auto request example:
   requested EDSR restoration stage produces a larger 2x result.
 - Enhancement cannot invent unlimited detail. Severe blur or compression damage
   still requires a validated restoration model and may need moderator review.
+
+Sources above `ENHANCEMENT_MAX_INPUT_PIXELS` (default 24 MP) are reduced to that
+budget before enhancement and the result says so (`input_pixel_budget`,
+`source_resolution_strategy = original_reduced_to_pixel_budget`). See ADR-014.
 
 ## 17. Main implementation files
 

@@ -1,9 +1,10 @@
 import logging
 
 from celery import shared_task
+from celery.exceptions import SoftTimeLimitExceeded
 from django.db import transaction
-from django.db.utils import InterfaceError, OperationalError
 from django.utils import timezone
+from rest_framework.exceptions import ValidationError
 
 from datetime import timedelta
 
@@ -17,13 +18,50 @@ from .models import (
     ModelComparison,
 )
 from .comparison import process_model_comparison
-from .services import process_enhancement_result, process_image_edit
+from .services import (
+    TIME_LIMIT_FAILURE_REASON,
+    TRANSIENT_INFRASTRUCTURE_ERRORS,
+    process_enhancement_result,
+    process_image_edit,
+)
 
 logger = logging.getLogger(__name__)
 
-# Transient infrastructure failures only (dropped DB connections). Business
-# and validation errors are handled per-result and must never retry.
-TRANSIENT_INFRASTRUCTURE_ERRORS = (OperationalError, InterfaceError)
+# TRANSIENT_INFRASTRUCTURE_ERRORS (dropped DB connections) are the only failures
+# worth retrying. Business and validation errors are recorded per result.
+TASK_FAILURE_REASON = "The background enhancement task failed safely."
+FINISHED_STATUSES = (
+    EnhancementStatus.COMPLETED, EnhancementStatus.FAILED, EnhancementStatus.CANCELLED,
+)
+
+
+def _retries_remain(task):
+    return task.request.retries < task.max_retries
+
+
+def _fail_if_unfinished(result, reason=TASK_FAILURE_REASON):
+    """Never leave a result looking "in progress" once its task has given up."""
+    result.refresh_from_db()
+    if result.status in FINISHED_STATUSES:
+        return
+    result.status = EnhancementStatus.FAILED
+    result.failure_reason = reason
+    result.finished_at = timezone.now()
+    result.save(update_fields=["status", "failure_reason", "finished_at", "updated_at"])
+
+
+def _publish_outcome(result):
+    """Tell the user, the activity timeline and the progress bar how it ended."""
+    from activity.services import record_activity_event
+    from notifications.events import notify_enhancement_result
+    from uploads.progress import sync_image_progress
+
+    notify_enhancement_result(result)
+    record_activity_event(
+        result.owner, "processing", f"enhancement_{result.status}",
+        object_type="ImageEnhancementResult", object_id=result.pk,
+    )
+    sync_image_progress(result.image_id)
 
 
 @shared_task(
@@ -58,40 +96,22 @@ def process_enhancement_image(self, result_id):
             return {"result_id": result_id, "status": "superseded"}
     try:
         result = process_enhancement_result(result)
+    except TRANSIENT_INFRASTRUCTURE_ERRORS:
+        if _retries_remain(self):
+            raise  # autoretry_for schedules the next attempt
+        logger.exception("Enhancement of result %s failed after %s retries.", result_id, self.max_retries)
+        _fail_if_unfinished(result)
+    except SoftTimeLimitExceeded:
+        logger.error("Enhancement of result %s exceeded the task time limit.", result_id)
+        _fail_if_unfinished(result, TIME_LIMIT_FAILURE_REASON)
+    except ValidationError as error:
+        # Recorded on the row by the service, which also logs unexpected causes.
+        logger.warning("Enhancement of result %s was refused: %s", result_id, error)
+        _fail_if_unfinished(result)
     except Exception:
-        result.refresh_from_db()
-        if result.status not in (
-            EnhancementStatus.COMPLETED,
-            EnhancementStatus.FAILED,
-            EnhancementStatus.CANCELLED,
-        ):
-            result.status = EnhancementStatus.FAILED
-            result.failure_reason = "The background enhancement task failed safely."
-            result.finished_at = timezone.now()
-            result.save(
-                update_fields=[
-                    "status", "failure_reason", "finished_at", "updated_at",
-                ]
-            )
-        from notifications.events import notify_enhancement_result
-        from uploads.progress import sync_image_progress
-        notify_enhancement_result(result)
-        from activity.services import record_activity_event
-        record_activity_event(
-            result.owner, "processing", f"enhancement_{result.status}",
-            object_type="ImageEnhancementResult", object_id=result.pk,
-        )
-        sync_image_progress(result.image_id)
-        return {"result_id": result_id, "status": result.status}
-    from notifications.events import notify_enhancement_result
-    from uploads.progress import sync_image_progress
-    notify_enhancement_result(result)
-    from activity.services import record_activity_event
-    record_activity_event(
-        result.owner, "processing", f"enhancement_{result.status}",
-        object_type="ImageEnhancementResult", object_id=result.pk,
-    )
-    sync_image_progress(result.image_id)
+        logger.exception("Enhancement of result %s failed.", result_id)
+        _fail_if_unfinished(result)
+    _publish_outcome(result)
     return {"result_id": result_id, "status": result.status}
 
 
@@ -125,6 +145,7 @@ def process_enhancement_batch(self, job_id):
         job.save(update_fields=["status", "started_at", "failure_reason", "updated_at"])
 
     result_ids = list(job.results.order_by("pk").values_list("pk", flat=True))
+    out_of_time = False
     for result_id in result_ids:
         job.refresh_from_db(fields=["source_batch_id"])
         if job.source_batch.cancellation_requested:
@@ -141,27 +162,34 @@ def process_enhancement_batch(self, job_id):
         result = ImageEnhancementResult.objects.get(pk=result_id)
         try:
             process_enhancement_result(result)
+        except TRANSIENT_INFRASTRUCTURE_ERRORS:
+            if _retries_remain(self):
+                raise  # the retried batch skips what already completed
+            logger.exception(
+                "Enhancement of result %s failed inside batch job %s after %s retries.",
+                result_id, job_id, self.max_retries,
+            )
+        except SoftTimeLimitExceeded:
+            # The hard limit follows within minutes: stop now, while there is
+            # still time to record what happened, instead of starting more images.
+            out_of_time = True
+            logger.error(
+                "Batch job %s exceeded the task time limit at result %s.", job_id, result_id,
+            )
+        except ValidationError as error:
+            logger.warning(
+                "Enhancement of result %s was refused inside batch job %s: %s", result_id, job_id, error,
+            )
         except Exception:
             # One bad image must not stop the batch, but it must leave a trace and
             # must not be left looking "in progress".
             logger.exception("Enhancement of result %s failed inside batch job %s.", result_id, job_id)
-        result.refresh_from_db()
-        if result.status not in (
-            EnhancementStatus.COMPLETED, EnhancementStatus.FAILED, EnhancementStatus.CANCELLED,
-        ):
-            result.status = EnhancementStatus.FAILED
-            result.failure_reason = "The background enhancement task failed safely."
-            result.finished_at = timezone.now()
-            result.save(update_fields=["status", "failure_reason", "finished_at", "updated_at"])
-        from notifications.events import notify_enhancement_result
-        from uploads.progress import sync_image_progress
-        notify_enhancement_result(result)
-        from activity.services import record_activity_event
-        record_activity_event(
-            result.owner, "processing", f"enhancement_{result.status}",
-            object_type="ImageEnhancementResult", object_id=result.pk,
-        )
-        sync_image_progress(result.image_id)
+        _fail_if_unfinished(result, TIME_LIMIT_FAILURE_REASON if out_of_time else TASK_FAILURE_REASON)
+        _publish_outcome(result)
+        if out_of_time:
+            for unfinished in job.results.exclude(status__in=FINISHED_STATUSES):
+                _fail_if_unfinished(unfinished, TIME_LIMIT_FAILURE_REASON)
+                _publish_outcome(unfinished)
         successful = job.results.filter(status=EnhancementStatus.COMPLETED).count()
         failed = job.results.filter(status=EnhancementStatus.FAILED).count()
         EnhancementBatchJob.objects.filter(pk=job_id).update(
@@ -169,6 +197,8 @@ def process_enhancement_batch(self, job_id):
             successful_images=successful,
             failed_images=failed,
         )
+        if out_of_time:
+            break
 
     successful = job.results.filter(status=EnhancementStatus.COMPLETED).count()
     failed = job.results.filter(status=EnhancementStatus.FAILED).count()
@@ -178,12 +208,19 @@ def process_enhancement_batch(self, job_id):
         final_status = EnhancementStatus.PARTIAL
     else:
         final_status = EnhancementStatus.FAILED
+    if out_of_time:
+        failure_reason = (
+            "The batch ran out of time before every image was enhanced. "
+            "Start it again to process the remaining images."
+        )
+    else:
+        failure_reason = "" if successful else "No image was enhanced successfully."
     EnhancementBatchJob.objects.filter(pk=job_id).update(
         status=final_status,
         processed_images=successful + failed,
         successful_images=successful,
         failed_images=failed,
-        failure_reason="" if successful else "No image was enhanced successfully.",
+        failure_reason=failure_reason,
         finished_at=timezone.now(),
     )
     return {"job_id": job_id, "status": final_status, "successful": successful, "failed": failed}
@@ -219,6 +256,7 @@ def process_gallery_edit(self, edit_id):
     try:
         edit = process_image_edit(edit)
     except Exception:
+        logger.exception("Gallery edit %s failed.", edit_id)
         edit.refresh_from_db()
         if edit.status not in (
             EnhancementStatus.COMPLETED,

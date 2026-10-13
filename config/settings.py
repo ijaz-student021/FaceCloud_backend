@@ -474,6 +474,12 @@ YUNET_TOP_K = env.int("YUNET_TOP_K", default=5000)
 ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION = env.bool(
     "ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION", default=True
 )
+# Largest source the enhancement pipeline works on at its native size. Uploads may
+# be up to MAX_IMAGE_PIXELS, but enhancement time and memory grow with every
+# pixel (measured on the CPU path: 12 MP 9 s / 1.0 GB, 24 MP 24 s / 1.4 GB, 48 MP
+# 61 s / 2.2 GB). Larger sources are reduced to this budget first; the stored
+# original is never changed. 0 removes the limit.
+ENHANCEMENT_MAX_INPUT_PIXELS = env.int("ENHANCEMENT_MAX_INPUT_PIXELS", default=24_000_000)
 ENHANCEMENT_MODEL_LUMINANCE_THRESHOLD = env.float(
     "ENHANCEMENT_MODEL_LUMINANCE_THRESHOLD", default=0.45
 )

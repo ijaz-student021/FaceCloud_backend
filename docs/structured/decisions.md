@@ -96,3 +96,30 @@ context, decision, and consequences. Superseded decisions remain for history.
   completion.
 - **Consequence:** A feature is not complete merely because an endpoint or adapter
   exists; every stated acceptance layer must be reconciled first.
+
+## ADR-013 — Restoration is judged against a pre-restoration reference
+
+- **Status:** Accepted
+- **Decision:** The final output guard compares the finished image with the last
+  image accepted before any restoration model ran, resized (bicubic) only for the
+  comparison. An upscaled or restored image is never its own reference. At most
+  one upscaler runs per image: PureScale is skipped when EDSR or Real-ESRGAN has
+  already changed the pixel grid. A NAFNet deblur that passed its own guard is
+  kept when the following upscale fails.
+- **Consequence:** A restoration model that shifts brightness, contrast, clipping
+  or colour is blended back toward the reference instead of passing unnoticed.
+  `quality_after` is measured on the saved pixels, after colorization, style and
+  the identity guard.
+
+## ADR-014 — Enhancement works within a pixel budget
+
+- **Status:** Accepted
+- **Decision:** Sources larger than `ENHANCEMENT_MAX_INPUT_PIXELS` (default 24 MP)
+  are reduced to that budget before enhancement. The stored original is never
+  changed, and the result records `original_reduced_to_pixel_budget` with both
+  sizes and a warning.
+- **Consequence:** This narrows `ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION`: the
+  original grid is preserved up to the budget, not up to the 100 MP upload limit.
+  Measured on the CPU path (synthetic noisy photo, Apple Silicon): 12 MP 9 s /
+  1.0 GB, 24 MP 24 s / 1.4 GB, 48 MP 61 s / 2.2 GB.
+
