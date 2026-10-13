@@ -624,6 +624,22 @@ evaluation reads (mean SSIM to the clean photo):
 
 Still true: nothing here removes JPEG artifacts or blur. Those need a model.
 
+### Denoise decision (2026-10-13, ADR-021)
+
+`applied_parameters.adaptive_denoise` now reads:
+
+| Key | Meaning |
+|---|---|
+| `eligibility` | `eligible`, the reason, the noise score, the noise measured in flat regions and the minimum; `depends_on_exposure_level` is always false |
+| `benefit` | Noise before and after (grey levels, flat regions), amount and share removed, and how noise-like the removed part was |
+| `detail` | Share of structured detail and of edges kept, for the frame and for each face; `null` where there was no structure to measure |
+| `acceptance` | `accepted`, `strength_reduced`, `rejected` or `not_attempted`, with the reason and the blend applied |
+| `candidate_guard` | Every strength tried, with its measurements and violations |
+| `stage_duration_ms` | Time spent in the stage, including the check |
+
+The stage report carries the same `benefit`, `detail` and `acceptance`, and its
+status is `rejected` when a candidate was computed and dropped.
+
 ## 19. Private GFPGAN v1.4 rollout checkpoint
 
 The company has confirmed that private commercial permission for the supplied

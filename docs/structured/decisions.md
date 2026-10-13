@@ -202,9 +202,8 @@ context, decision, and consequences. Superseded decisions remain for history.
   changed only when a lighting defect was measured and sharpening is applied
   only when blur was measured; a photo with neither is returned unchanged
   (`no_correction_needed`). A photo with JPEG blocking is never sharpened or
-  given local contrast, at any level or style. On the automatic level a
-  well-exposed photo is denoised only when its fine detail is spatially
-  uncorrelated (grain), not when it is texture. `plan.routing` lists each
+  given local contrast, at any level or style. (The grain-versus-texture rule
+  first added here was replaced by ADR-021.) `plan.routing` lists each
   decision with its reason. An explicit level or style is honoured as before.
 - **Evidence:** Real CPU processing, no learned model. Thresholds were set on
   four photographs; the blockiness rule was then checked unchanged on eighteen
@@ -218,3 +217,34 @@ context, decision, and consequences. Superseded decisions remain for history.
   and is not recognised. Real sensor noise is more correlated than the synthetic
   grain used, so the automatic level may leave some real grain alone.
 
+
+## ADR-021 — Denoising is decided by measured noise and judged against a pre-denoise reference
+
+- **Status:** Accepted
+- **Decision:** Whether to denoise no longer depends on the exposure level: a
+  photo is eligible when noise is measured in its flat regions, at any level,
+  and not otherwise. The denoised candidate is compared with the image
+  immediately before denoising and kept only if it removed at least
+  `DENOISE_MIN_NOISE_REMOVED` grey levels of noise, that was either a real share
+  of what was there or noise-like in character, and it kept
+  `DENOISE_MIN_DETAIL_RETENTION` of the structured detail and
+  `DENOISE_MIN_EDGE_RETENTION` of the edges, in the frame and in each face. A
+  candidate that fails on detail is tried at lower strengths; one that then
+  removes too little noise is rejected. Sharpening is not consulted and is not
+  changed by the outcome. `adaptive_denoise` records eligibility, benefit,
+  detail, acceptance and duration.
+- **Evidence (real CPU processing, synthetic Gaussian grain, no learned model):**
+  22 photographs, clean and with four grain levels, at three levels, 330 runs
+  against the previous commit: 90 closer to the clean original, 39 further, sum
+  of SSIM 273.3 to 283.2. Clean photographs denoised: 27 of 66 before, 4 after.
+  The noise-removed and noise-share limits were fixed on four photographs and
+  applied unchanged to eighteen; the residual-whiteness limit was chosen with
+  all in view. The pipeline's denoiser kept 1.00 of the structured detail in
+  every case, so the detail limits were verified only against a deliberately
+  destructive candidate (a Gaussian blur kept at most 0.82).
+- **Consequence:** An explicit LOW level now removes measured grain; it used to
+  mean "never denoise". Known losses: heavily grained, heavily textured
+  photographs are left alone where the old code denoised them (the largest was
+  0.084 SSIM), and photographs with no flat region cannot be measured well.
+  Fine-band texture in flat regions (skin pores) cannot be told from grain by
+  any measure here. Nothing was calibrated on real sensor noise.

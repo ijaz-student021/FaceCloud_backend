@@ -258,13 +258,12 @@ class OpenCVPolicyTests(SimpleTestCase):
     )
     @patch("enhancement.services.cv2.fastNlMeansDenoisingColored")
     def test_adaptive_denoise_uses_post_exposure_noise_mapping(self, denoise):
-        source = np.random.default_rng(18).integers(
-            15,
-            120,
-            size=(160, 160, 3),
-            dtype=np.uint8,
-        )
-        denoise.side_effect = lambda image, *_args: image.copy()
+        # A smooth scene with grain on it: something a denoiser can actually help.
+        rng = np.random.default_rng(18)
+        ramp = np.tile(np.linspace(40, 110, 320, dtype=np.float32), (320, 1))
+        source = np.clip(ramp[:, :, None] + rng.normal(0, 10, (320, 320, 3)), 0, 255).astype(np.uint8)
+        # A stand-in that really removes the grain, so the candidate is kept.
+        denoise.side_effect = lambda image, *_args: cv2.GaussianBlur(image, (0, 0), 1.2)
 
         _enhanced, _level, parameters = enhance_bgr(
             source,
@@ -275,7 +274,8 @@ class OpenCVPolicyTests(SimpleTestCase):
         metadata = parameters["adaptive_denoise"]
         self.assertTrue(metadata["enabled"])
         self.assertTrue(metadata["applied"])
-        self.assertEqual(metadata["strength"], 4)
+        self.assertEqual(metadata["strength"], metadata["requested_strength"])
+        self.assertEqual(metadata["requested_strength"], denoise.call_args.args[2])
         self.assertEqual(metadata["measurement_point"], "after_guard_a")
 
     @override_settings(

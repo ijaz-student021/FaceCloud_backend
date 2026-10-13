@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 from django.test import SimpleTestCase, override_settings
 
-from .services import _noise_whiteness, enhance_bgr, measure_compression_artifacts
+from .services import enhance_bgr, measure_compression_artifacts
 from .test_pipeline_regressions import NO_MODELS, textured
 
 
@@ -162,23 +162,20 @@ class DefectDrivenRoutingTests(SimpleTestCase):
 
 @override_settings(**NO_MODELS)
 class TextureIsNotNoiseTests(SimpleTestCase):
-    def test_grain_is_spatially_uncorrelated_and_texture_is_not(self):
-        self.assertLess(_noise_whiteness(fine_texture()), 1.0)
-        self.assertGreater(_noise_whiteness(grain(detailed(), 16)), 1.6)
-
     def test_a_well_lit_finely_textured_photo_is_not_denoised(self):
         texture = fine_texture()
         output, level, parameters = enhance_bgr(texture, "auto")
 
+        denoise = parameters["adaptive_denoise"]
         self.assertEqual(level, "low")
-        self.assertGreaterEqual(parameters["adaptive_denoise"]["input_noise_score"], 5.0)  # it *looks* noisy
-        self.assertFalse(parameters["adaptive_denoise"]["applied"])
-        self.assertEqual(parameters["adaptive_denoise"]["reason"], "auto_level_fine_texture_not_noise")
+        self.assertGreaterEqual(denoise["input_noise_score"], 5.0)  # it *looks* noisy
+        self.assertFalse(denoise["applied"])
+        self.assertEqual(denoise["reason"], "candidate_rejected")
+        self.assertIn("removed_texture_not_noise", denoise["candidate_guard"]["rejection_reasons"])
         np.testing.assert_array_equal(output, texture)
 
     def test_a_well_lit_grainy_photo_is_still_denoised(self):
-        grainy = grain(detailed(), 16)
+        grainy = grain(textured(720, 960, base=135), 16)
         _output, _level, parameters = enhance_bgr(grainy, "auto")
         self.assertTrue(parameters["adaptive_denoise"]["applied"])
-        self.assertEqual(parameters["adaptive_denoise"]["reason"], "auto_level_visible_noise")
-        self.assertGreaterEqual(parameters["adaptive_denoise"]["noise_whiteness"], 1.25)
+        self.assertEqual(parameters["adaptive_denoise"]["reason"], "measured_noise_accepted")

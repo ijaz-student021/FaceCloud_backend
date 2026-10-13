@@ -815,15 +815,17 @@ class EvaluationDrivenBehaviourTests(SimpleTestCase):
 
         self.assertEqual(level, "low")
         self.assertTrue(parameters["adaptive_denoise"]["applied"])
-        self.assertEqual(parameters["adaptive_denoise"]["reason"], "auto_level_visible_noise")
+        self.assertEqual(parameters["adaptive_denoise"]["reason"], "measured_noise_accepted")
         self.assertGreater(self.similarity(output, clean), self.similarity(grainy, clean) + 0.05)
         self.assertLess(parameters["quality_after"]["estimated_noise"], parameters["quality_before"]["estimated_noise"])
 
-    def test_an_explicit_low_level_still_keeps_the_source_texture(self):
+    def test_the_exposure_level_does_not_decide_whether_grain_is_removed(self):
+        """An explicit LOW used to mean "never denoise", whatever was measured."""
         grainy = noisy(textured(720, 960, base=135), 16)
-        parameters = enhance_bgr(grainy, "low")[2]
-        self.assertFalse(parameters["adaptive_denoise"]["applied"])
-        self.assertEqual(parameters["adaptive_denoise"]["reason"], "low_level_preserves_source_texture")
+        for level in ("low", "medium", "high", "auto"):
+            parameters = enhance_bgr(grainy, level)[2]
+            self.assertTrue(parameters["adaptive_denoise"]["applied"], level)
+            self.assertFalse(parameters["adaptive_denoise"]["eligibility"]["depends_on_exposure_level"])
 
     def test_a_clean_photo_is_not_denoised_on_the_automatic_level(self):
         parameters = enhance_bgr(textured(720, 960, base=135), "auto")[2]
@@ -836,9 +838,8 @@ class EvaluationDrivenBehaviourTests(SimpleTestCase):
 
         self.assertTrue(parameters["adaptive_denoise"]["applied"])
         self.assertGreaterEqual(parameters["adaptive_denoise"]["strength"], 10)
-        self.assertLessEqual(
-            parameters["quality_after"]["estimated_noise"], parameters["quality_before"]["estimated_noise"],
-        )
+        self.assertGreater(parameters["adaptive_denoise"]["benefit"]["noise_removed"], 1.0)
+        self.assertLess(self.similarity(grainy, clean), self.similarity(output, clean))
 
     def test_stronger_noise_gets_a_stronger_denoise(self):
         from .services import _adaptive_denoise_strength

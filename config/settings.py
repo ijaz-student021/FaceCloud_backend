@@ -339,15 +339,26 @@ ADAPTIVE_DENOISE_STRENGTHS = tuple(
         default=["0", "3", "4", "7", "10", "13", "16"],
     )
 )
-# On the automatic level a bright photo lands on LOW, which normally leaves grain
-# alone. From this measured score up, it is denoised anyway.
-ADAPTIVE_DENOISE_AUTO_MIN_SCORE = env.float("ADAPTIVE_DENOISE_AUTO_MIN_SCORE", default=5.0)
-# ...and only when that detail is grain rather than texture: the ratio of
-# finest-band to next-band detail energy (see _noise_whiteness). Clean textured
-# photographs measured 0.5-1.0, photographs with added grain 1.4-3.9. Real sensor
-# noise is more correlated than the synthetic grain this was set with, so it may
-# read lower; lowering this makes the automatic level denoise more readily.
-ADAPTIVE_DENOISE_AUTO_MIN_WHITENESS = env.float("ADAPTIVE_DENOISE_AUTO_MIN_WHITENESS", default=1.25)
+# Whether a denoised candidate is kept (enhancement/denoise_guard.py). It is
+# compared with the image immediately before denoising:
+#  - it must remove at least this much fine-band noise (grey levels) from the
+#    flat regions, and that must be at least this share of what was there (grass
+#    and gravel "score" as noisy, but only a small share of real texture can be
+#    denoised away). Fixed on four photographs with added grain, then applied
+#    unchanged to eighteen others (ADR-021);
+#  - it must keep this fraction of the structured detail and of the edges, each
+#    measured above its own noise floor. The pipeline's denoiser kept 1.00 in
+#    every case measured and a Gaussian blur at most 0.82, so 0.85 separates a
+#    destructive candidate from a sound one; it is a guard, not a tuned value.
+DENOISE_MIN_NOISE_REMOVED = env.float("DENOISE_MIN_NOISE_REMOVED", default=1.0)
+DENOISE_MIN_NOISE_REDUCTION = env.float("DENOISE_MIN_NOISE_REDUCTION", default=0.30)
+# A candidate below that share is still kept when what it removed is noise-like
+# (fine-band over mid-band amplitude of the removed part: about 3.5 for pure
+# grain, about 1.8 for texture). Chosen with all 22 photographs in view: none of
+# the four design photographs depends on it, so it has no held-out check.
+DENOISE_MIN_RESIDUAL_WHITENESS = env.float("DENOISE_MIN_RESIDUAL_WHITENESS", default=3.0)
+DENOISE_MIN_DETAIL_RETENTION = env.float("DENOISE_MIN_DETAIL_RETENTION", default=0.85)
+DENOISE_MIN_EDGE_RETENTION = env.float("DENOISE_MIN_EDGE_RETENTION", default=0.85)
 # The company has confirmed a private commercial license for the supplied
 # checkpoint.  The artifact and license evidence remain outside source control.
 # Portable source defaults stay disabled because the licensed checkpoint is not

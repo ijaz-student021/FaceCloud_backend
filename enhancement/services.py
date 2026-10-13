@@ -39,6 +39,7 @@ from .models import (
     ImageEnhancementResult,
 )
 from .colorization import ColorizationUnavailable, colorize_with_siggraph17
+from .denoise_guard import DenoiseReference, judge_candidate
 from .face_fidelity import check_face_regions
 from .gfpgan import GFPGANUnavailable, restore_faces
 from .identity_guard import (
@@ -1111,21 +1112,6 @@ def measure_post_exposure_noise_stage(context):
     return context
 
 
-def _noise_whiteness(image):
-    """How uncorrelated the finest detail is: fine-band over mid-band energy.
-
-    Sensor grain varies pixel to pixel, so nearly all of its energy is in the
-    finest band and the ratio is high (1.4 to 3.9 on photographs with added
-    grain). Real texture is correlated across neighbouring pixels and has as
-    much energy one octave down (0.5 to 1.0 on clean grass, gravel and brick).
-    """
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32)
-    fine_blur = cv2.GaussianBlur(gray, (0, 0), 1.0)
-    fine = float(np.median(np.abs(gray - fine_blur)))
-    mid = float(np.median(np.abs(fine_blur - cv2.GaussianBlur(gray, (0, 0), 2.5))))
-    return fine / max(mid, 0.25)
-
-
 def _adaptive_denoise_strength(noise_score):
     breakpoints = tuple(settings.ADAPTIVE_DENOISE_BREAKPOINTS)
     strengths = tuple(settings.ADAPTIVE_DENOISE_STRENGTHS)
@@ -1178,67 +1164,120 @@ def _edge_aware_denoise(image, strength):
     return np.clip(blended, 0, 255).astype(np.uint8)
 
 
+def _denoise_face_boxes(image):
+    """Face boxes for the denoise check, or none when the detector is unavailable."""
+    from .face_fidelity import _detect_boxes
+
+    try:
+        return _detect_boxes(image)
+    except (ValidationError, cv2.error):
+        return []
+
+
 def adaptive_denoise_stage(context):
-    """Denoise measured output noise without inventing facial detail."""
+    """Denoise only where noise was measured, and keep the result only if it paid off.
+
+    Eligibility comes from the image, not from the exposure level: a photo that
+    was brightened is not thereby noisy, and a well-exposed one is not thereby
+    clean. The denoised candidate is then compared with the image as it was
+    immediately before (``DenoiseReference``) and kept, weakened or dropped on
+    what it removed and what it cost. Nothing later (sharpening in particular)
+    is consulted or adjusted to offset a loss here.
+    """
     enabled = bool(settings.ADAPTIVE_DENOISE_ENABLED) or context.style == EnhancementStyle.AI_MAX
     noise_score = context.post_exposure_noise["estimated_noise"]
-    strength = 0
-    reason = "not_required"
-    whiteness = None
-
-    if enabled and context.applied_level in {
-        EnhancementLevel.MEDIUM,
-        EnhancementLevel.HIGH,
-    }:
-        strength = _adaptive_denoise_strength(noise_score)
-        reason = "post_exposure_noise_mapping"
-    elif (
-        enabled
-        and context.requested_level == EnhancementLevel.AUTO
-        and noise_score >= settings.ADAPTIVE_DENOISE_AUTO_MIN_SCORE
-    ):
-        # The automatic level follows exposure, so a bright but grainy photo
-        # lands on LOW. Its noise is measured, not assumed: denoise it. An
-        # explicitly chosen LOW still keeps the source's texture.
-        # The noise score cannot tell grain from fine texture (grass, gravel,
-        # fabric score as high as a noisy photo), so a well-exposed photo is
-        # denoised only when the detail is also spatially uncorrelated.
-        whiteness = _noise_whiteness(context.current_image)
-        if whiteness >= settings.ADAPTIVE_DENOISE_AUTO_MIN_WHITENESS:
-            strength = _adaptive_denoise_strength(noise_score)
-            reason = "auto_level_visible_noise"
-        else:
-            reason = "auto_level_fine_texture_not_noise"
-    elif enabled:
-        reason = "low_level_preserves_source_texture"
+    before = context.current_image
+    minimum_noise = float(settings.DENOISE_MIN_NOISE_REMOVED)
+    if enabled:
+        requested = _adaptive_denoise_strength(noise_score)
+        basis = "measured_noise"
     else:
-        # Preserve the legacy, input-defect-driven behaviour while the new
-        # rollout flag remains disabled.
-        strength = int(context.policy.get("denoise", 0))
-        reason = "feature_flag_disabled_legacy_policy"
+        # The rollout flag is off: the legacy input-defect policy proposes the
+        # strength, and its candidate is judged like any other.
+        requested = int(context.policy.get("denoise", 0))
+        basis = "feature_flag_disabled_legacy_policy"
 
-    # Judge blur on the brightened image. A near-black frame always measures as
-    # "severe blur" (almost no Laplacian variance), which used to switch denoising
-    # off for exactly the night photos that come out grainiest.
+    eligibility = {
+        "eligible": False,
+        "reason": "",
+        "basis": basis,
+        "noise_score": noise_score,
+        "ladder_strength": requested,
+        "flat_region_noise": None,
+        "minimum_flat_region_noise": minimum_noise,
+        # Recorded to show it was not consulted.
+        "exposure_level": context.applied_level,
+        "depends_on_exposure_level": False,
+    }
+    reference = None
     if "severe_blur" in context.post_exposure_noise["quality"]["defects"]:
-        strength = 0
+        # Judged on the brightened image: a near-black frame always measures as
+        # severely blurred, which used to switch denoising off for night photos.
+        eligibility["reason"] = "The image is severely blurred; denoising would remove what detail is left."
         reason = "severe_blur_protection"
+    elif requested <= 0:
+        eligibility["reason"] = "The measured noise score is below the lowest denoise step."
+        reason = "noise_score_below_ladder"
+    else:
+        reference = DenoiseReference(before)
+        eligibility["flat_region_noise"] = reference.noise_level
+        if reference.noise_level < minimum_noise:
+            # It cannot remove more noise than is there, so it could not pass.
+            eligibility["reason"] = "Too little noise was measured in the flat regions to be worth removing."
+            reason = "no_measurable_noise"
+            reference = None
+        else:
+            eligibility["eligible"] = True
+            eligibility["reason"] = "Noise was measured in the flat regions."
+            reason = "measured_noise"
 
-    applied = strength > 0
-    if applied:
-        context.current_image = _edge_aware_denoise(context.current_image, strength)
-    context.adaptive_denoise = {
+    metadata = {
         "enabled": enabled,
-        "applied": applied,
-        "strength": strength,
+        "applied": False,
+        "strength": 0,
+        "requested_strength": requested,
         "reason": reason,
         "method": "edge_aware_nlm_blend",
         "input_noise_score": noise_score,
-        "noise_whiteness": None if whiteness is None else round(whiteness, 3),
         "measurement_point": "after_guard_a",
+        "reference": "image_immediately_before_denoise",
         "breakpoints": list(settings.ADAPTIVE_DENOISE_BREAKPOINTS),
         "strengths": list(settings.ADAPTIVE_DENOISE_STRENGTHS),
+        "eligibility": eligibility,
+        "requested": eligibility["eligible"],
     }
+    if reference is not None:
+        metadata["faces_checked"] = reference.set_faces(_denoise_face_boxes(before))
+        candidate = _edge_aware_denoise(before, requested)
+        accepted_image, verdict = judge_candidate(reference, candidate)
+        decisive = verdict["attempts"][-1 if verdict["accepted"] else 0]
+        frame = decisive["frame"]
+        metadata["benefit"] = {
+            key: frame[key] for key in (
+                "noise_before", "noise_after", "noise_removed", "noise_reduction", "removed_residual_whiteness",
+            )
+        }
+        metadata["detail"] = {
+            **{key: frame[key] for key in ("detail_retention", "edge_retention")},
+            "faces": decisive["faces"],
+        }
+        metadata["candidate_guard"] = verdict
+        metadata["acceptance"] = {key: verdict[key] for key in ("status", "reason", "applied_blend")}
+        if verdict["accepted"]:
+            context.current_image = accepted_image
+            metadata["applied"] = True
+            metadata["strength"] = requested
+            metadata["reason"] = (
+                "measured_noise_accepted" if verdict["status"] == "accepted"
+                else "measured_noise_accepted_at_reduced_strength"
+            )
+        else:
+            context.current_image = before
+            metadata["reason"] = "candidate_rejected"
+            metadata["fallback_reason"] = verdict["reason"]
+    else:
+        metadata["acceptance"] = {"status": "not_attempted", "reason": eligibility["reason"], "applied_blend": 0.0}
+    context.adaptive_denoise = metadata
     context.restoration_reference = context.current_image
     return context
 
@@ -1946,6 +1985,7 @@ _CHECKPOINT_STAGES = frozenset({
 _REPORTED_KEYS = (
     "provider", "model", "device", "tile_size", "memory_retries",
     "checkpoint_sha256_prefix", "strength", "output_blend",
+    "requested_strength", "acceptance", "benefit", "detail",
 )
 
 
@@ -2042,6 +2082,8 @@ def _run_stage(context, name, function, optional, attribute):
     if name == "adaptive_denoise":
         # Whatever happened, this is the last image before any restoration model.
         context.restoration_reference = context.current_image
+    if attribute and isinstance(getattr(context, attribute), dict):
+        getattr(context, attribute)["stage_duration_ms"] = round((time.perf_counter() - started) * 1000, 3)
     context.stage_reports.append(_stage_report(
         context, name, optional, attribute, failed,
         # A guard returns a new array even when it kept every pixel, so identity
