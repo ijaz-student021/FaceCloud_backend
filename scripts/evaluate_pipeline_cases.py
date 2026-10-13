@@ -15,6 +15,19 @@ scikit-image for that). Output goes to ``.runtime/pipeline_eval/<run name>/``:
 ``summary.md``, ``results.json`` and one ``<photo>__<case>.jpg`` per case showing
 clean | degraded input | enhanced output, plus ``sheet.jpg`` with all of them.
 
+Real photographs, as they are (portraits, group photos), with the models this
+machine has enabled:
+
+    python scripts/evaluate_pipeline_cases.py --images gpu_sample/faces --cases original \
+        --enable HD_RESTORATION_ENABLED,GFPGAN_ENABLED --limit 20 --name gpu-portraits
+
+``--enable`` switches settings on for this run only. The summary opens with what
+kind of evidence the run is: ``real_gpu_models`` (a learned model ran on CUDA or
+MPS), ``real_cpu_models`` (a learned model ran on the CPU) or
+``cpu_classical_only`` (no learned model ran; only OpenCV processing). It lists,
+per photo, the identity outcome, each model stage's device and fallback reason,
+latency, and peak host and GPU memory.
+
 What this does and does not show: the degradations are synthetic and the numbers
 come from whatever models this machine has installed (the summary lists which
 stages actually ran). It is evidence about the pipeline's routing and guards and
@@ -35,7 +48,41 @@ sys.path.insert(0, str(ROOT))
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
-CASES = ("good", "dark", "noisy", "blurred", "compressed", "overexposed", "grayscale", "group", "transparent")
+CASES = (
+    "original", "good", "dark", "noisy", "blurred", "compressed", "overexposed", "grayscale", "group", "transparent",
+)
+DEFAULT_CASES = tuple(case for case in CASES if case != "original")
+# Stages that run a learned model. Everything else is classical OpenCV code.
+MODEL_STAGES = (
+    "purevision_restoration", "low_resolution_restoration", "hd_restoration",
+    "purescale_super_resolution", "face_restoration", "colorization",
+)
+
+
+def gpu_memory_mb(reset=False):
+    """Peak GPU memory since the last reset, in MB, or ``None`` without a GPU."""
+    torch = sys.modules.get("torch")
+    if torch is None:
+        return None
+    if torch.cuda.is_available():
+        if reset:
+            torch.cuda.reset_peak_memory_stats()
+            return 0.0
+        return round(torch.cuda.max_memory_allocated() / (1024 * 1024))
+    mps = getattr(torch.backends, "mps", None)
+    if mps is not None and mps.is_available() and hasattr(torch, "mps"):
+        return round(torch.mps.driver_allocated_memory() / (1024 * 1024))
+    return None
+
+
+def evidence_tier(rows):
+    """What kind of evidence a run is, from the stages that actually ran."""
+    devices = {device for row in rows for device in row["model_stages_run"].values()}
+    if any(str(device).startswith(("cuda", "mps")) for device in devices):
+        return "real_gpu_models"
+    if devices or any(row["zero_dce_applied"] for row in rows):
+        return "real_cpu_models"
+    return "cpu_classical_only"
 
 
 def load_sources(folder, limit):
@@ -58,7 +105,7 @@ def degrade(clean, case, rng):
     import cv2
     import numpy as np
 
-    if case == "good":
+    if case in {"good", "original"}:
         return clean.copy(), None
     if case == "dark":
         dark = (clean.astype(np.float32) / 255.0) ** 2.2 * 0.10  # two-plus stops under, in linear light
@@ -122,7 +169,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--images", help="Folder of photos to use instead of the bundled samples.")
     parser.add_argument("--limit", type=int, default=4, help="How many source photos to use.")
-    parser.add_argument("--cases", default=",".join(CASES))
+    parser.add_argument("--cases", default=",".join(DEFAULT_CASES))
+    parser.add_argument(
+        "--enable", default="",
+        help="Comma-separated boolean settings to switch on for this run, e.g. HD_RESTORATION_ENABLED,GFPGAN_ENABLED.",
+    )
     parser.add_argument("--level", default="auto", choices=("auto", "low", "medium", "high"))
     parser.add_argument("--style", default="natural", choices=("natural", "dynamic", "ai_max"))
     parser.add_argument("--min-edge", type=int, default=0, help="Upscale smaller photos to this shorter edge first.")
@@ -139,6 +190,13 @@ def main():
     django.setup()
     import cv2
     import numpy as np
+    from django.conf import settings
+
+    enabled = [name.strip() for name in arguments.enable.split(",") if name.strip()]
+    for name in enabled:
+        if not hasattr(settings, name) or not isinstance(getattr(settings, name), bool):
+            raise SystemExit(f"{name} is not a boolean setting.")
+        setattr(settings, name, True)
 
     from enhancement.services import _attach_alpha, _structural_similarity, analyze_image_quality, enhance_bgr
 
@@ -156,6 +214,7 @@ def main():
             degraded, alpha = degrade(clean, case, rng)
             target = reference_for(clean, case)
             memory_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            gpu_memory_mb(reset=True)
             started = time.perf_counter()
             enhanced, level, parameters = enhance_bgr(degraded, arguments.level, style=arguments.style)
             elapsed = time.perf_counter() - started
@@ -195,6 +254,26 @@ def main():
                     key: parameters["face_fidelity"].get(key) for key in ("status", "faces_checked", "faces_adjusted")
                 },
                 "identity_status": parameters["identity_status"],
+                "identity": {
+                    key: parameters["identity_verification"].get(key)
+                    for key in ("status", "verified", "reason", "requirement_bypass", "face_restoration_unverified")
+                } | {
+                    key: parameters["identity_guard"].get(key)
+                    for key in ("similarity", "initial_similarity", "faces_compared", "strength")
+                },
+                "gpu_peak_memory_mb": gpu_memory_mb(),
+                "zero_dce_applied": bool(parameters["zero_dce"].get("applied")),
+                "model_stages_run": {
+                    entry["stage"]: entry.get("device") or next(
+                        (m.get("device") for m in entry.get("models", []) if m.get("applied")), "unknown",
+                    )
+                    for entry in parameters["stage_reports"]
+                    if entry["stage"] in MODEL_STAGES and entry["status"] in {"accepted", "partially_accepted"}
+                },
+                "stage_durations_ms": {
+                    entry["stage"]: entry["duration_ms"] for entry in parameters["stage_reports"]
+                },
+                "no_correction_needed": parameters["no_correction_needed"],
                 "minimal_processing": parameters["plan"]["minimal_processing"],
                 "warnings": parameters["warnings"],
             }
@@ -224,8 +303,24 @@ def main():
     cv2.imwrite(str(output_dir / "sheet.jpg"), sheet, [cv2.IMWRITE_JPEG_QUALITY, 85])
     (output_dir / "results.json").write_text(json.dumps(rows, indent=2))
 
+    tier = evidence_tier(rows)
+    torch = sys.modules.get("torch")
+    environment = [
+        f"- Evidence: **`{tier}`** "
+        + {
+            "real_gpu_models": "(a learned model ran on a GPU)",
+            "real_cpu_models": "(a learned model ran, on the CPU)",
+            "cpu_classical_only": "(no learned model ran; OpenCV processing only)",
+        }[tier],
+        f"- PyTorch: {getattr(torch, '__version__', 'not loaded')}"
+        + (f", CUDA device: {torch.cuda.get_device_name(0)}" if torch is not None and torch.cuda.is_available() else ""),
+        f"- Settings switched on for this run: {', '.join(enabled) or 'none'}",
+        f"- Model stages that ran: {sorted({stage for row in rows for stage in row['model_stages_run']}) or 'none'}",
+    ]
     lines = [
         f"# Pipeline evaluation `{arguments.name}`",
+        "",
+        *environment,
         "",
         f"Level `{arguments.level}`, style `{arguments.style}`. Degradations are synthetic; PSNR and SSIM are "
         "measured against the clean photo, so a rise means the output moved toward it.",
@@ -243,6 +338,18 @@ def main():
         )
     fallbacks = sorted({f"{stage}: {reason}" for row in rows for stage, reason in row["fallbacks"].items()})
     lines += ["", "## Stages that fell back", ""] + ([f"- {item}" for item in fallbacks] or ["- none"])
+    lines += [
+        "", "## Identity, devices and memory", "",
+        "| Photo | Case | Identity | Similarity | Model stages (device) | Time (s) | GPU peak MB |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for row in rows:
+        stages = ", ".join(f"{stage} ({device})" for stage, device in row["model_stages_run"].items()) or "none"
+        lines.append(
+            f"| {row['photo']} | {row['case']} | {row['identity']['status']}"
+            + (" (restored, unverified)" if row["identity"]["face_restoration_unverified"] else "")
+            + f" | {row['identity']['similarity']} | {stages} | {row['seconds']} | {row['gpu_peak_memory_mb']} |"
+        )
     lines += ["", f"Peak process memory: {max(row['peak_memory_mb'] for row in rows)} MB."]
     (output_dir / "summary.md").write_text("\n".join(lines) + "\n")
     print(f"\nWrote {output_dir}")
