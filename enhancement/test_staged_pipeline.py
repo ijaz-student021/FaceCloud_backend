@@ -257,9 +257,10 @@ class FaceRestorationIdentityGateTests(SimpleTestCase):
         self.assertEqual(report(parameters, "face_restoration")["status"], "rejected")
 
     @override_settings(**GFPGAN_ON)
+    @patch("enhancement.services._identity_model_configured", return_value=True)
     @patch("enhancement.services.build_identity_reference", return_value=(None, "No face large enough to judge was found in the source."))
     @patch("enhancement.services.restore_faces")
-    def test_no_reliable_source_face_also_refuses(self, restore, _reference):
+    def test_no_reliable_source_face_also_refuses(self, restore, _reference, _configured):
         _output, _level, parameters = enhance_bgr(self.blurred, "low")
 
         restore.assert_not_called()
@@ -791,3 +792,92 @@ class TransparencyTests(ResultFixture):
 
         self.assertEqual(self.read_output(result).shape, (64, 96, 3))
         self.assertEqual(result.applied_parameters["transparency"], {"source_had_alpha": False, "preserved": False})
+
+
+def noisy(image, sigma, seed=9):
+    rng = np.random.default_rng(seed)
+    return np.clip(image.astype(np.float32) + rng.normal(0, sigma, image.shape), 0, 255).astype(np.uint8)
+
+
+@override_settings(**NO_MODELS)
+class EvaluationDrivenBehaviourTests(SimpleTestCase):
+    """Behaviour changed because scripts/evaluate_pipeline_cases.py showed a failure."""
+
+    def similarity(self, first, second):
+        from .services import _structural_similarity
+
+        return _structural_similarity(first, second)
+
+    def test_a_bright_grainy_photo_is_denoised_on_the_automatic_level(self):
+        clean = textured(720, 960, base=135)
+        grainy = noisy(clean, 16)
+        output, level, parameters = enhance_bgr(grainy, "auto")
+
+        self.assertEqual(level, "low")
+        self.assertTrue(parameters["adaptive_denoise"]["applied"])
+        self.assertEqual(parameters["adaptive_denoise"]["reason"], "auto_level_visible_noise")
+        self.assertGreater(self.similarity(output, clean), self.similarity(grainy, clean) + 0.05)
+        self.assertLess(parameters["quality_after"]["estimated_noise"], parameters["quality_before"]["estimated_noise"])
+
+    def test_an_explicit_low_level_still_keeps_the_source_texture(self):
+        grainy = noisy(textured(720, 960, base=135), 16)
+        parameters = enhance_bgr(grainy, "low")[2]
+        self.assertFalse(parameters["adaptive_denoise"]["applied"])
+        self.assertEqual(parameters["adaptive_denoise"]["reason"], "low_level_preserves_source_texture")
+
+    def test_a_clean_photo_is_not_denoised_on_the_automatic_level(self):
+        parameters = enhance_bgr(textured(720, 960, base=135), "auto")[2]
+        self.assertFalse(parameters["adaptive_denoise"]["applied"])
+
+    def test_brightening_a_noisy_dark_photo_does_not_leave_it_grainier(self):
+        clean = textured(720, 960, base=70)
+        grainy = noisy(clean, 14)
+        output, _level, parameters = enhance_bgr(grainy, "auto")
+
+        self.assertTrue(parameters["adaptive_denoise"]["applied"])
+        self.assertGreaterEqual(parameters["adaptive_denoise"]["strength"], 10)
+        self.assertLessEqual(
+            parameters["quality_after"]["estimated_noise"], parameters["quality_before"]["estimated_noise"],
+        )
+
+    def test_stronger_noise_gets_a_stronger_denoise(self):
+        from .services import _adaptive_denoise_strength
+
+        strengths = [_adaptive_denoise_strength(score) for score in (0.5, 1.5, 3.0, 4.0, 6.0, 8.0, 12.0)]
+        self.assertEqual(strengths, [0, 3, 4, 7, 10, 13, 16])
+        self.assertEqual(strengths, sorted(strengths))
+
+    def test_an_overexposed_source_is_corrected_instead_of_vetoed_by_its_own_clipping(self):
+        clean = textured(720, 960, base=120)
+        blown = np.clip(clean.astype(np.float32) * 1.6 + 40, 0, 255).astype(np.uint8)
+        output, level, parameters = enhance_bgr(blown, "auto")
+
+        guard = parameters["quality_guards"]["guard_a"]
+        self.assertGreater(parameters["quality_before"]["highlight_clipping_percent"], 20)
+        self.assertEqual(level, "high")  # judged on clipping, not on darkness alone
+        self.assertNotIn("absolute_highlight_clipping_limited", guard["reasons"])
+        self.assertEqual(guard["applied_candidate_strength"], 1.0)
+        self.assertLess(float(output.mean()), float(blown.mean()))
+
+    def test_enhancement_still_may_not_create_blown_highlights(self):
+        from .services import _quality_guard, analyze_image_quality
+
+        source = textured(720, 960, base=150)
+        blown = np.clip(source.astype(np.float32) * 1.5 + 30, 0, 255).astype(np.uint8)
+        _guarded, quality, metadata = _quality_guard(
+            source, blown, EnhancementLevel.HIGH, analyze_image_quality(source),
+        )
+        self.assertIn("highlight_clipping_limited", metadata["reasons"])
+        self.assertLessEqual(quality["highlight_clipping_percent"], 5.0)
+
+    def test_a_bright_photo_without_clipping_is_not_treated_as_overexposed(self):
+        high_key = np.clip(textured(720, 960, base=185), 0, 240)  # bright by intent, nothing clipped
+        _output, level, parameters = enhance_bgr(high_key, "auto")
+        self.assertEqual(level, "low")
+        self.assertLess(parameters["quality_before"]["highlight_clipping_percent"], 8)
+
+    @override_settings(IDENTITY_GUARD_ENABLED=True)
+    def test_identity_is_unavailable_not_inconclusive_when_no_model_is_configured(self):
+        parameters = enhance_bgr(textured(), "low")[2]
+        self.assertEqual(parameters["identity_status"], "unavailable")
+        self.assertIn("No identity model is configured", parameters["identity_guard"]["fallback_reason"])

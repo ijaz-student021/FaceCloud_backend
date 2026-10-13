@@ -109,6 +109,11 @@ OUTPUT_GUARD_POLICIES = {
     },
 }
 
+# Smallest smoothed Sobel magnitude treated as a full-strength edge.
+_EDGE_REFERENCE_FLOOR = 20.0
+# Percentage points of highlight clipping a colour-space round trip can add.
+_CLIPPING_ROUNDING_TOLERANCE = 0.1
+
 _SUPERRES_LOCK = threading.Lock()
 _SUPERRES_CACHE = {}
 
@@ -185,10 +190,18 @@ def _timed_pipeline_stage(context, stage_name):
         context.stage_order.append(stage_name)
 
 
-def _auto_level(mean_luminance):
+def _auto_level(mean_luminance, highlight_clipping_percent=0.0):
     if mean_luminance < 65:
         return EnhancementLevel.HIGH
     if mean_luminance < 115:
+        return EnhancementLevel.MEDIUM
+    # Overexposure needs correcting as much as darkness does; the level only
+    # ever followed darkness, so a blown-out photo got the gentlest setting.
+    # Judged on clipped highlights, not on brightness: a high-key portrait or a
+    # snow scene is bright by intent and must not be darkened.
+    if highlight_clipping_percent > 20:
+        return EnhancementLevel.HIGH
+    if highlight_clipping_percent > 8:
         return EnhancementLevel.MEDIUM
     return EnhancementLevel.LOW
 
@@ -732,8 +745,13 @@ def _quality_guard(original, candidate, level, input_quality, learned_model=Fals
             - input_quality["highlight_clipping_percent"]
         )
         clipping_ok = clipping_growth <= limits["max_highlight_clipping_growth"]
+        # The absolute limit stops enhancement from *creating* blown highlights.
+        # A source that is already over it must not veto the correction that
+        # darkens it: only a candidate that adds clipping is held to the limit
+        # (a tenth of a point allows for colour-space rounding).
         absolute_clipping_ok = (
             output_quality["highlight_clipping_percent"] <= clipping_limit
+            or clipping_growth <= _CLIPPING_ROUNDING_TOLERANCE
         )
         chroma_ok = chroma_shift <= limits["max_chroma_shift"]
         if contrast_ok and clipping_ok and absolute_clipping_ok and chroma_ok:
@@ -758,7 +776,10 @@ def _quality_guard(original, candidate, level, input_quality, learned_model=Fals
         output_quality["highlight_clipping_percent"]
         - input_quality["highlight_clipping_percent"]
     )
-    if output_quality["highlight_clipping_percent"] > clipping_limit:
+    if (
+        output_quality["highlight_clipping_percent"] > clipping_limit
+        and clipping_growth > _CLIPPING_ROUNDING_TOLERANCE
+    ):
         logger.warning(
             "Enhancement output retained %.3f%% clipped highlights after guarding.",
             output_quality["highlight_clipping_percent"],
@@ -901,7 +922,7 @@ def analyze_original_stage(context):
     context.input_quality = analyze_image_quality(image)
     mean_luminance = context.input_quality["mean_luminance"]
     context.applied_level = (
-        _auto_level(mean_luminance)
+        _auto_level(mean_luminance, context.input_quality["highlight_clipping_percent"])
         if context.requested_level == EnhancementLevel.AUTO
         else context.requested_level
     )
@@ -1024,7 +1045,12 @@ def _gradient_edge_strength(image):
     gradient_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
     gradient_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
     gradient = cv2.GaussianBlur(cv2.magnitude(gradient_x, gradient_y), (0, 0), 3.0)
-    edge_reference = float(np.percentile(gradient, 75)) + 1e-6
+    # "Edge" is relative to the photo's own 75th-percentile gradient, but never
+    # below an absolute floor: in a photo with no real edges (sky, a studio
+    # backdrop) the strongest quarter of leftover grain would otherwise count as
+    # edges and be protected from denoising, leaving blotches. Measured p75 on
+    # real photographs was 34-87, so the floor does not affect them.
+    edge_reference = max(float(np.percentile(gradient, 75)), _EDGE_REFERENCE_FLOOR) + 1e-6
     return np.clip(gradient / edge_reference, 0.0, 1.0)
 
 
@@ -1065,6 +1091,16 @@ def adaptive_denoise_stage(context):
     }:
         strength = _adaptive_denoise_strength(noise_score)
         reason = "post_exposure_noise_mapping"
+    elif (
+        enabled
+        and context.requested_level == EnhancementLevel.AUTO
+        and noise_score >= settings.ADAPTIVE_DENOISE_AUTO_MIN_SCORE
+    ):
+        # The automatic level follows exposure, so a bright but grainy photo
+        # lands on LOW. Its noise is measured, not assumed: denoise it. An
+        # explicitly chosen LOW still keeps the source's texture.
+        strength = _adaptive_denoise_strength(noise_score)
+        reason = "auto_level_visible_noise"
     elif enabled:
         reason = "low_level_preserves_source_texture"
     else:
@@ -1344,6 +1380,16 @@ def restore_degraded_faces(image, input_quality):
         return image, metadata
 
 
+def _identity_model_configured():
+    """Whether an identity model is configured at all (no model is loaded)."""
+    from identities.providers import DisabledIdentityProvider, get_identity_provider
+
+    return not isinstance(get_identity_provider(), DisabledIdentityProvider)
+
+
+NO_IDENTITY_MODEL_REASON = "No identity model is configured, so identity was not checked."
+
+
 def _prepare_identity_reference(context):
     """Embed the source's faces once: ``(state, reason)``.
 
@@ -1363,6 +1409,9 @@ def _prepare_identity_reference(context):
             reference, reason = build_identity_reference(context.source_image)
             context.identity_reference = reference
             state = "ready" if reference is not None else "inconclusive"
+            if reference is None and not _identity_model_configured():
+                # Nothing could have been compared even if a face had been found.
+                state, reason = "unavailable", NO_IDENTITY_MODEL_REASON
         except IdentityGuardUnavailable as error:
             reason = str(error)
         except (cv2.error, ValueError, TypeError):
@@ -1660,6 +1709,13 @@ def identity_guard_stage(context):
         )
         metadata.update(guard_metadata)
         context.current_image = guarded
+        if (
+            metadata.get("status") == "skipped"
+            and metadata.get("reference_checked")
+            and not _identity_model_configured()
+        ):
+            metadata["reference_checked"] = False
+            metadata["fallback_reason"] = NO_IDENTITY_MODEL_REASON
         if guard_metadata["status"] == "unresolved":
             context.warnings.append(
                 "Enhancement changed a face more than the identity guard allows "

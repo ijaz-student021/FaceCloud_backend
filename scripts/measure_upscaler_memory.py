@@ -9,12 +9,17 @@ so the numbers describe memory and speed, never image quality.
 ``native`` is the previous behaviour: accumulate the full 4x result, then reduce.
 ``output_scale`` reduces each tile first (what the pipeline does now). Run each
 mode in its own process: peak memory is a per-process high-water mark.
+
+``--stub-model`` swaps the network for a trivial 4x upscaler. That isolates the
+memory of the tiling buffers, which is what differs between the two modes, and
+makes large inputs quick to measure.
 """
 import argparse
 import os
 import resource
 import sys
 import time
+import tracemalloc
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +34,7 @@ def main():
     parser.add_argument("--device", default="auto")
     parser.add_argument("--tile", type=int, default=256)
     parser.add_argument("--overlap", type=int, default=24)
+    parser.add_argument("--stub-model", action="store_true")
     arguments = parser.parse_args()
 
     import django
@@ -47,8 +53,16 @@ def main():
     height = int((arguments.megapixels * 1e6 * 3 / 4) ** 0.5)
     width = int(height * 4 / 3)
     image = np.random.default_rng(1).integers(0, 256, (height, width, 3), dtype=np.uint8)
-    model = _build_realesrgan(nn, functional).eval().to(device)
+    if arguments.stub_model:
+        class Stub(nn.Module):
+            def forward(self, value):
+                return functional.interpolate(value, scale_factor=4, mode="nearest")
 
+        model = Stub().eval().to(device)
+    else:
+        model = _build_realesrgan(nn, functional).eval().to(device)
+
+    tracemalloc.start()
     started = time.perf_counter()
     if arguments.mode == "native":
         native = runtime.tiled_inference(torch, image, model, device, 4, arguments.tile, arguments.overlap)
@@ -58,6 +72,7 @@ def main():
             torch, image, model, device, 4, arguments.tile, arguments.overlap, output_scale=2,
         )
     elapsed = time.perf_counter() - started
+    buffers_mb = tracemalloc.get_traced_memory()[1] / (1024 * 1024)
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     peak_mb = peak / (1024 * 1024) if sys.platform == "darwin" else peak / 1024
     device_mb = None
@@ -67,7 +82,8 @@ def main():
         device_mb = torch.mps.driver_allocated_memory() / (1024 * 1024)
     print(
         f"mode={arguments.mode} device={device} input={width}x{height} ({width * height / 1e6:.2f} MP) "
-        f"output={output.shape[1]}x{output.shape[0]} time={elapsed:.1f}s peak_host={peak_mb:,.0f}MB"
+        f"output={output.shape[1]}x{output.shape[0]} time={elapsed:.1f}s peak_host={peak_mb:,.0f}MB "
+        f"peak_array_buffers={buffers_mb:,.0f}MB"
         + (f" device_memory={device_mb:,.0f}MB" if device_mb is not None else "")
     )
 

@@ -319,20 +319,29 @@ IDENTITY_GUARD_MIN_FACE_EDGE = env.int("IDENTITY_GUARD_MIN_FACE_EDGE", default=4
 # GFPGAN structural-similarity guard below); was off while that rollout was
 # still being validated.
 ADAPTIVE_DENOISE_ENABLED = env.bool("ADAPTIVE_DENOISE_ENABLED", default=True)
+# Denoise strength (the non-local-means ``h``) by measured noise score. Calibrated
+# against clean originals with synthetic Gaussian noise on four photographs
+# (scripts/evaluate_pipeline_cases.py and docs/features/10-12-image-enhancement.md):
+# the earlier ladder stopped at 7, which left a score-6 photo at SSIM 0.81 where
+# 10-12 reaches 0.84-0.85, and a score-10 photo at 0.50 where 16-18 reaches 0.63.
+# Each step sits at the low end of the range that scored best, to keep texture.
 ADAPTIVE_DENOISE_BREAKPOINTS = tuple(
     float(value)
     for value in env.list(
         "ADAPTIVE_DENOISE_BREAKPOINTS",
-        default=["1.0", "2.0", "3.5", "5.0", "7.0"],
+        default=["1.0", "2.0", "3.5", "5.0", "7.0", "9.0"],
     )
 )
 ADAPTIVE_DENOISE_STRENGTHS = tuple(
     int(value)
     for value in env.list(
         "ADAPTIVE_DENOISE_STRENGTHS",
-        default=["0", "3", "4", "5", "6", "7"],
+        default=["0", "3", "4", "7", "10", "13", "16"],
     )
 )
+# On the automatic level a bright photo lands on LOW, which normally leaves grain
+# alone. From this measured score up, it is denoised anyway.
+ADAPTIVE_DENOISE_AUTO_MIN_SCORE = env.float("ADAPTIVE_DENOISE_AUTO_MIN_SCORE", default=5.0)
 # The company has confirmed a private commercial license for the supplied
 # checkpoint.  The artifact and license evidence remain outside source control.
 # Portable source defaults stay disabled because the licensed checkpoint is not
@@ -505,9 +514,10 @@ ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION = env.bool(
 )
 # Largest source the enhancement pipeline works on at its native size. Uploads may
 # be up to MAX_IMAGE_PIXELS, but enhancement time and memory grow with every
-# pixel (measured on the CPU path: 12 MP 9 s / 1.0 GB, 24 MP 24 s / 1.4 GB, 48 MP
-# 61 s / 2.2 GB). Larger sources are reduced to this budget first; the stored
-# original is never changed. 0 removes the limit.
+# pixel (measured on the CPU path, Apple Silicon, a noisy photo: 12 MP 6 s /
+# 1.3 GB, 24 MP 15 s / 1.8 GB, 48 MP 50 s / 2.1 GB peak process memory). Larger
+# sources are reduced to this budget first; the stored original is never
+# changed. 0 removes the limit.
 ENHANCEMENT_MAX_INPUT_PIXELS = env.int("ENHANCEMENT_MAX_INPUT_PIXELS", default=24_000_000)
 # A lossy (JPEG) output is decoded again before it is saved; it is refused if it
 # differs from the enhanced pixels by more than this mean absolute error (0-255).

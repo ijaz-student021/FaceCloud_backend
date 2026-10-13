@@ -120,6 +120,68 @@ context, decision, and consequences. Superseded decisions remain for history.
   sizes and a warning.
 - **Consequence:** This narrows `ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION`: the
   original grid is preserved up to the budget, not up to the 100 MP upload limit.
-  Measured on the CPU path (synthetic noisy photo, Apple Silicon): 12 MP 9 s /
-  1.0 GB, 24 MP 24 s / 1.4 GB, 48 MP 61 s / 2.2 GB.
+  Measured on the CPU path (synthetic noisy photo, Apple Silicon, peak process
+  memory): 12 MP 6 s / 1.3 GB, 24 MP 15 s / 1.8 GB, 48 MP 50 s / 2.1 GB.
+
+## ADR-015 — Every stage proposes a candidate; guards are mandatory
+
+- **Status:** Accepted
+- **Decision:** One runner executes every pipeline stage. A stage that changes
+  pixels is optional: if it raises (including out of memory), the image it was
+  given is kept, the failure is logged and reported, and the pipeline continues.
+  A stage that measures or guards is required: if it cannot run, the enhancement
+  fails. `stage_reports` records status, model, device, tile, duration and
+  fallback reason per stage; `plan` records what the analysis intended.
+- **Consequence:** A model failure costs that model's contribution, not the
+  image. A guard failure costs the image, because an unchecked result is worse
+  than none.
+
+## ADR-016 — Generative face restoration requires a verifiable identity
+
+- **Status:** Accepted
+- **Decision:** With `GFPGAN_REQUIRE_IDENTITY_CHECK` (default on), GFPGAN runs in
+  the Natural and Dynamic styles only when the source has a face that can be
+  embedded (consent, identity model, reliable detection), and its result is
+  withdrawn if the final identity check is not `verified`. AI Max is exempt.
+  Identity is recorded as `verified`, `inconclusive`, `unavailable` or `failed`.
+- **Consequence:** A deployment that enables GFPGAN without the identity model
+  gets no face restoration outside AI Max. Embedding similarity shows a face
+  stayed recognisably the same; it does not show restored detail is true detail.
+
+## ADR-017 — Faces are checked separately from the frame
+
+- **Status:** Accepted
+- **Decision:** After the whole-image guard, each detected face is compared with
+  the image before restoration and sharpening (structure, fine-texture energy,
+  colour, highlights) and blended back toward it when outside
+  `FACE_FIDELITY_*`. Only detection is used; no embedding is computed and no face
+  coordinates are stored.
+- **Consequence:** It can only reduce enhancement on a face. Its thresholds are
+  set from synthetic cases and one real portrait; they need calibrating on real
+  restoration-model output before being relied on as a quality bar.
+
+## ADR-018 — One task owns a result at a time
+
+- **Status:** Accepted
+- **Decision:** `ImageEnhancementResult` carries a claim token and timestamp.
+  A task claims the row before enhancing, refreshes the claim at each stage, and
+  publishes only while it still holds the claim, under the row lock. A claim not
+  refreshed for `ENHANCEMENT_CLAIM_LEASE_SECONDS` may be taken over.
+  Cancellation is checked at the same points and before any file is written.
+- **Consequence:** A redelivered task waits for the lease instead of running
+  immediately, so recovery from a dead worker takes up to the lease (30 minutes
+  by default) rather than the stuck-job reaper's 65.
+
+## ADR-019 — Denoise strength follows measured noise, calibrated on ground truth
+
+- **Status:** Accepted
+- **Decision:** The strength ladder is `0,3,4,7,10,13,16` for noise scores split
+  at `1,2,3.5,5,7,9`, and the automatic level denoises from score 5 even when the
+  exposure level is LOW. Edge protection uses an absolute floor so edge-free
+  regions are fully denoised.
+- **Consequence:** Calibrated with synthetic Gaussian noise on four photographs
+  (mean SSIM to the clean original at score 6: 0.81 with the old ladder, 0.84-0.85
+  now). Real sensor noise is signal-dependent and colour-correlated; the ladder
+  should be re-checked on real night photographs. A deployment whose `.env`
+  still lists the old `ADAPTIVE_DENOISE_*` values keeps the old ladder.
 
