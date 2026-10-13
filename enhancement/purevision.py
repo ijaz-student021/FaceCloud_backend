@@ -11,19 +11,21 @@ removing compression artifacts and mild blur without inventing detail.
 """
 
 import hashlib
-import threading
 from pathlib import Path
 
 import cv2
 import numpy as np
 from django.conf import settings
 
+from . import runtime
+
 
 class PureVisionUnavailable(RuntimeError):
     """Raised when the PureVision restorer cannot run safely."""
 
 
-_MODEL_LOCK = threading.Lock()
+# Shared with every other adapter: one heavy inference at a time per process.
+_MODEL_LOCK = runtime.INFERENCE_LOCK
 _MODEL_CACHE = {}
 
 _NUM_FILTERS = 64
@@ -59,26 +61,8 @@ def _verified_path(path_value, expected_hash, label):
     return path
 
 
-def _auto_device(torch):
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
-
-
 def _device(torch):
-    configured = str(settings.PUREVISION_DEVICE).strip().lower()
-    if configured == "auto":
-        configured = _auto_device(torch)
-    if configured.startswith("cuda") and not torch.cuda.is_available():
-        raise PureVisionUnavailable("The configured PureVision CUDA device is unavailable.")
-    if configured == "mps" and not torch.backends.mps.is_available():
-        raise PureVisionUnavailable("The configured PureVision MPS device is unavailable.")
-    try:
-        return torch.device(configured)
-    except (RuntimeError, ValueError) as error:
-        raise PureVisionUnavailable("The configured PureVision device is invalid.") from error
+    return runtime.resolve_device(torch, settings.PUREVISION_DEVICE, "PureVision", PureVisionUnavailable)
 
 
 def _build_purevision(nn, functional):
@@ -167,37 +151,9 @@ def _load_model():
     return model, device
 
 
-def _tensor_from_bgr(image, torch, device):
-    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-    return torch.from_numpy(np.ascontiguousarray(rgb.transpose(2, 0, 1))).unsqueeze(0).to(device)
-
-
-def _bgr_from_tensor(tensor):
-    rgb = tensor.detach().float().clamp_(0, 1).squeeze(0).cpu().numpy().transpose(1, 2, 0)
-    return cv2.cvtColor(np.rint(rgb * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
-
-
 def _tiled_inference(image, model, device, tile, overlap):
     torch, _nn, _functional = _runtime()
-    height, width = image.shape[:2]
-    output = np.zeros((height, width, 3), dtype=np.float32)
-    weights = np.zeros((height, width, 1), dtype=np.float32)
-    step = max(1, tile - overlap)
-    y_positions = list(range(0, max(height - tile, 0) + 1, step))
-    x_positions = list(range(0, max(width - tile, 0) + 1, step))
-    if not y_positions or y_positions[-1] != max(height - tile, 0):
-        y_positions.append(max(height - tile, 0))
-    if not x_positions or x_positions[-1] != max(width - tile, 0):
-        x_positions.append(max(width - tile, 0))
-    with torch.inference_mode():
-        for y in y_positions:
-            for x in x_positions:
-                patch = image[y:min(y + tile, height), x:min(x + tile, width)]
-                prediction = _bgr_from_tensor(model(_tensor_from_bgr(patch, torch, device)))
-                ph, pw = prediction.shape[:2]
-                output[y:y + ph, x:x + pw] += prediction.astype(np.float32)
-                weights[y:y + ph, x:x + pw] += 1.0
-    return np.rint(output / np.maximum(weights, 1.0)).astype(np.uint8)
+    return runtime.tiled_inference(torch, image, model, device, 1, tile, overlap)
 
 
 def restore_with_purevision(image):
@@ -205,9 +161,11 @@ def restore_with_purevision(image):
         raise PureVisionUnavailable("The PureVision input image is invalid.")
     with _MODEL_LOCK:
         model, device = _load_model()
-        output = _tiled_inference(
-            image, model, device,
-            settings.PUREVISION_TILE_SIZE, settings.PUREVISION_TILE_OVERLAP,
+        output, inference = runtime.run_with_memory_fallback(
+            lambda tile, overlap: _tiled_inference(image, model, device, tile, overlap),
+            device=device,
+            tile=settings.PUREVISION_TILE_SIZE, overlap=settings.PUREVISION_TILE_OVERLAP,
+            label="PureVision", error_class=PureVisionUnavailable,
         )
     source_lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB).astype(np.float32)
     output_lab = cv2.cvtColor(output, cv2.COLOR_BGR2LAB).astype(np.float32)
@@ -222,4 +180,7 @@ def restore_with_purevision(image):
         "provider": "purevision_rrdb_1x",
         "checkpoint_sha256_prefix": settings.PUREVISION_MODEL_SHA256[:12],
         "license": "CC BY-NC-SA 4.0 (non-commercial)",
+        "chroma_shift": round(chroma_shift, 3),
+        "luminance_shift": round(luminance_shift, 3),
+        **inference,
     }

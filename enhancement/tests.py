@@ -169,6 +169,8 @@ class OpenCVPolicyTests(SimpleTestCase):
                 "purescale_enabled": False,
                 "colorization_enabled": False,
                 "identity_guard_enabled": False,
+                "face_fidelity_enabled": True,
+                "gfpgan_require_identity_check": True,
             },
         )
         self.assertFalse(parameters["adaptive_denoise"]["enabled"])
@@ -201,6 +203,7 @@ class OpenCVPolicyTests(SimpleTestCase):
             "face_restoration",
             "sharpen",
             "output_guard_b",
+            "face_fidelity",
             "colorization",
             "dynamic_style",
             "identity_guard",

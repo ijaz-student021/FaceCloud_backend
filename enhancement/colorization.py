@@ -12,19 +12,21 @@ otherwise fight a deliberate near-zero-to-full-colour change.
 """
 
 import hashlib
-import threading
 from pathlib import Path
 
 import cv2
 import numpy as np
 from django.conf import settings
 
+from . import runtime
+
 
 class ColorizationUnavailable(RuntimeError):
     """Raised when the colorization model cannot run safely."""
 
 
-_MODEL_LOCK = threading.Lock()
+# Shared with every other adapter: one heavy inference at a time per process.
+_MODEL_LOCK = runtime.INFERENCE_LOCK
 _MODEL_CACHE = {}
 
 _PAD_MULTIPLE = 8
@@ -60,26 +62,8 @@ def _verified_path(path_value, expected_hash, label):
     return path
 
 
-def _auto_device(torch):
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
-
-
 def _device(torch):
-    configured = str(settings.COLORIZATION_DEVICE).strip().lower()
-    if configured == "auto":
-        configured = _auto_device(torch)
-    if configured.startswith("cuda") and not torch.cuda.is_available():
-        raise ColorizationUnavailable("The configured colorization CUDA device is unavailable.")
-    if configured == "mps" and not torch.backends.mps.is_available():
-        raise ColorizationUnavailable("The configured colorization MPS device is unavailable.")
-    try:
-        return torch.device(configured)
-    except (RuntimeError, ValueError) as error:
-        raise ColorizationUnavailable("The configured colorization device is invalid.") from error
+    return runtime.resolve_device(torch, settings.COLORIZATION_DEVICE, "colorization", ColorizationUnavailable)
 
 
 def _build_siggraph17(nn, functional):
@@ -232,7 +216,14 @@ def colorize_with_siggraph17(image):
 
     with _MODEL_LOCK:
         model, device = _load_model()
-        working_ab = _predict_ab(working_l, model, device)
+        try:
+            working_ab = _predict_ab(working_l, model, device)
+        except (RuntimeError, MemoryError) as error:
+            # One bounded forward pass (COLORIZATION_MAX_INFERENCE_EDGE), so there
+            # is no smaller tile to retry with: keep the uncoloured image.
+            runtime.release_memory(device)
+            reason = "ran out of memory" if runtime.is_out_of_memory(error) else "failed safely"
+            raise ColorizationUnavailable(f"Colorization inference {reason}.") from error
 
     if working_ab.shape[:2] != full_l.shape:
         full_ab = cv2.resize(working_ab, (width, height), interpolation=cv2.INTER_LINEAR)
@@ -271,4 +262,5 @@ def colorize_with_siggraph17(image):
         "checkpoint_sha256_prefix": settings.COLORIZATION_MODEL_SHA256[:12],
         "license": "BSD-2-Clause",
         "inference_edge": min(longest_edge, max_edge),
+        "device": str(device),
     }

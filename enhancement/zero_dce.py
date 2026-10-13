@@ -118,6 +118,7 @@ def enhance_with_zero_dce(image):
     )
     return output, {
         "provider": "facecloud_private_curve_onnx_opencv_dnn",
+        "device": "cpu",
         "model_path": Path(settings.ZERO_DCE_MODEL_PATH).name,
         "input_dimensions": [width, height],
         "inference_dimensions": [infer_width, infer_height],

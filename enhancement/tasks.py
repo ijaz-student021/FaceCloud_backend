@@ -21,6 +21,9 @@ from .comparison import process_model_comparison
 from .services import (
     TIME_LIMIT_FAILURE_REASON,
     TRANSIENT_INFRASTRUCTURE_ERRORS,
+    EnhancementCancelled,
+    EnhancementSuperseded,
+    ResultInProgress,
     process_enhancement_result,
     process_image_edit,
 )
@@ -48,6 +51,24 @@ def _fail_if_unfinished(result, reason=TASK_FAILURE_REASON):
     result.failure_reason = reason
     result.finished_at = timezone.now()
     result.save(update_fields=["status", "failure_reason", "finished_at", "updated_at"])
+
+
+def _close_job_if_cancelled(job):
+    """Close a batch job whose upload batch the user cancelled; True if it was."""
+    job.refresh_from_db(fields=["source_batch_id"])
+    if not job.source_batch.cancellation_requested:
+        return False
+    job.results.exclude(status__in=[EnhancementStatus.COMPLETED, EnhancementStatus.FAILED]).update(
+        status=EnhancementStatus.CANCELLED,
+        failure_reason="Processing was cancelled by the user.",
+        claim_token="",
+        finished_at=timezone.now(),
+    )
+    EnhancementBatchJob.objects.filter(pk=job.pk).update(
+        status=EnhancementStatus.CANCELLED, finished_at=timezone.now(),
+        failure_reason="Processing was cancelled by the user.",
+    )
+    return True
 
 
 def _publish_outcome(result):
@@ -96,6 +117,18 @@ def process_enhancement_image(self, result_id):
             return {"result_id": result_id, "status": "superseded"}
     try:
         result = process_enhancement_result(result)
+    except ResultInProgress as busy:
+        # A duplicate delivery, or the redelivery of a task whose worker died.
+        # Look again once the other claim would have lapsed: by then the result
+        # is finished, or its worker is gone and this task takes over.
+        if self.request.called_directly or self.request.is_eager or self.request.retries:
+            return {"result_id": result_id, "status": "in_progress"}
+        raise self.retry(exc=busy, countdown=busy.retry_after, max_retries=1)
+    except EnhancementSuperseded:
+        return {"result_id": result_id, "status": "superseded"}
+    except EnhancementCancelled:
+        result.refresh_from_db()
+        return {"result_id": result_id, "status": result.status}
     except TRANSIENT_INFRASTRUCTURE_ERRORS:
         if _retries_remain(self):
             raise  # autoretry_for schedules the next attempt
@@ -147,21 +180,18 @@ def process_enhancement_batch(self, job_id):
     result_ids = list(job.results.order_by("pk").values_list("pk", flat=True))
     out_of_time = False
     for result_id in result_ids:
-        job.refresh_from_db(fields=["source_batch_id"])
-        if job.source_batch.cancellation_requested:
-            job.results.exclude(status__in=[EnhancementStatus.COMPLETED, EnhancementStatus.FAILED]).update(
-                status=EnhancementStatus.CANCELLED,
-                failure_reason="Processing was cancelled by the user.",
-                finished_at=timezone.now(),
-            )
-            EnhancementBatchJob.objects.filter(pk=job_id).update(
-                status=EnhancementStatus.CANCELLED, finished_at=timezone.now(),
-                failure_reason="Processing was cancelled by the user.",
-            )
+        if _close_job_if_cancelled(job):
             return {"job_id": job_id, "status": EnhancementStatus.CANCELLED}
         result = ImageEnhancementResult.objects.get(pk=result_id)
         try:
             process_enhancement_result(result)
+        except (ResultInProgress, EnhancementSuperseded):
+            # Another worker owns this image (a duplicate delivery of this batch).
+            # It will record the outcome; do not fail or report it from here.
+            logger.warning("Result %s is owned by another worker; batch job %s skipped it.", result_id, job_id)
+            continue
+        except EnhancementCancelled:
+            continue  # the cancellation check at the top of the loop closes the job
         except TRANSIENT_INFRASTRUCTURE_ERRORS:
             if _retries_remain(self):
                 raise  # the retried batch skips what already completed
@@ -199,6 +229,11 @@ def process_enhancement_batch(self, job_id):
         )
         if out_of_time:
             break
+
+    # A cancellation that arrived during the last image has no next iteration
+    # to notice it.
+    if _close_job_if_cancelled(job):
+        return {"job_id": job_id, "status": EnhancementStatus.CANCELLED}
 
     successful = job.results.filter(status=EnhancementStatus.COMPLETED).count()
     failed = job.results.filter(status=EnhancementStatus.FAILED).count()

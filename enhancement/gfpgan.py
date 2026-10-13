@@ -12,13 +12,16 @@ from pathlib import Path
 import numpy as np
 from django.conf import settings
 
+from . import runtime
+
 
 class GFPGANUnavailable(RuntimeError):
     """Raised when private face restoration cannot run safely."""
 
 
 _MODEL_LOCK = threading.RLock()
-_INFERENCE_LOCK = threading.Lock()
+# Shared with every other adapter: one heavy inference at a time per process.
+_INFERENCE_LOCK = runtime.INFERENCE_LOCK
 _MODEL_CACHE = {}
 _NMS_BACKEND = "uninitialized"
 
@@ -283,7 +286,12 @@ def restore_faces(image):
                 paste_back=True,
                 weight=float(settings.GFPGAN_RESTORATION_WEIGHT),
             )
-    except (RuntimeError, ValueError, TypeError, AttributeError, OSError) as error:
+    except (RuntimeError, ValueError, TypeError, AttributeError, OSError, MemoryError) as error:
+        if runtime.is_out_of_memory(error):
+            # Faces are restored as fixed 512px crops, so there is no smaller tile
+            # to retry with: free the device and keep the unrestored image.
+            runtime.release_memory(getattr(restorer, "device", "cpu"))
+            raise GFPGANUnavailable("GFPGAN ran out of memory; the faces were left as they were.") from error
         raise GFPGANUnavailable("GFPGAN inference failed safely.") from error
 
     face_count = 0 if restored_faces is None else len(restored_faces)
@@ -311,6 +319,7 @@ def restore_faces(image):
         "restoration_weight": float(settings.GFPGAN_RESTORATION_WEIGHT),
         "background_upsampler": None,
         "dimensions_preserved": True,
+        "device": str(getattr(restorer, "device", settings.GFPGAN_DEVICE)),
     }
 
 

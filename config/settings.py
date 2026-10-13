@@ -247,6 +247,16 @@ NAFNET_MAX_MEAN_LUMINANCE_SHIFT = env.float("NAFNET_MAX_MEAN_LUMINANCE_SHIFT", d
 HD_RESTORATION_MAX_NATIVE_OUTPUT_PIXELS = env.int(
     "HD_RESTORATION_MAX_NATIVE_OUTPUT_PIXELS", default=20_000_000
 )
+# Real-ESRGAN is a 4x model, but its tiles are reduced to HD_RESTORATION_OUTPUT_SCALE
+# before they are accumulated, so memory follows the output, not the native 4x
+# result. This bounds that output; the native limit above still applies when the
+# output scale is 4.
+HD_RESTORATION_MAX_OUTPUT_PIXELS = env.int("HD_RESTORATION_MAX_OUTPUT_PIXELS", default=20_000_000)
+# Out-of-memory handling for every tiled model (enhancement/runtime.py): each
+# retry halves the tile edge, at most this many times and never below the minimum.
+# After that the stage gives up and the pipeline keeps its last safe image.
+ENHANCEMENT_OOM_MAX_RETRIES = env.int("ENHANCEMENT_OOM_MAX_RETRIES", default=2)
+ENHANCEMENT_MIN_TILE_SIZE = env.int("ENHANCEMENT_MIN_TILE_SIZE", default=64)
 ZERO_DCE_ENABLED = env.bool("ZERO_DCE_ENABLED", default=True)
 ZERO_DCE_MODEL_PATH = env(
     "ZERO_DCE_MODEL_PATH",
@@ -454,6 +464,25 @@ GFPGAN_MAX_CHROMA_SHIFT = env.float("GFPGAN_MAX_CHROMA_SHIFT", default=3.0)
 GFPGAN_MAX_HIGHLIGHT_CLIPPING_GROWTH = env.float(
     "GFPGAN_MAX_HIGHLIGHT_CLIPPING_GROWTH", default=1.0
 )
+# Generative face restoration only runs when the result can be compared with a
+# source face (consent, an identity model, and a face reliable enough to embed).
+# The explicit AI Max style is exempt. See enhancement/services.py
+# _face_restoration_gate.
+GFPGAN_REQUIRE_IDENTITY_CHECK = env.bool("GFPGAN_REQUIRE_IDENTITY_CHECK", default=True)
+# Face-region fidelity (enhancement/face_fidelity.py): each detected face is
+# compared with the image as it was before restoration and sharpening, and
+# blended back toward it when it leaves these limits. Texture ratio is fine-detail
+# energy after/before: below the minimum is smoothing (waxy skin), above the
+# maximum is over-sharpening, halos or amplified noise.
+FACE_FIDELITY_ENABLED = env.bool("FACE_FIDELITY_ENABLED", default=True)
+FACE_FIDELITY_MIN_STRUCTURAL_SIMILARITY = env.float("FACE_FIDELITY_MIN_STRUCTURAL_SIMILARITY", default=0.85)
+FACE_FIDELITY_MIN_TEXTURE_RETENTION = env.float("FACE_FIDELITY_MIN_TEXTURE_RETENTION", default=0.60)
+FACE_FIDELITY_MAX_TEXTURE_GAIN = env.float("FACE_FIDELITY_MAX_TEXTURE_GAIN", default=1.80)
+FACE_FIDELITY_MAX_CHROMA_SHIFT = env.float("FACE_FIDELITY_MAX_CHROMA_SHIFT", default=4.0)
+FACE_FIDELITY_MAX_HIGHLIGHT_CLIPPING_GROWTH = env.float("FACE_FIDELITY_MAX_HIGHLIGHT_CLIPPING_GROWTH", default=1.0)
+FACE_FIDELITY_MAX_FACES = env.int("FACE_FIDELITY_MAX_FACES", default=8)
+FACE_FIDELITY_MAX_EDGE = env.int("FACE_FIDELITY_MAX_EDGE", default=1024)
+FACE_FIDELITY_MIN_FACE_EDGE = env.int("FACE_FIDELITY_MIN_FACE_EDGE", default=40)
 PER_FACE_METRICS_ENABLED = env.bool("PER_FACE_METRICS_ENABLED", default=False)
 IDENTITY_EMBEDDING_ENABLED = env.bool("IDENTITY_EMBEDDING_ENABLED", default=False)
 FACE_DETECTOR_PROVIDER = env("FACE_DETECTOR_PROVIDER", default="haar_v1")
@@ -480,6 +509,16 @@ ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION = env.bool(
 # 61 s / 2.2 GB). Larger sources are reduced to this budget first; the stored
 # original is never changed. 0 removes the limit.
 ENHANCEMENT_MAX_INPUT_PIXELS = env.int("ENHANCEMENT_MAX_INPUT_PIXELS", default=24_000_000)
+# A lossy (JPEG) output is decoded again before it is saved; it is refused if it
+# differs from the enhanced pixels by more than this mean absolute error (0-255).
+# Quality 95 measures well under 2. PNG output must match exactly.
+ENHANCEMENT_MAX_ENCODING_ERROR = env.float("ENHANCEMENT_MAX_ENCODING_ERROR", default=4.0)
+# One task at a time may enhance a result. A claim is refreshed at every pipeline
+# stage; one not refreshed for this long belongs to a worker that died and may be
+# taken over. It must outlast the slowest single stage on the slowest hardware.
+ENHANCEMENT_CLAIM_LEASE_SECONDS = env.int("ENHANCEMENT_CLAIM_LEASE_SECONDS", default=1800)
+if ENHANCEMENT_CLAIM_LEASE_SECONDS < 60:
+    raise ImproperlyConfigured("ENHANCEMENT_CLAIM_LEASE_SECONDS must be at least 60 seconds.")
 ENHANCEMENT_MODEL_LUMINANCE_THRESHOLD = env.float(
     "ENHANCEMENT_MODEL_LUMINANCE_THRESHOLD", default=0.45
 )
@@ -652,6 +691,13 @@ CELERY_TASK_TIME_LIMIT = env.int("CELERY_TASK_TIME_LIMIT", default=60 * 60)
 CELERY_TASK_SOFT_TIME_LIMIT = env.int("CELERY_TASK_SOFT_TIME_LIMIT", default=55 * 60)
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_TASK_ACKS_LATE = True
+# With late acknowledgement, Redis hands a task to a second worker once it has
+# been unacknowledged for the visibility timeout (one hour by default) -- the
+# same as the task time limit, so a long batch could be delivered twice while
+# still running. Keep the timeout comfortably above the hard limit.
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    "visibility_timeout": env.int("CELERY_VISIBILITY_TIMEOUT", default=CELERY_TASK_TIME_LIMIT + 900),
+}
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 SYSTEM_HEALTH_TIMEOUT_SECONDS = env.float("SYSTEM_HEALTH_TIMEOUT_SECONDS", default=1.0)
 FACECLOUD_VERSION = env("FACECLOUD_VERSION", default="dev")

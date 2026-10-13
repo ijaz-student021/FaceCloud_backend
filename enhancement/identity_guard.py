@@ -128,8 +128,78 @@ def _worst_face_similarity(source_faces, trial, detector, provider):
     return min(similarities) if similarities else None
 
 
-def apply_identity_guard(source, candidate):
-    """Return ``(image, metadata)`` with identity preserved against ``source``."""
+# Every outcome of the guard, reduced to what a reader needs to know about the
+# saved image: was identity checked against the source, and did it hold?
+IDENTITY_VERIFIED = "verified"          # compared with the source and preserved
+IDENTITY_INCONCLUSIVE = "inconclusive"  # no reliable comparison was possible
+IDENTITY_UNAVAILABLE = "unavailable"    # no consent, no model, or switched off
+IDENTITY_FAILED = "failed"              # compared, and still below the minimum
+
+_STATUS_TO_IDENTITY = {
+    "preserved": IDENTITY_VERIFIED,
+    "strength_reduced": IDENTITY_VERIFIED,
+    "inconclusive": IDENTITY_INCONCLUSIVE,
+    "unresolved": IDENTITY_FAILED,
+    "disabled": IDENTITY_UNAVAILABLE,
+}
+
+
+def identity_status(metadata):
+    """Map the guard's detailed status onto verified/inconclusive/unavailable/failed."""
+    status = metadata.get("status")
+    if status in _STATUS_TO_IDENTITY:
+        return _STATUS_TO_IDENTITY[status]
+    # "skipped": either nothing could be compared (no face, face too dark) or
+    # the check could not run at all (consent, detector, identity model).
+    return IDENTITY_INCONCLUSIVE if metadata.get("reference_checked") else IDENTITY_UNAVAILABLE
+
+
+class IdentityReference:
+    """The source's faces, embedded once and reused for every comparison."""
+
+    def __init__(self, records, dimensions, detector, provider):
+        self.records = records
+        self.width, self.height = dimensions
+        self.detector = detector
+        self.provider = provider
+
+
+def build_identity_reference(source):
+    """Embed the source's faces: ``(reference or None, reason)``.
+
+    ``None`` with a reason means the source offers nothing reliable to compare
+    against (no face large enough, a face too dark, or one that cannot be
+    embedded). Raises ``IdentityGuardUnavailable`` when the detector or identity
+    model is missing.
+    """
+    detector = _load_detector()
+    working_source = _fit_to_edge(source, settings.IDENTITY_GUARD_MAX_EDGE)
+    source_faces = _detect_faces(
+        working_source, detector, settings.IDENTITY_GUARD_MIN_FACE_EDGE
+    )
+    if not source_faces:
+        return None, "No face large enough to judge was found in the source."
+    source_faces = [
+        (box, landmarks)
+        for box, landmarks in source_faces
+        if _face_luminance(working_source, box) >= settings.IDENTITY_GUARD_MIN_FACE_LUMINANCE
+    ]
+    if not source_faces:
+        return None, "The source face is too dark for a reliable identity comparison."
+    provider = _load_provider()
+    source_records = _embed_faces(working_source, source_faces, provider)
+    if not source_records:
+        return None, "The source faces could not be embedded safely."
+    height, width = working_source.shape[:2]
+    return IdentityReference(source_records, (width, height), detector, provider), ""
+
+
+def apply_identity_guard(source, candidate, reference=None):
+    """Return ``(image, metadata)`` with identity preserved against ``source``.
+
+    ``reference`` is a prepared ``IdentityReference`` for ``source``; when it is
+    not given the source's faces are detected and embedded here.
+    """
     threshold = float(settings.IDENTITY_GUARD_MIN_SIMILARITY)
     metadata = {
         "requested": True,
@@ -144,34 +214,18 @@ def apply_identity_guard(source, candidate):
         "fallback_reason": "",
         "model": "sface_embedding_similarity",
     }
-    detector = _load_detector()
-
-    working_source = _fit_to_edge(source, settings.IDENTITY_GUARD_MAX_EDGE)
-    source_faces = _detect_faces(
-        working_source, detector, settings.IDENTITY_GUARD_MIN_FACE_EDGE
-    )
-    if not source_faces:
-        metadata["fallback_reason"] = "No face large enough to judge was found in the source."
-        return candidate, metadata
-    source_faces = [
-        (box, landmarks)
-        for box, landmarks in source_faces
-        if _face_luminance(working_source, box) >= settings.IDENTITY_GUARD_MIN_FACE_LUMINANCE
-    ]
-    if not source_faces:
-        metadata["fallback_reason"] = (
-            "The source face is too dark for a reliable identity comparison."
-        )
-        return candidate, metadata
-
-    provider = _load_provider()
-    source_records = _embed_faces(working_source, source_faces, provider)
-    if not source_records:
-        metadata["fallback_reason"] = "The source faces could not be embedded safely."
-        return candidate, metadata
+    if reference is None:
+        reference, reason = build_identity_reference(source)
+        if reference is None:
+            metadata["reference_checked"] = True
+            metadata["fallback_reason"] = reason
+            return candidate, metadata
+    metadata["reference_checked"] = True
+    source_records = reference.records
+    detector, provider = reference.detector, reference.provider
     metadata["faces_compared"] = len(source_records)
 
-    height, width = working_source.shape[:2]
+    height, width = reference.height, reference.width
     reference = source
     if reference.shape[:2] != candidate.shape[:2]:
         reference = cv2.resize(

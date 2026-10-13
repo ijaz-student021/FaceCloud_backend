@@ -9,19 +9,19 @@ scale factors and could exceed the output-pixel safety limit.
 """
 
 import hashlib
-import threading
 from pathlib import Path
 
-import cv2
-import numpy as np
 from django.conf import settings
+
+from . import runtime
 
 
 class PureScaleUnavailable(RuntimeError):
     """Raised when the PureScale upscaler cannot run safely."""
 
 
-_MODEL_LOCK = threading.Lock()
+# Shared with every other adapter: one heavy inference at a time per process.
+_MODEL_LOCK = runtime.INFERENCE_LOCK
 _MODEL_CACHE = {}
 
 
@@ -52,26 +52,8 @@ def _verified_path(path_value, expected_hash, label):
     return path
 
 
-def _auto_device(torch):
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
-
-
 def _device(torch):
-    configured = str(settings.PURESCALE_DEVICE).strip().lower()
-    if configured == "auto":
-        configured = _auto_device(torch)
-    if configured.startswith("cuda") and not torch.cuda.is_available():
-        raise PureScaleUnavailable("The configured PureScale CUDA device is unavailable.")
-    if configured == "mps" and not torch.backends.mps.is_available():
-        raise PureScaleUnavailable("The configured PureScale MPS device is unavailable.")
-    try:
-        return torch.device(configured)
-    except (RuntimeError, ValueError) as error:
-        raise PureScaleUnavailable("The configured PureScale device is invalid.") from error
+    return runtime.resolve_device(torch, settings.PURESCALE_DEVICE, "PureScale", PureScaleUnavailable)
 
 
 def _build_safmn(nn, functional):
@@ -185,38 +167,9 @@ def _load_model():
     return model, device
 
 
-def _tensor_from_bgr(image, torch, device):
-    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-    return torch.from_numpy(np.ascontiguousarray(rgb.transpose(2, 0, 1))).unsqueeze(0).to(device)
-
-
-def _bgr_from_tensor(tensor):
-    rgb = tensor.detach().float().clamp_(0, 1).squeeze(0).cpu().numpy().transpose(1, 2, 0)
-    return cv2.cvtColor(np.rint(rgb * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
-
-
 def _tiled_inference(image, model, device, scale, tile, overlap):
     torch, _nn, _functional = _runtime()
-    height, width = image.shape[:2]
-    output = np.zeros((height * scale, width * scale, 3), dtype=np.float32)
-    weights = np.zeros((height * scale, width * scale, 1), dtype=np.float32)
-    step = max(1, tile - overlap)
-    y_positions = list(range(0, max(height - tile, 0) + 1, step))
-    x_positions = list(range(0, max(width - tile, 0) + 1, step))
-    if not y_positions or y_positions[-1] != max(height - tile, 0):
-        y_positions.append(max(height - tile, 0))
-    if not x_positions or x_positions[-1] != max(width - tile, 0):
-        x_positions.append(max(width - tile, 0))
-    with torch.inference_mode():
-        for y in y_positions:
-            for x in x_positions:
-                patch = image[y:min(y + tile, height), x:min(x + tile, width)]
-                prediction = _bgr_from_tensor(model(_tensor_from_bgr(patch, torch, device)))
-                ph, pw = prediction.shape[:2]
-                oy, ox = y * scale, x * scale
-                output[oy:oy + ph, ox:ox + pw] += prediction.astype(np.float32)
-                weights[oy:oy + ph, ox:ox + pw] += 1.0
-    return np.rint(output / np.maximum(weights, 1.0)).astype(np.uint8)
+    return runtime.tiled_inference(torch, image, model, device, scale, tile, overlap)
 
 
 def upscale_with_purescale(image):
@@ -228,13 +181,16 @@ def upscale_with_purescale(image):
         raise PureScaleUnavailable("The requested PureScale output exceeds the safety limit.")
     with _MODEL_LOCK:
         model, device = _load_model()
-        output = _tiled_inference(
-            image, model, device, 2,
-            settings.PURESCALE_TILE_SIZE, settings.PURESCALE_TILE_OVERLAP,
+        output, inference = runtime.run_with_memory_fallback(
+            lambda tile, overlap: _tiled_inference(image, model, device, 2, tile, overlap),
+            device=device,
+            tile=settings.PURESCALE_TILE_SIZE, overlap=settings.PURESCALE_TILE_OVERLAP,
+            label="PureScale", error_class=PureScaleUnavailable,
         )
     return output, {
         "provider": "purescale_safmn_2x",
         "native_scale": 2,
         "checkpoint_sha256_prefix": settings.PURESCALE_MODEL_SHA256[:12],
         "license": "CC BY-NC-SA 4.0 (non-commercial)",
+        **inference,
     }
