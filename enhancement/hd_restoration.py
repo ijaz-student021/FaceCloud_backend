@@ -91,7 +91,12 @@ def _build_nafnet(nn, functional):
             self.gamma = nn.Parameter(torch.zeros((1, channels, 1, 1)))
 
         def forward(self, source):
-            value = self.conv3(self.sca(self.sg(self.conv2(self.conv1(self.norm1(source))))))
+            value = self.sg(self.conv2(self.conv1(self.norm1(source))))
+            # Simplified channel attention *re-weights* the features by their
+            # pooled summary. Feeding the pooled summary on in their place (as
+            # this did) leaves one value per channel for the whole tile, which is
+            # what produced the washed-out, colour-shifted output that failed QA.
+            value = self.conv3(value * self.sca(value))
             intermediate = source + value * self.beta
             value = self.conv5(self.sg(self.conv4(self.norm2(intermediate))))
             return intermediate + value * self.gamma
