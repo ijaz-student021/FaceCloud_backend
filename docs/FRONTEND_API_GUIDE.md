@@ -215,6 +215,10 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}     -> 201
   - `identity_check_bypassed`: `true` when faces were generatively restored
     without a verified check. Show a visible notice on that result.
   - `identity_notice`: the sentence to show; empty when there is nothing to say.
+  The same three fields are on every entry of a model comparison's `outputs`
+  (`GET /api/enhancements/comparisons/{id}/`) and at the end of its CSV report,
+  with the same meaning, so a profile reads there as it would on the result it
+  produces. They are null / false / empty for the untouched `original` entry.
 - The job is asynchronous. Poll `GET /api/enhancements/results/{id}/` until
   `status` is `completed` (or `failed`, with `failure_reason`). Other statuses:
   `pending, queued, processing, partial, cancelled`.
