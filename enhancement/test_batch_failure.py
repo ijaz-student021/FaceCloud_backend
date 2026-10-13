@@ -35,7 +35,7 @@ class BatchFailureIsolationTests(TestCase):
             ))
 
     def test_an_unexpected_error_is_logged_marked_failed_and_does_not_stop_the_batch(self):
-        def fake(result):
+        def fake(result, claim_owner=None):
             if result.pk == self.results[0].pk:
                 raise RuntimeError("unexpected bug")
             result.status = "completed"

@@ -2358,13 +2358,28 @@ def _mark_result_cancelled(result, token):
     result.save(update_fields=["status", "failure_reason", "claim_token", "finished_at", "updated_at"])
 
 
-def _claim_result(result, token):
+def _is_earlier_attempt_of(result, owner):
+    """Whether the live claim was made by an earlier attempt of this same task.
+
+    Celery starts attempt N+1 of a task only after attempt N has raised, so that
+    claim has no worker behind it and the retry may resume it. An *equal*
+    attempt number is a second delivery of the same attempt, which may still be
+    running, so it is not resumable.
+    """
+    if owner is None:
+        return False
+    task_id, attempt = owner
+    return bool(task_id) and result.claim_task_id == task_id and result.claim_attempt < attempt
+
+
+def _claim_result(result, token, owner=None):
     """Take ownership of a result, or refuse while another worker holds it.
 
     A queue can deliver one task twice, and two tasks can target one result.
     The claim is a token plus a timestamp refreshed at every stage; a claim not
     refreshed within ENHANCEMENT_CLAIM_LEASE_SECONDS belongs to a worker that
-    died, and may be taken over.
+    died, and may be taken over. ``owner`` is ``(task id, attempt number)``: a
+    retry of the task that made the claim resumes it at once instead of waiting.
     """
     lease = timedelta(seconds=settings.ENHANCEMENT_CLAIM_LEASE_SECONDS)
     with transaction.atomic():
@@ -2383,29 +2398,34 @@ def _claim_result(result, token):
             and result.claim_token
             and result.claimed_at
             and now - result.claimed_at < lease
+            and not _is_earlier_attempt_of(result, owner)
         ):
             remaining = lease - (now - result.claimed_at)
             raise ResultInProgress(max(1, int(remaining.total_seconds()) + 1))
         result.status = EnhancementStatus.PROCESSING
         result.claim_token = token
         result.claimed_at = now
+        result.claim_task_id, result.claim_attempt = owner or ("", 0)
         result.started_at = result.started_at or now
         result.finished_at = None
         result.failure_reason = ""
         result.save(update_fields=[
-            "status", "claim_token", "claimed_at", "started_at", "finished_at", "failure_reason", "updated_at",
+            "status", "claim_token", "claimed_at", "claim_task_id", "claim_attempt",
+            "started_at", "finished_at", "failure_reason", "updated_at",
         ])
     return result, True
 
 
-def process_enhancement_result(result):
+def process_enhancement_result(result, claim_owner=None):
     """Process one result and persist a separate enhanced output.
 
     Safe to call twice for the same result, at the same time or one after the
     other: only the holder of the claim enhances, and only the holder publishes.
+    ``claim_owner`` is the calling task's ``(id, attempt number)``, so that its
+    own retry can resume a claim an earlier attempt left behind.
     """
     token = uuid.uuid4().hex
-    result, claimed = _claim_result(result, token)
+    result, claimed = _claim_result(result, token, claim_owner)
     if not claimed:
         return result
     batch_id = result.image.batch_id

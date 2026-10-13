@@ -38,8 +38,19 @@ FINISHED_STATUSES = (
 )
 
 
+# How many times a task will wait out another worker's claim before leaving the
+# result to that worker. Each wait lasts until the claim would have lapsed.
+MAX_CLAIM_WAITS = 2
+
+
 def _retries_remain(task):
     return task.request.retries < task.max_retries
+
+
+def _claim_owner(task):
+    """This execution's identity for claims: the task id and attempt number."""
+    task_id = task.request.id or ""
+    return (task_id, task.request.retries) if task_id else None
 
 
 def _fail_if_unfinished(result, reason=TASK_FAILURE_REASON):
@@ -49,8 +60,9 @@ def _fail_if_unfinished(result, reason=TASK_FAILURE_REASON):
         return
     result.status = EnhancementStatus.FAILED
     result.failure_reason = reason
+    result.claim_token = ""  # nothing is working on it any more
     result.finished_at = timezone.now()
-    result.save(update_fields=["status", "failure_reason", "finished_at", "updated_at"])
+    result.save(update_fields=["status", "failure_reason", "claim_token", "finished_at", "updated_at"])
 
 
 def _close_job_if_cancelled(job):
@@ -116,14 +128,20 @@ def process_enhancement_image(self, result_id):
         if result.task_id and task_id and result.task_id != task_id:
             return {"result_id": result_id, "status": "superseded"}
     try:
-        result = process_enhancement_result(result)
+        result = process_enhancement_result(result, claim_owner=_claim_owner(self))
     except ResultInProgress as busy:
-        # A duplicate delivery, or the redelivery of a task whose worker died.
-        # Look again once the other claim would have lapsed: by then the result
-        # is finished, or its worker is gone and this task takes over.
-        if self.request.called_directly or self.request.is_eager or self.request.retries:
+        # Another execution holds a live claim: a duplicate delivery, or a task
+        # whose worker died. (This task's own earlier attempt is not "another":
+        # its claim is resumed, never waited on.) Stay scheduled and look again
+        # once that claim would have lapsed: by then the result is finished, or
+        # its worker is gone and this task takes over. The wait is counted
+        # separately from database retries, so having retried does not turn a
+        # wait into giving up.
+        cannot_schedule = self.request.called_directly or self.request.is_eager
+        if cannot_schedule or self.request.retries >= self.max_retries + MAX_CLAIM_WAITS:
+            logger.warning("Result %s is being enhanced by another worker; leaving it to that worker.", result_id)
             return {"result_id": result_id, "status": "in_progress"}
-        raise self.retry(exc=busy, countdown=busy.retry_after, max_retries=1)
+        raise self.retry(exc=busy, countdown=busy.retry_after, max_retries=self.max_retries + MAX_CLAIM_WAITS)
     except EnhancementSuperseded:
         return {"result_id": result_id, "status": "superseded"}
     except EnhancementCancelled:
@@ -184,7 +202,7 @@ def process_enhancement_batch(self, job_id):
             return {"job_id": job_id, "status": EnhancementStatus.CANCELLED}
         result = ImageEnhancementResult.objects.get(pk=result_id)
         try:
-            process_enhancement_result(result)
+            process_enhancement_result(result, claim_owner=_claim_owner(self))
         except (ResultInProgress, EnhancementSuperseded):
             # Another worker owns this image (a duplicate delivery of this batch).
             # It will record the outcome; do not fail or report it from here.

@@ -168,9 +168,15 @@ context, decision, and consequences. Superseded decisions remain for history.
   publishes only while it still holds the claim, under the row lock. A claim not
   refreshed for `ENHANCEMENT_CLAIM_LEASE_SECONDS` may be taken over.
   Cancellation is checked at the same points and before any file is written.
+  The claim also records the task id and attempt number: a later attempt of the
+  same task resumes its claim at once (Celery starts attempt N+1 only after
+  attempt N raised), while a second delivery of the same attempt does not. A
+  task that meets another task's live claim stays scheduled, re-checking when
+  that claim would lapse, up to two waits beyond its database retries.
 - **Consequence:** A redelivered task waits for the lease instead of running
   immediately, so recovery from a dead worker takes up to the lease (30 minutes
-  by default) rather than the stuck-job reaper's 65.
+  by default) rather than the stuck-job reaper's 65. A database failure
+  mid-enhancement is retried without that wait.
 
 ## ADR-019 — Denoise strength follows measured noise, calibrated on ground truth
 
