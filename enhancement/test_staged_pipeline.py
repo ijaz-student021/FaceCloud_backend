@@ -877,7 +877,7 @@ class EvaluationDrivenBehaviourTests(SimpleTestCase):
         self.assertEqual(level, "low")
         self.assertLess(parameters["quality_before"]["highlight_clipping_percent"], 8)
 
-    @override_settings(IDENTITY_GUARD_ENABLED=True)
+    @override_settings(IDENTITY_GUARD_ENABLED=True, IDENTITY_PROVIDER="disabled")
     def test_identity_is_unavailable_not_inconclusive_when_no_model_is_configured(self):
         parameters = enhance_bgr(textured(), "low")[2]
         self.assertEqual(parameters["identity_status"], "unavailable")

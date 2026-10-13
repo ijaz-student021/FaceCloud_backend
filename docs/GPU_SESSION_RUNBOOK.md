@@ -237,3 +237,49 @@ What to record from each run, and what would count as a failure:
 Also run the real-tensor tests on the GPU box, where they exercise CUDA instead
 of MPS: `python manage.py test enhancement.test_runtime`.
 
+## Appendix: setting up and validating the models on one machine
+
+Added 2026-10-13, after doing exactly this on an Apple M1 Mac (no CUDA; PyTorch
+uses MPS, OpenCV models use the CPU). The same commands apply on Linux.
+
+```bash
+# 1. The web application's environment.
+python3 -m venv venv && venv/bin/pip install -r requirements.txt torch
+
+# 2. The worker's environment: everything above plus the GFPGAN stack.
+python3.12 -m venv .runtime/venvs/gfpgan
+.runtime/venvs/gfpgan/bin/pip install -r requirements-gfpgan.txt
+
+# 3. Checkpoints go in .runtime/models/ (GFPGAN's two helpers in gfpgan/weights/).
+#    Every file must match docs/gpu/model_manifest.json:
+venv/bin/python scripts/model_manifest.py verify
+
+# 4. Run every model for real, alone and then together:
+.runtime/venvs/gfpgan/bin/python scripts/validate_models.py \
+    --portrait /path/to/a/portrait.jpg --name my-run --combinations
+```
+
+Step 4 writes `.runtime/model_validation/my-run/report.md` and before/after
+images, and exits non-zero unless every component passed. A component whose
+file does not match its pinned checksum is reported as a mismatch even if it
+runs; the checksum is never changed to accept a file.
+
+Where the public checkpoints came from (each verified against its pinned SHA-256):
+
+| File | Official source |
+|---|---|
+| `RealESRGAN_x4plus.pth` | github.com/xinntao/Real-ESRGAN, release v0.1.0 |
+| `GFPGANv1.4.pth` | github.com/TencentARC/GFPGAN, release v1.3.0 |
+| `detection_Resnet50_Final.pth`, `parsing_parsenet.pth` | github.com/xinntao/facexlib, releases v0.1.0 and v0.2.2 |
+| `EDSR_x2.pb` | github.com/Saafke/EDSR_Tensorflow, `models/` |
+| `colorization_siggraph17.pth` | the S3 bucket named in github.com/richzhang/colorization (`siggraph17-df00044c.pth`) |
+| `PureScale_2x.pth`, `PureVision_1x.pth` | github.com/limitlesslab/AI-upscaling-models, releases `PureScale2` (`2x_SAFMN_PureScale.pth`) and `PureVision` (`1x_PureVision.pth`) |
+| `NAFNet-GoPro-width64.pth` | the Google Drive link in github.com/megvii-research/NAFNet `docs/GoPro.md` |
+| `yunet_s_dynamic.onnx`, `face_recognition_sface_2021dec.onnx` | see `docs/model-licenses/feature-18-yunet-sface-attestation.md` |
+
+`zero_dce_epoch99.onnx` is exported locally from the official Zero-DCE
+`Epoch99.pth` with `scripts/export_zero_dce_onnx.py`. An export made on another
+machine or PyTorch version is not byte-identical, so it will not match the
+manifest even though it computes the same thing. `facecloud_curve_best_opencv.onnx`
+is private and has no public source.
+

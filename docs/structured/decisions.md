@@ -248,3 +248,30 @@ context, decision, and consequences. Superseded decisions remain for history.
   0.084 SSIM), and photographs with no flat region cannot be measured well.
   Fine-band texture in flat regions (skin pores) cannot be told from grain by
   any measure here. Nothing was calibrated on real sensor noise.
+
+## ADR-022 — NAFNet's failed QA was an adapter bug, now fixed; it stays off pending visual approval
+
+- **Status:** Accepted (updates ADR-010)
+- **Decision:** The corruption recorded in ADR-010 came from this project's
+  re-implementation of the network, not from the checkpoint or the device: the
+  simplified channel attention passed its pooled summary on in place of the
+  features instead of multiplying them by it. With that corrected, the pinned
+  checkpoint's mean colour shift on a motion-blurred portrait fell from 66.9 to
+  0.26 (limit 8), identically on CPU and on Apple MPS, and its output moved 3 to
+  7 dB closer to the sharp original. `NAFNET_DEBLUR_ENABLED` still defaults to
+  false.
+- **Consequence:** NAFNet now runs and passes its fidelity guard. That is not a
+  visual sign-off: it was checked on synthetic motion blur of one portrait.
+  Enable it only after it has been looked at on real blurred photographs.
+
+## ADR-023 — The worker environment is the backend's requirements plus the model stack
+
+- **Status:** Accepted
+- **Decision:** `requirements-gfpgan.txt` includes `requirements.txt` instead of
+  repeating it. BasicSR 1.4.2 imports a module torchvision removed in 0.17;
+  `enhancement/gfpgan.py` supplies the one missing name at import time, because
+  Django 6 needs Python 3.12 and no older torchvision exists for it.
+- **Consequence:** The worker can no longer drift from the application (it had:
+  without `cryptography` it could not start Django). The shim touches only a
+  module that is absent, and is removed when BasicSR is replaced.
+
