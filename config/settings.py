@@ -998,6 +998,10 @@ SPECTACULAR_SETTINGS = {
 # Runs tests against a throwaway media folder instead of the real one.
 TEST_RUNNER = "config.test_runner.FaceCloudTestRunner"
 
+# How long records of ended sign-in sessions (device, IP address, times) are
+# kept for the user's own session list before they are deleted.
+SESSION_RECORD_RETENTION_DAYS = env.int("SESSION_RECORD_RETENTION_DAYS", default=30)
+
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),

@@ -15,6 +15,7 @@ from . import lockout
 from .services import (dashboard_for_user, has_active_two_factor,
                        issue_login_tokens, make_two_factor_login_challenge,
                        record_auth_event)
+from .sessions import record_rotation, token_session_is_active
 
 User = get_user_model()
 
@@ -133,7 +134,7 @@ class FaceCloudTokenObtainPairSerializer(serializers.Serializer):
                 "login_token": make_two_factor_login_challenge(user),
             }
         record_auth_event("login", request, user, identifier)
-        return issue_login_tokens(user)
+        return issue_login_tokens(user, request)
 
 
 class FaceCloudTokenRefreshSerializer(TokenRefreshSerializer):
@@ -148,7 +149,12 @@ class FaceCloudTokenRefreshSerializer(TokenRefreshSerializer):
             raise serializers.ValidationError({"detail": "This account is suspended."})
         if token.get("token_version", 0) != user.token_version:
             raise serializers.ValidationError({"detail": "This token has been revoked."})
-        return super().validate(attrs)
+        if not token_session_is_active(token, user):
+            raise serializers.ValidationError({"detail": "This session has been signed out."})
+        data = super().validate(attrs)
+        if "refresh" in data:
+            record_rotation(RefreshToken(data["refresh"]))
+        return data
 
 
 PROFILE_TEXT_FIELDS = ("display_name", "organization_name", "job_title", "country")

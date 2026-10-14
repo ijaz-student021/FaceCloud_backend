@@ -31,6 +31,9 @@ from . import lockout
 from .models import PendingRegistration
 from .dashboard import build_user_dashboard
 from .permissions import IsAdminRole
+from .sessions import revoke as revoke_session
+from .sessions import revoke_all as revoke_all_sessions
+from .sessions import session_for_token
 from .serializers import (
     AdminUserSerializer,
     ChangePasswordSerializer,
@@ -825,6 +828,9 @@ class LogoutView(APIView):
             if str(token.get("user_id")) != str(request.user.pk):
                 raise TokenError("Token belongs to another account.")
             token.blacklist()
+            session = session_for_token(token)
+            if session is not None and session.user_id == request.user.pk:
+                revoke_session(session, "logout")
         except TokenError:
             return Response({"detail": "Invalid refresh token."}, status=status.HTTP_400_BAD_REQUEST)
         record_auth_event("logout", request, request.user, request.user.email)
@@ -839,6 +845,7 @@ class LogoutAllView(APIView):
         user = request.user
         user.token_version += 1
         user.save(update_fields=["token_version"])
+        revoke_all_sessions(user, "logout_all")
         record_auth_event("logout_all", request, user, user.email)
         return Response({"detail": "Logged out from all devices."})
 
@@ -943,4 +950,55 @@ class AvatarView(APIView):
         from .avatars import remove_avatar
 
         remove_avatar(request.user)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class UserSessionSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    device = serializers.CharField(help_text='Parsed from the user agent, e.g. "Chrome on macOS".')
+    user_agent = serializers.CharField()
+    ip_address = serializers.IPAddressField(allow_null=True)
+    created_at = serializers.DateTimeField()
+    last_seen_at = serializers.DateTimeField(help_text="Last sign-in or token refresh.")
+    expires_at = serializers.DateTimeField()
+    is_current = serializers.BooleanField(help_text="The session making this request.")
+
+
+class UserSessionListView(APIView):
+    """The signed-in user's active sessions (devices), most recently active first."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(responses={200: UserSessionSerializer(many=True)})
+    def get(self, request):
+        from .sessions import SID_CLAIM, active_sessions, describe_device
+
+        current = str((request.auth or {}).get(SID_CLAIM, "")) if request.auth is not None else ""
+        rows = [{
+            "id": session.pk, "device": describe_device(session.user_agent), "user_agent": session.user_agent,
+            "ip_address": session.ip_address, "created_at": session.created_at,
+            "last_seen_at": session.last_seen_at, "expires_at": session.expires_at,
+            "is_current": str(session.pk) == current,
+        } for session in active_sessions(request.user)]
+        return Response(UserSessionSerializer(rows, many=True).data)
+
+
+class UserSessionRevokeView(APIView):
+    """Sign one of the user's sessions out, at once.
+
+    Its access tokens stop working immediately and its refresh token is
+    blacklisted. Revoking the current session signs this client out too.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(request=None, responses={204: None, 404: OpenApiTypes.OBJECT})
+    def post(self, request, session_id):
+        from django.shortcuts import get_object_or_404
+
+        from .models import UserSession
+
+        session = get_object_or_404(UserSession, pk=session_id, user=request.user, revoked_at__isnull=True)
+        revoke_session(session, "revoked_by_user")
+        record_auth_event("session_revoked", request, request.user, request.user.email, {"session": str(session.pk)})
         return Response(status=status.HTTP_204_NO_CONTENT)

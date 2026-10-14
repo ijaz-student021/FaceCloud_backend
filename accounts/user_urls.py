@@ -12,6 +12,8 @@ from .views import (
     LogoutView,
     ProfileView,
     UserDashboardView,
+    UserSessionListView,
+    UserSessionRevokeView,
 )
 
 urlpatterns = [
@@ -21,6 +23,8 @@ urlpatterns = [
     path("change-password/", ChangePasswordView.as_view(), name="change-password"),
     path("logout/", LogoutView.as_view(), name="logout"),
     path("logout-all/", LogoutAllView.as_view(), name="logout-all"),
+    path("sessions/", UserSessionListView.as_view(), name="user-sessions"),
+    path("sessions/<uuid:session_id>/revoke/", UserSessionRevokeView.as_view(), name="user-session-revoke"),
     path("delete-account/", DeleteAccountView.as_view(), name="delete-account"),
     path("activity/", UserActivityTimelineView.as_view(), name="user-activity"),
     path("admin/users/", AdminUserListView.as_view(), name="admin-user-list"),
