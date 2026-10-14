@@ -897,11 +897,24 @@ SIGNUP_VERIFICATION_SUPPORT_EMAIL = env(
     default="support@facecloud.local",
 )
 
+# Rate limits (DRF throttles) and other cache users. Without CACHE_URL each
+# process keeps its own counters, so every limit multiplies by the number of
+# processes and resets on restart: fine for development, refused in production
+# (config/production_guard.py). Example: CACHE_URL=redis://127.0.0.1:6379/2
+CACHE_URL = env("CACHE_URL", default="")
+if CACHE_URL:
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": CACHE_URL}}
+else:
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "accounts.authentication.FaceCloudJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
+    # Paginated when the request passes page or page_size; a plain array
+    # otherwise, so existing clients keep working (config/pagination.py).
+    "DEFAULT_PAGINATION_CLASS": "config.pagination.OptionalPageNumberPagination",
     # Number of reverse proxies in front of Django. With 0 the socket address is
     # the client, so a spoofed X-Forwarded-For cannot evade throttling.
     "NUM_PROXIES": int(os.environ.get("TRUSTED_PROXY_COUNT", "0")),
@@ -912,9 +925,6 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_THROTTLE_RATES": {
         "anon": "100/hour",
-    # Paginated when the request passes page or page_size; a plain array
-    # otherwise, so existing clients keep working (config/pagination.py).
-    "DEFAULT_PAGINATION_CLASS": "config.pagination.OptionalPageNumberPagination",
         "user": "1000/hour",
         "registration": "10/hour",
         "login": "20/hour",

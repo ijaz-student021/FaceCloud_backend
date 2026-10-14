@@ -114,6 +114,12 @@ def infrastructure_rule(cfg):
         problems.append("EMAIL_HOST must be a real SMTP server.")
     if cfg.get("CELERY_TASK_ALWAYS_EAGER"):
         problems.append("CELERY_TASK_ALWAYS_EAGER must be False: jobs belong on the workers, not in web requests.")
+    cache = str(((cfg.get("CACHES") or {}).get("default") or {}).get("BACKEND", ""))
+    if not cache or "locmem" in cache or "dummy" in cache:
+        problems.append(
+            "CACHE_URL must point at a shared cache (Redis): with a per-process cache every rate limit "
+            "multiplies by the number of processes and resets on restart."
+        )
     return problems
 
 
