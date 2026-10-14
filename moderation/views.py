@@ -598,3 +598,73 @@ class ModeratorBatchDetailView(OrganizationScopedMixin, APIView):
         return Response(ModeratorBatchDetailSerializer({
             "batch": batch, "images": rows, "counts_from_images": dict(counts),
         }).data)
+
+
+def organization_images(organization):
+    """Images submitted to ``organization``: its batches, never a personal space."""
+    from uploads.models import ImageUpload
+
+    if organization.is_personal:
+        return ImageUpload.objects.none()
+    return ImageUpload.objects.filter(batch__organization=organization)
+
+
+class ModeratorImagePreviewView(OrganizationScopedMixin, APIView):
+    """A thumbnail of an image submitted to this organization (owner or moderator).
+
+    ``variant=original`` (default) is the uploaded image; ``variant=enhanced``
+    is its latest completed enhancement output. Always a JPEG thumbnail of at
+    most the requested size, never the full-size file. Images of another
+    organization, and images in a personal space, are 404. Every preview is
+    recorded in the organization's audit log.
+    """
+
+    require_owner_or_moderator = True
+    throttle_scope = "thumbnail"
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("variant", str, enum=["original", "enhanced"], description="Default: original."),
+            OpenApiParameter("size", int, description="Longest edge; one of THUMBNAIL_SIZES (default 256)."),
+        ],
+        responses={(200, "image/jpeg"): OpenApiTypes.BINARY, **ERROR_RESPONSES},
+    )
+    def get(self, request, organization_id, image_id):
+        from django.http import FileResponse, HttpResponse
+        from rest_framework.exceptions import NotFound, ValidationError
+
+        from enhancement.models import EnhancementStatus
+        from organizations.models import OrganizationAuditEvent
+        from organizations.services import record_audit_event
+        from thumbnails.services import (
+            ThumbnailUnavailable, allowed_sizes, default_size, get_or_create_thumbnail, render_thumbnail,
+        )
+
+        variant = request.query_params.get("variant", "original")
+        if variant not in ("original", "enhanced"):
+            raise ValidationError({"variant": "Choose original or enhanced."})
+        raw_size = request.query_params.get("size", "")
+        if raw_size and (not raw_size.isdigit() or int(raw_size) not in allowed_sizes()):
+            raise ValidationError({"size": f"Choose one of: {', '.join(str(size) for size in allowed_sizes())}."})
+        size = int(raw_size) if raw_size else default_size()
+        image = get_object_or_404(organization_images(self.organization).filter(status="uploaded"), pk=image_id)
+        try:
+            if variant == "original":
+                thumbnail = get_or_create_thumbnail(image, size)
+                response = FileResponse(thumbnail.file.open("rb"), content_type="image/jpeg")
+            else:
+                result = (image.enhancement_results.filter(status=EnhancementStatus.COMPLETED)
+                          .exclude(enhanced_file="").order_by("-finished_at", "-pk").first())
+                if result is None:
+                    raise NotFound("This image has no completed enhancement.")
+                payload, _width, _height = render_thumbnail(result.enhanced_file, size)
+                response = HttpResponse(payload, content_type="image/jpeg")
+        except ThumbnailUnavailable as error:
+            raise NotFound(str(error)) from error
+        record_audit_event(
+            self.organization, request.user, OrganizationAuditEvent.Action.MODERATOR_IMAGE_PREVIEWED,
+            target_type="image", target_id=image.pk, new_value={"variant": variant, "size": size},
+            request=request,
+        )
+        response["Cache-Control"] = "private, no-store"
+        return response
