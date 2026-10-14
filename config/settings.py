@@ -84,6 +84,7 @@ INSTALLED_APPS = [
     "moderation",
     "contact",
     "security",
+    "camera",
 ]
 
 MIDDLEWARE = [
@@ -821,6 +822,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "operations.reap_stuck_jobs",
         "schedule": crontab(minute="*/5"),
     },
+    "purge-camera-sessions": {
+        "task": "camera.purge_old_sessions",
+        "schedule": crontab(minute=45, hour=3),
+    },
     "evaluate-security-alerts": {
         "task": "security.evaluate_alert_rules",
         "schedule": crontab(minute="*/5"),
@@ -1034,6 +1039,10 @@ SECURITY_ALERT_FAILED_LOGIN_THRESHOLD = env.int("SECURITY_ALERT_FAILED_LOGIN_THR
 SECURITY_ALERT_AUTHORIZATION_FAILURE_THRESHOLD = env.int("SECURITY_ALERT_AUTHORIZATION_FAILURE_THRESHOLD", default=20)
 SECURITY_ALERT_RATE_LIMIT_THRESHOLD = env.int("SECURITY_ALERT_RATE_LIMIT_THRESHOLD", default=10)
 SECURITY_EVENT_RETENTION_DAYS = env.int("SECURITY_EVENT_RETENTION_DAYS", default=90)
+
+# Live camera (camera app): session metadata is kept this long; saved
+# snapshots are ordinary uploads and follow the image retention rules.
+CAMERA_SESSION_RETENTION_DAYS = env.int("CAMERA_SESSION_RETENTION_DAYS", default=30)
 
 # How long records of ended sign-in sessions (device, IP address, times) are
 # kept for the user's own session list before they are deleted.

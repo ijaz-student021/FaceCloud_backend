@@ -324,6 +324,12 @@ def build_privacy_export(user):
             },
         },
         "consents": consents,
+        "camera_sessions": [
+            {"id": str(session.pk), "device_label": session.device_label, "settings": session.settings,
+             "started_at": session.started_at, "ended_at": session.ended_at,
+             "snapshot_image_ids": list(session.snapshots.values_list("image_id", flat=True))}
+            for session in user.camera_sessions.order_by("-started_at")
+        ],
         "images": images,
         "enhancements": enhancement_rows,
         "identity": {

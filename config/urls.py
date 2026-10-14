@@ -30,6 +30,7 @@ urlpatterns = [
     path("api/auth/", include("accounts.urls")),
     path("api/user/", include("accounts.user_urls")),
     path("api/contact/", include("contact.urls")),
+    path("api/camera/", include("camera.urls")),
     path("api/images/", include("uploads.urls")),
     path("api/images/", include("thumbnails.urls")),
     path("api/enhancements/", include("enhancement.urls")),
