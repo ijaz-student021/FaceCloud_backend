@@ -372,3 +372,60 @@ class TwoFactorLoginVerifySerializer(serializers.Serializer):
 class TwoFactorRequiredResponseSerializer(serializers.Serializer):
     two_factor_required = serializers.BooleanField()
     login_token = serializers.CharField()
+
+
+# -- User dashboard (GET /api/user/dashboard/) --------------------------------
+# The response is rendered through these serializers, and a test compares them
+# with accounts.dashboard.build_user_dashboard key by key.
+
+class DashboardSummarySerializer(serializers.Serializer):
+    total_images = serializers.IntegerField(help_text="Every image the user uploaded, accepted or rejected.")
+    upload_batches = serializers.IntegerField()
+    enhanced_images = serializers.IntegerField(help_text="Distinct images with at least one completed enhancement.")
+    accepted_images = serializers.IntegerField(help_text="Completed quality decisions of 'accepted'.")
+    rejected_images = serializers.IntegerField(
+        help_text="Uploads rejected at validation plus uploaded images whose quality decision is 'rejected'.",
+    )
+    needs_review_images = serializers.IntegerField()
+    average_quality_score = serializers.FloatField(help_text="Mean overall quality score (0-100); 0 when none.")
+    most_common_rejection_reason = serializers.CharField(allow_null=True)
+    processing_images = serializers.IntegerField(help_text="Images with enhancement or quality analysis in flight.")
+    failed_images = serializers.IntegerField()
+    identity_groups = serializers.IntegerField()
+    identity_grouped_images = serializers.IntegerField()
+    identity_review_items = serializers.IntegerField()
+    identity_groups_available = serializers.BooleanField(help_text="False when identity grouping is switched off.")
+    storage_bytes = serializers.IntegerField(help_text="Originals, standardized copies and enhanced outputs.")
+
+
+class DashboardDaySerializer(serializers.Serializer):
+    date = serializers.DateField(help_text="Server local date.")
+    uploads = serializers.IntegerField()
+    accepted = serializers.IntegerField(help_text="Images given an 'accepted' quality decision that day.")
+    rejected = serializers.IntegerField(help_text="Images given a 'rejected' quality decision that day.")
+
+
+class DashboardRecentUploadSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    filename = serializers.CharField()
+    status = serializers.CharField()
+    batch_id = serializers.IntegerField()
+    uploaded_at = serializers.DateTimeField()
+
+
+class DashboardActivitySerializer(serializers.Serializer):
+    type = serializers.CharField(help_text="e.g. image_uploaded, enhancement_completed, quality_rejected.")
+    message = serializers.CharField()
+    image_id = serializers.IntegerField()
+    status = serializers.CharField()
+    created_at = serializers.DateTimeField()
+    enhancement_id = serializers.IntegerField(required=False)
+    validation_id = serializers.IntegerField(required=False)
+    quality_id = serializers.IntegerField(required=False)
+
+
+class UserDashboardSerializer(serializers.Serializer):
+    summary = DashboardSummarySerializer()
+    uploads_last_7_days = DashboardDaySerializer(many=True, help_text="Seven rows, oldest first, zero-filled.")
+    recent_uploads = DashboardRecentUploadSerializer(many=True, help_text="Up to five, newest first.")
+    recent_activity = DashboardActivitySerializer(many=True, help_text="Newest first.")

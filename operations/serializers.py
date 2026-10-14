@@ -19,3 +19,99 @@ class AdminFailedBatchSerializer(serializers.ModelSerializer):
             "created_at", "updated_at",
         ]
         read_only_fields = fields
+
+
+# -- Admin analytics (GET /api/system/analytics/) -----------------------------
+# The response is rendered through these serializers, and a test compares them
+# with operations.analytics.build_admin_analytics key by key.
+
+class AnalyticsRangeSerializer(serializers.Serializer):
+    """The time window every windowed total and chart covers."""
+
+    # "from" is a Python keyword, so the fields are declared here.
+    def get_fields(self):
+        return {
+            "from": serializers.DateTimeField(help_text="Window start (inclusive)."),
+            "to": serializers.DateTimeField(help_text="Window end (inclusive)."),
+        }
+
+
+class AnalyticsFiltersSerializer(serializers.Serializer):
+    status = serializers.CharField(allow_null=True)
+    model = serializers.CharField(allow_null=True)
+    owner = serializers.IntegerField(allow_null=True)
+
+
+class AnalyticsUserTotalsSerializer(serializers.Serializer):
+    total = serializers.IntegerField(help_text="All accounts, not limited to the window.")
+    verified = serializers.IntegerField()
+    suspended = serializers.IntegerField()
+
+
+class AnalyticsImageTotalsSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    accepted = serializers.IntegerField(help_text="Uploads that passed upload validation (status 'uploaded').")
+    rejected = serializers.IntegerField(help_text="Uploads refused at upload validation.")
+
+
+class AnalyticsBreakdownSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+
+
+class AnalyticsEnhancementTotalsSerializer(AnalyticsBreakdownSerializer):
+    by_status = serializers.DictField(child=serializers.IntegerField())
+
+
+class AnalyticsQualityTotalsSerializer(AnalyticsBreakdownSerializer):
+    by_decision = serializers.DictField(child=serializers.IntegerField())
+
+
+class AnalyticsTotalsSerializer(serializers.Serializer):
+    users = AnalyticsUserTotalsSerializer()
+    batches = serializers.IntegerField()
+    images = AnalyticsImageTotalsSerializer()
+    enhancements = AnalyticsEnhancementTotalsSerializer()
+    quality_decisions = AnalyticsQualityTotalsSerializer()
+
+
+class AnalyticsTimingSerializer(serializers.Serializer):
+    enhancement = serializers.FloatField(allow_null=True)
+    quality_analysis = serializers.FloatField(allow_null=True)
+
+
+class AnalyticsCountSerializer(serializers.Serializer):
+    value = serializers.CharField()
+    count = serializers.IntegerField()
+
+
+class AnalyticsStorageSerializer(serializers.Serializer):
+    originals = serializers.IntegerField()
+    enhanced_outputs = serializers.IntegerField()
+    total = serializers.IntegerField()
+
+
+class AnalyticsDaySerializer(serializers.Serializer):
+    date = serializers.DateField()
+    count = serializers.IntegerField()
+
+
+class AnalyticsChartsSerializer(serializers.Serializer):
+    uploads_per_day = AnalyticsDaySerializer(many=True)
+    enhancements_per_day = AnalyticsDaySerializer(many=True)
+
+
+class AdminAnalyticsSerializer(serializers.Serializer):
+    range = AnalyticsRangeSerializer()
+    filters_applied = AnalyticsFiltersSerializer()
+    totals = AnalyticsTotalsSerializer()
+    success_rate_percent = serializers.FloatField(
+        allow_null=True, help_text="Accepted quality decisions as a share of all decided ones; null when none.",
+    )
+    average_processing_time_ms = AnalyticsTimingSerializer()
+    top_rejection_reasons = AnalyticsCountSerializer(many=True, help_text="Each reason occurrence counts once.")
+    model_usage = AnalyticsCountSerializer(
+        many=True, help_text="Each '+'-joined component of an algorithm string counts once per result.",
+    )
+    storage_bytes = AnalyticsStorageSerializer()
+    charts = AnalyticsChartsSerializer()
+    generated_at = serializers.DateTimeField()

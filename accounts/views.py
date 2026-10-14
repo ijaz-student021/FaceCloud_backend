@@ -53,6 +53,7 @@ from .serializers import (
     TwoFactorRequiredResponseSerializer,
     TwoFactorSetupResponseSerializer,
     TwoFactorStatusSerializer,
+    UserDashboardSerializer,
     UserSerializer,
     VerifyRegistrationSerializer,
 )
@@ -873,9 +874,9 @@ class DeleteAccountView(APIView):
 class UserDashboardView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
-    @extend_schema(responses={200: OpenApiTypes.OBJECT})
+    @extend_schema(responses={200: UserDashboardSerializer})
     def get(self, request):
-        return Response(build_user_dashboard(request.user))
+        return Response(UserDashboardSerializer(build_user_dashboard(request.user)).data)
 
 
 class AdminUserListView(generics.ListAPIView):
