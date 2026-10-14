@@ -25,8 +25,9 @@ from django.db.utils import InterfaceError, OperationalError
 from django.utils import timezone
 from rest_framework import status as http_status
 from rest_framework.exceptions import APIException, ValidationError
-from PIL import Image, ImageColor, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageColor, UnidentifiedImageError
 
+from uploads.decoding import to_working_colour
 from uploads.models import ImagePreprocessingResult, UploadBatch
 from quality_control.models import ImageQualityDecision
 
@@ -2319,8 +2320,12 @@ def _visible_mean_colour(pixels, alpha, fallback):
     return np.rint(pixels[visible].mean(axis=0)).astype(np.uint8)
 
 
-def _read_full_resolution_original(result, keep_alpha=False):
+def _read_full_resolution_original(result, keep_alpha=False, decoding=None):
     """Decode the EXIF-oriented original without a resize or destructive overwrite.
+
+    The original is brought into the working format (8-bit sRGB) by
+    ``uploads.decoding.to_working_colour``; what that converted (bit depth,
+    colour profile) is added to the ``decoding`` dict when one is passed.
 
     With ``keep_alpha`` the return value is ``(bgr, alpha)``: ``alpha`` is the
     source's transparency (``None`` when it has none), and the colour channels
@@ -2338,11 +2343,11 @@ def _read_full_resolution_original(result, keep_alpha=False):
     try:
         with Image.open(original) as source:
             source.load()
-            working = ImageOps.exif_transpose(source)
-            if working.mode in {"RGBA", "LA"} or (
-                working.mode == "P" and "transparency" in working.info
-            ):
-                rgba = working.convert("RGBA")
+            working, notes = to_working_colour(source)
+            if decoding is not None:
+                decoding.update(notes)
+            if working.mode == "RGBA":
+                rgba = working
                 background_colour = ImageColor.getrgb(settings.PREPROCESS_TRANSPARENT_BACKGROUND)
                 straight = np.asarray(rgba, dtype=np.uint8)
                 if keep_alpha and int(straight[:, :, 3].min()) < 255:
@@ -2384,21 +2389,21 @@ def _read_standardized_with_alpha(preprocessing):
     return bgr, alpha
 
 
-def _read_enhancement_source(result):
+def _read_enhancement_source(result, decoding=None):
     if settings.ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION:
         try:
-            return _read_full_resolution_original(result), "full_resolution_original"
+            return _read_full_resolution_original(result, decoding=decoding), "full_resolution_original"
         except ValidationError:
             # Legacy rows can legitimately have only their standardized file.
             pass
     return _read_standardized_image(result.preprocessing_result), "standardized_fallback"
 
 
-def _read_enhancement_source_with_alpha(result):
+def _read_enhancement_source_with_alpha(result, decoding=None):
     """``(bgr, alpha, strategy)`` for a result whose output format keeps transparency."""
     if settings.ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION:
         try:
-            bgr, alpha = _read_full_resolution_original(result, keep_alpha=True)
+            bgr, alpha = _read_full_resolution_original(result, keep_alpha=True, decoding=decoding)
             return bgr, alpha, "full_resolution_original"
         except ValidationError:
             pass
@@ -2764,10 +2769,11 @@ def _process_claimed_result(result, token):
     stored_name = None
     try:
         keep_alpha = result.preprocessing_result.output_format == "png"
+        decoding = {}
         if keep_alpha:
-            source, alpha, source_strategy = _read_enhancement_source_with_alpha(result)
+            source, alpha, source_strategy = _read_enhancement_source_with_alpha(result, decoding)
         else:
-            source, source_strategy = _read_enhancement_source(result)
+            source, source_strategy = _read_enhancement_source(result, decoding)
             alpha = None
         source, pixel_budget = _fit_pixel_budget(source)
         if pixel_budget["reduced"]:
@@ -2779,6 +2785,10 @@ def _process_claimed_result(result, token):
             checkpoint=checkpoint,
         )
         parameters["source_resolution_strategy"] = source_strategy
+        if decoding:
+            parameters["source_decoding"] = decoding
+            if decoding["colour_profile"].get("error"):
+                parameters["warnings"].append(decoding["colour_profile"]["error"])
         parameters["input_pixel_budget"] = pixel_budget
         if pixel_budget["reduced"]:
             parameters["warnings"].append(

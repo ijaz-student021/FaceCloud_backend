@@ -7,9 +7,10 @@ import cv2
 import numpy as np
 from django.conf import settings
 from django.db import transaction
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, UnidentifiedImageError
 from rest_framework.exceptions import ValidationError
 
+from uploads.decoding import to_working_colour
 from uploads.models import ImagePreprocessingResult, ImageUpload
 
 from .models import FaceValidationResult
@@ -182,10 +183,8 @@ def _read_full_resolution_original(image_upload):
     try:
         with Image.open(image_upload.original_file) as source:
             source.load()
-            working = ImageOps.exif_transpose(source)
-            if working.mode in {"RGBA", "LA"} or (
-                working.mode == "P" and "transparency" in working.info
-            ):
+            working, _notes = to_working_colour(source)
+            if working.mode == "RGBA":
                 rgba = working.convert("RGBA")
                 background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
                 working = Image.alpha_composite(background, rgba).convert("RGB")

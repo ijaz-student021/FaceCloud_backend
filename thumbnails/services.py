@@ -4,7 +4,9 @@ import logging
 from django.conf import settings
 from django.core.files.base import ContentFile
 from django.db import IntegrityError, transaction
-from PIL import Image, ImageOps
+from PIL import Image
+
+from uploads.decoding import to_working_colour
 
 from .models import ImageThumbnail
 
@@ -42,8 +44,8 @@ def render_thumbnail(image_field, size):
                     # Let the decoder skip most of the work for a big JPEG.
                     source.draft("RGB", (size * 2, size * 2))
                 source.load()
-                working = ImageOps.exif_transpose(source)
-                if working.mode in ("RGBA", "LA") or (working.mode == "P" and "transparency" in working.info):
+                working, _notes = to_working_colour(source)
+                if working.mode == "RGBA":
                     rgba = working.convert("RGBA")
                     flattened = Image.new("RGB", rgba.size, (255, 255, 255))
                     flattened.paste(rgba, mask=rgba.getchannel("A"))
