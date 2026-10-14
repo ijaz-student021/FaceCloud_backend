@@ -9,6 +9,8 @@ Backend baseline: branch `feat/backend-frontend-alignment`, based on
 `fix/pipeline-review-followups` at `51d746f` (pushed). The current route list
 (156 API routes) was generated from Django's URL resolver on 2026-10-14.
 
+Frontend contracts for everything added: `frontend-handoff.md`.
+
 **Backend status values:** `exists` (reuse; verified against routes and
 serializers), `extended` / `added` (with commit), `planned`, `frontend-only`
 (no backend work), `deferred` (with reason). Frontend integration is tracked
@@ -32,7 +34,7 @@ separately in `frontend-handoff.md`; nothing here claims a frontend change.
 |---|---|---|---|---|
 | PAGE-003 | Landing | none | frontend-only | Copy must match capabilities |
 | PAGE-001 | About | none | frontend-only | as above |
-| PAGE-002 | Contact | none | planned (B07) | Validated, throttled submission with queued delivery |
+| PAGE-002 | Contact | `POST /api/contact/` | added `3836620` | — |
 | PAGE-006 | Register | `POST /api/auth/register/` | exists | Display name: B02 profile field |
 | PAGE-007 | Signup (unmounted) | as Register | frontend-only | `/signup` redirects to Register |
 | PAGE-009 | VerifyEmail | `verify-email/`, `verify-email/resend/`, `registrations/{id}/status/` | exists | — |
@@ -45,21 +47,21 @@ separately in `frontend-handoff.md`; nothing here claims a frontend change.
 | ID | Page | Existing backend | Status | Gap / package |
 |---|---|---|---|---|
 | PAGE-038 | Dashboard | `GET /api/user/dashboard/` | exists | Typed response schema: B01 |
-| PAGE-049 | UploadCenter | upload validators | exists | Limits endpoint: B01 (`/api/images/upload/limits/`) |
+| PAGE-049 | UploadCenter | `GET /api/images/upload/limits/` | added `698f68e` | — |
 | PAGE-051 | UploadSingle | `upload/single/`, batch progress, `enhancements/images/{id}/` | exists | — |
 | PAGE-050 | UploadMultiple | `upload/multiple/` | exists | — |
 | PAGE-052 | UploadZip | `upload/zip/` | exists | — |
 | PAGE-047 | ProcessingPage | batch detail/progress, enhancement result | exists | ID kind is batch id (handoff) |
-| PAGE-046 | ProcessingJobs | `enhancements/jobs/`, `images/batches/` | exists | Pagination: B01 |
+| PAGE-046 | ProcessingJobs | `enhancements/jobs/`, `images/batches/` | exists; pagination added `f8f9f4b` | — |
 | PAGE-044 | MyImages | `GET /api/images/my/` (paginated) | exists | Filters already in view; verify |
 | PAGE-042 | ImageDetail | image, preprocessing, quality, validation, duplicates, enhancement, edits, shares | exists | — |
-| PAGE-041 | IdentityGroups | `identities/groups/`, `search/`, `review/`, privacy consents | exists | Pagination: B01 |
+| PAGE-041 | IdentityGroups | `identities/groups/`, `search/`, `review/`, privacy consents | exists; pagination added `f8f9f4b` | — |
 | PAGE-040 | GroupDetail | rename/merge/profile/delete/memberships/exports | exists | — |
 | PAGE-039 | Downloads | `downloads/`, `downloads/packages/`, reports, identity exports | exists | Mixed-selection package: deferred until the UI defines scope |
-| PAGE-045 | Notifications | list/read/all-read/unread-count/preferences | exists | Pagination: B01 |
+| PAGE-045 | Notifications | list/read/all-read/unread-count/preferences | exists (already paginated) | — |
 | PAGE-037 | ActivityLogs | `GET /api/user/activity/` | exists | — |
-| PAGE-048 | Settings: profile | `user/profile/` (username, email only) | planned (B02) | name, organization text, job title, phone, country; avatar |
-| PAGE-048 | Settings: security | change-password, logout-all, 2FA | planned (B02) | Session inventory + per-session revoke |
+| PAGE-048 | Settings: profile | `user/profile/`, `user/avatar/` | extended `3c62344` | — |
+| PAGE-048 | Settings: security | `user/sessions/`, `sessions/{id}/revoke/`, change-password, logout-all, 2FA | added `1a2c1b8` | — |
 | PAGE-048 | Settings: notifications | `notifications/preferences/` | exists | — |
 | PAGE-048 | Settings: privacy | `privacy/consents/`, `export/`, `facial-data/` | exists | Camera permission stays in the browser |
 | PAGE-043 | LiveEnhancement | upload + enhancement (snapshots) | exists | Sessions/history: deferred (needs retention spec); video: out of scope |
@@ -68,14 +70,14 @@ separately in `frontend-handoff.md`; nothing here claims a frontend change.
 
 | ID | Page | Existing backend | Status | Gap / package |
 |---|---|---|---|---|
-| PAGE-031 | ModeratorLogin / access gate | `organizations/` | planned (B01) | Membership role/status and capabilities in responses |
+| PAGE-031 | ModeratorLogin / access gate | `organizations/` with membership + capabilities | extended `689f90d` | — |
 | PAGE-029 | ModeratorDashboard | `moderator/dashboard/`, `moderator/metrics/` | exists | — |
-| PAGE-026 | MemberManagement | members, invitations, resend, cancel, update, remove, audit | exists | Capabilities: B01 |
+| PAGE-026 | MemberManagement | members, invitations, resend, cancel, update, remove, audit | exists; capabilities `689f90d` | Copy "only invited by you" differs from policy (handoff) |
 | PAGE-036 | ReviewQueue | reviews list/claim/release/assign/bulk-decision | exists | — |
-| PAGE-030 | ModeratorImageReview | review detail/image/decision/escalate/merge | exists | Before/after preview, reprocess: planned (B04) |
-| PAGE-024 | BatchManagement | `moderator/batches/`, retry, cancel | planned (B04) | Batch detail with per-image outcomes |
-| PAGE-033 | NotificationCenter | user notifications | exists | Moderator event producers: B05 |
-| PAGE-035 | ReportsExports | `moderator/reports/` (type, format) | planned (B05) | Date range, filter snapshot, dedup key |
+| PAGE-030 | ModeratorImageReview | review detail/image/decision/escalate/merge | exists | Reprocess and before/after: deferred (decisions D2, D3) |
+| PAGE-024 | BatchManagement | `moderator/batches/{id}/`, retry, cancel | added `0765596` | Packages/reprocess: deferred (D2, D3) |
+| PAGE-033 | NotificationCenter | user notifications; assignment/escalation/overdue/batch-failed producers verified | exists | — |
+| PAGE-035 | ReportsExports | `moderator/reports/` with date window | extended `f30722d` | "general activity" has no report type (handoff) |
 | PAGE-028 | ModeratorAudit | `{org}/audit/` | exists | — |
 | PAGE-032 | ModeratorSettings | profile, notification preferences | exists | — |
 | PAGE-025/027/034 | IdentityReview, ModerationLogs, RejectedImages (unmounted) | moderation, audit | frontend-only | Consolidate or route (frontend decision) |
@@ -85,23 +87,23 @@ separately in `frontend-handoff.md`; nothing here claims a frontend change.
 | ID | Page | Existing backend | Status | Gap / package |
 |---|---|---|---|---|
 | PAGE-011 | AdminOverview | `system/analytics/`, `system/health/`, `system/queue/`, `system/moderation/` | exists | — |
-| PAGE-023 | Users | `user/admin/users/` list + PATCH | planned (B06) | Detail view |
+| PAGE-023 | Users | `user/admin/users/` list, GET detail, PATCH | extended `616b628` | Add-user: decision D4 |
 | PAGE-014 | AuditLogs | `system/audit/` | exists | — |
-| PAGE-018 | Security | audit signals only | planned (B06) | Alert projection + audited acknowledgement |
+| PAGE-018 | Security | audit feed | deferred | Alert rules needed first (decision D1) |
 | PAGE-012 | ApiDocs | `/api/docs/`, `/api/schema/`, `/api/redoc/` | exists | Frontend should link them (handoff) |
 | PAGE-013 | ApiTest | existing API | frontend-only | Use Swagger |
 | PAGE-021 | SystemMonitoring | health, queue, failed jobs | exists | Host telemetry: deferred (needs an operational monitor, not Django) |
 | PAGE-022 | UploadStatistics | `system/analytics/` | exists | Check buckets in B06 |
 | PAGE-016 | RejectionSummary | analytics, moderation overview | exists | — |
-| PAGE-015 | ImageMonitoring | owner-scoped image APIs only | planned (B06) | Admin-scoped image list/detail/preview with audit |
+| PAGE-015 | ImageMonitoring | `system/images/`, `{id}/`, `{id}/preview/` | added `0215bc8` | Frontend needs an admin detail route |
 | PAGE-017/019/020 | Rejections, Statistics, SystemHealth (unmounted) | as routed equivalents | frontend-only | — |
 
 ## Cross-cutting backend items
 
 | Item | Status | Package |
 |---|---|---|
-| Pagination on 19 list endpoints (audit P2-14) | planned | B01, opt-in so current consumers keep working |
-| Per-process rate limits (audit P2-15) | planned | B01, Redis cache when configured |
-| Typed response schemas for aggregates | planned | B01 |
-| EDSR runtime checksum (audit P2-16) | planned | B08 |
+| Pagination on 19 list endpoints (audit P2-14) | added `f8f9f4b` | B01, opt-in |
+| Per-process rate limits (audit P2-15) | added `33008a3` | B01, `CACHE_URL`, required in production |
+| Typed response schemas for aggregates | partial | New endpoints typed; dashboard/analytics still loosely typed |
+| EDSR runtime checksum (audit P2-16) | fixed `02ead0c` | B08 |
 | Deployment artefacts | deferred | B09, needs a hosting decision |
