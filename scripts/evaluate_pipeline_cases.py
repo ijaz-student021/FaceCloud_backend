@@ -155,6 +155,39 @@ def psnr(first, second):
     return 99.0 if error == 0 else round(float(10 * np.log10(255.0 ** 2 / error)), 2)
 
 
+def write_crops(path, before, after):
+    """Full-resolution face and background crops, before and after, side by side.
+
+    Scaled-down panels hide exactly what matters here (texture, halos, colour
+    blotches), so these are taken at the image's own resolution.
+    """
+    import cv2
+    import numpy as np
+
+    from enhancement.face_fidelity import _detect_boxes
+
+    height, width = before.shape[:2]
+    crops = []
+    try:
+        boxes = _detect_boxes(before)
+    except Exception:  # no detector: background crop only
+        boxes = []
+    if boxes:
+        x, y, w, h = boxes[0]
+        left, top = int(max(0, (x - 0.15 * w) * width)), int(max(0, (y - 0.15 * h) * height))
+        right, bottom = int(min(width, (x + 1.15 * w) * width)), int(min(height, (y + 1.15 * h) * height))
+        crops.append(("face", (top, bottom, left, right)))
+    side = max(64, min(height, width) // 4)
+    crops.append(("background", (0, side, 0, side)))
+    rows = []
+    for label, (top, bottom, left, right) in crops:
+        pair = [labelled(image[top:bottom, left:right], f"{label} {name}", 360) for image, name in ((before, "before"), (after, "after"))]
+        rows.append(np.hstack(pair))
+    widest = max(row.shape[1] for row in rows)
+    sheet = np.vstack([cv2.copyMakeBorder(row, 0, 4, 0, widest - row.shape[1], cv2.BORDER_CONSTANT) for row in rows])
+    cv2.imwrite(str(path), sheet, [cv2.IMWRITE_JPEG_QUALITY, 92])
+
+
 def labelled(image, text, height):
     import cv2
 
@@ -177,6 +210,7 @@ def main():
     parser.add_argument("--level", default="auto", choices=("auto", "low", "medium", "high"))
     parser.add_argument("--style", default="natural", choices=("natural", "dynamic", "ai_max"))
     parser.add_argument("--min-edge", type=int, default=0, help="Upscale smaller photos to this shorter edge first.")
+    parser.add_argument("--max-edge", type=int, default=0, help="Reduce larger photos to this longer edge first.")
     parser.add_argument("--name", default=datetime.now().strftime("%Y%m%d-%H%M%S"))
     parser.add_argument("--output", default=str(ROOT / ".runtime" / "pipeline_eval"))
     arguments = parser.parse_args()
@@ -210,6 +244,9 @@ def main():
             clean = cv2.resize(
                 clean, (round(clean.shape[1] * scale), round(clean.shape[0] * scale)), interpolation=cv2.INTER_LANCZOS4,
             )
+        if arguments.max_edge and max(clean.shape[:2]) > arguments.max_edge:
+            scale = arguments.max_edge / max(clean.shape[:2])
+            clean = cv2.resize(clean, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
         for case in cases:
             degraded, alpha = degrade(clean, case, rng)
             target = reference_for(clean, case)
@@ -287,6 +324,7 @@ def main():
                 labelled(comparable, f"enhanced ({level})", 300),
             ])
             cv2.imwrite(str(output_dir / f"{name}__{case}.jpg"), panel, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            write_crops(output_dir / f"{name}__{case}__crops.jpg", degraded, comparable)
             panels.append(panel)
             print(
                 f"{name:10s} {case:12s} {row['megapixels']:5.2f} MP {elapsed:5.1f}s "
