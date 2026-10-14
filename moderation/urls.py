@@ -62,6 +62,10 @@ urlpatterns = [
         views.ModeratorBatchDetailView.as_view(), name="batch-detail",
     ),
     path(
+        "<int:organization_id>/moderator/batches/<int:batch_id>/reprocess/",
+        views.ModeratorBatchReprocessView.as_view(), name="batch-reprocess",
+    ),
+    path(
         "<int:organization_id>/moderator/batches/<int:batch_id>/retry/",
         views.ModeratorBatchRetryView.as_view(), name="batch-retry",
     ),

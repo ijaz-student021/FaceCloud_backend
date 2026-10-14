@@ -1,6 +1,6 @@
 from django.conf import settings
 from django.db.models import F
-from django.http import FileResponse
+from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
@@ -668,3 +668,57 @@ class ModeratorImagePreviewView(OrganizationScopedMixin, APIView):
         )
         response["Cache-Control"] = "private, no-store"
         return response
+
+
+class ModeratorReprocessSerializer(serializers.Serializer):
+    level = serializers.ChoiceField(choices=["auto", "low", "medium", "high"], default="auto")
+    style = serializers.ChoiceField(choices=["natural", "dynamic", "ai_max"], default="natural")
+    reason = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
+
+
+class ModeratorReprocessResponseSerializer(serializers.Serializer):
+    job_id = serializers.IntegerField()
+    status = serializers.CharField()
+    total_images = serializers.IntegerField()
+
+
+class ModeratorBatchReprocessView(OrganizationScopedMixin, APIView):
+    """Run enhancement again for a batch submitted to this organization.
+
+    Every eligible image gets a new enhancement result (a new version) made
+    from its preserved original. Originals and earlier outputs are never
+    changed or removed. 409 when any image already has enhancement queued or
+    running (nothing is started); the batch owner's fair-use limit applies
+    (429). Recorded in the organization audit log.
+    """
+
+    require_owner_or_moderator = True
+    throttle_scope = "org_batch_action"
+
+    @extend_schema(request=ModeratorReprocessSerializer,
+                   responses={201: ModeratorReprocessResponseSerializer, 409: OpenApiTypes.OBJECT,
+                              429: OpenApiTypes.OBJECT, 500: OpenApiTypes.OBJECT, **ERROR_RESPONSES})
+    def post(self, request, organization_id, batch_id):
+        from enhancement.batch_jobs import start_batch_enhancement
+        from enhancement.services import ensure_enhancement_capacity
+        from organizations.models import OrganizationAuditEvent
+        from organizations.services import record_audit_event
+
+        if self.organization.is_personal:
+            raise Http404("Batch not found.")
+        batch = get_object_or_404(UploadBatch.objects.select_related("owner"), pk=batch_id,
+                                  organization_id=self.organization.pk)
+        payload = ModeratorReprocessSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        ensure_enhancement_capacity(batch.owner, batch=True)
+        job = start_batch_enhancement(batch, level=payload.validated_data["level"],
+                                      style=payload.validated_data["style"])
+        record_audit_event(
+            self.organization, request.user, OrganizationAuditEvent.Action.BATCH_REPROCESSED_BY_MODERATOR,
+            target_type="batch", target_id=batch.pk, reason=payload.validated_data["reason"],
+            new_value={"job_id": job.pk, "level": job.requested_level, "style": job.requested_style,
+                       "images": job.total_images},
+            request=request,
+        )
+        return Response({"job_id": job.pk, "status": job.status, "total_images": job.total_images},
+                        status=status.HTTP_201_CREATED)
