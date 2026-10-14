@@ -169,6 +169,8 @@ class EnhancementPipelineContext:
     # Set when face restoration was applied but identity then could not be
     # verified: the tail of the pipeline is run again without it.
     face_restoration_withdrawn: bool = False
+    # Reports of a tail pass that was withdrawn and run again (see enhance_bgr).
+    discarded_stage_reports: list = field(default_factory=list)
     stage_timings_ms: dict = field(default_factory=dict)
     stage_order: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
@@ -1857,7 +1859,41 @@ def face_fidelity_stage(context):
             "Enhancement was reduced on a face that moved too far from the source "
             "in texture, structure, colour or highlights."
         )
+    if metadata.get("status") == "unresolved":
+        context.warnings.append(
+            "A face still measured outside the fidelity limits after it was restored to the source."
+        )
+    _reconcile_face_restoration(context, metadata)
     return context
+
+
+def _reconcile_face_restoration(context, face_check):
+    """Stop reporting a GFPGAN restoration that the face check took back out.
+
+    The face check judges against the image before any restoration. When it
+    put every face it checked back to that image (strength 0) and checked at
+    least as many faces as GFPGAN restored, no restored face is left in the
+    output, so the result must not claim one (in the algorithm label, the
+    identity notice or the stage report). A partial reduction leaves restored
+    detail in place and is reported as applied.
+    """
+    restoration = context.face_restoration
+    faces = face_check.get("faces") or []
+    if not restoration.get("applied") or not faces:
+        return
+    if any(face.get("applied_strength", 1.0) > 0.0 for face in faces):
+        return
+    if len(faces) < int(restoration.get("faces_restored") or 1):
+        return
+    reason = "Face restoration was undone by the face check: every restored face was put back to the source."
+    context.face_restoration = {
+        **restoration, "applied": False, "reverted_by_face_check": True, "fallback_reason": reason,
+    }
+    context.warnings.append(reason)
+    for report in context.stage_reports:
+        if report["stage"] == "face_restoration" and report.get("status") == "accepted":
+            report["status"] = "reverted"
+            report["fallback_reason"] = reason
 
 
 def validate_output_stage(context):
@@ -2245,6 +2281,8 @@ def enhance_bgr(
     for stage in _HEAD_STAGES:
         _run_stage(context, *stage)
     before_tail = context.current_image
+    reports_before_tail = len(context.stage_reports)
+    warnings_before_tail = len(context.warnings)
     for stage in _TAIL_STAGES:
         _run_stage(context, *stage)
     if _face_restoration_needs_withdrawing(context):
@@ -2258,6 +2296,12 @@ def enhance_bgr(
         withdrawn = {**context.face_restoration, "applied": False, "withdrawn": True, "fallback_reason": reason}
         context.face_restoration_withdrawn = True
         context.face_restoration = withdrawn
+        # The first tail's image is discarded, so are its reports and warnings:
+        # what is kept describes the image that is saved. The discarded reports
+        # stay available for audit.
+        context.discarded_stage_reports = context.stage_reports[reports_before_tail:]
+        del context.stage_reports[reports_before_tail:]
+        del context.warnings[warnings_before_tail:]
         context.warnings.append(reason)
         context.current_image = before_tail
         for stage in _TAIL_STAGES:
@@ -2265,8 +2309,9 @@ def enhance_bgr(
     _run_stage(context, "validate_output", validate_output_stage, False, None)
 
     identity_verification = identity_verification_summary(context)
-    # True when every stage left the pixels alone: the photo had no defect this
-    # pipeline corrects. The output is then the source, re-encoded.
+    # True when every kept stage left the pixels alone: the photo had no defect
+    # this pipeline corrects. The output is then the source, re-encoded.
+    # Discarded passes (above) are not counted.
     no_correction_needed = not any(entry["changed_pixels"] for entry in context.stage_reports)
     context.plan["no_correction_needed"] = no_correction_needed
     # The restoration stage could not know the final verdict; record it now.
@@ -2342,6 +2387,7 @@ def enhance_bgr(
         "plan": context.plan,
         "no_correction_needed": no_correction_needed,
         "stage_reports": context.stage_reports,
+        "discarded_stage_reports": context.discarded_stage_reports,
         "identity_status": identity_verification["status"],
         "identity_verification": identity_verification,
         "face_fidelity": context.face_fidelity,

@@ -26,9 +26,15 @@ from rest_framework.exceptions import ValidationError
 logger = logging.getLogger(__name__)
 
 # Strengths tried, in order, for a face that violates a limit: full candidate
-# first, then progressively more of the reference, ending with the reference.
+# first, then progressively more of the reference inside a feathered ellipse,
+# ending with the reference there (the box's corners keep the candidate). If
+# every one still violates a limit, the whole face box is restored to the
+# reference (see _restore_box), so no altered pixel is left inside it.
 _BLEND_STRENGTHS = (1.0, 0.7, 0.4, 0.0)
 _BOX_MARGIN = 0.15
+# Width of the ramp outside a restored box, as a share of its shorter side, so
+# the restored box has no visible edge.
+_RESTORE_FEATHER = 0.12
 
 
 def _limits():
@@ -130,6 +136,44 @@ def _feathered_mask(height, width):
     return cv2.GaussianBlur(mask, (0, 0), sigma)[:, :, None]
 
 
+def _restore_box(output, reference, box, reference_box):
+    """Put the reference back over the whole face box, feathered *outside* it.
+
+    Inside the box every pixel is the reference's; across a margin around it
+    the reference fades into the candidate, so there is no seam. Returns the new
+    output (a copy) and the box's pixels on the output grid.
+    """
+    height, width = output.shape[:2]
+    left, top, right, bottom = box
+    feather = max(2, int(round(min(right - left, bottom - top) * _RESTORE_FEATHER)))
+    outer = (max(0, left - feather), max(0, top - feather), min(width, right + feather), min(height, bottom + feather))
+    scale_x = reference.shape[1] / float(width)
+    scale_y = reference.shape[0] / float(height)
+    source_top, source_left = int(round(outer[1] * scale_y)), int(round(outer[0] * scale_x))
+    source = reference[
+        source_top:max(int(round(outer[3] * scale_y)), source_top + 1),
+        source_left:max(int(round(outer[2] * scale_x)), source_left + 1),
+    ]
+    region_size = (outer[2] - outer[0], outer[3] - outer[1])
+    if source.shape[1::-1] != region_size:
+        source = cv2.resize(source, region_size, interpolation=cv2.INTER_CUBIC)
+    inner = np.zeros((region_size[1], region_size[0]), np.uint8)
+    inner[top - outer[1]:bottom - outer[1], left - outer[0]:right - outer[0]] = 1
+    # 1 inside the box, falling linearly to 0 over ``feather`` pixels outside it.
+    distance = cv2.distanceTransform(1 - inner, cv2.DIST_L2, 3)
+    weight = np.clip(1.0 - distance / float(feather), 0.0, 1.0)[:, :, None]
+    restored = output.copy()
+    region = restored[outer[1]:outer[3], outer[0]:outer[2]].astype(np.float32)
+    restored[outer[1]:outer[3], outer[0]:outer[2]] = np.clip(
+        np.rint(region * (1.0 - weight) + source.astype(np.float32) * weight), 0, 255,
+    ).astype(np.uint8)
+    if reference_box is not None:
+        # Same grid: the box is the reference exactly, not a resampled copy.
+        ref_left, ref_top, ref_right, ref_bottom = reference_box
+        restored[top:bottom, left:right] = reference[ref_top:ref_bottom, ref_left:ref_right]
+    return restored, restored[top:bottom, left:right]
+
+
 def check_face_regions(reference, candidate):
     """Return ``(image, metadata)`` with every detected face inside its limits.
 
@@ -137,6 +181,14 @@ def check_face_regions(reference, candidate):
     ``candidate`` is the image after them, possibly on a larger pixel grid. Each
     face is measured on the reference's grid, so an upscaler is judged on what it
     changed, not on having more pixels.
+
+    Per face, ``outcome`` is ``passed`` (left alone), ``reduced`` (blended toward
+    the reference until within limits; at strength 0 the face ellipse is the
+    reference), ``reverted`` (no blend was within limits, so the whole box is
+    the reference again) or ``unresolved`` (even the
+    restored box measured outside a limit; listed in ``violations``). The
+    overall ``status`` is never ``reverted`` while altered pixels or violations
+    remain.
     """
     limits = _limits()
     metadata = {
@@ -183,6 +235,7 @@ def check_face_regions(reference, candidate):
         mask = None
         record = {"attempts": []}
         accepted_face = candidate_face
+        violations = []
         for strength in _BLEND_STRENGTHS:
             if strength >= 1.0:
                 trial = candidate_face
@@ -206,23 +259,46 @@ def check_face_regions(reference, candidate):
             accepted_face = trial
             if not violations:
                 break
-        record["applied_strength"] = record["attempts"][-1]["strength"]
         record["violations_at_full_strength"] = record["attempts"][0]["violations"]
+        if not violations:
+            record["applied_strength"] = record["attempts"][-1]["strength"]
+            record["outcome"] = "passed" if record["applied_strength"] >= 1.0 else "reduced"
+            if record["applied_strength"] < 1.0:
+                if output is candidate:
+                    output = candidate.copy()
+                output[out_top:out_bottom, out_left:out_right] = accepted_face
+        else:
+            # The ellipse blends leave the box's corners as the candidate, and
+            # none was within limits: restore the whole box.
+            output, restored_face = _restore_box(
+                output, reference, (out_left, out_top, out_right, out_bottom),
+                (left, top, right, bottom) if same_grid else None,
+            )
+            comparable = restored_face if same_grid else cv2.resize(
+                restored_face, (right - left, bottom - top), interpolation=cv2.INTER_AREA,
+            )
+            metrics = face_metrics(reference_face, comparable)
+            violations = _violations(metrics, limits)
+            record["attempts"].append({"strength": 0.0, "scope": "whole_box", "metrics": metrics, "violations": violations})
+            record["applied_strength"] = 0.0
+            record["outcome"] = "unresolved" if violations else "reverted"
+        record["violations"] = violations
         record["metrics"] = record["attempts"][-1]["metrics"]
         metadata["faces"].append(record)
         metadata["faces_checked"] += 1
-        if record["applied_strength"] < 1.0:
+        if record["outcome"] != "passed":
             metadata["faces_adjusted"] += 1
-            if output is candidate:
-                output = candidate.copy()
-            output[out_top:out_bottom, out_left:out_right] = accepted_face
 
     if not metadata["faces_checked"]:
         return candidate, metadata
-    if not metadata["faces_adjusted"]:
+    outcomes = {face["outcome"] for face in metadata["faces"]}
+    if "unresolved" in outcomes:
+        metadata["status"] = "unresolved"
+    elif outcomes == {"passed"}:
         metadata["status"] = "passed"
-    elif all(face["applied_strength"] == 0.0 for face in metadata["faces"] if face["applied_strength"] < 1.0):
+    elif outcomes <= {"passed", "reverted"}:
         metadata["status"] = "reverted"
     else:
         metadata["status"] = "strength_reduced"
+    metadata["faces_reverted"] = sum(face["outcome"] == "reverted" for face in metadata["faces"])
     return output, metadata
