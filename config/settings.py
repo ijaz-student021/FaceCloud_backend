@@ -82,6 +82,7 @@ INSTALLED_APPS = [
     "thumbnails",
     "organizations",
     "moderation",
+    "contact",
 ]
 
 MIDDLEWARE = [
@@ -932,6 +933,7 @@ REST_FRAMEWORK = {
         "token_refresh": "60/hour",
         "verification": "10/hour",
         "verification_status": "60/hour",
+        "contact": "5/hour",
         "password_reset": "10/hour",
         "password_change": "10/hour",
         "image_upload": "100/hour",
@@ -997,6 +999,12 @@ SPECTACULAR_SETTINGS = {
 
 # Runs tests against a throwaway media folder instead of the real one.
 TEST_RUNNER = "config.test_runner.FaceCloudTestRunner"
+
+# Public contact form (contact app): where messages are delivered, and how
+# long they are kept. With no recipient the form answers 503 instead of
+# pretending to work.
+CONTACT_RECIPIENT_EMAILS = env.list("CONTACT_RECIPIENT_EMAILS", default=[])
+CONTACT_MESSAGE_RETENTION_DAYS = env.int("CONTACT_MESSAGE_RETENTION_DAYS", default=180)
 
 # How long records of ended sign-in sessions (device, IP address, times) are
 # kept for the user's own session list before they are deleted.
