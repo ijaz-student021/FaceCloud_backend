@@ -429,8 +429,10 @@ class ModeratorReportListCreateView(OrganizationScopedMixin, generics.ListAPIVie
         responses={201: ModeratorReportSerializer, 200: ModeratorReportSerializer, **ERROR_RESPONSES},
         summary="Request an organization report",
         description=(
-            "Returns the existing in-flight report instead of creating a "
-            "duplicate if one of the same type and format is already queued or generating."
+            "Returns the existing in-flight report instead of creating a duplicate if one of the "
+            "same type, format and date window is already queued or generating. The window "
+            "(UTC, half-open) is stored on the report and applied by every report type; the "
+            "payload states which timestamp each type filters on."
         ),
     )
     def post(self, request, organization_id):
@@ -440,6 +442,8 @@ class ModeratorReportListCreateView(OrganizationScopedMixin, generics.ListAPIVie
             organization=self.organization, requested_by=request.user,
             report_type=serializer.validated_data["report_type"],
             report_format=serializer.validated_data["format"],
+            date_from=serializer.validated_data["date_from"],
+            date_to=serializer.validated_data["date_to"],
         )
         return Response(
             ModeratorReportSerializer(report).data,

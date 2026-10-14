@@ -655,8 +655,39 @@ _ORGANIZATION_AUDIT_ACTIONS_FOR_ACTIVITY = [
 ]
 
 
-def build_review_summary_payload(organization):
-    reviews = ModeratorReview.objects.filter(organization=organization)
+def report_period_key(date_from, date_to):
+    """Names a reporting window for deduplication: "all" when unbounded."""
+    if date_from is None and date_to is None:
+        return "all"
+    stamp = lambda moment: moment.strftime("%Y-%m-%dT%H:%M:%SZ") if moment else "-"  # noqa: E731
+    return f"{stamp(date_from)}/{stamp(date_to)}"
+
+
+def _in_period(queryset, field, period):
+    """Rows whose ``field`` falls in the half-open UTC window ``period``."""
+    if period is None:
+        return queryset
+    start, end = period
+    if start is not None:
+        queryset = queryset.filter(**{f"{field}__gte": start})
+    if end is not None:
+        queryset = queryset.filter(**{f"{field}__lt": end})
+    return queryset
+
+
+def _period_description(period, field):
+    start, end = period or (None, None)
+    return {
+        "from": start.isoformat() if start else None,
+        "to": end.isoformat() if end else None,
+        "timezone": "UTC",
+        "bounds": "from inclusive, to exclusive",
+        "filtered_on": field,
+    }
+
+
+def build_review_summary_payload(organization, period=None):
+    reviews = _in_period(ModeratorReview.objects.filter(organization=organization), "created_at", period)
     rows = list(
         reviews.order_by("-created_at").values(
             "id", "source", "status", "ai_recommendation", "ai_confidence",
@@ -675,6 +706,7 @@ def build_review_summary_payload(organization):
         "report_type": ModeratorReport.ReportType.REVIEW_SUMMARY,
         "generated_at": timezone.now().isoformat(),
         "organization": {"id": organization.pk, "name": organization.name},
+        "period": _period_description(period, "review created_at"),
         "summary": {
             "total_reviews": reviews.count(),
             "by_status": dict(Counter(reviews.values_list("status", flat=True))),
@@ -685,8 +717,10 @@ def build_review_summary_payload(organization):
     }
 
 
-def build_moderator_activity_payload(organization):
-    decided = ModeratorReview.objects.filter(organization=organization, decided_by__isnull=False)
+def build_moderator_activity_payload(organization, period=None):
+    decided = _in_period(
+        ModeratorReview.objects.filter(organization=organization, decided_by__isnull=False), "decided_at", period,
+    )
     per_moderator = list(
         decided.values("decided_by_id", "decided_by__username")
         .annotate(
@@ -698,9 +732,9 @@ def build_moderator_activity_payload(organization):
         .order_by("-total")
     )
     rows = list(
-        OrganizationAuditEvent.objects.filter(
+        _in_period(OrganizationAuditEvent.objects.filter(
             organization=organization, action__in=_ORGANIZATION_AUDIT_ACTIONS_FOR_ACTIVITY,
-        )
+        ), "created_at", period)
         .order_by("-created_at")
         .values("actor_id", "actor__username", "action", "target_type", "target_id", "reason", "created_at")[:200]
     )
@@ -711,18 +745,20 @@ def build_moderator_activity_payload(organization):
         "report_type": ModeratorReport.ReportType.MODERATOR_ACTIVITY,
         "generated_at": timezone.now().isoformat(),
         "organization": {"id": organization.pk, "name": organization.name},
+        "period": _period_description(period, "review decided_at; audit event created_at"),
         "summary": {"moderators": per_moderator},
         "rows": rows,
         "row_count": len(rows),
     }
 
 
-def _report_envelope(organization, report_type, summary, rows):
+def _report_envelope(organization, report_type, summary, rows, period=None, filtered_on=""):
     return {
         "format_version": 1,
         "report_type": report_type,
         "generated_at": timezone.now().isoformat(),
         "organization": {"id": organization.pk, "name": organization.name},
+        "period": _period_description(period, filtered_on),
         "summary": summary,
         "rows": rows,
         "row_count": len(rows),
@@ -735,9 +771,9 @@ def _organization_quality_decisions(organization):
     )
 
 
-def build_rejection_reasons_payload(organization):
+def build_rejection_reasons_payload(organization, period=None):
     """Why photos were rejected or sent to review, most common reason first."""
-    flagged = _organization_quality_decisions(organization).filter(
+    flagged = _in_period(_organization_quality_decisions(organization), "updated_at", period).filter(
         decision__in=[ImageQualityDecision.Decision.REJECTED, ImageQualityDecision.Decision.NEEDS_REVIEW],
     )
     reasons = Counter(
@@ -761,7 +797,8 @@ def build_rejection_reasons_payload(organization):
         "by_decision": dict(Counter(flagged.values_list("decision", flat=True))),
         "reasons": dict(reasons.most_common()),
     }
-    return _report_envelope(organization, ModeratorReport.ReportType.REJECTION_REASONS, summary, rows)
+    return _report_envelope(organization, ModeratorReport.ReportType.REJECTION_REASONS, summary, rows,
+                            period, "quality decision updated_at")
 
 
 QUALITY_SCORE_BUCKETS = ((0, 20), (20, 40), (40, 60), (60, 80), (80, 101))
@@ -774,9 +811,11 @@ def _rounded(value):
     return round(value, 1) if value is not None else None
 
 
-def build_quality_scores_payload(organization):
+def build_quality_scores_payload(organization, period=None):
     """How good the organization's photos are: averages and a score distribution."""
-    decisions = _organization_quality_decisions(organization).filter(overall_score__isnull=False)
+    decisions = _in_period(
+        _organization_quality_decisions(organization), "updated_at", period,
+    ).filter(overall_score__isnull=False)
     averages = decisions.aggregate(overall=Avg("overall_score"), **{name: Avg(name) for name in QUALITY_SUBSCORES})
     buckets = decisions.aggregate(**{
         f"b{low}": Count("id", filter=Q(overall_score__gte=low, overall_score__lt=high))
@@ -799,12 +838,13 @@ def build_quality_scores_payload(organization):
         "score_distribution": {f"{low}-{min(high, 100)}": buckets[f"b{low}"] for low, high in QUALITY_SCORE_BUCKETS},
         "by_decision": dict(Counter(decisions.values_list("decision", flat=True))),
     }
-    return _report_envelope(organization, ModeratorReport.ReportType.QUALITY_SCORES, summary, rows)
+    return _report_envelope(organization, ModeratorReport.ReportType.QUALITY_SCORES, summary, rows,
+                            period, "quality decision updated_at")
 
 
-def build_batches_payload(organization):
+def build_batches_payload(organization, period=None):
     """The organization's upload batches and how they finished."""
-    batches = UploadBatch.objects.filter(organization=organization)
+    batches = _in_period(UploadBatch.objects.filter(organization=organization), "created_at", period)
     totals = batches.aggregate(
         files=Sum("total_files"), accepted=Sum("accepted_files"), rejected=Sum("rejected_files"),
         processing_failed=Sum("processing_failed_files"), retries=Sum("retry_count"),
@@ -830,12 +870,15 @@ def build_batches_payload(organization):
         "processing_failed_files": totals["processing_failed"] or 0,
         "retries": totals["retries"] or 0,
     }
-    return _report_envelope(organization, ModeratorReport.ReportType.BATCHES, summary, rows)
+    return _report_envelope(organization, ModeratorReport.ReportType.BATCHES, summary, rows,
+                            period, "batch created_at")
 
 
-def build_duplicate_decisions_payload(organization):
+def build_duplicate_decisions_payload(organization, period=None):
     """Suspected duplicates and what was decided about them (hash-based, no faces)."""
-    matches = DuplicateMatch.objects.filter(source_image__batch__organization=organization)
+    matches = _in_period(
+        DuplicateMatch.objects.filter(source_image__batch__organization=organization), "created_at", period,
+    )
     rows = [
         {
             "match_id": row["id"], "source_image_id": row["source_image_id"],
@@ -854,7 +897,8 @@ def build_duplicate_decisions_payload(organization):
         "by_match_type": dict(Counter(matches.values_list("match_type", flat=True))),
         "awaiting_decision": matches.filter(review_status=DuplicateMatch.ReviewStatus.SUSPECTED).count(),
     }
-    return _report_envelope(organization, ModeratorReport.ReportType.DUPLICATE_DECISIONS, summary, rows)
+    return _report_envelope(organization, ModeratorReport.ReportType.DUPLICATE_DECISIONS, summary, rows,
+                            period, "duplicate match created_at")
 
 
 _REPORT_PAYLOAD_BUILDERS = {
@@ -868,18 +912,21 @@ _REPORT_PAYLOAD_BUILDERS = {
 
 
 def build_moderator_report_payload(report):
-    return _REPORT_PAYLOAD_BUILDERS[report.report_type](report.organization)
+    period = None if report.date_from is None and report.date_to is None else (report.date_from, report.date_to)
+    return _REPORT_PAYLOAD_BUILDERS[report.report_type](report.organization, period)
 
 
 def moderator_report_expiration_time():
     return timezone.now() + timedelta(hours=settings.MODERATOR_REPORT_TTL_HOURS)
 
 
-def enqueue_moderator_report(*, organization, requested_by, report_type, report_format):
+def enqueue_moderator_report(*, organization, requested_by, report_type, report_format, date_from=None, date_to=None):
     from .tasks import generate_moderator_report_task
 
+    period_key = report_period_key(date_from, date_to)
     active_filters = {
         "organization": organization, "report_type": report_type, "format": report_format,
+        "period_key": period_key,
         "status__in": [ModeratorReport.Status.QUEUED, ModeratorReport.Status.GENERATING],
     }
     try:
@@ -891,6 +938,7 @@ def enqueue_moderator_report(*, organization, requested_by, report_type, report_
             report = ModeratorReport.objects.create(
                 organization=organization, requested_by=requested_by, report_type=report_type,
                 format=report_format, status=ModeratorReport.Status.QUEUED, task_id=task_id,
+                date_from=date_from, date_to=date_to, period_key=period_key,
             )
 
             def dispatch():
