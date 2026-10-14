@@ -1,0 +1,16 @@
+[15:20:26] isolated database facecloud_queue_itest, Redis on :6391, media in /var/folders/vr/699tcg812llfc_4wgyns740m0000gn/T/facecloud-queue-pich7ucz/media
+[10:20:27] worker web ready on queue 'celery' (venv environment)
+[10:20:29] worker gfpgan ready on queue 'gfpgan' (gfpgan environment)
+[ WARN:0@0.583] global net_impl_backend.cpp:345 setPreferableTarget Targets are not supported by the new graph engine for now
+[10:21:11] PASS  routing_and_full_flow: {"status": "completed", "enhancement_task_delivered_to": {"gfpgan": 1}, "preprocessing_task_delivered_to": "n/a", "gfpgan_applied": true, "gfpgan_device": "mps", "identity_status": "verified", "similarity": 0.9696, "download_status": 200, "download_matches_stored_file": true, "output": [560, 840], "processing_ms": 40385, "progress": {"status": "completed", "progress_percentage": 100.0}}
+[10:21:13] worker gfpgan-2 ready on queue 'gfpgan' (gfpgan environment)
+[ WARN:0@43.796] global net_impl_backend.cpp:345 setPreferableTarget Targets are not supported by the new graph engine for now
+[10:21:37] PASS  duplicate_delivery: {"status": "completed", "deliveries": {"gfpgan-2": 1, "gfpgan": 2}, "task_outcome_lines": 2, "output_files": ["c15e4dea60014c8d9de7e3e6a9d8b345.jpg"], "claim_attempt": 0}
+[ WARN:0@73.439] global net_impl_backend.cpp:345 setPreferableTarget Targets are not supported by the new graph engine for now
+[10:22:07] PASS  database_failure_then_retry: {"connections_terminated": 1, "retries_logged": 1, "status": "completed", "seconds_from_failure_to_completion": 22, "claim_attempt": 1, "output_files": ["d42e969c04ee4a8bbf13b80b534b5477.jpg"]}
+[10:22:12] PASS  cancellation_mid_batch: {"job_status": "cancelled", "result_statuses": ["cancelled", "cancelled", "cancelled", "cancelled"], "cancelled_results_with_files": []}
+[ WARN:0@103.223] global net_impl_backend.cpp:345 setPreferableTarget Targets are not supported by the new graph engine for now
+[10:22:14] GFPGAN worker killed mid-task (SIGKILL); restarting it
+[10:22:14] worker gfpgan ready on queue 'gfpgan' (gfpgan environment)
+[10:24:03] PASS  worker_killed_then_restarted: {"status_when_killed": "processing", "final_status": "completed", "seconds_to_recover": 108, "deliveries": {"gfpgan": 2}, "output_files": ["d5ce466c9b4d4620968614cb16713471.jpg"], "note": "visibility timeout 90 s, task limit 80 s, claim lease 60 s for this run; defaults are 75 min, 60 min and 30 min"}
+[10:24:06] wrote /Users/Ali/FaceCloud_backend/.runtime/queue_integration/2026-10-14-audit-rerun

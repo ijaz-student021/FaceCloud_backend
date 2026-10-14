@@ -1,0 +1,19 @@
+## Wed Oct 14 20:22:38 PKT 2026 HEAD 658b860 branch feat/backend-frontend-alignment; modified tracked files: 0
+## django check
+System check identified no issues (0 silenced).
+## migrations
+No changes detected
+## openapi
+exit=0
+## pip check
+All installed packages are compatible
+All installed packages are compatible
+## tests web venv (all)
+Ran 1552 tests in 81.078s
+OK (skipped=6)
+## tests worker venv incl slow
+Ran 1552 tests in 84.048s
+OK (skipped=3)
+## tests on PostgreSQL (throwaway test db)
+Ran 1548 tests in 89.814s
+OK (skipped=4)
