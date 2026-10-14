@@ -155,7 +155,7 @@ class ProcessingPlanTests(SimpleTestCase):
     def test_a_dark_noisy_image_is_planned_for_exposure_and_denoise(self):
         rng = np.random.default_rng(2)
         dark = np.clip(textured(720, 960, base=35).astype(np.int16) + rng.normal(0, 9, (720, 960, 3)), 0, 255).astype(np.uint8)
-        _output, level, parameters = enhance_bgr(dark, "auto")
+        _output, level, parameters = enhance_bgr(dark, "high")  # lifting a dark photo is asked for
 
         plan = parameters["plan"]
         self.assertEqual(level, "high")

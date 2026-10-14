@@ -234,7 +234,7 @@ class OpenCVPolicyTests(SimpleTestCase):
         source = np.full((96, 96, 3), 55, dtype=np.uint8)
         context = EnhancementPipelineContext(
             source,
-            EnhancementLevel.AUTO,
+            EnhancementLevel.HIGH,
         )
 
         analyze_original_stage(context)
@@ -385,9 +385,10 @@ class OpenCVPolicyTests(SimpleTestCase):
                     comparison["before"]["contrast_stddev"] * 0.74,
                 )
 
-        self.assertGreater(
+        # Automatic mode withholds the lift from a dark photo (intent is unknown).
+        self.assertLessEqual(
             comparisons["extremely_dark"]["after"]["mean_luminance"],
-            comparisons["extremely_dark"]["before"]["mean_luminance"],
+            comparisons["extremely_dark"]["before"]["mean_luminance"] + 1.0,
         )
         self.assertLessEqual(
             comparisons["bright_portrait"]["after"]["mean_luminance"],
@@ -447,13 +448,23 @@ class OpenCVPolicyTests(SimpleTestCase):
         self.assertTrue(parameters["adaptive_denoise"]["enabled"])
 
     @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=False)
-    def test_auto_selects_high_for_dark_image_and_improves_luminance(self):
+    @override_settings(ENHANCEMENT_RENDER_POLICY="learned_v1")
+    def test_under_learned_v1_auto_selects_high_for_dark_image_and_improves_luminance(self):
         source = np.full((80, 80, 3), 35, dtype=np.uint8)
         enhanced, level, parameters = enhance_bgr(source, EnhancementLevel.AUTO)
 
         self.assertEqual(level, EnhancementLevel.HIGH)
         self.assertGreater(float(np.mean(enhanced)), float(np.mean(source)))
         self.assertEqual(parameters["colour_policy"], "preserve_lab_chroma_channels")
+
+    def test_under_lightweight_v1_auto_leaves_a_dark_image_dark_and_a_level_lifts_it(self):
+        source = np.full((80, 80, 3), 35, dtype=np.uint8)
+        auto, level, _parameters = enhance_bgr(source, EnhancementLevel.AUTO)
+        self.assertEqual(level, EnhancementLevel.LOW)
+        self.assertLessEqual(float(np.mean(auto)), float(np.mean(source)) + 1.0)
+        lifted, level, _parameters = enhance_bgr(source, EnhancementLevel.HIGH)
+        self.assertEqual(level, EnhancementLevel.HIGH)
+        self.assertGreater(float(np.mean(lifted)), float(np.mean(source)) + 5)
 
     @override_settings(
         AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True,
@@ -782,7 +793,8 @@ class EnhancementProcessingAndAPITests(TestCase):
         result = process_enhancement_result(result)
 
         self.assertEqual(result.status, "completed")
-        self.assertEqual(result.applied_level, EnhancementLevel.HIGH)
+        # Automatic mode no longer raises the level for darkness (it does not lift dark photos).
+        self.assertEqual(result.applied_level, EnhancementLevel.LOW)
         self.assertTrue(result.enhanced_file.name)
         self.assertNotEqual(result.enhanced_file.name, self.preprocessing.processed_file.name)
         self.assertGreater(result.output_file_size, 0)

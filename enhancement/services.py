@@ -198,10 +198,14 @@ def _timed_pipeline_stage(context, stage_name):
 
 
 def _auto_level(mean_luminance, highlight_clipping_percent=0.0):
-    if mean_luminance < 65:
-        return EnhancementLevel.HIGH
-    if mean_luminance < 115:
-        return EnhancementLevel.MEDIUM
+    # Darkness chose the level only to decide how hard to lift. Under the
+    # lightweight policy automatic mode never lifts a dark photo (its intent
+    # cannot be read from pixels), so darkness no longer raises the level.
+    if rendering_policy.active_policy() == rendering_policy.LEARNED:
+        if mean_luminance < 65:
+            return EnhancementLevel.HIGH
+        if mean_luminance < 115:
+            return EnhancementLevel.MEDIUM
     # Overexposure needs correcting as much as darkness does; the level only
     # ever followed darkness, so a blown-out photo got the gentlest setting.
     # Judged on clipped highlights, not on brightness: a high-key portrait or a
@@ -989,7 +993,25 @@ def _apply_conservative_routing(context):
     automatic = (
         context.requested_level == EnhancementLevel.AUTO and context.style == EnhancementStyle.NATURAL
     )
-    if automatic and not (defects & _LIGHTING_DEFECTS):
+    # A dark photo may be underexposed or dark by design (low-key portraits,
+    # night scenes); pixel statistics cannot tell them apart (the mean luminance
+    # and highlight level of real photos form a continuum, not two groups). So
+    # in the lightweight policy, automatic mode withholds the lift and says so;
+    # an explicit level or style, or the editor's "brighten" intent, asks for it.
+    dark = defects & {"low_light", "severe_low_light"}
+    withheld = (
+        automatic and bool(dark) and "overexposed_highlights" not in defects
+        and rendering_policy.active_policy() == rendering_policy.LIGHTWEIGHT
+    )
+    if withheld:
+        policy["skip_exposure"] = True
+        policy["exposure_lift_withheld"] = True
+        decisions.append({
+            "stage": "exposure_enhancement", "decision": "lift_withheld",
+            "reason": "Dark photo: whether it is meant to be dark cannot be told from the pixels, so it was "
+                      "not brightened. Choose a level (low, medium or high) to lift it.",
+        })
+    elif automatic and not (defects & _LIGHTING_DEFECTS):
         policy["skip_exposure"] = True
         decisions.append({"stage": "exposure_enhancement", "decision": "skipped",
                           "reason": "No lighting defect was measured."})
@@ -1061,7 +1083,8 @@ def _build_processing_plan(context):
         "steps": {
             "exposure": step(
                 not context.policy.get("skip_exposure"),
-                "Low light: learned curves when available, otherwise the OpenCV correction."
+                "Dark photo: lift withheld, lighting intent is unknown." if context.policy.get("exposure_lift_withheld")
+                else "Low light: learned curves when available, otherwise the OpenCV correction."
                 if context.zero_dce["requested"]
                 else f"Lighting defects: {', '.join(lighting_defects)}." if lighting_defects
                 else "No lighting defect was measured." if context.policy.get("skip_exposure")
