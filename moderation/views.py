@@ -5,7 +5,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
-from rest_framework import generics, status
+from rest_framework import generics, serializers, status
 from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -516,3 +516,85 @@ class ModeratorDuplicateGroupMergeView(OrganizationScopedMixin, APIView):
             "source": IdentityGroupSerializer(source).data,
             "target": IdentityGroupSerializer(target).data,
         })
+
+
+class ModeratorBatchImageSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    original_name = serializers.CharField()
+    upload_status = serializers.CharField()
+    rejection_reason = serializers.CharField(allow_blank=True)
+    stage = serializers.CharField(allow_null=True)
+    progress_status = serializers.CharField(allow_null=True)
+    progress_percentage = serializers.FloatField(allow_null=True)
+    failure_stage = serializers.CharField(allow_blank=True, allow_null=True)
+    failure_reason = serializers.CharField(allow_blank=True, allow_null=True)
+    retry_count = serializers.IntegerField()
+    quality_decision = serializers.CharField(allow_null=True)
+    enhancement_status = serializers.CharField(allow_null=True)
+
+
+class ModeratorBatchSummarySerializer(AdminFailedBatchSerializer):
+    class Meta(AdminFailedBatchSerializer.Meta):
+        fields = AdminFailedBatchSerializer.Meta.fields + ["rejected_files"]
+        read_only_fields = fields
+
+
+class ModeratorBatchDetailSerializer(serializers.Serializer):
+    batch = ModeratorBatchSummarySerializer()
+    images = ModeratorBatchImageSerializer(many=True)
+    counts_from_images = serializers.DictField(
+        child=serializers.IntegerField(),
+        help_text="Per-image progress statuses counted from the rows, to reconcile with the batch counters.",
+    )
+
+
+class ModeratorBatchDetailView(OrganizationScopedMixin, APIView):
+    """One organization batch with every image's outcome (owner or moderator).
+
+    Metadata only: no image content. A batch of another organization is 404.
+    """
+
+    require_owner_or_moderator = True
+
+    @extend_schema(responses={200: ModeratorBatchDetailSerializer, **ERROR_RESPONSES})
+    def get(self, request, organization_id, batch_id):
+        from collections import Counter
+
+        from django.db.models import Prefetch
+
+        from enhancement.models import ImageEnhancementResult
+        from uploads.models import ImageUpload
+
+        batch = get_object_or_404(
+            UploadBatch.objects.select_related("owner"), pk=batch_id, organization_id=self.organization.pk,
+        )
+        images = list(
+            ImageUpload.objects.filter(batch=batch)
+            .select_related("processing_progress", "quality_decision")
+            .prefetch_related(Prefetch(
+                "enhancement_results", queryset=ImageEnhancementResult.objects.order_by("-created_at"),
+                to_attr="latest_enhancements",
+            ))
+            .order_by("pk")
+        )
+        rows = []
+        for image in images:
+            progress = getattr(image, "processing_progress", None)
+            decision = getattr(image, "quality_decision", None)
+            enhancements = image.latest_enhancements
+            rows.append({
+                "id": image.pk, "original_name": image.original_name, "upload_status": image.status,
+                "rejection_reason": image.rejection_reason or "",
+                "stage": progress.stage if progress else None,
+                "progress_status": progress.status if progress else None,
+                "progress_percentage": progress.progress_percentage if progress else None,
+                "failure_stage": progress.failure_stage if progress else None,
+                "failure_reason": progress.failure_reason if progress else None,
+                "retry_count": progress.retry_count if progress else 0,
+                "quality_decision": (decision.decision or None) if decision else None,
+                "enhancement_status": enhancements[0].status if enhancements else None,
+            })
+        counts = Counter(row["progress_status"] or "no_progress_record" for row in rows)
+        return Response(ModeratorBatchDetailSerializer({
+            "batch": batch, "images": rows, "counts_from_images": dict(counts),
+        }).data)
