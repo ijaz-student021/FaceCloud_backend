@@ -246,6 +246,82 @@ def _histogram_median(cumulative, total):
     return (low + high) / 2
 
 
+# Blur is judged where an image is sharpest, on a copy of fixed size.
+#
+# The measure is the median, over the strongest 2 % of edges, of the
+# Laplacian (curvature) beside the edge divided by the gradient across it:
+# roughly the inverse of the edge's width in pixels. A gain cancels out of the
+# ratio, so darkening does not read as blur; measuring at a fixed long edge
+# makes it a property of the picture rather than of its pixel count; and the
+# strongest edges are the in-focus ones, so a soft background (bokeh) or noise
+# in flat areas does not decide it. The old measure, the Laplacian variance of
+# the full-size image, fell 5-14x with resolution and ~16x with a 4x
+# darkening, and read sharp photos as blurred.
+#
+# Thresholds and the evidence for them: docs/evaluation/2026-10-14-blur-measure.md.
+BLUR_PROXY_LONG_EDGE = 1024
+BLUR_EDGE_PERCENTILE = 98
+# Units: edge_sharpness is a ratio (per pixel at the measuring scale); edge
+# strength is grey levels per pixel. Chosen on the calibration half of 498
+# photographs and checked on the other half:
+# * mild: below the 1st percentile of sharp photographs at every size,
+#   exposure, noise and JPEG level tried (about 1 % of sharp photos flagged);
+# * severe: the value that best separates a Gaussian blur of sigma 1.2 from one
+#   of sigma 2.0 at the measuring scale;
+# * uncertain: a tonal range (5th to 95th percentile, grey levels) too small
+#   to judge -- a flat or near-black frame. Range, not edge strength: blur
+#   weakens edges but keeps the range, so heavy blur is still judged. Below 8
+#   levels on the calibration half: 0.6 % of severely blurred variants, 2.7 %
+#   of sharp ones (graphics and near-uniform frames). Also uncertain: no edge
+#   anywhere -- the strongest gradients under one grey level per pixel, i.e.
+#   only quantisation steps (a smooth gradient), which carries no evidence of
+#   focus either way (0.4 % of severely blurred variants).
+BLUR_SEVERE_BELOW = 0.232
+BLUR_MILD_BELOW = 0.422
+BLUR_MIN_TONAL_RANGE = 8.0
+BLUR_MIN_EDGE_STRENGTH = 1.0
+
+
+def measure_blur(gray):
+    """``{"edge_sharpness", "edge_strength", "verdict", ...}`` for a grayscale image.
+
+    ``verdict`` is ``sharp``, ``mild``, ``severe`` or ``uncertain``: with too
+    little tonal range to judge (a flat or almost black frame), nothing is
+    claimed, and no blur correction is routed.
+    """
+    height, width = gray.shape[:2]
+    scale = min(1.0, BLUR_PROXY_LONG_EDGE / float(max(height, width)))
+    if scale < 1.0:
+        gray = cv2.resize(gray, (max(1, round(width * scale)), max(1, round(height * scale))),
+                          interpolation=cv2.INTER_AREA)
+    working = cv2.GaussianBlur(gray.astype(np.float32), (0, 0), 0.5)
+    gradient = np.hypot(cv2.Sobel(working, cv2.CV_32F, 1, 0, ksize=3), cv2.Sobel(working, cv2.CV_32F, 0, 1, ksize=3))
+    curvature = cv2.dilate(np.abs(cv2.Laplacian(working, cv2.CV_32F, ksize=3)), np.ones((3, 3), np.uint8))
+    threshold = float(np.percentile(gradient, BLUR_EDGE_PERCENTILE))
+    edges = gradient >= max(threshold, 1e-6)
+    edge_sharpness = float(np.median(curvature[edges] / gradient[edges])) if edges.any() else 0.0
+    # Sobel's 3x3 kernel sums to 8x a one-pixel step: divide to get grey levels per pixel.
+    edge_strength = threshold / 8.0
+    low, high = np.percentile(gray, (5, 95))
+    tonal_range = float(high - low)
+    if tonal_range < BLUR_MIN_TONAL_RANGE or edge_strength < BLUR_MIN_EDGE_STRENGTH:
+        verdict = "uncertain"
+    elif edge_sharpness < BLUR_SEVERE_BELOW:
+        verdict = "severe"
+    elif edge_sharpness < BLUR_MILD_BELOW:
+        verdict = "mild"
+    else:
+        verdict = "sharp"
+    return {
+        "measure": "edge_sharpness_v1",
+        "edge_sharpness": round(edge_sharpness, 4),
+        "edge_strength": round(edge_strength, 3),
+        "tonal_range": round(tonal_range, 1),
+        "measured_at_long_edge": int(round(max(height, width) * scale)),
+        "verdict": verdict,
+    }
+
+
 def analyze_image_quality(image):
     """Measure defects without classifying identity, ethnicity, or skin colour.
 
@@ -266,6 +342,7 @@ def analyze_image_quality(image):
     contrast = float(np.sqrt(np.dot(histogram, (levels - luminance) ** 2) / total))
     laplacian = cv2.Laplacian(gray, cv2.CV_64F)
     sharpness = float(cv2.meanStdDev(laplacian)[1][0][0] ** 2)
+    blur = measure_blur(gray)
     smooth = cv2.GaussianBlur(gray, (3, 3), 0)
     residual = np.cumsum(
         cv2.calcHist([cv2.absdiff(gray, smooth)], [0], None, [256], [0, 256]).ravel().astype(np.int64)
@@ -286,9 +363,9 @@ def analyze_image_quality(image):
         defects.append("severe_low_light")
     elif luminance < 115:
         defects.append("low_light")
-    if sharpness < 35:
+    if blur["verdict"] == "severe":
         defects.append("severe_blur")
-    elif sharpness < 90:
+    elif blur["verdict"] == "mild":
         defects.append("mild_blur")
     if noise > 5:
         defects.append("visible_noise")
@@ -307,7 +384,10 @@ def analyze_image_quality(image):
         "height": height,
         "mean_luminance": round(luminance, 2),
         "contrast_stddev": round(contrast, 2),
+        # Reported for comparison only: it changes with resolution, exposure and
+        # noise, so it no longer decides blur (see ``measure_blur``).
         "laplacian_sharpness": round(sharpness, 2),
+        "blur": blur,
         "estimated_noise": round(noise, 2),
         "shadow_clipping_percent": round(shadow_clipping, 3),
         "highlight_clipping_percent": round(highlight_clipping, 3),
@@ -971,9 +1051,10 @@ def _build_processing_plan(context):
                 "Decided after exposure, from the noise that correction reveals.",
             ),
             "deblur": step(
-                settings.HD_RESTORATION_ENABLED and settings.NAFNET_DEBLUR_ENABLED,
-                "NAFNet is enabled." if settings.HD_RESTORATION_ENABLED and settings.NAFNET_DEBLUR_ENABLED
-                else "Deblurring is disabled.",
+                settings.HD_RESTORATION_ENABLED and settings.NAFNET_DEBLUR_ENABLED and blur_defects,
+                "Deblurring is disabled." if not (settings.HD_RESTORATION_ENABLED and settings.NAFNET_DEBLUR_ENABLED)
+                else f"Blur defects: {', '.join(blur_defects)}." if blur_defects
+                else "No blur was measured.",
             ),
             "upscale": {**step(upscaler is not None, upscaler_reason), "upscaler": upscaler},
             "face_restoration": step(
@@ -1212,9 +1293,11 @@ def adaptive_denoise_stage(context):
         "depends_on_exposure_level": False,
     }
     reference = None
-    if "severe_blur" in context.post_exposure_noise["quality"]["defects"]:
-        # Judged on the brightened image: a near-black frame always measures as
-        # severely blurred, which used to switch denoising off for night photos.
+    if "severe_blur" in context.input_quality.get("defects", ()):
+        # The one blur verdict every stage uses (sharpening, deblurring, face
+        # restoration, the plan). It does not depend on exposure, so a night
+        # photo is not read as blurred; it used to be, which switched denoising
+        # off for it until this was judged on the brightened image instead.
         eligibility["reason"] = "The image is severely blurred; denoising would remove what detail is left."
         reason = "severe_blur_protection"
     elif requested <= 0:

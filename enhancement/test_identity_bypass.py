@@ -13,6 +13,7 @@ from .models import ImageEnhancementResult
 from .serializers import EnhancementRequestSerializer, ImageEnhancementResultSerializer
 from .services import enhance_bgr, process_enhancement_result
 from .test_pipeline_regressions import NO_MODELS, ResultFixture, textured
+from .test_blur_measure import blurred_photo
 from .test_staged_pipeline import GFPGAN_ON, gentle_restoration
 
 
@@ -24,7 +25,7 @@ def guard_returning(status):
 
 class IdentityVerificationSummaryTests(SimpleTestCase):
     def setUp(self):
-        self.blurred = cv2.GaussianBlur(textured(720, 960, base=130), (0, 0), 6)  # eligible for restoration
+        self.blurred = blurred_photo()  # eligible for restoration
 
     @override_settings(**GFPGAN_ON)
     @patch("enhancement.services.restore_faces", side_effect=gentle_restoration)
@@ -119,7 +120,7 @@ class IdentityBypassApiTests(ResultFixture):
     def test_the_result_endpoint_states_the_bypass(self, _restore):
         result = self.make_result(size=(720, 960))
         ImageEnhancementResult.objects.filter(pk=result.pk).update(requested_style="ai_max")
-        blurred = cv2.GaussianBlur(textured(720, 960, base=130), (0, 0), 6)
+        blurred = blurred_photo()
         with patch("enhancement.services._read_enhancement_source", return_value=(blurred, "full_resolution_original")), \
                 patch("privacy.services.biometric_processing_allowed", return_value=False):
             result = process_enhancement_result(result)

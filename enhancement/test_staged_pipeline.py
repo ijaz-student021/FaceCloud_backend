@@ -34,6 +34,7 @@ from .services import (
 )
 from .tasks import process_enhancement_batch, process_enhancement_image
 from .test_pipeline_regressions import NO_MODELS, ResultFixture, textured
+from .test_blur_measure import blurred_photo
 
 WHOLE_IMAGE = [(0.0, 0.0, 1.0, 1.0)]
 
@@ -242,7 +243,7 @@ class FaceRestorationIdentityGateTests(SimpleTestCase):
     """Generative face restoration runs only when its result can be checked."""
 
     def setUp(self):
-        self.blurred = cv2.GaussianBlur(textured(720, 960, base=130), (0, 0), 6)  # severe blur: eligible
+        self.blurred = blurred_photo()  # severe blur: eligible
 
     @override_settings(**GFPGAN_ON)
     @patch("enhancement.services.restore_faces")
@@ -903,7 +904,7 @@ class DeblurRoutingTests(SimpleTestCase):
     @patch("enhancement.services.deblur_with_nafnet")
     def test_a_blurred_photo_is(self, deblur, _upscale):
         deblur.side_effect = lambda image: (image.copy(), {"provider": "nafnet_gopro_width64", "tiles_rejected": 2})
-        blurred = cv2.GaussianBlur(textured(720, 960, base=130), (0, 0), 4)
+        blurred = blurred_photo()
         parameters = enhance_bgr(blurred, "auto")[2]
         deblur.assert_called_once()
         self.assertTrue(any("diverged on 2 tile" in warning for warning in parameters["warnings"]))

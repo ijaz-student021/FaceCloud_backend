@@ -41,6 +41,7 @@ from .tasks import (
     process_gallery_edit,
 )
 from .zero_dce import _apply_curves_tiled
+from .test_blur_measure import blurred_photo
 
 User = get_user_model()
 
@@ -570,12 +571,19 @@ class OpenCVPolicyTests(SimpleTestCase):
         self.assertEqual(level, EnhancementLevel.LOW)
 
     def test_quality_router_identifies_blur_and_low_resolution(self):
-        source = np.full((200, 200, 3), 90, dtype=np.uint8)
-        quality = analyze_image_quality(source)
+        quality = analyze_image_quality(blurred_photo(200, 200))
 
         self.assertIn("severe_blur", quality["defects"])
         self.assertIn("low_resolution", quality["defects"])
         self.assertTrue(quality["needs_ai_restoration"])
+
+    def test_a_flat_frame_is_not_called_blurred(self):
+        """It used to be "severe blur": a flat frame has nothing to judge focus by."""
+        quality = analyze_image_quality(np.full((200, 200, 3), 90, dtype=np.uint8))
+
+        self.assertEqual(quality["blur"]["verdict"], "uncertain")
+        self.assertNotIn("severe_blur", quality["defects"])
+        self.assertTrue(quality["needs_ai_restoration"])  # still low resolution
 
     def test_high_policy_uses_quality_guard_metadata(self):
         source = np.full((80, 80, 3), 210, dtype=np.uint8)
