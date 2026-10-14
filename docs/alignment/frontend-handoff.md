@@ -159,6 +159,80 @@ Retry and cancel are the existing `.../retry/` and `.../cancel/`.
   and `usage{upload_batches, images, enhancements}`.
 * `PATCH` is unchanged (role, suspension, `is_active`).
 
+### Typed dashboard and analytics (no shape change)
+`GET /api/user/dashboard/` and `GET /api/system/analytics/` are now documented
+field by field in Swagger, with units and what each number counts. The JSON is
+unchanged; generate types from the schema instead of hand-writing them.
+
+### Batch start errors (`POST /api/enhancements/batches/{id}/`)
+* `409 {detail, image_ids: [int]}`: some images already have an enhancement
+  queued or running; nothing was created. Show which images and retry later.
+* `500 {detail, error_reference}`: unexpected fault. Show the reference; the
+  cause is only in the server log.
+* The old catch-all `400` message no longer appears.
+
+### Moderator reports: `general_activity`
+`report_type: "general_activity"` is now valid (audit trail of the window
+summarised by action and actor, plus batches, images and reviews created).
+It takes the same `date_from`/`date_to`, formats and polling as the others.
+
+### Security alerts (admin, Security page)
+* `GET /api/system/security/alerts/` (paginated; filters `status`, `rule`,
+  `severity`): `{id, rule, subject, severity, status, event_count, threshold,
+  window_minutes, first_seen_at, last_seen_at, acknowledged_by,
+  acknowledged_at, acknowledgement_note}`. An empty list means no rule
+  crossed its threshold, **not** that the system is secure; do not show a
+  "secure" badge.
+* `GET .../alerts/{id}/` adds `evidence` (up to 50 triggering events).
+* `POST .../alerts/{id}/acknowledge/ {note}`: note required; `409` if already
+  acknowledged. Nothing is deleted; the evidence stays.
+* `GET /api/system/security/rules/` returns the thresholds in force; show
+  them on the page instead of hard-coding.
+* Rules: repeated failed logins (per account, per address), repeated 403s,
+  repeated 429s. Subjects look like `account:<email>`, `ip:<address>`,
+  `user:<id>`.
+
+### Moderator image previews (ModeratorImageReview, BatchManagement)
+`GET /api/organizations/{org}/moderator/images/{image_id}/preview/
+?variant=original|enhanced&size=256|1024` returns a JPEG thumbnail. Owners
+and moderators only; images in a personal space, rejected uploads and other
+organizations are `404`; every request is audited. Fetch as a blob (needs the
+bearer header). The response is `no-store`.
+
+### Moderator reprocess (BatchManagement)
+`POST /api/organizations/{org}/moderator/batches/{batch_id}/reprocess/
+{level?, style?, reason?}` starts enhancement again from the preserved
+originals as a **new version**. Earlier outputs are untouched.
+`201 {job_id, status, total_images}`; `409 {image_ids}` while any image has
+work in flight; `429` when the batch owner is at their fair-use limit.
+Progress and results are the batch owner's existing job/result endpoints.
+
+### Admin "Add user" by invitation
+* `POST /api/user/admin/invitations/ {email, role}` (roles `user`,
+  `moderator`; `admin` only for a superuser, otherwise `403`); `GET` lists
+  (`?status=`); `POST .../{id}/resend/`; `DELETE .../{id}/` cancels.
+  `409` if the email has an account or a pending invitation.
+* The invitee gets an email linking to
+  `{FRONTEND_URL}/accept-invitation?token=...`. **The frontend needs that
+  route.** It calls the public `POST /api/auth/invitations/inspect/ {token}`
+  (shows email and role; `404` if invalid, used or expired) and then
+  `POST /api/auth/invitations/accept/ {token, username, password}`, which
+  creates the verified account and answers like login (`201` with tokens).
+* `PATCH /api/user/admin/users/{id}/` now also returns `403` when an
+  administrator tries to grant `admin`.
+
+### Camera sessions (LiveEnhancement)
+* `POST /api/camera/sessions/ {device_label?, settings?}` starts a session;
+  `GET` lists the last 30 days; `GET .../{id}/` includes snapshots;
+  `POST .../{id}/end/`.
+* `POST .../{id}/snapshots/` (multipart `file`) saves **one** snapshot, only
+  when the user presses a save action. It is an ordinary single upload (same
+  response fields; check `image_status` for rejection) linked to the session;
+  `409` once the session ended.
+* There is no video endpoint. Local canvas filters are previews only; the
+  server never receives frames unless the user saves a snapshot. Session
+  metadata is deleted 30 days after it started; saved images stay.
+
 ### Contact form (B07, public)
 `POST /api/contact/` (no authentication) takes
 `{name, email, company?, reason, message}`.
@@ -185,20 +259,14 @@ Leave the hidden `website` field out (or empty); it is a spam trap.
 | Settings → Privacy | `/api/privacy/consents/`, `/export/`, `/facial-data/` |
 | Moderator notification centre | `/api/notifications/` (assignment, escalation, overdue and batch-failed events are produced server-side) |
 
-## 4. Open decisions (product or owner)
+## 4. Product decisions
 
-* **D1 Security page:** a persistent alert and acknowledgement workflow needs
-  agreed alert rules. Until then the page should show the audit feed, not
-  "secure" claims.
-* **D2 Moderator image previews:** whether staff may view organization
-  members' images, and at which size, is a privacy decision. The batch detail
-  is metadata-only until it is made.
-* **D3 Reprocess actions:** reprocessing a completed batch (re-ingest,
-  re-evaluate quality or regenerate enhancement?) needs a definition first.
-* **D4 Admin "Add user":** a verified-invitation flow is recommended over
-  creating accounts directly.
-* **D5 Live camera sessions:** saved session history needs a retention rule;
-  snapshots already work through the upload and enhancement APIs.
+Resolved and implemented: security alert rules (D1), moderator previews (D2),
+reprocess semantics (D3), admin user invitations (D4), camera session
+retention (D5; 30 days, snapshots only on explicit action).
+
+Still open:
 * **D6 System telemetry:** host CPU, GPU and uptime history belong to an
   operational monitor, not Django; the page should show only
   `/api/system/health/` and `/queue/`.
+* Organization download packages for staff (owner-only today).
