@@ -31,6 +31,8 @@ from uploads.decoding import to_working_colour
 from uploads.models import ImagePreprocessingResult, UploadBatch
 from quality_control.models import ImageQualityDecision
 
+from . import policy as rendering_policy
+from .policy import learned_stage_enabled
 from .models import (
     EditMode,
     EnhancementBatchJob,
@@ -477,6 +479,7 @@ def restore_low_resolution(image, quality):
     """Apply bounded pretrained EDSR only when the source is low resolution."""
     metadata = {
         "requested": "low_resolution" in quality["defects"],
+        "enabled": learned_stage_enabled("AI_RESTORATION_ENABLED"),
         "applied": False,
         "provider": "opencv_dnn_edsr",
         "device": "cpu",
@@ -485,8 +488,8 @@ def restore_low_resolution(image, quality):
     }
     if not metadata["requested"]:
         return image, metadata
-    if not settings.AI_RESTORATION_ENABLED:
-        metadata["fallback_reason"] = "AI restoration is disabled."
+    if not learned_stage_enabled("AI_RESTORATION_ENABLED"):
+        metadata["fallback_reason"] = rendering_policy.disabled_reason("AI restoration")
         return image, metadata
     height, width = image.shape[:2]
     metadata["maximum_input_edge"] = settings.AI_RESTORATION_MAX_INPUT_EDGE
@@ -1005,15 +1008,15 @@ def _planned_upscaler(defects, width, height):
     Only one ever changes the pixel grid; a later one runs only if the earlier
     one was unavailable.
     """
-    if settings.HD_RESTORATION_ENABLED:
+    if learned_stage_enabled("HD_RESTORATION_ENABLED"):
         return "realesrgan_x4plus", "The HD pipeline is enabled."
     if (
         "low_resolution" in defects
-        and settings.AI_RESTORATION_ENABLED
+        and learned_stage_enabled("AI_RESTORATION_ENABLED")
         and min(width, height) <= settings.AI_RESTORATION_MAX_INPUT_EDGE
     ):
         return "opencv_dnn_edsr", "The source is low resolution."
-    if settings.PURESCALE_ENABLED:
+    if learned_stage_enabled("PURESCALE_ENABLED"):
         return "purescale_safmn_2x", "PureScale is enabled."
     return None, "No upscaler is enabled for this image."
 
@@ -1070,22 +1073,22 @@ def _build_processing_plan(context):
                 "Decided after exposure, from the noise that correction reveals.",
             ),
             "deblur": step(
-                settings.HD_RESTORATION_ENABLED and settings.NAFNET_DEBLUR_ENABLED and blur_defects,
-                "Deblurring is disabled." if not (settings.HD_RESTORATION_ENABLED and settings.NAFNET_DEBLUR_ENABLED)
+                learned_stage_enabled("HD_RESTORATION_ENABLED") and learned_stage_enabled("NAFNET_DEBLUR_ENABLED") and blur_defects,
+                "Deblurring is disabled." if not (learned_stage_enabled("HD_RESTORATION_ENABLED") and learned_stage_enabled("NAFNET_DEBLUR_ENABLED"))
                 else f"Blur defects: {', '.join(blur_defects)}." if blur_defects
                 else "No blur was measured.",
             ),
             "upscale": {**step(upscaler is not None, upscaler_reason), "upscaler": upscaler},
             "face_restoration": step(
-                face_restoration_wanted and settings.GFPGAN_ENABLED,
+                face_restoration_wanted and learned_stage_enabled("GFPGAN_ENABLED"),
                 "Blur or low resolution on a face-restoration-enabled deployment."
-                if face_restoration_wanted and settings.GFPGAN_ENABLED
+                if face_restoration_wanted and learned_stage_enabled("GFPGAN_ENABLED")
                 else "Face restoration is disabled." if face_restoration_wanted
                 else "No blur or low-resolution defect.",
             ),
             "sharpen": step(context.policy.get("sharpen", 0) > 0, f"Blur defects: {', '.join(blur_defects) or 'none'}."),
             "colorization": step(
-                context.colorization["requested"] and settings.COLORIZATION_ENABLED,
+                context.colorization["requested"] and learned_stage_enabled("COLORIZATION_ENABLED"),
                 "The source is near-grayscale." if context.colorization["requested"] else "The source has colour.",
             ),
             "style": step(explicit_style, f"Requested style: {context.style}."),
@@ -1137,7 +1140,7 @@ def exposure_enhancement_stage(context):
     """Apply learned exposure curves or the auditable OpenCV fallback."""
     source = context.source_image
     working = source
-    if context.zero_dce["requested"] and settings.ZERO_DCE_ENABLED and context.use_zero_dce:
+    if context.zero_dce["requested"] and learned_stage_enabled("ZERO_DCE_ENABLED") and context.use_zero_dce:
         try:
             working, zero_metadata = enhance_with_zero_dce(source)
             context.zero_dce.update(zero_metadata)
@@ -1146,7 +1149,7 @@ def exposure_enhancement_stage(context):
             context.zero_dce["fallback_reason"] = str(error)
     elif context.zero_dce["requested"]:
         context.zero_dce["fallback_reason"] = (
-            "Zero-DCE is disabled." if not settings.ZERO_DCE_ENABLED
+            rendering_policy.disabled_reason("Zero-DCE") if not learned_stage_enabled("ZERO_DCE_ENABLED")
             else "Zero-DCE was switched off for this run."
         )
 
@@ -1396,13 +1399,13 @@ def purevision_restoration_stage(context):
     deployment.
     """
     metadata = {
-        "enabled": bool(settings.PUREVISION_ENABLED),
-        "requested": bool(settings.PUREVISION_ENABLED),
+        "enabled": bool(learned_stage_enabled("PUREVISION_ENABLED")),
+        "requested": bool(learned_stage_enabled("PUREVISION_ENABLED")),
         "applied": False,
         "fallback_reason": "",
     }
-    if not settings.PUREVISION_ENABLED:
-        metadata["fallback_reason"] = "PureVision is disabled."
+    if not learned_stage_enabled("PUREVISION_ENABLED"):
+        metadata["fallback_reason"] = rendering_policy.disabled_reason("PureVision")
         context.purevision = metadata
         return context
     if context.input_quality["mean_luminance"] < settings.EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD:
@@ -1428,7 +1431,7 @@ def purevision_restoration_stage(context):
 def low_resolution_restoration_stage(context):
     """Run EDSR only after denoise and only if resolution is still low."""
     quality_at_stage = analyze_image_quality(context.current_image)
-    if settings.HD_RESTORATION_ENABLED:
+    if learned_stage_enabled("HD_RESTORATION_ENABLED"):
         restored = context.current_image
         metadata = {
             "requested": False,
@@ -1452,20 +1455,20 @@ def low_resolution_restoration_stage(context):
 def hd_restoration_stage(context):
     """Optionally deblur with NAFNet and create a 2x/4x HD display output."""
     metadata = {
-        "enabled": bool(settings.HD_RESTORATION_ENABLED),
-        "requested": bool(settings.HD_RESTORATION_ENABLED),
+        "enabled": bool(learned_stage_enabled("HD_RESTORATION_ENABLED")),
+        "requested": bool(learned_stage_enabled("HD_RESTORATION_ENABLED")),
         "applied": False,
         "deblur": {
-            "enabled": bool(settings.NAFNET_DEBLUR_ENABLED),
-            "requested": bool(settings.HD_RESTORATION_ENABLED and settings.NAFNET_DEBLUR_ENABLED),
+            "enabled": bool(learned_stage_enabled("NAFNET_DEBLUR_ENABLED")),
+            "requested": bool(learned_stage_enabled("HD_RESTORATION_ENABLED") and learned_stage_enabled("NAFNET_DEBLUR_ENABLED")),
             "applied": False,
         },
-        "super_resolution": {"requested": bool(settings.HD_RESTORATION_ENABLED), "applied": False},
+        "super_resolution": {"requested": bool(learned_stage_enabled("HD_RESTORATION_ENABLED")), "applied": False},
         "fallback_reason": "",
         "recognition_policy": "display_output_only; recognition_uses_original",
     }
-    if not settings.HD_RESTORATION_ENABLED:
-        metadata["fallback_reason"] = "HD restoration is disabled."
+    if not learned_stage_enabled("HD_RESTORATION_ENABLED"):
+        metadata["fallback_reason"] = rendering_policy.disabled_reason("HD restoration")
         context.hd_restoration = metadata
         return context
     source_dimensions = [int(context.current_image.shape[1]), int(context.current_image.shape[0])]
@@ -1473,11 +1476,11 @@ def hd_restoration_stage(context):
     # Without an analysis (a stage called on its own) there is nothing to gate on.
     defects = context.input_quality.get("defects")
     blur_measured = defects is None or bool({"mild_blur", "severe_blur"} & set(defects))
-    if settings.NAFNET_DEBLUR_ENABLED and not blur_measured:
+    if learned_stage_enabled("NAFNET_DEBLUR_ENABLED") and not blur_measured:
         # A deblurring network run on a sharp photo can only invent or remove
         # detail; it is not run without measured blur.
         metadata["deblur"]["fallback_reason"] = "No blur was measured; deblurring was not needed."
-    elif settings.NAFNET_DEBLUR_ENABLED:
+    elif learned_stage_enabled("NAFNET_DEBLUR_ENABLED"):
         try:
             deblurred, deblur_metadata = deblur_with_nafnet(context.current_image)
             metadata["deblur"].update(deblur_metadata)
@@ -1533,17 +1536,17 @@ def purescale_super_resolution_stage(context):
     the intended deployment.
     """
     metadata = {
-        "enabled": bool(settings.PURESCALE_ENABLED),
+        "enabled": bool(learned_stage_enabled("PURESCALE_ENABLED")),
         "requested": bool(
-            settings.PURESCALE_ENABLED
+            learned_stage_enabled("PURESCALE_ENABLED")
             and not context.hd_restoration.get("applied")
             and not context.restoration.get("applied")
         ),
         "applied": False,
         "fallback_reason": "",
     }
-    if not settings.PURESCALE_ENABLED:
-        metadata["fallback_reason"] = "PureScale is disabled."
+    if not learned_stage_enabled("PURESCALE_ENABLED"):
+        metadata["fallback_reason"] = rendering_policy.disabled_reason("PureScale")
         context.purescale = metadata
         return context
     if context.hd_restoration.get("applied"):
@@ -1589,7 +1592,7 @@ def restore_degraded_faces(image, input_quality):
     metadata = {
         "requested": bool(eligible_defects),
         "eligible_defects": eligible_defects,
-        "enabled": bool(settings.GFPGAN_ENABLED),
+        "enabled": bool(learned_stage_enabled("GFPGAN_ENABLED")),
         "applied": False,
         "provider": "private_gfpgan_v1_4",
         "fallback_reason": "",
@@ -1601,8 +1604,8 @@ def restore_degraded_faces(image, input_quality):
     if not metadata["requested"]:
         metadata["fallback_reason"] = "Face restoration is not required."
         return image, metadata
-    if not settings.GFPGAN_ENABLED:
-        metadata["fallback_reason"] = "Private face restoration is disabled."
+    if not learned_stage_enabled("GFPGAN_ENABLED"):
+        metadata["fallback_reason"] = rendering_policy.disabled_reason("Private face restoration")
         return image, metadata
 
     blend = min(max(float(settings.GFPGAN_OUTPUT_BLEND), 0.0), 0.60)
@@ -1761,7 +1764,7 @@ def face_restoration_stage(context):
     if context.face_restoration_withdrawn:
         return context  # the withdrawn record written by enhance_bgr stands
     refusal = ""
-    if settings.GFPGAN_ENABLED and context.plan.get("steps", {}).get("face_restoration", {}).get("planned", True):
+    if learned_stage_enabled("GFPGAN_ENABLED") and context.plan.get("steps", {}).get("face_restoration", {}).get("planned", True):
         refusal = _face_restoration_gate(context)
     if refusal:
         restored, metadata = context.current_image, {
@@ -1981,13 +1984,13 @@ def colorization_stage(context):
     or fights the new colour.
     """
     metadata = {
-        "enabled": bool(settings.COLORIZATION_ENABLED),
+        "enabled": bool(learned_stage_enabled("COLORIZATION_ENABLED")),
         "requested": context.colorization["requested"],
         "applied": False,
         "fallback_reason": "",
     }
-    if not settings.COLORIZATION_ENABLED:
-        metadata["fallback_reason"] = "Colorization is disabled."
+    if not learned_stage_enabled("COLORIZATION_ENABLED"):
+        metadata["fallback_reason"] = rendering_policy.disabled_reason("Colorization")
         context.colorization = metadata
         return context
     if not context.colorization["requested"]:
@@ -2146,7 +2149,7 @@ def _failed_stage_metadata(context, attribute, reason):
     }
     if attribute == "hd_restoration":
         metadata.update({
-            "enabled": bool(settings.HD_RESTORATION_ENABLED),
+            "enabled": bool(learned_stage_enabled("HD_RESTORATION_ENABLED")),
             "deblur": {"applied": False, "fallback_reason": reason},
             "super_resolution": {"applied": False},
         })
@@ -2348,7 +2351,10 @@ def enhance_bgr(
         context.output_quality = normalized_comparison["after"]
     else:
         context.output_quality = analyze_image_quality(context.current_image)
-    if context.zero_dce["requested"] and not context.zero_dce["applied"]:
+    if (
+        context.zero_dce["requested"] and not context.zero_dce["applied"]
+        and learned_stage_enabled("ZERO_DCE_ENABLED")  # only a model that could have run is "unavailable"
+    ):
         context.warnings.append(
             "Zero-DCE was requested for low light but was unavailable; "
             "the adaptive OpenCV fallback was used."
@@ -2359,6 +2365,9 @@ def enhance_bgr(
         and not context.face_restoration["applied"]
     ):
         context.warnings.append(
+            "Severe blur or low resolution cannot be corrected by the lightweight "
+            "pipeline; the baseline avoids inventing detail."
+            if not rendering_policy.describe()["heavy_restoration_available"] else
             "Severe blur or low resolution requires an AI restoration model; "
             "the baseline avoids inventing facial detail."
         )
@@ -2385,6 +2394,28 @@ def enhance_bgr(
     if context.identity_guard.get("applied"):
         algorithm = f"{algorithm}+identity_guard"
 
+    render_policy = rendering_policy.describe()
+    ai_max = None
+    if context.style == EnhancementStyle.AI_MAX:
+        ai_max = {
+            "requested": True,
+            "applied_level": context.applied_level,
+            "heavy_restoration_available": render_policy["heavy_restoration_available"],
+            "behaviour": (
+                "AI Max applies the strongest local correction (high level; denoising only where noise is measured). "
+                "Face restoration, super-resolution and the other learned stages are available "
+                "only under the learned_v1 rendering policy; this result used "
+                f"{render_policy['name']}."
+                if not render_policy["heavy_restoration_available"] else
+                "AI Max also allows the enabled learned stages."
+            ),
+        }
+        if not render_policy["heavy_restoration_available"]:
+            context.warnings.append(
+                "AI Max used the strongest local correction only: heavy restoration is not available "
+                f"under the {render_policy['name']} rendering policy."
+            )
+
     parameters = {
         **context.policy,
         "style": context.style,
@@ -2393,6 +2424,8 @@ def enhance_bgr(
         "mean_input_luminance": context.input_quality["mean_luminance"],
         "algorithm": algorithm,
         "pipeline_version": "staged_candidate_pipeline_v4",
+        "render_policy": render_policy,
+        **({"ai_max": ai_max} if ai_max else {}),
         "colour_policy": (
             "learned_rgb_curves"
             if context.zero_dce["applied"]
@@ -2428,13 +2461,13 @@ def enhance_bgr(
         "stage_timings_ms": context.stage_timings_ms,
         "feature_flags": {
             "adaptive_denoise_enabled": settings.ADAPTIVE_DENOISE_ENABLED,
-            "gfpgan_enabled": settings.GFPGAN_ENABLED,
+            "gfpgan_enabled": learned_stage_enabled("GFPGAN_ENABLED"),
             "gfpgan_queue_enabled": settings.GFPGAN_QUEUE_ENABLED,
-            "hd_restoration_enabled": settings.HD_RESTORATION_ENABLED,
-            "nafnet_deblur_enabled": settings.NAFNET_DEBLUR_ENABLED,
-            "purevision_enabled": settings.PUREVISION_ENABLED,
-            "purescale_enabled": settings.PURESCALE_ENABLED,
-            "colorization_enabled": settings.COLORIZATION_ENABLED,
+            "hd_restoration_enabled": learned_stage_enabled("HD_RESTORATION_ENABLED"),
+            "nafnet_deblur_enabled": learned_stage_enabled("NAFNET_DEBLUR_ENABLED"),
+            "purevision_enabled": learned_stage_enabled("PUREVISION_ENABLED"),
+            "purescale_enabled": learned_stage_enabled("PURESCALE_ENABLED"),
+            "colorization_enabled": learned_stage_enabled("COLORIZATION_ENABLED"),
             "identity_guard_enabled": settings.IDENTITY_GUARD_ENABLED,
             "face_fidelity_enabled": settings.FACE_FIDELITY_ENABLED,
             "gfpgan_require_identity_check": settings.GFPGAN_REQUIRE_IDENTITY_CHECK,

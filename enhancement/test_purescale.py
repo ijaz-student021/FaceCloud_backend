@@ -63,7 +63,7 @@ class PureScalePipelineTests(SimpleTestCase):
     @override_settings(
         PURESCALE_ENABLED=True, HD_RESTORATION_ENABLED=False,
         GFPGAN_ENABLED=False, AI_RESTORATION_ENABLED=False,
-    )
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.upscale_with_purescale")
     def test_enabled_purescale_produces_a_2x_auditable_output(self, provider):
         source = np.full((64, 96, 3), 100, dtype=np.uint8)
@@ -77,7 +77,7 @@ class PureScalePipelineTests(SimpleTestCase):
     @override_settings(
         PURESCALE_ENABLED=True, HD_RESTORATION_ENABLED=True, NAFNET_DEBLUR_ENABLED=False,
         GFPGAN_ENABLED=False, AI_RESTORATION_ENABLED=False,
-    )
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.upscale_with_purescale")
     @patch("enhancement.services.upscale_with_realesrgan")
     def test_purescale_never_stacks_with_hd_restoration(self, realesrgan, purescale_provider):
@@ -97,7 +97,7 @@ class PureScalePipelineTests(SimpleTestCase):
         PURESCALE_ENABLED=True, HD_RESTORATION_ENABLED=False,
         GFPGAN_ENABLED=False, AI_RESTORATION_ENABLED=False,
         EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD=25.0,
-    )
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.upscale_with_purescale")
     def test_extremely_dark_source_skips_purescale_even_when_enabled(self, provider):
         source = np.full((64, 96, 3), 12, dtype=np.uint8)
@@ -110,7 +110,7 @@ class PureScalePipelineTests(SimpleTestCase):
     @override_settings(
         PURESCALE_ENABLED=True, HD_RESTORATION_ENABLED=False,
         GFPGAN_ENABLED=False, AI_RESTORATION_ENABLED=False,
-    )
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.upscale_with_purescale")
     def test_provider_failure_preserves_pipeline_output(self, provider):
         provider.side_effect = PureScaleUnavailable("PureScale inference failed safely.")

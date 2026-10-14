@@ -87,7 +87,7 @@ class ColorizationPipelineTests(SimpleTestCase):
     @override_settings(
         COLORIZATION_ENABLED=True, HD_RESTORATION_ENABLED=False,
         GFPGAN_ENABLED=False, AI_RESTORATION_ENABLED=False,
-    )
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.colorize_with_siggraph17")
     def test_already_colour_source_never_calls_the_provider(self, provider):
         source = _color_bgr()
@@ -100,7 +100,7 @@ class ColorizationPipelineTests(SimpleTestCase):
     @override_settings(
         COLORIZATION_ENABLED=True, HD_RESTORATION_ENABLED=False,
         GFPGAN_ENABLED=False, AI_RESTORATION_ENABLED=False,
-    )
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.colorize_with_siggraph17")
     def test_enabled_colorization_of_a_grayscale_source_is_auditable(self, provider):
         source = _grayscale_bgr()
@@ -116,7 +116,7 @@ class ColorizationPipelineTests(SimpleTestCase):
     @override_settings(
         COLORIZATION_ENABLED=True, HD_RESTORATION_ENABLED=False,
         GFPGAN_ENABLED=False, AI_RESTORATION_ENABLED=False,
-    )
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.colorize_with_siggraph17")
     def test_provider_failure_preserves_pipeline_output(self, provider):
         provider.side_effect = ColorizationUnavailable("Colorization inference failed safely.")

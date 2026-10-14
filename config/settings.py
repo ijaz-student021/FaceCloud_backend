@@ -210,6 +210,18 @@ PREPROCESS_JPEG_QUALITY = int(os.environ.get("PREPROCESS_JPEG_QUALITY", "95"))
 PREPROCESS_TRANSPARENT_BACKGROUND = os.environ.get("PREPROCESS_TRANSPARENT_BACKGROUND", "#FFFFFF")
 
 AI_RESTORATION_ENABLED = env.bool("AI_RESTORATION_ENABLED", default=True)
+# Which enhancement stages may run (enhancement/policy.py). "lightweight_v1"
+# (default): OpenCV and Pillow only; the learned-model settings below
+# (ZERO_DCE_ENABLED, HD_RESTORATION_ENABLED, ...) are ignored. "learned_v1": the
+# earlier behaviour, where each of those settings decides. Adapters and
+# checkpoints stay installed either way, so the change is reversible.
+ENHANCEMENT_RENDER_POLICY = env("ENHANCEMENT_RENDER_POLICY", default="lightweight_v1")
+if ENHANCEMENT_RENDER_POLICY not in ("lightweight_v1", "learned_v1"):
+    raise ImproperlyConfigured(
+        "ENHANCEMENT_RENDER_POLICY must be lightweight_v1 or learned_v1, "
+        f"not {ENHANCEMENT_RENDER_POLICY!r}."
+    )
+
 AI_RESTORATION_EDSR_MODEL_PATH = env(
     "AI_RESTORATION_EDSR_MODEL_PATH",
     default=str(BASE_DIR / ".runtime" / "models" / "EDSR_x2.pb"),

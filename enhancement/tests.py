@@ -285,7 +285,7 @@ class OpenCVPolicyTests(SimpleTestCase):
         ADAPTIVE_DENOISE_ENABLED=True,
         ADAPTIVE_DENOISE_BREAKPOINTS=(),
         ADAPTIVE_DENOISE_STRENGTHS=(3,),
-    )
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services._load_edsr_model")
     @patch("enhancement.services.cv2.fastNlMeansDenoisingColored")
     def test_edsr_runs_after_denoise_for_still_low_resolution_image(
@@ -460,7 +460,7 @@ class OpenCVPolicyTests(SimpleTestCase):
         EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD=25.0,
         EXTREME_LOW_LIGHT_MAX_LUMINANCE_GAIN=90.0,
         EXTREME_LOW_LIGHT_MODEL_STRENGTH=0.85,
-    )
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.enhance_with_zero_dce")
     def test_extremely_dark_source_gets_a_larger_brightening_allowance(self, zero_dce):
         """A normal HIGH-level max_luminance_gain of 30 would cap a
@@ -478,7 +478,7 @@ class OpenCVPolicyTests(SimpleTestCase):
         self.assertTrue(parameters["zero_dce"]["applied"])
         self.assertGreater(float(enhanced.mean()), 60.0)
 
-    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True)
+    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True, ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.enhance_with_zero_dce")
     def test_dark_image_routes_through_genuine_zero_dce_provider(self, zero_dce):
         source = np.full((80, 80, 3), 35, dtype=np.uint8)
@@ -495,7 +495,7 @@ class OpenCVPolicyTests(SimpleTestCase):
         self.assertEqual(parameters["colour_policy"], "learned_rgb_curves")
         self.assertGreater(float(enhanced.mean()), float(source.mean()))
 
-    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True)
+    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True, ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.enhance_with_zero_dce")
     def test_learned_model_cannot_over_brighten_or_shift_source_chroma(
         self, zero_dce
@@ -523,7 +523,7 @@ class OpenCVPolicyTests(SimpleTestCase):
             "preserve_source_lab_chroma",
         )
 
-    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True)
+    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True, ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.enhance_with_zero_dce")
     def test_learned_model_guard_preserves_source_contrast(self, zero_dce):
         source = np.full((96, 96, 3), 40, dtype=np.uint8)
@@ -549,7 +549,7 @@ class OpenCVPolicyTests(SimpleTestCase):
         self.assertEqual(parameters["exposure_mode"], "darken")
         self.assertLessEqual(float(enhanced.mean()), float(source.mean()))
 
-    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True)
+    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True, ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.enhance_with_zero_dce")
     def test_zero_dce_failure_uses_auditable_opencv_fallback(self, zero_dce):
         from enhancement.zero_dce import ZeroDCEUnavailable
@@ -680,7 +680,7 @@ class OpenCVPolicyTests(SimpleTestCase):
         self.assertEqual(comparison["after"]["width"], 120)
         self.assertIn("laplacian_sharpness", comparison["deltas"])
 
-    @override_settings(AI_RESTORATION_ENABLED=True)
+    @override_settings(AI_RESTORATION_ENABLED=True, ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services._load_edsr_model")
     def test_low_resolution_image_is_restored_at_two_times_scale(self, load_model):
         source = np.full((120, 100, 3), 90, dtype=np.uint8)
@@ -703,7 +703,7 @@ class OpenCVPolicyTests(SimpleTestCase):
     @override_settings(
         AI_RESTORATION_ENABLED=True,
         AI_RESTORATION_MAX_INPUT_EDGE=480,
-    )
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services._load_edsr_model")
     def test_medium_resolution_image_preserves_original_grid(self, load_model):
         source = np.full((1194, 670, 3), 90, dtype=np.uint8)
@@ -719,7 +719,7 @@ class OpenCVPolicyTests(SimpleTestCase):
         self.assertIn("original pixel grid", metadata["fallback_reason"])
         load_model.assert_not_called()
 
-    @override_settings(AI_RESTORATION_ENABLED=True)
+    @override_settings(AI_RESTORATION_ENABLED=True, ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services._load_edsr_model")
     def test_restoration_failure_falls_back_without_breaking_enhancement(
         self, load_model

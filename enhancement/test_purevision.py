@@ -64,7 +64,7 @@ class PureVisionPipelineTests(SimpleTestCase):
     @override_settings(
         PUREVISION_ENABLED=True, HD_RESTORATION_ENABLED=False,
         GFPGAN_ENABLED=False, AI_RESTORATION_ENABLED=False,
-    )
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.restore_with_purevision")
     def test_enabled_purevision_preserves_the_pixel_grid(self, provider):
         source = np.full((64, 96, 3), 100, dtype=np.uint8)
@@ -79,7 +79,7 @@ class PureVisionPipelineTests(SimpleTestCase):
         PUREVISION_ENABLED=True, HD_RESTORATION_ENABLED=False,
         GFPGAN_ENABLED=False, AI_RESTORATION_ENABLED=False,
         EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD=25.0,
-    )
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.restore_with_purevision")
     def test_extremely_dark_source_skips_purevision_even_when_enabled(self, provider):
         source = np.full((64, 96, 3), 12, dtype=np.uint8)
@@ -92,7 +92,7 @@ class PureVisionPipelineTests(SimpleTestCase):
     @override_settings(
         PUREVISION_ENABLED=True, HD_RESTORATION_ENABLED=False,
         GFPGAN_ENABLED=False, AI_RESTORATION_ENABLED=False,
-    )
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.restore_with_purevision")
     def test_provider_failure_preserves_pipeline_output(self, provider):
         provider.side_effect = PureVisionUnavailable("PureVision inference failed safely.")

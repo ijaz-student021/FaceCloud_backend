@@ -229,7 +229,7 @@ class GFPGANPipelineTests(SimpleTestCase):
         AI_RESTORATION_ENABLED=False,
         ZERO_DCE_ENABLED=False,
         ADAPTIVE_DENOISE_ENABLED=False,
-    )
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.restore_faces")
     def test_eligible_face_restoration_is_bounded_and_auditable(self, provider):
         source = np.full((96, 96, 3), 50, dtype=np.uint8)
@@ -266,7 +266,7 @@ class GFPGANPipelineTests(SimpleTestCase):
         GFPGAN_ENABLED=True,
         GFPGAN_OUTPUT_BLEND=0.25,
         GFPGAN_MIN_OUTPUT_BLEND=0.08,
-    )
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.restore_faces")
     def test_safe_face_restoration_uses_configured_blend(self, provider):
         source = np.full((96, 96, 3), 80, dtype=np.uint8)
@@ -294,7 +294,7 @@ class GFPGANPipelineTests(SimpleTestCase):
         GFPGAN_ENABLED=True,
         GFPGAN_OUTPUT_BLEND=0.25,
         GFPGAN_MIN_OUTPUT_BLEND=0.20,
-    )
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.restore_faces")
     def test_destructive_candidate_is_rejected_at_minimum_safe_blend(self, provider):
         source = np.full((96, 96, 3), 90, dtype=np.uint8)
@@ -323,7 +323,7 @@ class GFPGANPipelineTests(SimpleTestCase):
     @override_settings(
         GFPGAN_ENABLED=True,
         GFPGAN_ALLOW_MILD_BLUR=False,
-    )
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.restore_faces")
     def test_mild_blur_can_be_excluded_by_rollout_policy(self, provider):
         source = np.full((800, 800, 3), 100, dtype=np.uint8)
@@ -341,7 +341,7 @@ class GFPGANPipelineTests(SimpleTestCase):
         GFPGAN_ENABLED=True,
         AI_RESTORATION_ENABLED=False,
         ZERO_DCE_ENABLED=False,
-    )
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.restore_faces")
     def test_provider_failure_preserves_pipeline_output(self, provider):
         provider.side_effect = GFPGANUnavailable("GFPGAN inference failed safely.")
@@ -360,7 +360,7 @@ class GFPGANPipelineTests(SimpleTestCase):
         GFPGAN_ENABLED=True,
         AI_RESTORATION_ENABLED=False,
         ZERO_DCE_ENABLED=False,
-    )
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.restore_faces")
     def test_well_lit_sharp_large_image_skips_gfpgan(self, provider):
         source = np.full((800, 800, 3), 150, dtype=np.uint8)

@@ -12,6 +12,8 @@ from pathlib import Path
 import numpy as np
 from django.conf import settings
 
+from .policy import learned_stage_enabled
+
 from . import runtime
 
 
@@ -358,7 +360,8 @@ def gfpgan_healthcheck(load_model=False):
     """Return non-sensitive readiness metadata or raise a safe error."""
     model_path, expected_sha256, auxiliary_models = _validated_checkpoint()
     metadata = {
-        "enabled": bool(settings.GFPGAN_ENABLED),
+        "enabled": learned_stage_enabled("GFPGAN_ENABLED"),
+        "configured": bool(settings.GFPGAN_ENABLED),
         "queue_enabled": bool(settings.GFPGAN_QUEUE_ENABLED),
         "queue_name": str(settings.GFPGAN_QUEUE_NAME),
         "checkpoint": model_path.name,

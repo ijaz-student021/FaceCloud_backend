@@ -87,7 +87,7 @@ class AmplifySourceChromaTests(SimpleTestCase):
             self.assertEqual(result.dtype, np.uint8)
 
 
-@override_settings(ZERO_DCE_ENABLED=True, AI_RESTORATION_ENABLED=False)
+@override_settings(ZERO_DCE_ENABLED=True, AI_RESTORATION_ENABLED=False, ENHANCEMENT_RENDER_POLICY="learned_v1")
 class ExposureStageColourGainTests(SimpleTestCase):
     def run_exposure_stage(self, cap):
         source = dark_tinted_photo(size=(160, 200))
