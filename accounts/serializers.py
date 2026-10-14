@@ -304,6 +304,44 @@ class AdminUserSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class AdminUserDetailSerializer(AdminUserSerializer):
+    """Read-only detail for administrators; PATCH still uses AdminUserSerializer."""
+
+    two_factor_enabled = serializers.SerializerMethodField()
+    active_sessions = serializers.SerializerMethodField()
+    organizations = serializers.SerializerMethodField()
+    usage = serializers.SerializerMethodField()
+
+    class Meta(AdminUserSerializer.Meta):
+        fields = AdminUserSerializer.Meta.fields + [
+            "last_login", "display_name", "organization_name", "job_title", "country",
+            "two_factor_enabled", "active_sessions", "organizations", "usage",
+        ]
+        read_only_fields = fields
+
+    def get_two_factor_enabled(self, user) -> bool:
+        return has_active_two_factor(user)
+
+    def get_active_sessions(self, user) -> int:
+        from .sessions import active_sessions
+
+        return len(active_sessions(user))
+
+    def get_organizations(self, user) -> list[dict]:
+        return [
+            {"id": membership.organization_id, "name": membership.organization.name,
+             "role": membership.role, "status": membership.status}
+            for membership in user.organization_memberships.select_related("organization").order_by("organization__name")
+        ]
+
+    def get_usage(self, user) -> dict:
+        return {
+            "upload_batches": user.upload_batches.count(),
+            "images": user.image_uploads.count(),
+            "enhancements": user.image_enhancement_results.count(),
+        }
+
+
 # -- Two-factor authentication -----------------------------------------------
 
 class TwoFactorSetupResponseSerializer(serializers.Serializer):

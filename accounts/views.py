@@ -35,6 +35,7 @@ from .sessions import revoke as revoke_session
 from .sessions import revoke_all as revoke_all_sessions
 from .sessions import session_for_token
 from .serializers import (
+    AdminUserDetailSerializer,
     AdminUserSerializer,
     ChangePasswordSerializer,
     DeleteAccountSerializer,
@@ -883,11 +884,17 @@ class AdminUserListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminRole]
 
 
-class AdminUserUpdateView(generics.UpdateAPIView):
+class AdminUserUpdateView(generics.RetrieveUpdateAPIView):
+    """GET: an account's detail for administrators. PATCH: role, suspension, activity."""
+
     queryset = User.objects.all()
     serializer_class = AdminUserSerializer
     permission_classes = [permissions.IsAuthenticated, IsAdminRole]
-    http_method_names = ["patch"]
+    http_method_names = ["get", "patch"]
+
+    @extend_schema(responses={200: AdminUserDetailSerializer})
+    def get(self, request, *args, **kwargs):
+        return Response(AdminUserDetailSerializer(self.get_object()).data)
 
     @transaction.atomic
     def perform_update(self, serializer):

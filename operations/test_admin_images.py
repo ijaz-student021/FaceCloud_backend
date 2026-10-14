@@ -122,3 +122,33 @@ class AdminImageMonitoringTests(TestCase):
         bob = self.client_for(self.bob)
         self.assertEqual(bob.get(f"/api/images/{self.alice_image.pk}/").status_code, 404)
         self.assertNotIn(self.alice_image.pk, [row["id"] for row in bob.get("/api/images/my/").json()["results"]])
+
+
+class AdminUserDetailTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(username="root", email="root@example.com", password="ForestRiver!4821",
+                                              is_email_verified=True, role="admin")
+        self.user = User.objects.create_user(username="member", email="member@example.com",
+                                             password="ForestRiver!4821", is_email_verified=True, job_title="Editor")
+        UploadBatch.objects.create(owner=self.user, upload_type="single")
+
+    def test_an_administrator_sees_the_account_detail(self):
+        client = APIClient()
+        client.force_authenticate(self.admin)
+        body = client.get(f"/api/user/admin/users/{self.user.pk}/").json()
+        self.assertEqual((body["email"], body["job_title"], body["two_factor_enabled"]), ("member@example.com", "Editor", False))
+        self.assertEqual(body["usage"], {"upload_batches": 1, "images": 0, "enhancements": 0})
+        self.assertIn("organizations", body)
+
+    def test_a_non_administrator_does_not(self):
+        client = APIClient()
+        client.force_authenticate(self.user)
+        self.assertEqual(client.get(f"/api/user/admin/users/{self.admin.pk}/").status_code, 403)
+
+    def test_patch_is_unchanged(self):
+        client = APIClient()
+        client.force_authenticate(self.admin)
+        response = client.patch(f"/api/user/admin/users/{self.user.pk}/", {"is_suspended": True,
+                                                                            "suspension_reason": "test"}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("usage", response.json())
