@@ -111,9 +111,19 @@ def _fail_if_unfinished(result, reason=TASK_FAILURE_REASON, token=None):
 
 
 def _close_job_if_cancelled(job):
-    """Close a batch job whose upload batch the user cancelled; True if it was."""
+    """Close a batch job whose upload batch the user cancelled; True if it was.
+
+    A cancellation that arrives once every image has completed or failed has
+    nothing left to cancel: the job keeps its real outcome (completed, partial
+    or failed) and its counts. One that stopped an image (cancelled it) or has
+    images left to stop closes the job as cancelled. Progress for the cancelled
+    images is set by ``uploads.services.cancel_batch`` when the cancellation is
+    made.
+    """
     job.refresh_from_db(fields=["source_batch_id"])
     if not job.source_batch.cancellation_requested:
+        return False
+    if not job.results.exclude(status__in=(EnhancementStatus.COMPLETED, EnhancementStatus.FAILED)).exists():
         return False
     job.results.exclude(status__in=[EnhancementStatus.COMPLETED, EnhancementStatus.FAILED]).update(
         status=EnhancementStatus.CANCELLED,
@@ -129,16 +139,33 @@ def _close_job_if_cancelled(job):
 
 
 def _publish_outcome(result):
-    """Tell the user, the activity timeline and the progress bar how it ended."""
+    """Tell the user, the activity timeline and the progress bar how it ended.
+
+    Only a finished outcome is published, and publishing it again (a retried
+    task) adds nothing: notifications carry idempotency keys, and an activity
+    entry for this outcome recorded since the result finished is not repeated.
+    A later, different outcome of the same result is still recorded.
+    """
+    from activity.models import ActivityEvent
     from activity.services import record_activity_event
     from notifications.events import notify_enhancement_result
     from uploads.progress import sync_image_progress
 
+    if result.status not in FINISHED_STATUSES:
+        return
     notify_enhancement_result(result)
-    record_activity_event(
-        result.owner, "processing", f"enhancement_{result.status}",
-        object_type="ImageEnhancementResult", object_id=result.pk,
+    event = f"enhancement_{result.status}"
+    already = ActivityEvent.objects.filter(
+        user=result.owner, category="processing", event=event,
+        object_type="ImageEnhancementResult", object_id=str(result.pk),
     )
+    if result.finished_at:
+        already = already.filter(created_at__gte=result.finished_at)
+    if not already.exists():
+        record_activity_event(
+            result.owner, "processing", event,
+            object_type="ImageEnhancementResult", object_id=result.pk,
+        )
     sync_image_progress(result.image_id)
 
 
