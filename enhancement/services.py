@@ -1366,7 +1366,14 @@ def hd_restoration_stage(context):
         return context
     source_dimensions = [int(context.current_image.shape[1]), int(context.current_image.shape[0])]
     working = context.current_image
-    if settings.NAFNET_DEBLUR_ENABLED:
+    # Without an analysis (a stage called on its own) there is nothing to gate on.
+    defects = context.input_quality.get("defects")
+    blur_measured = defects is None or bool({"mild_blur", "severe_blur"} & set(defects))
+    if settings.NAFNET_DEBLUR_ENABLED and not blur_measured:
+        # A deblurring network run on a sharp photo can only invent or remove
+        # detail; it is not run without measured blur.
+        metadata["deblur"]["fallback_reason"] = "No blur was measured; deblurring was not needed."
+    elif settings.NAFNET_DEBLUR_ENABLED:
         try:
             deblurred, deblur_metadata = deblur_with_nafnet(context.current_image)
             metadata["deblur"].update(deblur_metadata)
@@ -1985,7 +1992,7 @@ _CHECKPOINT_STAGES = frozenset({
 _REPORTED_KEYS = (
     "provider", "model", "device", "tile_size", "memory_retries",
     "checkpoint_sha256_prefix", "strength", "output_blend",
-    "requested_strength", "acceptance", "benefit", "detail",
+    "requested_strength", "acceptance", "benefit", "detail", "tiles", "tiles_rejected",
 )
 
 
@@ -2079,6 +2086,18 @@ def _run_stage(context, name, function, optional, attribute):
             if attribute:
                 setattr(context, attribute, _failed_stage_metadata(context, attribute, reason))
             context.warnings.append(reason)
+    if attribute and isinstance(getattr(context, attribute), dict):
+        stage_metadata = getattr(context, attribute)
+        rejected = sum(
+            int(part.get("tiles_rejected") or 0)
+            for part in (stage_metadata, stage_metadata.get("deblur") or {}, stage_metadata.get("super_resolution") or {})
+            if isinstance(part, dict)
+        )
+        if rejected:
+            context.warnings.append(
+                f"The {name.replace('_', ' ')} model diverged on {rejected} tile(s); "
+                "those areas were left unrestored."
+            )
     if name == "adaptive_denoise":
         # Whatever happened, this is the last image before any restoration model.
         context.restoration_reference = context.current_image

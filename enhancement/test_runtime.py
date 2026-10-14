@@ -95,7 +95,8 @@ class MemoryFallbackTests(SimpleTestCase):
     def test_success_records_the_device_and_tile_actually_used(self):
         output, metadata = self.run_fallback(lambda tile, overlap: "pixels")
         self.assertEqual(output, "pixels")
-        self.assertEqual(metadata, {"device": "cuda", "tile_size": 256, "tile_overlap": 24, "memory_retries": 0})
+        self.assertEqual(metadata, {"device": "cuda", "tile_size": 256, "tile_overlap": 24, "memory_retries": 0,
+                                    "tiles": 0, "tiles_rejected": 0})
 
     def test_out_of_memory_retries_with_smaller_tiles(self):
         tiles = []
@@ -279,3 +280,53 @@ class RealTorchTests(SimpleTestCase):
     def test_resolve_device_returns_a_device_this_runtime_accepts(self):
         device = runtime.resolve_device(self.torch, "auto", "PureScale", Unavailable)
         self.assertEqual(self.torch.zeros(1, device=device).device.type, device.type)
+
+
+@unittest.skipUnless(TORCH_INSTALLED, "PyTorch is not installed here.")
+class DivergedTileTests(SimpleTestCase):
+    """A tile whose raw output leaves [0, 1] far behind is not clamped into noise."""
+
+    def setUp(self):
+        import torch
+
+        self.torch = torch
+        self.device = torch.device("cpu")
+        rng = np.random.default_rng(5)
+        self.image = rng.integers(40, 200, (100, 140, 3), dtype=np.uint8)
+
+    def model(self, explode_where_dark=False):
+        torch = self.torch
+
+        class Identity(torch.nn.Module):
+            def forward(self, value):
+                if explode_where_dark and float(value.mean()) < 0.1:
+                    return value * 0 + 393.0  # what NAFNet did on a near-black hair tile
+                return value
+
+        return Identity().eval()
+
+    def test_a_well_behaved_model_has_no_rejected_tiles(self):
+        output = runtime.tiled_inference(self.torch, self.image, self.model(), self.device, 1, 64, 16)
+        np.testing.assert_array_equal(output, self.image)
+        self.assertEqual(runtime.last_tile_stats()["tiles_rejected"], 0)
+        self.assertGreater(runtime.last_tile_stats()["tiles"], 1)
+
+    def test_a_diverged_tile_falls_back_to_its_input(self):
+        image = self.image.copy()
+        image[:64, :64] = 3  # one near-black tile
+        output = runtime.tiled_inference(self.torch, image, self.model(explode_where_dark=True), self.device, 1, 64, 0)
+        stats = runtime.last_tile_stats()
+        self.assertEqual(stats["tiles_rejected"], 1)
+        np.testing.assert_array_equal(output[:64, :64], image[:64, :64])  # not saturated colour noise
+        np.testing.assert_array_equal(output, image)
+
+    def test_the_rejection_count_reaches_the_adapters_metadata(self):
+        image = self.image.copy()
+        image[:64, :64] = 3
+        model = self.model(explode_where_dark=True)
+        output, metadata = runtime.run_with_memory_fallback(
+            lambda tile, overlap: runtime.tiled_inference(self.torch, image, model, self.device, 1, tile, overlap),
+            device=self.device, tile=64, overlap=0, label="NAFNet", error_class=Unavailable,
+        )
+        self.assertEqual(metadata["tiles_rejected"], 1)
+        self.assertEqual(output.shape, image.shape)

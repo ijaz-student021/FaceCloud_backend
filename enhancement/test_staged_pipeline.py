@@ -882,3 +882,28 @@ class EvaluationDrivenBehaviourTests(SimpleTestCase):
         parameters = enhance_bgr(textured(), "low")[2]
         self.assertEqual(parameters["identity_status"], "unavailable")
         self.assertIn("No identity model is configured", parameters["identity_guard"]["fallback_reason"])
+
+
+@override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True})
+class DeblurRoutingTests(SimpleTestCase):
+    """Deblurring runs only on a photo whose blur was measured."""
+
+    @patch("enhancement.services.upscale_with_realesrgan", side_effect=__import__("enhancement.hd_restoration", fromlist=["x"]).HDRestorationUnavailable("off"))
+    @patch("enhancement.services.deblur_with_nafnet")
+    def test_a_sharp_photo_is_not_deblurred(self, deblur, _upscale):
+        from .test_conservative_routing import detailed
+
+        sharp = detailed()
+        parameters = enhance_bgr(sharp, "auto")[2]
+        self.assertFalse({"mild_blur", "severe_blur"} & set(parameters["quality_before"]["defects"]))
+        deblur.assert_not_called()
+        self.assertIn("No blur was measured", parameters["hd_restoration"]["deblur"]["fallback_reason"])
+
+    @patch("enhancement.services.upscale_with_realesrgan", side_effect=__import__("enhancement.hd_restoration", fromlist=["x"]).HDRestorationUnavailable("off"))
+    @patch("enhancement.services.deblur_with_nafnet")
+    def test_a_blurred_photo_is(self, deblur, _upscale):
+        deblur.side_effect = lambda image: (image.copy(), {"provider": "nafnet_gopro_width64", "tiles_rejected": 2})
+        blurred = cv2.GaussianBlur(textured(720, 960, base=130), (0, 0), 4)
+        parameters = enhance_bgr(blurred, "auto")[2]
+        deblur.assert_called_once()
+        self.assertTrue(any("diverged on 2 tile" in warning for warning in parameters["warnings"]))

@@ -19,6 +19,19 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
+# A model's raw output is expected in [0, 1]. A tile whose output leaves this
+# band by more than the margin has diverged (NAFNet does on some near-black
+# tiles: about +-390 on a dark hair tile, on CPU and MPS alike); it is replaced
+# by its own input, resized, rather than clamped into colour noise.
+VALID_OUTPUT_MARGIN = 0.5
+_TILE_STATS = threading.local()
+
+
+def last_tile_stats():
+    """``{"tiles": n, "tiles_rejected": m}`` for the most recent tiled inference."""
+    return dict(getattr(_TILE_STATS, "value", {"tiles": 0, "tiles_rejected": 0}))
+
+
 # One heavy inference at a time in a worker process, whichever model runs it.
 # Two models on one GPU at once is the usual way to run out of memory.
 INFERENCE_LOCK = threading.RLock()
@@ -127,13 +140,22 @@ def tiled_inference(torch, image, model, device, scale, tile, overlap, output_sc
     step = max(1, tile - max(0, min(int(overlap), tile // 2)))
     total = np.zeros((height * output_scale, width * output_scale, 3), dtype=np.uint16)
     count = np.zeros((height * output_scale, width * output_scale, 1), dtype=np.uint8)
+    stats = {"tiles": 0, "tiles_rejected": 0}
+    _TILE_STATS.value = stats
     with torch.inference_mode():
         for y in _positions(height, tile, step):
             for x in _positions(width, tile, step):
                 patch = image[y:min(y + tile, height), x:min(x + tile, width)]
-                prediction = bgr_from_tensor(model(tensor_from_bgr(patch, torch, device)))
+                raw = model(tensor_from_bgr(patch, torch, device))
                 patch_height, patch_width = patch.shape[:2]
                 expected = (patch_height * output_scale, patch_width * output_scale)
+                stats["tiles"] += 1
+                low, high = float(raw.min()), float(raw.max())
+                if not (np.isfinite(low) and np.isfinite(high)) or low < -VALID_OUTPUT_MARGIN or high > 1 + VALID_OUTPUT_MARGIN:
+                    stats["tiles_rejected"] += 1
+                    prediction = cv2.resize(patch, (expected[1], expected[0]), interpolation=cv2.INTER_CUBIC)
+                else:
+                    prediction = bgr_from_tensor(raw)
                 if prediction.shape[:2] != expected:
                     native = (patch_height * scale, patch_width * scale)
                     if prediction.shape[:2] != native:
@@ -165,6 +187,7 @@ def run_with_memory_fallback(run, *, device, tile, overlap, label, error_class):
     overlap = max(0, min(int(overlap), tile // 4))
     retries = 0
     while True:
+        _TILE_STATS.value = {"tiles": 0, "tiles_rejected": 0}  # never report a previous run's counts
         try:
             output = run(tile, overlap)
         except Exception as error:
@@ -194,4 +217,5 @@ def run_with_memory_fallback(run, *, device, tile, overlap, label, error_class):
             "tile_size": tile,
             "tile_overlap": overlap,
             "memory_retries": retries,
+            **last_tile_stats(),
         }
