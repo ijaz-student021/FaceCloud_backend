@@ -212,6 +212,13 @@ AI_RESTORATION_EDSR_MODEL_PATH = env(
     "AI_RESTORATION_EDSR_MODEL_PATH",
     default=str(BASE_DIR / ".runtime" / "models" / "EDSR_x2.pb"),
 )
+# The EDSR file must match this SHA-256 (docs/gpu/model_manifest.json): any
+# other file at the path is refused at load time, not only by the offline
+# manifest check.
+AI_RESTORATION_EDSR_MODEL_SHA256 = env(
+    "AI_RESTORATION_EDSR_MODEL_SHA256",
+    default="585623221baa070279a0d1e7e113a4c3faba0f318ca7fdd9a65d9afc0763d9b4",
+)
 AI_RESTORATION_SCALE = env.int("AI_RESTORATION_SCALE", default=2)
 AI_RESTORATION_MAX_INPUT_EDGE = env.int(
     "AI_RESTORATION_MAX_INPUT_EDGE",

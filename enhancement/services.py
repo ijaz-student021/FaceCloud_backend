@@ -440,15 +440,32 @@ def compare_image_quality(source, output):
     }
 
 
+def _verify_edsr_checksum(model_path):
+    """The file's SHA-256, which must equal AI_RESTORATION_EDSR_MODEL_SHA256.
+
+    The hash is cached by file identity (path, size, modification time), so a
+    loaded model costs no rehash per image, and a replaced file is hashed again.
+    """
+    from identities.providers import verify_model_checksum
+
+    expected = str(settings.AI_RESTORATION_EDSR_MODEL_SHA256).strip().lower()
+    if len(expected) != 64:
+        raise RuntimeError("The EDSR checksum is not configured.")
+    try:
+        return verify_model_checksum(model_path, expected)
+    except ValidationError as error:
+        raise RuntimeError("The EDSR model failed integrity verification.") from error
+
+
 def _load_edsr_model(model_path, scale):
-    key = (str(model_path), scale)
-    if key in _SUPERRES_CACHE:
-        return _SUPERRES_CACHE[key]
     if not hasattr(cv2, "dnn_superres"):
         raise RuntimeError("The OpenCV super-resolution module is not installed.")
     model_path = Path(model_path)
     if not model_path.is_file():
         raise RuntimeError("The configured EDSR model file is unavailable.")
+    key = (str(model_path), scale, _verify_edsr_checksum(model_path))
+    if key in _SUPERRES_CACHE:
+        return _SUPERRES_CACHE[key]
     superres = cv2.dnn_superres.DnnSuperResImpl_create()
     superres.readModel(str(model_path))
     superres.setModel("edsr", scale)
