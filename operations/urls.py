@@ -1,5 +1,7 @@
 from django.urls import path
 
+from .admin_images import AdminImageDetailView, AdminImageListView, AdminImagePreviewView
+
 from .views import (
     AdminAnalyticsView,
     AdminAuditView,
@@ -23,5 +25,8 @@ urlpatterns = [
     path("jobs/failed/", FailedJobListView.as_view(), name="failed-jobs"),
     path("audit/", AdminAuditView.as_view(), name="admin-audit"),
     path("moderation/", AdminModerationOverviewView.as_view(), name="admin-moderation-overview"),
+    path("images/", AdminImageListView.as_view(), name="admin-images"),
+    path("images/<int:pk>/", AdminImageDetailView.as_view(), name="admin-image-detail"),
+    path("images/<int:pk>/preview/", AdminImagePreviewView.as_view(), name="admin-image-preview"),
 ]
 
