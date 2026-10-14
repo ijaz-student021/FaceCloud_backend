@@ -1,4 +1,5 @@
 import io
+import logging
 import uuid
 
 from django.db import IntegrityError, transaction
@@ -40,6 +41,7 @@ from .serializers import (
     ModelComparisonSummarySerializer,
     WatermarkOptionsSerializer,
 )
+from .batch_jobs import BatchEnhancementConflict, BatchEnhancementFailed, start_batch_enhancement
 from .services import create_enhancement_result, ensure_enhancement_capacity
 from .watermark import WatermarkError, render_watermarked
 from .tasks import (
@@ -78,6 +80,9 @@ def _watermarked_name(name):
     stem, dot, extension = name.rpartition(".")
     return f"{stem}_watermarked.{extension}" if dot else f"{name}_watermarked"
 
+
+
+logger = logging.getLogger(__name__)
 
 class ImageEnhanceView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -126,6 +131,7 @@ class ImageEnhanceView(APIView):
         try:
             process_enhancement_image.apply_async(args=[result.pk], task_id=task_id)
         except Exception:
+            logger.exception("Enhancement result %s could not be queued.", result.pk)
             result.status = EnhancementStatus.FAILED
             result.failure_reason = "The background enhancement queue is unavailable."
             result.finished_at = timezone.now()
@@ -146,14 +152,32 @@ class BatchEnhanceView(APIView):
 
     @extend_schema(
         summary="Enhance every ready image in a batch",
+        description=(
+            "409 lists the images that already have an enhancement queued or running (nothing is "
+            "created). 500 carries only an error_reference; the cause is logged on the server."
+        ),
         request=EnhancementRequestSerializer,
         responses={
             201: EnhancementBatchJobSerializer,
             400: OpenApiTypes.OBJECT,
+            409: OpenApiTypes.OBJECT,
             429: OpenApiTypes.OBJECT,
+            500: OpenApiTypes.OBJECT,
         },
         examples=[
             OpenApiExample("Dynamic look", value={"level": "medium", "style": "dynamic"}, request_only=True),
+            OpenApiExample(
+                "Images already in progress",
+                value={"detail": "Some images in this batch already have an enhancement queued or running.",
+                       "image_ids": [41, 42]},
+                response_only=True, status_codes=["409"],
+            ),
+            OpenApiExample(
+                "Unexpected failure",
+                value={"detail": "The batch enhancement could not be started. Quote the reference if you "
+                                 "contact support.", "error_reference": "3f9a1c0b7e2d"},
+                response_only=True, status_codes=["500"],
+            ),
             OpenApiExample(
                 "Too many batch jobs in progress",
                 value={"detail": "You already have 2 batch enhancement jobs in progress (limit 2). Wait for some to finish, then try again."},
@@ -166,40 +190,9 @@ class BatchEnhanceView(APIView):
         payload = EnhancementRequestSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         ensure_enhancement_capacity(request.user, batch=True)
-        images = list(
-            batch.images.filter(status="uploaded", preprocessing_result__status="completed")
-            .select_related("preprocessing_result", "owner")
+        job = start_batch_enhancement(
+            batch, level=payload.validated_data["level"], style=payload.validated_data["style"],
         )
-        if not images:
-            raise ValidationError("This batch has no preprocessed images ready for enhancement.")
-        job = EnhancementBatchJob.objects.create(
-            owner=request.user,
-            source_batch=batch,
-            requested_level=payload.validated_data["level"],
-            requested_style=payload.validated_data["style"],
-            status=EnhancementStatus.PENDING,
-            total_images=len(images),
-        )
-        try:
-            for image in images:
-                create_enhancement_result(
-                    image, job.requested_level, batch_job=job,
-                    requested_style=job.requested_style,
-                )
-        except Exception:
-            job.delete()
-            raise ValidationError("One or more images already have an active enhancement operation.")
-        task_id = uuid.uuid4().hex
-        job.status = EnhancementStatus.QUEUED
-        job.task_id = task_id
-        job.save(update_fields=["status", "task_id", "updated_at"])
-        try:
-            process_enhancement_batch.apply_async(args=[job.pk], task_id=task_id)
-        except Exception:
-            job.status = EnhancementStatus.FAILED
-            job.failure_reason = "The background enhancement queue is unavailable."
-            job.finished_at = timezone.now()
-            job.save(update_fields=["status", "failure_reason", "finished_at", "updated_at"])
         job.refresh_from_db()
         return Response(
             EnhancementBatchJobSerializer(job, context={"request": request}).data,
