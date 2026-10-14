@@ -5,6 +5,7 @@ from activity.views import UserActivityTimelineView
 from .views import (
     AdminUserListView,
     AdminUserUpdateView,
+    AvatarView,
     ChangePasswordView,
     DeleteAccountView,
     LogoutAllView,
@@ -15,6 +16,7 @@ from .views import (
 
 urlpatterns = [
     path("profile/", ProfileView.as_view(), name="profile"),
+    path("avatar/", AvatarView.as_view(), name="avatar"),
     path("dashboard/", UserDashboardView.as_view(), name="user-dashboard"),
     path("change-password/", ChangePasswordView.as_view(), name="change-password"),
     path("logout/", LogoutView.as_view(), name="logout"),

@@ -7,6 +7,10 @@ from django.db import models
 from django.db.models.functions import Lower
 
 
+def avatar_upload_path(instance, filename):
+    return f"users/{instance.pk}/avatar/{uuid.uuid4().hex}.png"
+
+
 class User(AbstractUser):
     ROLE_CHOICES = [("user", "User"), ("moderator", "Moderator"), ("admin", "Admin")]
     email = models.EmailField(unique=True)
@@ -15,6 +19,17 @@ class User(AbstractUser):
     suspension_reason = models.TextField(blank=True)
     is_email_verified = models.BooleanField(default=False)
     token_version = models.PositiveIntegerField(default=0)
+    # Profile details the user may fill in; all optional. organization_name is
+    # free text describing the user, never an access-control input: access to an
+    # organization comes only from OrganizationMembership.
+    display_name = models.CharField(max_length=150, blank=True)
+    organization_name = models.CharField(max_length=150, blank=True)
+    job_title = models.CharField(max_length=120, blank=True)
+    phone = models.CharField(max_length=32, blank=True)
+    country = models.CharField(max_length=80, blank=True)
+    # Re-encoded on upload (accounts/avatars.py); served only to the user.
+    avatar = models.FileField(upload_to=avatar_upload_path, blank=True)
+    avatar_updated_at = models.DateTimeField(null=True, blank=True)
 
 
 class AuthEvent(models.Model):

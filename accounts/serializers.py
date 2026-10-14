@@ -1,3 +1,5 @@
+import re
+
 from django.contrib.auth import get_user_model, password_validation
 from django.contrib.auth.tokens import default_token_generator
 from django.db.models import Q
@@ -149,11 +151,55 @@ class FaceCloudTokenRefreshSerializer(TokenRefreshSerializer):
         return super().validate(attrs)
 
 
+PROFILE_TEXT_FIELDS = ("display_name", "organization_name", "job_title", "country")
+PHONE_PATTERN = re.compile(r"^\+?[0-9][0-9 ()\-]{0,30}$")
+
+
 class UserSerializer(serializers.ModelSerializer):
+    avatar_url = serializers.SerializerMethodField(
+        help_text="Authenticated URL of the user's own avatar (changes when it is replaced), or null.",
+    )
+
     class Meta:
         model = User
-        fields = ["id", "username", "email", "role", "is_email_verified", "date_joined"]
-        read_only_fields = ["id", "role", "is_email_verified", "date_joined"]
+        fields = [
+            "id", "username", "email", "role", "is_email_verified", "date_joined",
+            "display_name", "organization_name", "job_title", "phone", "country", "avatar_url",
+        ]
+        read_only_fields = ["id", "role", "is_email_verified", "date_joined", "avatar_url"]
+        extra_kwargs = {
+            "organization_name": {"help_text": "Free text about the user. It grants no organization access."},
+        }
+
+    def get_avatar_url(self, user) -> str | None:
+        if not user.avatar:
+            return None
+        version = int(user.avatar_updated_at.timestamp()) if user.avatar_updated_at else 0
+        return f"/api/user/avatar/?v={version}"
+
+    def _clean_text(self, value, field):
+        value = " ".join(str(value).split())
+        if any(ord(character) < 32 for character in value):
+            raise serializers.ValidationError(f"{field} contains control characters.")
+        return value
+
+    def validate_display_name(self, value):
+        return self._clean_text(value, "Name")
+
+    def validate_organization_name(self, value):
+        return self._clean_text(value, "Organization")
+
+    def validate_job_title(self, value):
+        return self._clean_text(value, "Job title")
+
+    def validate_country(self, value):
+        return self._clean_text(value, "Country")
+
+    def validate_phone(self, value):
+        value = value.strip()
+        if value and not PHONE_PATTERN.match(value):
+            raise serializers.ValidationError("Use digits, spaces, brackets, hyphens and an optional leading +.")
+        return value
 
     def validate_username(self, value):
         value = User.normalize_username(value).strip()

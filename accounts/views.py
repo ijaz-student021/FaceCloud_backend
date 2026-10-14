@@ -854,6 +854,9 @@ class DeleteAccountView(APIView):
         user = request.user
         identifier = user.email
         event = record_auth_event("account_deleted", request, user, identifier)
+        if user.avatar:
+            avatar_name = user.avatar.name
+            transaction.on_commit(lambda: user.avatar.storage.delete(avatar_name))
         user.delete()
         event.refresh_from_db()
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -900,3 +903,44 @@ class AdminUserUpdateView(generics.UpdateAPIView):
         if "is_suspended" in changed:
             event = "suspended" if user.is_suspended else "reactivated"
             record_auth_event(event, self.request, user, user.email, {"reason": user.suspension_reason})
+
+
+class AvatarUploadSerializer(serializers.Serializer):
+    avatar = serializers.FileField(help_text="JPEG, PNG or WebP, at most 5 MB. Stored as a PNG of at most 512 px.")
+
+
+class AvatarView(APIView):
+    """The signed-in user's own avatar: fetch, replace or remove.
+
+    Served only to its owner through this authenticated endpoint; files are
+    never public. The response to PUT is the updated profile.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(responses={(200, "image/png"): OpenApiTypes.BINARY, 404: OpenApiTypes.OBJECT})
+    def get(self, request):
+        from django.http import FileResponse, Http404
+
+        user = request.user
+        if not user.avatar:
+            raise Http404("No avatar has been set.")
+        response = FileResponse(user.avatar.open("rb"), content_type="image/png")
+        response["Cache-Control"] = "private, max-age=3600"
+        return response
+
+    @extend_schema(request={"multipart/form-data": AvatarUploadSerializer}, responses={200: UserSerializer, 400: OpenApiTypes.OBJECT})
+    def put(self, request):
+        from .avatars import set_avatar
+
+        payload = AvatarUploadSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        set_avatar(request.user, payload.validated_data["avatar"])
+        return Response(UserSerializer(request.user).data)
+
+    @extend_schema(request=None, responses={204: None})
+    def delete(self, request):
+        from .avatars import remove_avatar
+
+        remove_avatar(request.user)
+        return Response(status=status.HTTP_204_NO_CONTENT)
