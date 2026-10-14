@@ -335,7 +335,7 @@ class SingleImageTaskTests(ResultFixture):
         result = self.make_result()
         attempts = []
 
-        def flaky(row, claim_owner=None):
+        def flaky(row, claim_owner=None, **kwargs):
             attempts.append(row.pk)
             if len(attempts) < 3:
                 raise OperationalError("server closed the connection unexpectedly")
@@ -354,7 +354,7 @@ class SingleImageTaskTests(ResultFixture):
         result = self.make_result()
         attempts = []
 
-        def always_down(row, claim_owner=None):
+        def always_down(row, claim_owner=None, **kwargs):
             attempts.append(row.pk)
             raise OperationalError("server closed the connection unexpectedly")
 
@@ -383,7 +383,7 @@ class BatchTimeLimitTests(ResultFixture):
         results = [self.make_result(f"{index}.jpg", job=job) for index in range(5)]
         attempted = []
 
-        def slow_second_image(row, claim_owner=None):
+        def slow_second_image(row, claim_owner=None, **kwargs):
             attempted.append(row.pk)
             if len(attempted) == 2:
                 raise SoftTimeLimitExceeded()
@@ -412,7 +412,7 @@ class BatchTimeLimitTests(ResultFixture):
         results = [self.make_result(f"{index}.jpg", job=job) for index in range(2)]
         attempts = []
 
-        def flaky_once(row, claim_owner=None):
+        def flaky_once(row, claim_owner=None, **kwargs):
             attempts.append(row.pk)
             if len(attempts) == 1:
                 raise OperationalError("server closed the connection unexpectedly")

@@ -1,8 +1,11 @@
 import logging
+import uuid
 
 from celery import shared_task
 from celery.exceptions import SoftTimeLimitExceeded
+from celery.utils.time import get_exponential_backoff_interval
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -40,29 +43,71 @@ FINISHED_STATUSES = (
 
 # How many times a task will wait out another worker's claim before leaving the
 # result to that worker. Each wait lasts until the claim would have lapsed.
+#
+# Claim waits and database retries are separate budgets. Celery counts both in
+# ``request.retries``, so a task passes the number of waits so far as the
+# ``claim_waits`` argument; the rest of its retries were for database failures
+# (``max_retries`` of them are allowed).
 MAX_CLAIM_WAITS = 2
 
 
-def _retries_remain(task):
-    return task.request.retries < task.max_retries
+def _database_retries(task, claim_waits):
+    return max(0, task.request.retries - claim_waits)
 
 
-def _claim_owner(task):
-    """This execution's identity for claims: the task id and attempt number."""
+def _database_retries_remain(task, claim_waits):
+    return _database_retries(task, claim_waits) < task.max_retries
+
+
+def _retry_after_database_error(task, error, claim_waits, **kwargs):
+    """Schedule the next attempt after a dropped database connection.
+
+    ``kwargs`` are the next attempt's task arguments, including the claim this
+    execution held, so the retry resumes it instead of waiting for it to lapse.
+    """
+    countdown = get_exponential_backoff_interval(
+        factor=1, retries=_database_retries(task, claim_waits),
+        maximum=settings.TASK_RETRY_BACKOFF_MAX_SECONDS, full_jitter=True,
+    )
+    raise task.retry(
+        exc=error, countdown=countdown, kwargs={"claim_waits": claim_waits, **kwargs},
+        max_retries=task.max_retries + MAX_CLAIM_WAITS,
+    )
+
+
+def _claim_owner(task, claim_waits):
+    """This execution's identity, recorded with its claim: task id and database attempt."""
     task_id = task.request.id or ""
-    return (task_id, task.request.retries) if task_id else None
+    return (task_id, _database_retries(task, claim_waits)) if task_id else None
 
 
-def _fail_if_unfinished(result, reason=TASK_FAILURE_REASON):
-    """Never leave a result looking "in progress" once its task has given up."""
+def _fail_if_unfinished(result, reason=TASK_FAILURE_REASON, token=None):
+    """Never leave a result looking "in progress" once its task has given up.
+
+    Only a row this execution may close is failed: one it holds (``token``), or
+    one nobody holds -- unclaimed, or a claim that was not renewed within the
+    lease. A live claim belongs to another execution, which records its own
+    outcome. Returns whether the row is now finished.
+    """
+    lapsed = timezone.now() - timedelta(seconds=settings.ENHANCEMENT_CLAIM_LEASE_SECONDS)
+    closable = Q(claim_token="") | Q(claimed_at__isnull=True) | Q(claimed_at__lt=lapsed)
+    if token:
+        closable |= Q(claim_token=token)
+    with transaction.atomic():
+        current = (
+            ImageEnhancementResult.objects.select_for_update()
+            .filter(pk=result.pk).exclude(status__in=FINISHED_STATUSES).filter(closable).first()
+        )
+        if current is not None:
+            current.status = EnhancementStatus.FAILED
+            current.failure_reason = reason
+            current.claim_token = ""  # nothing is working on it any more
+            current.finished_at = timezone.now()
+            current.save(update_fields=["status", "failure_reason", "claim_token", "finished_at", "updated_at"])
     result.refresh_from_db()
-    if result.status in FINISHED_STATUSES:
-        return
-    result.status = EnhancementStatus.FAILED
-    result.failure_reason = reason
-    result.claim_token = ""  # nothing is working on it any more
-    result.finished_at = timezone.now()
-    result.save(update_fields=["status", "failure_reason", "claim_token", "finished_at", "updated_at"])
+    if current is None and result.status not in FINISHED_STATUSES:
+        logger.warning("Result %s is held by another execution; leaving its outcome to that execution.", result.pk)
+    return result.status in FINISHED_STATUSES
 
 
 def _close_job_if_cancelled(job):
@@ -101,14 +146,21 @@ def _publish_outcome(result):
     bind=True,
     name="enhancement.process_image",
     acks_late=True,
-    autoretry_for=TRANSIENT_INFRASTRUCTURE_ERRORS,
-    retry_backoff=True,
-    retry_backoff_max=60,
-    retry_jitter=True,
-    max_retries=3,
+    max_retries=3,  # database failures; claim waits are counted separately
 )
-def process_enhancement_image(self, result_id):
-    task_id = self.request.id or ""
+def process_enhancement_image(self, result_id, claim_waits=0, resume_claim=""):
+    try:
+        return _enhance_image(self, result_id, claim_waits, resume_claim)
+    except TRANSIENT_INFRASTRUCTURE_ERRORS as error:
+        # The database went away outside the enhancement itself (loading or
+        # closing the row). No claim was taken, or the one taken is passed on.
+        if _database_retries_remain(self, claim_waits):
+            _retry_after_database_error(self, error, claim_waits, resume_claim=resume_claim)
+        raise
+
+
+def _enhance_image(task, result_id, claim_waits, resume_claim):
+    task_id = task.request.id or ""
     with transaction.atomic():
         result = (
             ImageEnhancementResult.objects.select_for_update()
@@ -127,42 +179,50 @@ def process_enhancement_image(self, result_id):
             return {"result_id": result_id, "status": result.status}
         if result.task_id and task_id and result.task_id != task_id:
             return {"result_id": result_id, "status": "superseded"}
+    token = uuid.uuid4().hex
     try:
-        result = process_enhancement_result(result, claim_owner=_claim_owner(self))
+        result = process_enhancement_result(
+            result, claim_owner=_claim_owner(task, claim_waits), token=token, resume_token=resume_claim,
+        )
+        finished = True
     except ResultInProgress as busy:
         # Another execution holds a live claim: a duplicate delivery, or a task
-        # whose worker died. (This task's own earlier attempt is not "another":
-        # its claim is resumed, never waited on.) Stay scheduled and look again
-        # once that claim would have lapsed: by then the result is finished, or
-        # its worker is gone and this task takes over. The wait is counted
-        # separately from database retries, so having retried does not turn a
-        # wait into giving up.
-        cannot_schedule = self.request.called_directly or self.request.is_eager
-        if cannot_schedule or self.request.retries >= self.max_retries + MAX_CLAIM_WAITS:
+        # whose worker died. Stay scheduled and look again once that claim would
+        # have lapsed: by then the result is finished, or its worker is gone and
+        # this task takes over. A live execution keeps renewing its claim, so
+        # after MAX_CLAIM_WAITS this task leaves the result to it; if that worker
+        # dies later, its own unacknowledged message is delivered again.
+        cannot_schedule = task.request.called_directly or task.request.is_eager
+        if cannot_schedule or claim_waits >= MAX_CLAIM_WAITS:
             logger.warning("Result %s is being enhanced by another worker; leaving it to that worker.", result_id)
             return {"result_id": result_id, "status": "in_progress"}
-        raise self.retry(exc=busy, countdown=busy.retry_after, max_retries=self.max_retries + MAX_CLAIM_WAITS)
+        raise task.retry(
+            exc=busy, countdown=busy.retry_after,
+            kwargs={"claim_waits": claim_waits + 1, "resume_claim": resume_claim},
+            max_retries=task.max_retries + MAX_CLAIM_WAITS,
+        )
     except EnhancementSuperseded:
         return {"result_id": result_id, "status": "superseded"}
     except EnhancementCancelled:
         result.refresh_from_db()
         return {"result_id": result_id, "status": result.status}
-    except TRANSIENT_INFRASTRUCTURE_ERRORS:
-        if _retries_remain(self):
-            raise  # autoretry_for schedules the next attempt
-        logger.exception("Enhancement of result %s failed after %s retries.", result_id, self.max_retries)
-        _fail_if_unfinished(result)
+    except TRANSIENT_INFRASTRUCTURE_ERRORS as error:
+        if _database_retries_remain(task, claim_waits):
+            _retry_after_database_error(task, error, claim_waits, resume_claim=token)
+        logger.exception("Enhancement of result %s failed after %s retries.", result_id, task.max_retries)
+        finished = _fail_if_unfinished(result, token=token)
     except SoftTimeLimitExceeded:
         logger.error("Enhancement of result %s exceeded the task time limit.", result_id)
-        _fail_if_unfinished(result, TIME_LIMIT_FAILURE_REASON)
+        finished = _fail_if_unfinished(result, TIME_LIMIT_FAILURE_REASON, token)
     except ValidationError as error:
         # Recorded on the row by the service, which also logs unexpected causes.
         logger.warning("Enhancement of result %s was refused: %s", result_id, error)
-        _fail_if_unfinished(result)
+        finished = _fail_if_unfinished(result, token=token)
     except Exception:
         logger.exception("Enhancement of result %s failed.", result_id)
-        _fail_if_unfinished(result)
-    _publish_outcome(result)
+        finished = _fail_if_unfinished(result, token=token)
+    if finished:
+        _publish_outcome(result)
     return {"result_id": result_id, "status": result.status}
 
 
@@ -170,14 +230,22 @@ def process_enhancement_image(self, result_id):
     bind=True,
     name="enhancement.process_batch",
     acks_late=True,
-    autoretry_for=TRANSIENT_INFRASTRUCTURE_ERRORS,
-    retry_backoff=True,
-    retry_backoff_max=60,
-    retry_jitter=True,
-    max_retries=3,
+    max_retries=3,  # database failures; claim waits are counted separately
 )
-def process_enhancement_batch(self, job_id):
-    task_id = self.request.id or ""
+def process_enhancement_batch(self, job_id, claim_waits=0, resume_claims=None):
+    resume_claims = resume_claims or {}
+    try:
+        return _enhance_batch(self, job_id, claim_waits, resume_claims)
+    except TRANSIENT_INFRASTRUCTURE_ERRORS as error:
+        if _database_retries_remain(self, claim_waits):
+            _retry_after_database_error(self, error, claim_waits, resume_claims=resume_claims)
+        raise
+
+
+def _enhance_batch(task, job_id, claim_waits, resume_claims):
+    """Enhance a batch job's images. ``resume_claims`` maps result id (as a
+    string) to the claim this task's previous execution held on it."""
+    task_id = task.request.id or ""
     with transaction.atomic():
         job = (
             EnhancementBatchJob.objects.select_for_update()
@@ -197,25 +265,41 @@ def process_enhancement_batch(self, job_id):
 
     result_ids = list(job.results.order_by("pk").values_list("pk", flat=True))
     out_of_time = False
+    held_elsewhere = []  # how long until each claim held by another execution lapses
     for result_id in result_ids:
         if _close_job_if_cancelled(job):
             return {"job_id": job_id, "status": EnhancementStatus.CANCELLED}
         result = ImageEnhancementResult.objects.get(pk=result_id)
+        if result.status in FINISHED_STATUSES:
+            # Finished by an earlier delivery or attempt of this batch: neither
+            # redone nor reported again.
+            continue
+        token = uuid.uuid4().hex
         try:
-            process_enhancement_result(result, claim_owner=_claim_owner(self))
-        except (ResultInProgress, EnhancementSuperseded):
-            # Another worker owns this image (a duplicate delivery of this batch).
-            # It will record the outcome; do not fail or report it from here.
-            logger.warning("Result %s is owned by another worker; batch job %s skipped it.", result_id, job_id)
+            process_enhancement_result(
+                result, claim_owner=_claim_owner(task, claim_waits), token=token,
+                resume_token=resume_claims.get(str(result_id), ""),
+            )
+        except ResultInProgress as busy:
+            # Another execution holds this image: a duplicate delivery of this
+            # batch, or this batch's earlier delivery whose worker died mid-image.
+            # Come back for it once that claim would have lapsed (below).
+            held_elsewhere.append(busy.retry_after)
+            continue
+        except EnhancementSuperseded:
+            logger.warning("Result %s was taken over by another worker; batch job %s left it.", result_id, job_id)
             continue
         except EnhancementCancelled:
             continue  # the cancellation check at the top of the loop closes the job
-        except TRANSIENT_INFRASTRUCTURE_ERRORS:
-            if _retries_remain(self):
-                raise  # the retried batch skips what already completed
+        except TRANSIENT_INFRASTRUCTURE_ERRORS as error:
+            if _database_retries_remain(task, claim_waits):
+                # The retried batch skips what already finished and resumes this image.
+                _retry_after_database_error(
+                    task, error, claim_waits, resume_claims={**resume_claims, str(result_id): token},
+                )
             logger.exception(
                 "Enhancement of result %s failed inside batch job %s after %s retries.",
-                result_id, job_id, self.max_retries,
+                result_id, job_id, task.max_retries,
             )
         except SoftTimeLimitExceeded:
             # The hard limit follows within minutes: stop now, while there is
@@ -232,12 +316,12 @@ def process_enhancement_batch(self, job_id):
             # One bad image must not stop the batch, but it must leave a trace and
             # must not be left looking "in progress".
             logger.exception("Enhancement of result %s failed inside batch job %s.", result_id, job_id)
-        _fail_if_unfinished(result, TIME_LIMIT_FAILURE_REASON if out_of_time else TASK_FAILURE_REASON)
-        _publish_outcome(result)
+        if _fail_if_unfinished(result, TIME_LIMIT_FAILURE_REASON if out_of_time else TASK_FAILURE_REASON, token):
+            _publish_outcome(result)
         if out_of_time:
             for unfinished in job.results.exclude(status__in=FINISHED_STATUSES):
-                _fail_if_unfinished(unfinished, TIME_LIMIT_FAILURE_REASON)
-                _publish_outcome(unfinished)
+                if _fail_if_unfinished(unfinished, TIME_LIMIT_FAILURE_REASON):
+                    _publish_outcome(unfinished)
         successful = job.results.filter(status=EnhancementStatus.COMPLETED).count()
         failed = job.results.filter(status=EnhancementStatus.FAILED).count()
         EnhancementBatchJob.objects.filter(pk=job_id).update(
@@ -252,6 +336,19 @@ def process_enhancement_batch(self, job_id):
     # to notice it.
     if _close_job_if_cancelled(job):
         return {"job_id": job_id, "status": EnhancementStatus.CANCELLED}
+
+    if held_elsewhere and not out_of_time:
+        cannot_schedule = task.request.called_directly or task.request.is_eager
+        if not cannot_schedule and claim_waits < MAX_CLAIM_WAITS:
+            raise task.retry(
+                countdown=max(held_elsewhere),
+                kwargs={"claim_waits": claim_waits + 1, "resume_claims": resume_claims},
+                max_retries=task.max_retries + MAX_CLAIM_WAITS,
+            )
+        logger.warning(
+            "Batch job %s finished without %s image(s) another worker is still enhancing.",
+            job_id, len(held_elsewhere),
+        )
 
     successful = job.results.filter(status=EnhancementStatus.COMPLETED).count()
     failed = job.results.filter(status=EnhancementStatus.FAILED).count()
@@ -277,7 +374,6 @@ def process_enhancement_batch(self, job_id):
         finished_at=timezone.now(),
     )
     return {"job_id": job_id, "status": final_status, "successful": successful, "failed": failed}
-
 
 @shared_task(
     bind=True,

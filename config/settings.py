@@ -726,23 +726,29 @@ CELERY_TASK_TIME_LIMIT = env.int("CELERY_TASK_TIME_LIMIT", default=60 * 60)
 CELERY_TASK_SOFT_TIME_LIMIT = env.int("CELERY_TASK_SOFT_TIME_LIMIT", default=55 * 60)
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_TASK_ACKS_LATE = True
+# Longest delay before an enhancement task retries after a database failure
+# (exponential backoff with jitter, capped here).
+TASK_RETRY_BACKOFF_MAX_SECONDS = 60
 # With late acknowledgement, Redis hands a task to a second worker once it has
-# been unacknowledged for the visibility timeout (one hour by default) -- the
-# same as the task time limit, so a long batch could be delivered twice while
-# still running. Keep the timeout comfortably above the hard limit.
+# been unacknowledged for the visibility timeout. A message stays
+# unacknowledged for its whole delay *and* its run: a retry is delivered to a
+# worker at once, held there until its countdown ends, then run for up to the
+# task time limit. The longest countdown an enhancement task sets is a claim
+# wait (at most ENHANCEMENT_CLAIM_LEASE_SECONDS) or a database retry (at most
+# TASK_RETRY_BACKOFF_MAX_SECONDS). A shorter timeout gets a waiting or running
+# task delivered again: a queue test with a 30 s timeout and a 60 s lease left a
+# worker idle for ten minutes. The default adds 15 minutes for queueing.
+LONGEST_TASK_DELAY_SECONDS = max(ENHANCEMENT_CLAIM_LEASE_SECONDS, TASK_RETRY_BACKOFF_MAX_SECONDS)
 CELERY_BROKER_TRANSPORT_OPTIONS = {
-    "visibility_timeout": env.int("CELERY_VISIBILITY_TIMEOUT", default=CELERY_TASK_TIME_LIMIT + 900),
+    "visibility_timeout": env.int(
+        "CELERY_VISIBILITY_TIMEOUT", default=CELERY_TASK_TIME_LIMIT + LONGEST_TASK_DELAY_SECONDS + 900,
+    ),
 }
-# The timeout must also outlast the longest delay a task schedules for itself:
-# a task that meets another worker's live claim retries after up to
-# ENHANCEMENT_CLAIM_LEASE_SECONDS. A delayed message is held unacknowledged by
-# the worker that received it, so a delay longer than the timeout gets it
-# delivered again and again while it waits. A queue test with a 30 s timeout and
-# a 60 s lease showed exactly that: a worker sat idle for ten minutes.
-if CELERY_BROKER_TRANSPORT_OPTIONS["visibility_timeout"] <= max(CELERY_TASK_TIME_LIMIT, ENHANCEMENT_CLAIM_LEASE_SECONDS):
+if CELERY_BROKER_TRANSPORT_OPTIONS["visibility_timeout"] <= CELERY_TASK_TIME_LIMIT + LONGEST_TASK_DELAY_SECONDS:
     raise ImproperlyConfigured(
-        "CELERY_VISIBILITY_TIMEOUT must be longer than both CELERY_TASK_TIME_LIMIT and "
-        "ENHANCEMENT_CLAIM_LEASE_SECONDS, or tasks are delivered again while still running or waiting."
+        "CELERY_VISIBILITY_TIMEOUT must be longer than CELERY_TASK_TIME_LIMIT plus the longest delay a task "
+        "schedules for itself (ENHANCEMENT_CLAIM_LEASE_SECONDS, or the database retry backoff if longer), "
+        "or tasks are delivered again while still waiting or running."
     )
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 SYSTEM_HEALTH_TIMEOUT_SECONDS = env.float("SYSTEM_HEALTH_TIMEOUT_SECONDS", default=1.0)

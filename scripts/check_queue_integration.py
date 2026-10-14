@@ -18,9 +18,13 @@ enhancement task when ``GFPGAN_QUEUE_ENABLED`` is on.
 Scenarios: routing and a real GFPGAN enhancement through upload, preprocessing,
 processing, storage, progress and download; duplicate delivery to two workers
 at once; a real database connection failure mid-task, then retry; cancellation
-mid-batch; and a worker killed mid-task, then restarted. To keep the last one
-short, the broker visibility timeout, task time limit and claim lease are
-lowered for the run (90 s, 80 s and 60 s); the report says so.
+mid-batch; a worker killed mid-task, then restarted; a duplicate arriving while
+the original runs one stage longer than the claim lease (renewal, bounded
+waiting); an old worker that fails after another took the result over; and a
+worker killed in the middle of a batch. Long stages and failures are injected
+by ``scripts/queue_harness_worker.py`` around the real pipeline. To keep the
+run short, the claim lease, task time limit and broker visibility timeout are
+lowered (60 s, 200 s and 300 s); the report says so.
 
 Results go to ``.runtime/queue_integration/<name>/`` (report.md, results.json,
 worker logs). Exit code is non-zero unless every scenario passed.
@@ -53,13 +57,16 @@ def parse_arguments():
     parser.add_argument("--db-user", default=os.environ.get("USER", "postgres"))
     parser.add_argument("--keep", action="store_true", help="Leave the database and Redis running afterwards.")
     parser.add_argument("--scenarios", default="", help="Comma-separated subset to run (default: all).")
-    parser.add_argument("--visibility-timeout", type=int, default=90,
-                        help="Broker visibility timeout for the run, seconds (production default 4500). It must "
-                             "exceed the task time limit (80 s here) and the claim lease (60 s here).")
+    parser.add_argument("--visibility-timeout", type=int, default=300,
+                        help="Broker visibility timeout for the run, seconds (production default 6300). It must "
+                             "exceed the task time limit plus the claim lease (200 s + 60 s here).")
     return parser.parse_args()
 
 
 ARGUMENTS = parse_arguments()
+LEASE = 60
+TIME_LIMIT = 200  # covers the longest injected stage (150 s); solo workers do not enforce it
+HARNESS_WORKER = ROOT / "scripts" / "queue_harness_worker.py"
 OUTPUT = ROOT / ".runtime" / "queue_integration" / ARGUMENTS.name
 OUTPUT.mkdir(parents=True, exist_ok=True)
 WORK = Path(tempfile.mkdtemp(prefix="facecloud-queue-"))
@@ -86,9 +93,9 @@ ENVIRONMENT = {
     "NOTIFICATION_EMAILS_ENABLED": "False",
     # Lowered so the worker-restart scenario finishes in minutes, not an hour.
     "CELERY_VISIBILITY_TIMEOUT": str(ARGUMENTS.visibility_timeout),
-    "ENHANCEMENT_CLAIM_LEASE_SECONDS": "60",
-    "CELERY_TASK_TIME_LIMIT": "80",
-    "CELERY_TASK_SOFT_TIME_LIMIT": "70",
+    "ENHANCEMENT_CLAIM_LEASE_SECONDS": str(LEASE),
+    "CELERY_TASK_TIME_LIMIT": str(TIME_LIMIT),
+    "CELERY_TASK_SOFT_TIME_LIMIT": str(TIME_LIMIT - 10),
     "TEMP_FILE_MAX_AGE_HOURS": "1",
 }
 os.environ.update(ENVIRONMENT)
@@ -142,15 +149,16 @@ def stop_infrastructure():
         shutil.rmtree(WORK, ignore_errors=True)
 
 
-def start_worker(name, python, queue):
+def start_worker(name, python, queue, fault=""):
+    """Start a real Celery worker; ``fault`` is a HARNESS_FAULT spec (see queue_harness_worker.py)."""
     logfile = OUTPUT / f"worker-{name}.log"
     handle = open(logfile, "a")
-    handle.write(f"\n===== started {time.strftime('%H:%M:%S')} =====\n")
+    handle.write(f"\n===== started {time.strftime('%H:%M:%S')} fault={fault or 'none'} =====\n")
     handle.flush()
     process = subprocess.Popen(
-        [str(python), "-m", "celery", "-A", "config", "worker", "--pool=solo", "--loglevel=info",
+        [str(python), str(HARNESS_WORKER), "-A", "config", "worker", "--pool=solo", "--loglevel=info",
          "-Q", queue, "-n", f"{name}@%h", "--without-gossip", "--without-mingle"],
-        cwd=ROOT, env=ENVIRONMENT, stdout=handle, stderr=subprocess.STDOUT,
+        cwd=ROOT, env={**ENVIRONMENT, "HARNESS_FAULT": fault}, stdout=handle, stderr=subprocess.STDOUT,
     )
     PROCESSES[name] = (process, handle, logfile)
     deadline = time.time() + 120
@@ -452,8 +460,168 @@ def scenario_worker_killed_then_restarted(api, pictures):
         bool(done) and left.status == "processing" and row.status == "completed" and len(stored_outputs(row.pk)) == 1,
         status_when_killed=left.status, final_status=row.status, seconds_to_recover=round(time.time() - killed_at),
         deliveries=deliveries(row.task_id), output_files=stored_outputs(row.pk),
-        note=f"visibility timeout {ARGUMENTS.visibility_timeout} s, task limit 80 s, claim lease 60 s for this run; defaults are 75 min, 60 min and 30 min",
+        note=f"visibility timeout {ARGUMENTS.visibility_timeout} s, task limit {TIME_LIMIT} s, claim lease {LEASE} s for this run; defaults are 105 min, 60 min and 30 min",
     )
+
+def task_outcomes(name, task_id):
+    """What each execution of ``task_id`` on worker ``name`` returned, or that it retried."""
+    text = worker_log(name)
+    pattern = rf"Task enhancement\.process_\w+\[{re.escape(task_id)}\] (succeeded in [\d.]+s: .*|retry: .*)"
+    return [line[:160] for line in re.findall(pattern, text)]
+
+
+def watch_row(result_id, until, timeout, interval=1.0):
+    """Sample a result row until ``until(row)``: statuses, claim tokens and claim times seen."""
+    seen = {"statuses": [], "tokens": [], "claimed_at": []}
+    deadline = time.time() + timeout
+    row = result_row(result_id)
+    while time.time() < deadline:
+        row = result_row(result_id)
+        for key, value in (("statuses", row.status), ("tokens", row.claim_token), ("claimed_at", row.claimed_at)):
+            if value and (not seen[key] or seen[key][-1] != value):
+                seen[key].append(value)
+        if until(row):
+            break
+        time.sleep(interval)
+    return row, seen
+
+
+def renewal_span(claimed_at_values):
+    """Seconds between the first and the last claim time seen while one claim was held."""
+    return round((claimed_at_values[-1] - claimed_at_values[0]).total_seconds()) if len(claimed_at_values) > 1 else 0
+
+
+def scenario_duplicate_while_original_renews(api, pictures):
+    """The original runs one 150 s stage (> two leases) with no checkpoint in it."""
+    from enhancement.tasks import MAX_CLAIM_WAITS, process_enhancement_image
+
+    stop_worker("gfpgan")
+    start_worker("slow-original", WORKER_PYTHON, "gfpgan", fault="sleep:150")
+    try:
+        batch = api.upload(("renewal.jpg", pictures["portrait_medium"]))
+        image = api.wait_preprocessed(batch["id"])[0]
+        queued = api.enhance(image.pk)
+        wait_for(lambda: result_row(queued["id"]).status == "processing", 120, interval=0.2)
+        start_worker("duplicate", WORKER_PYTHON, "gfpgan")
+        process_enhancement_image.apply_async(args=[queued["id"]], task_id=queued["task_id"])
+        row, seen = watch_row(queued["id"], lambda row: row.status in {"completed", "failed"}, 400)
+        time.sleep(5)
+        original, duplicate = task_outcomes("slow-original", row.task_id), task_outcomes("duplicate", row.task_id)
+        span = renewal_span(seen["claimed_at"])
+        record(
+            "duplicate_while_original_renews",
+            "the original's claim is renewed through a stage longer than the lease; the duplicate waits a bounded "
+            "number of times, never takes over, and leaves the result to the original, which publishes once",
+            row.status == "completed" and len(seen["tokens"]) == 1 and span > LEASE
+            and any("COMPLETED" in line or "'completed'" in line for line in original)
+            and sum("retry" in line for line in duplicate) == MAX_CLAIM_WAITS
+            and any("in_progress" in line for line in duplicate)
+            and len(stored_outputs(row.pk)) == 1,
+            status=row.status, claim_tokens_seen=len(seen["tokens"]), claim_renewed_over_seconds=span,
+            lease_seconds=LEASE, original_outcomes=original, duplicate_outcomes=duplicate,
+            output_files=stored_outputs(row.pk),
+        )
+    finally:
+        for name in ("slow-original", "duplicate"):
+            if name in PROCESSES:
+                stop_worker(name)
+        start_worker("gfpgan", WORKER_PYTHON, "gfpgan")
+
+
+def scenario_old_worker_fails_after_takeover(api, pictures):
+    """The original is frozen past its lease, another execution takes over, then
+    the original wakes up and fails."""
+    from enhancement.tasks import process_enhancement_image
+
+    stop_worker("gfpgan")
+    start_worker("old", WORKER_PYTHON, "gfpgan", fault="sleep_then_fail:20")
+    try:
+        batch = api.upload(("takeover.jpg", pictures["portrait_medium"]))
+        image = api.wait_preprocessed(batch["id"])[0]
+        queued = api.enhance(image.pk)
+        wait_for(lambda: result_row(queued["id"]).status == "processing", 120, interval=0.2)
+        time.sleep(3)
+        first_token = result_row(queued["id"]).claim_token
+        PROCESSES["old"][0].send_signal(signal.SIGSTOP)
+        log("old worker frozen (SIGSTOP) holding the claim")
+        start_worker("new", WORKER_PYTHON, "gfpgan", fault="sleep:45")
+        process_enhancement_image.apply_async(args=[queued["id"]], task_id=queued["task_id"])
+        taken = wait_for(lambda: result_row(queued["id"]).claim_token not in {"", first_token}, 240)
+        PROCESSES["old"][0].send_signal(signal.SIGCONT)
+        log("old worker resumed (SIGCONT) after the takeover; it will now fail")
+        row, seen = watch_row(queued["id"], lambda row: row.status in {"completed", "failed"}, 300, interval=0.5)
+        time.sleep(5)
+        old_log = worker_log("old")
+        record(
+            "old_worker_fails_after_takeover",
+            "an old worker whose claim lapsed fails after another execution took the result over; the failure "
+            "does not touch the new owner's row, which completes and is published once",
+            bool(taken) and "injected failure" in old_log and "failed" not in seen["statuses"]
+            and row.status == "completed" and len(stored_outputs(row.pk)) == 1,
+            taken_over=bool(taken), old_worker_failed="injected failure" in old_log,
+            statuses_seen=seen["statuses"], final_status=row.status,
+            old_outcomes=task_outcomes("old", row.task_id), new_outcomes=task_outcomes("new", row.task_id),
+            output_files=stored_outputs(row.pk),
+        )
+    finally:
+        for name in ("old", "new"):
+            if name in PROCESSES:
+                PROCESSES[name][0].send_signal(signal.SIGCONT)
+                stop_worker(name)
+        start_worker("gfpgan", WORKER_PYTHON, "gfpgan")
+
+
+def scenario_worker_killed_mid_batch(api, pictures):
+    """Killed shortly before the visibility timeout, so the batch is redelivered
+    while the dead worker's claim on the current image is still live."""
+    from enhancement.models import EnhancementBatchJob
+
+    stop_worker("gfpgan")
+    start_worker("batch-a", WORKER_PYTHON, "gfpgan", fault="sleep:60")
+    try:
+        named = [(f"batch-death-{index}.jpg", pictures["portrait_medium"]) for index in range(6)]
+        batch = api.upload(*named)
+        api.wait_preprocessed(batch["id"])
+        job = api.enhance_batch(batch["id"])
+        dispatched = time.time()
+        rows = lambda: list(EnhancementBatchJob.objects.get(pk=job["id"]).results.order_by("pk"))
+        # Kill late enough that the redelivery (visibility timeout after the
+        # first delivery, plus Redis's ~10 s restore cycle) arrives while the
+        # claim the dead worker last renewed is still within its lease.
+        start_worker("batch-b", WORKER_PYTHON, "gfpgan")  # idle until the batch is redelivered
+        kill_after = ARGUMENTS.visibility_timeout - 15
+        wait_for(lambda: time.time() - dispatched >= kill_after, kill_after + 10, interval=1.0)
+        interrupted = [row for row in rows() if row.status == "processing"]
+        renewed = 0
+        if interrupted:
+            renewed = round((interrupted[0].claimed_at - interrupted[0].started_at).total_seconds())
+        stop_worker("batch-a", kill=True)
+        killed_at = time.time()
+        log(f"batch worker killed (SIGKILL) {round(killed_at - dispatched)} s after dispatch, "
+            f"mid-image {[row.pk for row in interrupted]}")
+        final = wait_for(lambda: EnhancementBatchJob.objects.get(pk=job["id"]).status in {"completed", "partial", "failed"}
+                         and EnhancementBatchJob.objects.get(pk=job["id"]), 600, interval=2.0)
+        job_row = EnhancementBatchJob.objects.get(pk=job["id"])
+        statuses = [row.status for row in rows()]
+        outcomes = task_outcomes("batch-b", job_row.task_id)
+        record(
+            "worker_killed_mid_batch",
+            "the batch is redelivered while the dead worker's claim is live; it comes back for that image once the "
+            "claim lapses instead of skipping it; every image completes once and the job counts are right",
+            bool(final) and len(interrupted) == 1 and job_row.status == "completed" and statuses == ["completed"] * 6
+            and job_row.successful_images == 6 and any("retry" in line for line in outcomes)
+            and all(len(stored_outputs(row.pk)) == 1 for row in rows()),
+            killed_seconds_after_dispatch=round(killed_at - dispatched), interrupted=[row.pk for row in interrupted],
+            interrupted_claim_renewed_for_seconds=renewed, job_status=job_row.status, result_statuses=statuses,
+            counts=[job_row.processed_images, job_row.successful_images, job_row.failed_images],
+            seconds_to_finish_after_kill=round(time.time() - killed_at), batch_outcomes_after_redelivery=outcomes,
+            output_files=[len(stored_outputs(row.pk)) for row in rows()],
+        )
+    finally:
+        for name in ("batch-a", "batch-b"):
+            if name in PROCESSES:
+                stop_worker(name)
+        start_worker("gfpgan", WORKER_PYTHON, "gfpgan")
 
 
 def main():
@@ -468,6 +636,8 @@ def main():
         for scenario in (
             scenario_routing_and_full_flow, scenario_duplicate_delivery, scenario_database_failure_then_retry,
             scenario_cancellation, scenario_worker_killed_then_restarted,
+            scenario_duplicate_while_original_renews, scenario_old_worker_fails_after_takeover,
+            scenario_worker_killed_mid_batch,
         ):
             if chosen and scenario.__name__.removeprefix("scenario_") not in chosen:
                 continue
@@ -480,7 +650,7 @@ def main():
         lines = [f"# Queue integration `{ARGUMENTS.name}`", "",
                  "Real Redis, real Celery workers (web environment on `celery`, GFPGAN environment on `gfpgan`), "
                  f"a throwaway PostgreSQL database and real checkpoints. Visibility timeout {ARGUMENTS.visibility_timeout} s, "
-                 "task time limit 80 s and claim lease 60 s for this run.", "", "| Scenario | Expected | Result |", "|---|---|---|"]
+                 f"task time limit {TIME_LIMIT} s and claim lease {LEASE} s for this run.", "", "| Scenario | Expected | Result |", "|---|---|---|"]
         lines += [f"| {row['scenario']} | {row['expects']} | {'**PASS**' if row['passed'] else '**FAIL**'} |" for row in RESULTS]
         (OUTPUT / "report.md").write_text("\n".join(lines) + "\n")
         stop_infrastructure()

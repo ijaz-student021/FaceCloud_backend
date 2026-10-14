@@ -102,9 +102,16 @@ class ClaimOwnershipRuleTests(ResultFixture):
         )
         return result
 
-    def test_a_later_attempt_of_the_same_task_resumes(self):
+    def test_a_later_attempt_resumes_with_the_claim_its_previous_execution_held(self):
         result = self.held_by("task-1", 0)
-        self.assertEqual(process_enhancement_result(result, claim_owner=("task-1", 1)).status, "completed")
+        resumed = process_enhancement_result(result, claim_owner=("task-1", 1), resume_token="a" * 32)
+        self.assertEqual(resumed.status, "completed")
+
+    def test_a_later_attempt_number_alone_does_not_resume(self):
+        """A retry number also rises when a task waits for a claim it never held."""
+        result = self.held_by("task-1", 0)
+        with self.assertRaises(ResultInProgress):
+            process_enhancement_result(result, claim_owner=("task-1", 1))
 
     def test_a_second_delivery_of_the_same_attempt_does_not(self):
         """Same id, same attempt: the first delivery may still be running."""
@@ -140,14 +147,14 @@ class WaitingOnAnotherWorkerTests(ResultFixture):
             claim_task_id="another-task", claim_attempt=0,
         )
 
-    def run_on_a_queue(self, result, retries):
+    def run_on_a_queue(self, result, retries, **kwargs):
         """Run the task body as a worker would: not eager, not called directly."""
         task = process_enhancement_image
         task.push_request(id="this-task", retries=retries, is_eager=False, called_directly=False)
         try:
             with patch.object(task, "retry", side_effect=Retry("scheduled")) as retry:
                 try:
-                    return task.run(result.pk), retry
+                    return task.run(result.pk, **kwargs), retry
                 except Retry:
                     return "rescheduled", retry
         finally:
@@ -177,10 +184,8 @@ class WaitingOnAnotherWorkerTests(ResultFixture):
     def test_waiting_is_bounded(self):
         result = self.make_result()
         self.claim_elsewhere(result)
-        exhausted = process_enhancement_image.max_retries + MAX_CLAIM_WAITS
-
         with self.assertLogs("enhancement.tasks", level="WARNING"):
-            outcome, retry = self.run_on_a_queue(result, retries=exhausted)
+            outcome, retry = self.run_on_a_queue(result, retries=MAX_CLAIM_WAITS, claim_waits=MAX_CLAIM_WAITS)
 
         self.assertEqual(outcome["status"], "in_progress")
         retry.assert_not_called()

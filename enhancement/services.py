@@ -5,6 +5,7 @@ left unchanged so the baseline does not intentionally normalize skin tones.
 """
 
 import logging
+import math
 import time
 import threading
 import uuid
@@ -2609,30 +2610,90 @@ def _mark_result_cancelled(result, token):
     result.save(update_fields=["status", "failure_reason", "claim_token", "finished_at", "updated_at"])
 
 
-def _is_earlier_attempt_of(result, owner):
-    """Whether the live claim was made by an earlier attempt of this same task.
+# How often a running enhancement renews its claim between checkpoints. None
+# means a quarter of the lease, so a renewal or two lost to a database blip
+# still leaves the claim alive. Tests lower it.
+CLAIM_RENEWAL_INTERVAL_SECONDS = None
 
-    Celery starts attempt N+1 of a task only after attempt N has raised, so that
-    claim has no worker behind it and the retry may resume it. An *equal*
-    attempt number is a second delivery of the same attempt, which may still be
-    running, so it is not resumable.
+
+class ClaimRenewal:
+    """Keep a claim alive while one long stage runs between checkpoints.
+
+    Checkpoints refresh the claim between stages, but a single stage (a large
+    image through a model on the CPU) can outlast the lease, and a duplicate
+    would then take over live work. A background thread renews the claim while
+    this execution runs. It stops when the execution ends, when the claim is no
+    longer this execution's, and once the task time limit has passed: no
+    supported execution runs longer, so a claim still held then belongs to a
+    stuck worker and must be allowed to lapse. A worker that dies takes the
+    thread with it, so its claim lapses as before.
     """
-    if owner is None:
+
+    def __init__(self, result_pk, token):
+        self.result_pk = result_pk
+        self.token = token
+        self.started = time.monotonic()
+        self.interval = CLAIM_RENEWAL_INTERVAL_SECONDS or settings.ENHANCEMENT_CLAIM_LEASE_SECONDS / 4
+        self._stop = threading.Event()
+        self._thread = None
+
+    def renew(self):
+        """Refresh the claim; False once there is nothing (or no longer a reason) to renew."""
+        if time.monotonic() - self.started > settings.CELERY_TASK_TIME_LIMIT:
+            return False
+        now = timezone.now()
+        return bool(ImageEnhancementResult.objects.filter(
+            pk=self.result_pk, claim_token=self.token, status=EnhancementStatus.PROCESSING,
+        ).update(claimed_at=now, updated_at=now))
+
+    def _run(self):
+        from django.db import connections
+
+        try:
+            while not self._stop.wait(self.interval):
+                try:
+                    if not self.renew():
+                        return
+                except TRANSIENT_INFRASTRUCTURE_ERRORS:
+                    logger.warning("Could not renew the claim on result %s; trying again.", self.result_pk)
+        finally:
+            connections.close_all()  # this thread's own connections only
+
+    def __enter__(self):
+        self._thread = threading.Thread(target=self._run, name=f"claim-renewal-{self.result_pk}", daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc_info):
+        self._stop.set()
+        self._thread.join()
         return False
-    task_id, attempt = owner
-    return bool(task_id) and result.claim_task_id == task_id and result.claim_attempt < attempt
 
 
-def _claim_result(result, token, owner=None):
+def _resumes_own_claim(result, resume_token):
+    """Whether the live claim is the one this task's previous execution held.
+
+    Celery runs a retry only after the execution that asked for it has ended,
+    and that execution hands its claim token to the retry. Nothing else proves
+    the claim has no worker behind it: a retry *number* also rises when a task
+    retries to wait for a claim it never held, so a duplicate delivery could
+    otherwise take over work that is still running.
+    """
+    return bool(resume_token) and result.claim_token == resume_token
+
+
+def _claim_result(result, token, owner=None, resume_token=""):
     """Take ownership of a result, or refuse while another worker holds it.
 
     A queue can deliver one task twice, and two tasks can target one result.
-    The claim is a token plus a timestamp refreshed at every stage; a claim not
-    refreshed within ENHANCEMENT_CLAIM_LEASE_SECONDS belongs to a worker that
-    died, and may be taken over. ``owner`` is ``(task id, attempt number)``: a
-    retry of the task that made the claim resumes it at once instead of waiting.
+    The claim is a token plus a timestamp renewed while the work runs; a claim
+    not renewed within ENHANCEMENT_CLAIM_LEASE_SECONDS belongs to a worker that
+    died, and may be taken over. ``owner`` is ``(task id, attempt number)`` and
+    is recorded for diagnosis only. ``resume_token`` is the claim this task's
+    previous execution held: a retry resumes it at once instead of waiting.
     """
-    lease = timedelta(seconds=settings.ENHANCEMENT_CLAIM_LEASE_SECONDS)
+    lease_seconds = settings.ENHANCEMENT_CLAIM_LEASE_SECONDS
+    lease = timedelta(seconds=lease_seconds)
     with transaction.atomic():
         result = (
             ImageEnhancementResult.objects.select_for_update()
@@ -2649,10 +2710,11 @@ def _claim_result(result, token, owner=None):
             and result.claim_token
             and result.claimed_at
             and now - result.claimed_at < lease
-            and not _is_earlier_attempt_of(result, owner)
+            and not _resumes_own_claim(result, resume_token)
         ):
             remaining = lease - (now - result.claimed_at)
-            raise ResultInProgress(max(1, int(remaining.total_seconds()) + 1))
+            # Look again when the claim would lapse: never later than one lease.
+            raise ResultInProgress(min(lease_seconds, max(1, math.ceil(remaining.total_seconds()))))
         result.status = EnhancementStatus.PROCESSING
         result.claim_token = token
         result.claimed_at = now
@@ -2667,18 +2729,25 @@ def _claim_result(result, token, owner=None):
     return result, True
 
 
-def process_enhancement_result(result, claim_owner=None):
+def process_enhancement_result(result, claim_owner=None, token=None, resume_token=""):
     """Process one result and persist a separate enhanced output.
 
     Safe to call twice for the same result, at the same time or one after the
     other: only the holder of the claim enhances, and only the holder publishes.
-    ``claim_owner`` is the calling task's ``(id, attempt number)``, so that its
-    own retry can resume a claim an earlier attempt left behind.
+    ``token`` is the claim token to use (the caller keeps it, to tell its own
+    claim from another worker's); ``resume_token`` is the claim the caller's
+    previous, ended execution held, which it may resume. ``claim_owner`` is the
+    calling task's ``(id, attempt number)``, recorded for diagnosis.
     """
-    token = uuid.uuid4().hex
-    result, claimed = _claim_result(result, token, claim_owner)
+    token = token or uuid.uuid4().hex
+    result, claimed = _claim_result(result, token, claim_owner, resume_token)
     if not claimed:
         return result
+    with ClaimRenewal(result.pk, token):
+        return _process_claimed_result(result, token)
+
+
+def _process_claimed_result(result, token):
     batch_id = result.image.batch_id
 
     def checkpoint(stage_name):

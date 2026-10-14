@@ -236,8 +236,34 @@ class VisibilityTimeoutTests(SimpleTestCase):
         self.assertNotEqual(started.returncode, 0)
         self.assertIn("CELERY_VISIBILITY_TIMEOUT must be longer", started.stderr)
 
+    def test_a_timeout_that_covers_the_run_but_not_a_claim_wait_before_it_refuses_to_start(self):
+        """P2-7: the old defaults. A claim wait (up to the 1800 s lease) followed
+        by a run of up to the 3600 s limit outlasts a 4500 s timeout."""
+        started = self.start(CELERY_VISIBILITY_TIMEOUT="4500", CELERY_TASK_TIME_LIMIT="3600",
+                             ENHANCEMENT_CLAIM_LEASE_SECONDS="1800")
+        self.assertNotEqual(started.returncode, 0)
+        self.assertIn("CELERY_VISIBILITY_TIMEOUT must be longer", started.stderr)
+
+    def test_the_boundary_is_the_time_limit_plus_the_longest_delay(self):
+        common = dict(CELERY_TASK_TIME_LIMIT="80", CELERY_TASK_SOFT_TIME_LIMIT="70",
+                      ENHANCEMENT_CLAIM_LEASE_SECONDS="60", TEMP_FILE_MAX_AGE_HOURS="1")
+        self.assertNotEqual(self.start(CELERY_VISIBILITY_TIMEOUT="140", **common).returncode, 0)
+        self.assertEqual(self.start(CELERY_VISIBILITY_TIMEOUT="141", **common).returncode, 0)
+
+    def test_the_example_environment_values_start(self):
+        from pathlib import Path
+
+        values = dict(
+            line.split("=", 1) for line in (Path(__file__).resolve().parents[1] / ".env.example").read_text().splitlines()
+            if line.split("=", 1)[0] in {"CELERY_VISIBILITY_TIMEOUT", "CELERY_TASK_TIME_LIMIT",
+                                         "CELERY_TASK_SOFT_TIME_LIMIT", "ENHANCEMENT_CLAIM_LEASE_SECONDS"}
+        )
+        self.assertEqual(len(values), 4)
+        started = self.start(**values)
+        self.assertEqual(started.returncode, 0, started.stderr[-800:])
+
     def test_the_defaults_and_a_valid_short_test_setup_start(self):
         self.assertEqual(self.start().returncode, 0)
-        self.assertEqual(self.start(CELERY_VISIBILITY_TIMEOUT="90", ENHANCEMENT_CLAIM_LEASE_SECONDS="60",
+        self.assertEqual(self.start(CELERY_VISIBILITY_TIMEOUT="150", ENHANCEMENT_CLAIM_LEASE_SECONDS="60",
                                     CELERY_TASK_TIME_LIMIT="80", CELERY_TASK_SOFT_TIME_LIMIT="70",
                                     TEMP_FILE_MAX_AGE_HOURS="1").returncode, 0)
