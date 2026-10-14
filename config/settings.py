@@ -733,6 +733,17 @@ CELERY_TASK_ACKS_LATE = True
 CELERY_BROKER_TRANSPORT_OPTIONS = {
     "visibility_timeout": env.int("CELERY_VISIBILITY_TIMEOUT", default=CELERY_TASK_TIME_LIMIT + 900),
 }
+# The timeout must also outlast the longest delay a task schedules for itself:
+# a task that meets another worker's live claim retries after up to
+# ENHANCEMENT_CLAIM_LEASE_SECONDS. A delayed message is held unacknowledged by
+# the worker that received it, so a delay longer than the timeout gets it
+# delivered again and again while it waits. A queue test with a 30 s timeout and
+# a 60 s lease showed exactly that: a worker sat idle for ten minutes.
+if CELERY_BROKER_TRANSPORT_OPTIONS["visibility_timeout"] <= max(CELERY_TASK_TIME_LIMIT, ENHANCEMENT_CLAIM_LEASE_SECONDS):
+    raise ImproperlyConfigured(
+        "CELERY_VISIBILITY_TIMEOUT must be longer than both CELERY_TASK_TIME_LIMIT and "
+        "ENHANCEMENT_CLAIM_LEASE_SECONDS, or tasks are delivered again while still running or waiting."
+    )
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 SYSTEM_HEALTH_TIMEOUT_SECONDS = env.float("SYSTEM_HEALTH_TIMEOUT_SECONDS", default=1.0)
 FACECLOUD_VERSION = env("FACECLOUD_VERSION", default="dev")

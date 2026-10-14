@@ -207,3 +207,37 @@ class StartupRefusalTests(SimpleTestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Refusing to start", result.stderr)
+
+
+class VisibilityTimeoutTests(SimpleTestCase):
+    """A broker timeout shorter than a task's own delays makes Redis redeliver it."""
+
+    def start(self, **environment):
+        import os
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        env = {**os.environ, "DJANGO_DEBUG": "True", "DB_ENGINE": "django.db.backends.sqlite3", **environment}
+        return subprocess.run(
+            [sys.executable, "-c", "import django, os; os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings'); django.setup()"],
+            cwd=root, env=env, capture_output=True, text=True,
+        )
+
+    def test_a_timeout_shorter_than_the_claim_lease_refuses_to_start(self):
+        started = self.start(CELERY_VISIBILITY_TIMEOUT="30", ENHANCEMENT_CLAIM_LEASE_SECONDS="60",
+                             CELERY_TASK_TIME_LIMIT="20", CELERY_TASK_SOFT_TIME_LIMIT="15", TEMP_FILE_MAX_AGE_HOURS="1")
+        self.assertNotEqual(started.returncode, 0)
+        self.assertIn("CELERY_VISIBILITY_TIMEOUT must be longer", started.stderr)
+
+    def test_a_timeout_shorter_than_the_task_time_limit_refuses_to_start(self):
+        started = self.start(CELERY_VISIBILITY_TIMEOUT="600", CELERY_TASK_TIME_LIMIT="3600")
+        self.assertNotEqual(started.returncode, 0)
+        self.assertIn("CELERY_VISIBILITY_TIMEOUT must be longer", started.stderr)
+
+    def test_the_defaults_and_a_valid_short_test_setup_start(self):
+        self.assertEqual(self.start().returncode, 0)
+        self.assertEqual(self.start(CELERY_VISIBILITY_TIMEOUT="90", ENHANCEMENT_CLAIM_LEASE_SECONDS="60",
+                                    CELERY_TASK_TIME_LIMIT="80", CELERY_TASK_SOFT_TIME_LIMIT="70",
+                                    TEMP_FILE_MAX_AGE_HOURS="1").returncode, 0)
