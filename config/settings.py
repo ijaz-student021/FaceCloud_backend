@@ -912,6 +912,9 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_THROTTLE_RATES": {
         "anon": "100/hour",
+    # Paginated when the request passes page or page_size; a plain array
+    # otherwise, so existing clients keep working (config/pagination.py).
+    "DEFAULT_PAGINATION_CLASS": "config.pagination.OptionalPageNumberPagination",
         "user": "1000/hour",
         "registration": "10/hour",
         "login": "20/hour",
