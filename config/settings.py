@@ -262,6 +262,14 @@ ZERO_DCE_MODEL_PATH = env(
     "ZERO_DCE_MODEL_PATH",
     default=str(BASE_DIR / ".runtime" / "models" / "zero_dce_epoch99.onnx"),
 )
+# The official Zero-DCE Epoch99 weights exported by scripts/export_zero_dce_onnx.py
+# under PyTorch 2.13.0 (docs/model-licenses/zero-dce-provenance.md). A file that
+# does not match is not loaded, and the OpenCV correction is used instead. Point
+# ZERO_DCE_MODEL_PATH at the private curve model only together with its own checksum.
+ZERO_DCE_MODEL_SHA256 = env(
+    "ZERO_DCE_MODEL_SHA256",
+    default="e5cb6f921c7997f89105f6aa86242f30ff3f5379f5c6cd5282eb2aada14dae14",
+)
 ZERO_DCE_MAX_INFERENCE_EDGE = env.int("ZERO_DCE_MAX_INFERENCE_EDGE", default=1024)
 ZERO_DCE_FULL_RESOLUTION_TILE_EDGE = env.int(
     "ZERO_DCE_FULL_RESOLUTION_TILE_EDGE", default=1024
