@@ -487,8 +487,12 @@ def watch_row(result_id, until, timeout, interval=1.0):
 
 
 def renewal_span(claimed_at_values):
-    """Seconds between the first and the last claim time seen while one claim was held."""
-    return round((claimed_at_values[-1] - claimed_at_values[0]).total_seconds()) if len(claimed_at_values) > 1 else 0
+    """Seconds between the earliest and latest claim time seen while one claim was held.
+
+    Not first-to-last: the completing save writes the row as the worker loaded
+    it, which puts ``claimed_at`` back to the original claim time.
+    """
+    return round((max(claimed_at_values) - min(claimed_at_values)).total_seconds()) if len(claimed_at_values) > 1 else 0
 
 
 def scenario_duplicate_while_original_renews(api, pictures):
@@ -518,6 +522,7 @@ def scenario_duplicate_while_original_renews(api, pictures):
             and any("in_progress" in line for line in duplicate)
             and len(stored_outputs(row.pk)) == 1,
             status=row.status, claim_tokens_seen=len(seen["tokens"]), claim_renewed_over_seconds=span,
+            claim_times_seen=len(set(seen["claimed_at"])),
             lease_seconds=LEASE, original_outcomes=original, duplicate_outcomes=duplicate,
             output_files=stored_outputs(row.pk),
         )
