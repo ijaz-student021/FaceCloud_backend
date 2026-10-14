@@ -83,6 +83,7 @@ INSTALLED_APPS = [
     "organizations",
     "moderation",
     "contact",
+    "security",
 ]
 
 MIDDLEWARE = [
@@ -818,6 +819,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "operations.reap_stuck_jobs",
         "schedule": crontab(minute="*/5"),
     },
+    "evaluate-security-alerts": {
+        "task": "security.evaluate_alert_rules",
+        "schedule": crontab(minute="*/5"),
+    },
     "expire-download-packages": {
         "task": "downloads.cleanup_expired",
         "schedule": crontab(minute=5),
@@ -923,6 +928,8 @@ REST_FRAMEWORK = {
     # Paginated when the request passes page or page_size; a plain array
     # otherwise, so existing clients keep working (config/pagination.py).
     "DEFAULT_PAGINATION_CLASS": "config.pagination.OptionalPageNumberPagination",
+    # DRF's default handler, plus a record of 403/429 responses for security alerts.
+    "EXCEPTION_HANDLER": "config.exceptions.exception_handler",
     # Number of reverse proxies in front of Django. With 0 the socket address is
     # the client, so a spoofed X-Forwarded-For cannot evade throttling.
     "NUM_PROXIES": int(os.environ.get("TRUSTED_PROXY_COUNT", "0")),
@@ -984,6 +991,8 @@ SPECTACULAR_SETTINGS = {
     # different choice sets; name each set explicitly so the schema is stable.
     "ENUM_NAME_OVERRIDES": {
         "ProcessingStatusEnum": "enhancement.models.EnhancementStatus",
+        "SecurityAlertStatusEnum": "security.models.SecurityAlert.Status",
+        "SecurityAlertSeverityEnum": "security.models.SecurityAlert.Severity",
         "EnhancementLevelEnum": "enhancement.models.EnhancementLevel",
         "EnhancementStyleEnum": "enhancement.models.EnhancementStyle",
         "PackageStatusEnum": "downloads.models.DownloadPackage.Status",
@@ -1012,6 +1021,16 @@ TEST_RUNNER = "config.test_runner.FaceCloudTestRunner"
 # pretending to work.
 CONTACT_RECIPIENT_EMAILS = env.list("CONTACT_RECIPIENT_EMAILS", default=[])
 CONTACT_MESSAGE_RETENTION_DAYS = env.int("CONTACT_MESSAGE_RETENTION_DAYS", default=180)
+
+# Security alerts (security app). Within a sliding window of
+# SECURITY_ALERT_WINDOW_MINUTES, an alert opens for one subject (account,
+# address or user) at the threshold of failed logins, authorization failures
+# (403) or rate-limit violations (429; at most one counted per second).
+SECURITY_ALERT_WINDOW_MINUTES = env.int("SECURITY_ALERT_WINDOW_MINUTES", default=15)
+SECURITY_ALERT_FAILED_LOGIN_THRESHOLD = env.int("SECURITY_ALERT_FAILED_LOGIN_THRESHOLD", default=10)
+SECURITY_ALERT_AUTHORIZATION_FAILURE_THRESHOLD = env.int("SECURITY_ALERT_AUTHORIZATION_FAILURE_THRESHOLD", default=20)
+SECURITY_ALERT_RATE_LIMIT_THRESHOLD = env.int("SECURITY_ALERT_RATE_LIMIT_THRESHOLD", default=10)
+SECURITY_EVENT_RETENTION_DAYS = env.int("SECURITY_EVENT_RETENTION_DAYS", default=90)
 
 # How long records of ended sign-in sessions (device, IP address, times) are
 # kept for the user's own session list before they are deleted.
