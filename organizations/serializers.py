@@ -1,6 +1,8 @@
 from django.contrib.auth import get_user_model
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
+from .capabilities import membership_capabilities, membership_summary
 from .models import Organization, OrganizationAuditEvent, OrganizationInvitation, OrganizationMembership
 
 User = get_user_model()
@@ -17,6 +19,53 @@ class OrganizationSerializer(serializers.ModelSerializer):
         model = Organization
         fields = ["id", "name", "slug", "status", "plan", "is_personal", "created_at", "updated_at"]
         read_only_fields = fields
+
+
+class MembershipSummarySerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    role = serializers.ChoiceField(choices=OrganizationMembership.Role.choices)
+    status = serializers.ChoiceField(choices=OrganizationMembership.Status.choices)
+
+
+class CapabilitiesSerializer(serializers.Serializer):
+    """Advisory: what the caller may do here. Every endpoint still enforces it."""
+
+    view_members = serializers.BooleanField()
+    invite_members = serializers.BooleanField()
+    invite_moderators = serializers.BooleanField()
+    manage_members = serializers.BooleanField()
+    manage_moderators = serializers.BooleanField()
+    grant_owner = serializers.BooleanField()
+    view_audit = serializers.BooleanField()
+    moderate_reviews = serializers.BooleanField()
+    manage_batches = serializers.BooleanField()
+    create_reports = serializers.BooleanField()
+    export_organization = serializers.BooleanField()
+
+
+class OrganizationWithMembershipSerializer(OrganizationSerializer):
+    """An organization plus the caller's membership and capabilities in it.
+
+    Context: ``memberships`` maps organization id to the caller's membership.
+    """
+
+    membership = serializers.SerializerMethodField()
+    capabilities = serializers.SerializerMethodField()
+
+    class Meta(OrganizationSerializer.Meta):
+        fields = OrganizationSerializer.Meta.fields + ["membership", "capabilities"]
+        read_only_fields = fields
+
+    def _membership(self, organization):
+        return self.context.get("memberships", {}).get(organization.pk)
+
+    @extend_schema_field(MembershipSummarySerializer(allow_null=True))
+    def get_membership(self, organization):
+        return membership_summary(self._membership(organization))
+
+    @extend_schema_field(CapabilitiesSerializer)
+    def get_capabilities(self, organization):
+        return membership_capabilities(self._membership(organization))
 
 
 class OrganizationCreateSerializer(serializers.ModelSerializer):
