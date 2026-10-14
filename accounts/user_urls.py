@@ -3,6 +3,9 @@ from django.urls import path
 from activity.views import UserActivityTimelineView
 
 from .views import (
+    AccountInvitationCancelView,
+    AccountInvitationListCreateView,
+    AccountInvitationResendView,
     AdminUserListView,
     AdminUserUpdateView,
     AvatarView,
@@ -29,4 +32,7 @@ urlpatterns = [
     path("activity/", UserActivityTimelineView.as_view(), name="user-activity"),
     path("admin/users/", AdminUserListView.as_view(), name="admin-user-list"),
     path("admin/users/<int:pk>/", AdminUserUpdateView.as_view(), name="admin-user-update"),
+    path("admin/invitations/", AccountInvitationListCreateView.as_view(), name="admin-invitations"),
+    path("admin/invitations/<int:pk>/", AccountInvitationCancelView.as_view(), name="admin-invitation-cancel"),
+    path("admin/invitations/<int:pk>/resend/", AccountInvitationResendView.as_view(), name="admin-invitation-resend"),
 ]

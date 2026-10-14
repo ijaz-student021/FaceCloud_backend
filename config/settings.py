@@ -810,6 +810,8 @@ COLLAGE_TTL_HOURS = env.int("COLLAGE_TTL_HOURS", default=72)
 # Feature 48: hours between two photos that starts a new event in the timeline.
 EVENT_GAP_HOURS = env.float("EVENT_GAP_HOURS", default=6.0)
 ORG_INVITATION_TTL_HOURS = env.int("ORG_INVITATION_TTL_HOURS", default=72)
+# Administrator invitations to create an account (accounts/invitations.py).
+ACCOUNT_INVITATION_TTL_HOURS = env.int("ACCOUNT_INVITATION_TTL_HOURS", default=72)
 
 # Periodic maintenance. Nothing runs these unless a beat process is started
 # (scripts/run_beat.ps1 or `celery -A config beat`). Every entry is safe to run
@@ -948,6 +950,7 @@ REST_FRAMEWORK = {
         "verification": "10/hour",
         "verification_status": "60/hour",
         "contact": "5/hour",
+        "invitation": "30/hour",
         "password_reset": "10/hour",
         "password_change": "10/hour",
         "image_upload": "100/hour",
