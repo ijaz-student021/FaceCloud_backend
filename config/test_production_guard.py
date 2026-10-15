@@ -144,6 +144,18 @@ class GuardRuleTests(SimpleTestCase):
             with self.subTest(threshold=threshold):
                 self.assertFlags("LOGIN_LOCK_THRESHOLD", LOGIN_LOCK_THRESHOLD=threshold)
 
+    def test_debug_artifacts_and_unlicensed_models_are_refused_unless_acknowledged(self):
+        self.assertFlags("ADAPTIVE_DEBUG_ARTIFACTS must be False", ADAPTIVE_DEBUG_ARTIFACTS=True)
+        for name, change in (("CodeFormer", {"CODEFORMER_ENABLED": True}), ("GFPGAN", {"GFPGAN_ENABLED": True}),
+                             ("ArcFace", {"IDENTITY_PROVIDER": "arcface_w600k_r50_v1"}),
+                             ("RetinaFace", {"FACE_DETECTOR_PROVIDER": "retinaface_v1"}),
+                             ("Zero-DCE", {"ENHANCEMENT_RENDER_POLICY": "adaptive_v1", "ZERO_DCE_ENABLED": True})):
+            with self.subTest(model=name):
+                self.assertFlags(name, **change)
+                self.assertEqual(self.problems(NONCOMMERCIAL_MODELS_ACKNOWLEDGED=True, **change), [])
+        # Zero-DCE is ignored by the default policy, so its default-on setting alone is not a problem
+        self.assertEqual(self.problems(ZERO_DCE_ENABLED=True), [])
+
     def test_a_default_development_configuration_is_reported_all_at_once(self):
         problems = production_problems({
             "SECRET_KEY": "django-insecure-development-only-change-before-deployment-9f3a7c1d",
@@ -284,3 +296,21 @@ class VisibilityTimeoutTests(SimpleTestCase):
         self.assertEqual(self.start(CELERY_VISIBILITY_TIMEOUT="150", ENHANCEMENT_CLAIM_LEASE_SECONDS="60",
                                     CELERY_TASK_TIME_LIMIT="80", CELERY_TASK_SOFT_TIME_LIMIT="70",
                                     TEMP_FILE_MAX_AGE_HOURS="1").returncode, 0)
+
+
+class CeleryRoutesTests(SimpleTestCase):
+    def test_default_has_no_routes_and_the_queue_setting_isolates_every_inference_task(self):
+        from config.celery_routes import INFERENCE_TASKS, task_routes
+
+        self.assertEqual(task_routes(), {})
+        routed = task_routes("inference")
+        self.assertEqual(set(routed), set(INFERENCE_TASKS))
+        self.assertTrue(all(route == {"queue": "inference"} for route in routed.values()))
+
+    def test_the_gfpgan_queue_keeps_priority_for_the_two_enhancement_tasks(self):
+        from config.celery_routes import task_routes
+
+        routed = task_routes("inference", gfpgan_enabled=True, gfpgan_queue="gfpgan")
+        self.assertEqual(routed["enhancement.process_image"], {"queue": "gfpgan"})
+        self.assertEqual(routed["enhancement.process_batch"], {"queue": "gfpgan"})
+        self.assertEqual(routed["enhancement.process_gallery_edit"], {"queue": "inference"})

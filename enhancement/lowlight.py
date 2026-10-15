@@ -97,10 +97,15 @@ def enhance_with_retinexformer(image):
     torch = _torch()
     with _MODEL_LOCK:
         model, device = _load_model()
+        tile = int(settings.RETINEXFORMER_TILE_SIZE)
+        if getattr(device, "type", str(device)) == "cpu":
+            # Measured on CPU (docs/deployment/hostinger-readiness-2026-10.md): 1024-px tiles peak at 2.7 GB and took 56-70 s at 1.2 MP,
+            # 512-px tiles 1.7 GB and 24 s, with the same quality (PSNR to the clean photograph within 0.06 dB; 256 loses up to 0.9 dB).
+            tile = min(tile, int(settings.RETINEXFORMER_CPU_TILE_SIZE))
         output, inference = runtime.run_with_memory_fallback(
             lambda tile, overlap: runtime.tiled_inference(torch, image, model, device, 1, tile, overlap),
             device=device,
-            tile=settings.RETINEXFORMER_TILE_SIZE, overlap=settings.RETINEXFORMER_TILE_OVERLAP,
+            tile=tile, overlap=settings.RETINEXFORMER_TILE_OVERLAP,
             label="Retinexformer", error_class=LowLightUnavailable,
         )
     return output, {

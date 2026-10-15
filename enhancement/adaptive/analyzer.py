@@ -47,6 +47,11 @@ class Thresholds:
     noise_low: float = 1.5
     noise_moderate: float = 4.0
     noise_high: float = 9.0
+    # --- grain in flat regions, in 8-bit levels (what the estimator above cannot see: a lift amplifies correlated, coarser grain) ---
+    # Equivalent to the two thresholds above by measurement on the project's 16 photographs: Gaussian noise of sigma 10 reads 7.25 and
+    # sigma 25 reads 15.9 here, where the older estimator reads 4.2 and 9.1. Clean photographs read 1.9 on average (maximum 4.3).
+    flat_noise_moderate: float = 7.25
+    flat_noise_high: float = 15.9
     # --- exposure ---
     face_dynamic_range_poor: float = 70.0     # p95 - p5 of face luminance below this is a compressed range
     face_median_dark: float = 75.0            # ...and only when the face is also this dark
@@ -143,6 +148,22 @@ def _luminance(image):
 def _bounded(gray, long_edge=1024):
     scale = long_edge / max(gray.shape[:2])
     return cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale < 1 else gray
+
+
+def flat_noise(gray, high_pass_sigma=1.5, flat_sigma=3.0, flat_slope=3.0):
+    """Grain level: robust spread (MAD) of the fine-scale residual over flat regions, or None without enough flat area.
+
+    Flat means the smoothed image has a slope under ``flat_slope`` levels per pixel, so edges and texture are not counted as
+    noise. Unlike a 3x3 residual it also sees grain a few pixels wide (as left behind by a strong brightening).
+    """
+    gray = _bounded(gray).astype(np.float32)
+    smooth = cv2.GaussianBlur(gray, (0, 0), flat_sigma)
+    slope = np.hypot(cv2.Sobel(smooth, cv2.CV_32F, 1, 0, ksize=3), cv2.Sobel(smooth, cv2.CV_32F, 0, 1, ksize=3)) / 8.0
+    flat = slope < flat_slope
+    if int(flat.sum()) < 2000:
+        return None
+    residual = (gray - cv2.GaussianBlur(gray, (0, 0), high_pass_sigma))[flat]
+    return float(1.4826 * np.median(np.abs(residual - np.median(residual))))
 
 
 def blur_signals(gray):
@@ -289,7 +310,14 @@ class ImageQualityAnalyzer:
         noise = float(base["estimated_noise"])
         noise_status = ("none" if noise < t.noise_low else "low" if noise < t.noise_moderate
                         else "moderate" if noise < t.noise_high else "high")
-        report.noise = {"status": noise_status, "estimate": round(noise, 2)}
+        grain = flat_noise(gray)
+        level = max(noise / t.noise_moderate, (grain or 0.0) / t.flat_noise_moderate)   # 1.0 is "moderate" by either measure
+        if level >= t.noise_high / t.noise_moderate:
+            noise_status = "high"
+        elif level >= 1.0:
+            noise_status = "moderate" if noise_status in ("none", "low", "moderate") else noise_status
+        report.noise = {"status": noise_status, "estimate": round(noise, 2), "flat_estimate": None if grain is None else round(grain, 2),
+                        "level": round(level, 3)}
 
         # blur
         retention, ratio = blur_signals(gray)

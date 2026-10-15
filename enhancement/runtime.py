@@ -13,6 +13,8 @@ import logging
 import os
 import sys
 import threading
+import time
+from contextlib import contextmanager
 
 import cv2
 import numpy as np
@@ -31,6 +33,35 @@ _TILE_STATS = threading.local()
 def last_tile_stats():
     """``{"tiles": n, "tiles_rejected": m}`` for the most recent tiled inference."""
     return dict(getattr(_TILE_STATS, "value", {"tiles": 0, "tiles_rejected": 0}))
+
+
+class InferenceDeadline(RuntimeError):
+    """The caller's time budget ran out; raised between tiles, so a model call stops at the next tile, not at the end."""
+
+
+_DEADLINE = threading.local()
+
+
+@contextmanager
+def deadline_until(monotonic_deadline):
+    """Inside the block, tiled inference stops (``InferenceDeadline``) once ``time.monotonic()`` passes ``monotonic_deadline``.
+
+    The adaptive engine uses it so its time budget bounds one slow model call, not only the gaps between operations. Nesting
+    keeps the earlier of two deadlines; ``None`` sets no deadline.
+    """
+    previous = getattr(_DEADLINE, "value", None)
+    candidates = [value for value in (previous, monotonic_deadline) if value is not None]
+    _DEADLINE.value = min(candidates) if candidates else None
+    try:
+        yield
+    finally:
+        _DEADLINE.value = previous
+
+
+def check_deadline():
+    deadline = getattr(_DEADLINE, "value", None)
+    if deadline is not None and time.monotonic() > deadline:
+        raise InferenceDeadline("The time budget was reached.")
 
 
 # One heavy inference at a time in a worker process, whichever model runs it.
@@ -203,6 +234,7 @@ def tiled_inference(torch, image, model, device, scale, tile, overlap, output_sc
     with torch.inference_mode():
         for y in _positions(height, tile, step):
             for x in _positions(width, tile, step):
+                check_deadline()
                 patch = image[y:min(y + tile, height), x:min(x + tile, width)]
                 raw = model(tensor_from_bgr(patch, torch, device))
                 patch_height, patch_width = patch.shape[:2]
@@ -248,6 +280,9 @@ def run_with_memory_fallback(run, *, device, tile, overlap, label, error_class):
         _TILE_STATS.value = {"tiles": 0, "tiles_rejected": 0}  # never report a previous run's counts
         try:
             output = run(tile, overlap)
+        except InferenceDeadline as error:
+            release_memory(device)
+            raise error_class(f"{label} stopped: the time budget was reached.") from error
         except Exception as error:
             if isinstance(error, error_class):
                 raise

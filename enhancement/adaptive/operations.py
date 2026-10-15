@@ -14,6 +14,8 @@ import cv2
 import numpy as np
 from django.conf import settings
 
+from .colour import chromaticity_linear
+
 # Operation names, in the order the engine considers them (low light first: it changes what the rest see).
 LOW_LIGHT = "low_light_enhancement"
 DENOISE = "denoising"
@@ -74,9 +76,14 @@ def run_low_light(image, engine, blend):
         lightness = lab[:, :, 0].astype(np.float32) / 255.0
         lab[:, :, 0] = np.clip(255.0 * np.power(lightness, 0.6), 0, 255).astype(np.uint8)
         raw, metadata = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR), {"provider": "opencv_gamma_0_6"}
-    # The network may shift colour; the source's own chroma is kept and only amplified within a bound.
-    protected = services._preserve_source_chroma(image, raw)
-    raw, chroma = services._amplify_source_chroma(image, protected, settings.ENHANCEMENT_DARK_COLOUR_GAIN_MAX)
+    # The network shifts colour (it returns paler, hue-shifted output); the photograph's own colour is kept and only its brightness
+    # is taken from the network. "legacy" is the earlier, measurably paler method, kept for comparison and rollback.
+    if settings.ADAPTIVE_LOWLIGHT_COLOUR == "legacy":
+        protected = services._preserve_source_chroma(image, raw)
+        raw, chroma = services._amplify_source_chroma(image, protected, settings.ENHANCEMENT_DARK_COLOUR_GAIN_MAX)
+        chroma["method"] = "legacy_lab_chroma_sqrt_gain"
+    else:
+        raw, chroma = chromaticity_linear(image, raw), {"method": "chromaticity_linear"}
     seconds = time.perf_counter() - started
     return _blend(image, raw, blend), [_record(engine, metadata, seconds, chroma=chroma)]
 

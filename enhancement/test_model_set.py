@@ -59,6 +59,34 @@ class RetinexformerAdapterTests(SimpleTestCase):
         self.assertEqual(metadata["provider"], "retinexformer_ntire")
 
 
+class RetinexformerTileTests(SimpleTestCase):
+    """The CPU tile cap: measured to cut memory and time at the same quality (docs/deployment/hostinger-readiness-2026-10.md)."""
+
+    def run_with(self, device_type, **settings_):
+        from types import SimpleNamespace
+
+        seen = {}
+
+        def fake_fallback(run, *, device, tile, overlap, label, error_class):
+            seen["tile"] = tile
+            return dark_photo(), {"device": str(device)}
+
+        with override_settings(RETINEXFORMER_TILE_SIZE=1024, **settings_), \
+                patch("enhancement.lowlight._torch", return_value=object()), \
+                patch("enhancement.lowlight._load_model", return_value=(object(), SimpleNamespace(type=device_type))), \
+                patch("enhancement.lowlight.runtime.run_with_memory_fallback", side_effect=fake_fallback):
+            lowlight.enhance_with_retinexformer(dark_photo())
+        return seen["tile"]
+
+    def test_a_cpu_uses_the_smaller_tile(self):
+        self.assertEqual(self.run_with("cpu"), 512)
+        self.assertEqual(self.run_with("cpu", RETINEXFORMER_CPU_TILE_SIZE=256), 256)
+
+    def test_a_gpu_keeps_the_configured_tile(self):
+        self.assertEqual(self.run_with("cuda"), 1024)
+        self.assertEqual(self.run_with("mps"), 1024)
+
+
 class DenoiseAdapterTests(SimpleTestCase):
     @override_settings(NAFNET_SIDD_MODEL_PATH="/nonexistent/sidd.pth")
     def test_a_missing_checkpoint_is_refused(self):

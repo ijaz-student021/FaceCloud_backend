@@ -7,6 +7,8 @@ a photograph looks better; the benchmark and the visual evaluation do that.
 """
 from unittest.mock import patch
 
+import json
+
 import cv2
 import numpy as np
 from django.test import SimpleTestCase, override_settings
@@ -78,6 +80,16 @@ def motion_blur(image, length=21, angle=0):
 
 
 class AnalyzerTests(SimpleTestCase):
+    def test_coarse_grain_left_by_a_strong_lift_is_seen_as_noise(self):
+        """Grain a few pixels wide (as after brightening a dark photograph) was invisible to the 3x3 estimator."""
+        rng = np.random.default_rng(8)
+        grain = cv2.GaussianBlur(rng.normal(0, 1, (640, 480, 3)).astype(np.float32), (0, 0), 1.3) * 90.0
+        grainy = np.clip(portrait().astype(np.float32) + grain, 0, 255).astype(np.uint8)
+        report = analyzer_with().analyze(grainy)
+        self.assertIn(report.noise["status"], ("moderate", "high"))
+        self.assertGreater(report.noise["flat_estimate"], 7.25)
+        self.assertEqual(analyzer_with().analyze(portrait()).noise["status"], "none")
+
     def test_a_well_exposed_photograph_has_nothing_to_fix(self):
         report = analyzer_with().analyze(portrait())
         self.assertEqual(report.exposure["status"], "normal")
@@ -234,12 +246,35 @@ class ValidatorTests(SimpleTestCase):
                                        report or self.report, **kwargs)
 
     def lifted(self, factor=6.0):
-        return np.clip(self.parent.astype(np.float32) * factor, 0, 255).astype(np.uint8)
+        return exposure_lift(self.parent, factor)
 
     def test_a_sensible_lift_is_accepted(self):
         verdict = self.verdict(self.lifted(5.0))
         self.assertTrue(verdict["accepted"], verdict["reasons"])
         self.assertGreater(verdict["improvement"], 0.15)
+
+    def test_a_lift_that_turns_the_colours_pale_is_rejected(self):
+        """The failure seen on real output: the right brightness but a washed-out, grey-brown look."""
+        lifted = self.lifted(5.0)
+        grey = cv2.cvtColor(cv2.cvtColor(lifted, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+        verdict = self.verdict(cv2.addWeighted(lifted, 0.25, grey, 0.75, 0))
+        self.assertFalse(verdict["accepted"])
+        self.assertIn("colour_washed_out", verdict["reasons"])
+        self.assertLess(verdict["gates"]["colour"]["saturation_ratio"], 0.85)
+
+    def test_a_lift_that_over_saturates_is_rejected(self):
+        lifted = self.lifted(5.0)
+        hsv = cv2.cvtColor(lifted, cv2.COLOR_BGR2HSV).astype(np.float32)
+        hsv[..., 1] = np.clip(hsv[..., 1] * 2.5, 0, 255)
+        verdict = self.verdict(cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR))
+        self.assertIn("colour_oversaturated", verdict["reasons"])
+
+    def test_a_lift_that_rotates_the_hue_is_rejected(self):
+        lifted = self.lifted(5.0)
+        hsv = cv2.cvtColor(lifted, cv2.COLOR_BGR2HSV)
+        hsv[..., 0] = (hsv[..., 0].astype(np.int16) + 20) % 180
+        verdict = self.verdict(cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR))
+        self.assertIn("colour_drift", verdict["reasons"])
 
     def test_a_lift_that_over_brightens_is_rejected(self):
         verdict = self.verdict(np.clip(self.parent.astype(np.float32) * 14 + 60, 0, 255).astype(np.uint8))
@@ -328,8 +363,15 @@ class CandidatePoolTests(SimpleTestCase):
         self.assertNotIn("image", described[0])
 
 
+def exposure_lift(image, alpha):
+    """A physically valid brightening: the same factor on all three channels in linear light (the colour ratios are unchanged)."""
+    from enhancement.adaptive.colour import from_linear, to_linear
+
+    return from_linear(to_linear(image) * float(alpha) ** 2.2)
+
+
 def runner_lift(image, engine, variant):
-    return cv2.convertScaleAbs(image, alpha=1.0 + 4.0 * variant["blend"], beta=0), [{"model": engine, "device": "stand-in"}]
+    return exposure_lift(image, 1.0 + 4.0 * variant["blend"]), [{"model": engine, "device": "stand-in"}]
 
 
 def runner_denoise(image, engine, variant):
@@ -413,6 +455,24 @@ class ServiceTests(SimpleTestCase):
                                           ops.DEBLUR: spy("deblur", runner_lift)})
         self.assertNotIn("deblur", calls)
         self.assertTrue(set(calls) <= {"lift", "denoise"})
+
+    def test_a_model_call_that_runs_out_of_time_keeps_the_original_and_says_so(self):
+        from enhancement.lowlight import LowLightUnavailable
+
+        calls = []
+
+        def out_of_time(image, engine, variant):
+            calls.append(engine)
+            raise LowLightUnavailable("Retinexformer stopped: the time budget was reached.")
+
+        source = portrait(brightness=0.12)
+        output, _level, parameters = self.run_service(source, runners={ops.LOW_LIGHT: out_of_time})
+        np.testing.assert_array_equal(output, source)
+        adaptive = parameters["adaptive"]
+        self.assertEqual(adaptive["outcome"], ORIGINAL_PRESERVED)
+        self.assertIn("ran out of time", adaptive["summary"])
+        self.assertEqual(len(calls), 1)   # no further engine or variant was tried once the budget was gone
+        self.assertTrue(any("time budget" in warning for warning in parameters["warnings"]))
 
     def test_an_unsafe_candidate_is_rejected_and_the_original_is_kept(self):
         def over_exposed(image, engine, variant):
@@ -623,7 +683,7 @@ class AdaptiveJobTests(__import__("enhancement.test_pipeline_regressions", froml
         from rest_framework.test import APIClient
 
         source = portrait(brightness=0.12)
-        result = self.process(source, runners={"run_low_light": lambda image, engine, blend: (cv2.convertScaleAbs(image, alpha=1 + 4 * blend), [{"model": engine}])})
+        result = self.process(source, runners={"run_low_light": lambda image, engine, blend: (exposure_lift(image, 1 + 4 * blend), [{"model": engine}])})
         self.assertEqual(result.status, "completed")
         client = APIClient()
         client.force_authenticate(self.user)
@@ -649,6 +709,8 @@ class AdaptiveJobTests(__import__("enhancement.test_pipeline_regressions", froml
         body = client.get(f"/api/enhancements/results/{result.pk}/").json()
         self.assertEqual((body["status"], body["enhancement_outcome"]), ("failed", "failed"))
         self.assertIsNone(body["download_url"])
+        self.assertIn("could not be enhanced", body["enhancement_summary"])
+        self.assertNotIn("boom", json.dumps(body))   # an internal error message is never shown to the user
 
     def test_another_user_cannot_see_or_download_the_result(self):
         from django.contrib.auth import get_user_model
@@ -661,3 +723,83 @@ class AdaptiveJobTests(__import__("enhancement.test_pipeline_regressions", froml
         client.force_authenticate(other)
         self.assertEqual(client.get(f"/api/enhancements/results/{result.pk}/").status_code, 404)
         self.assertEqual(client.get(f"/api/enhancements/results/{result.pk}/download/").status_code, 404)
+
+
+class IdentityReportTests(SimpleTestCase):
+    """Identity is reported as verified / uncertain / not verifiable / not applicable, and an unavailable check is never a pass."""
+
+    @staticmethod
+    def identity(available, reason="", threshold=0.7):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(available=available, reason=reason, threshold=threshold if available else None)
+
+    def test_no_face_is_not_applicable_and_says_so_without_blaming_permissions(self):
+        from .adaptive.service import identity_report
+
+        block = identity_report(SimpleNamespace_report(False), self.identity(False, "No face was found, so there was no identity to check."),
+                                [ops.LOW_LIGHT], None, True)
+        self.assertEqual(block["state"], "not_applicable")
+        self.assertNotIn("permitted", block["reason"])
+
+    def test_a_check_that_could_not_run_is_not_verifiable_never_verified(self):
+        from .adaptive.service import identity_report
+
+        block = identity_report(SimpleNamespace_report(True), self.identity(False, "The face is too dark to embed."), [ops.LOW_LIGHT], None, True)
+        self.assertEqual((block["state"], block["status"], block["verified"]), ("not_verifiable", "unavailable", False))
+        self.assertIn("could not be verified", block["notice"])
+
+    def test_a_comparison_that_held_is_verified_with_its_scope_stated(self):
+        from .adaptive.service import identity_report
+
+        block = identity_report(SimpleNamespace_report(True), self.identity(True), [ops.LOW_LIGHT], {"status": "verified", "similarity": 0.91}, True)
+        self.assertEqual((block["state"], block["verified"], block["similarity"]), ("verified", True, 0.91))
+        self.assertIn("uploaded photograph only", block["scope"])
+
+    def test_an_inconclusive_comparison_is_uncertain(self):
+        from .adaptive.service import identity_report
+
+        block = identity_report(SimpleNamespace_report(True), self.identity(True), [ops.DENOISE], {"status": "inconclusive", "similarity": None}, True)
+        self.assertEqual((block["state"], block["status"], block["verified"]), ("uncertain", "inconclusive", False))
+        self.assertTrue(block["notice"])
+
+    def test_no_permission_is_named_as_the_reason(self):
+        from .adaptive.service import identity_report
+
+        block = identity_report(SimpleNamespace_report(True), self.identity(False, "ignored"), [ops.LOW_LIGHT], None, False)
+        self.assertIn("not permitted", block["reason"])
+
+    def test_an_unchanged_photograph_is_not_applicable(self):
+        from .adaptive.service import identity_report
+
+        block = identity_report(SimpleNamespace_report(True), self.identity(True), [], None, True)
+        self.assertEqual(block["state"], "not_applicable")
+
+
+def SimpleNamespace_report(has_faces):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(faces=[object()] if has_faces else [])
+
+
+class SmallFaceUpscaleTests(SimpleTestCase):
+    def router(self, **config):
+        from .adaptive.router import AdaptiveEnhancementRouter
+        from .adaptive.service import EngineConfig
+
+        return AdaptiveEnhancementRouter(EngineConfig(**config))
+
+    @override_settings(**ALL_ON)
+    def test_a_small_poor_face_in_an_adequate_photograph_does_not_enlarge_the_photograph(self):
+        image = cv2.resize(portrait(), (1280, 960))
+        box = (500, 300, 60, 70)
+        report = analyzer_with(box).analyze(cv2.GaussianBlur(image, (0, 0), 3.0))
+        decision = self.router().next_step(report, {ops.LOW_LIGHT, ops.DENOISE, ops.DEBLUR, ops.FACE})
+        self.assertIsNone(decision.step)
+        self.assertTrue(any("small face does not justify" in item["reason"] for item in decision.skipped), decision.skipped)
+
+    @override_settings(**ALL_ON)
+    def test_a_genuinely_small_photograph_is_still_enlarged(self):
+        report = analyzer_with(None).analyze(cv2.resize(portrait(), (320, 240)))
+        decision = self.router().next_step(report, {ops.LOW_LIGHT, ops.DENOISE, ops.DEBLUR, ops.FACE})
+        self.assertEqual(decision.step.operation, ops.UPSCALE)

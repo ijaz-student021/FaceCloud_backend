@@ -6,7 +6,8 @@ It never scores a candidate on one number. A candidate must pass **gates**, and 
 2. *Data consistency*: shrunk back to the parent's size and softened, the candidate must still look like the parent.
    This is the main defence against hallucination: a model that invents structure changes the low frequencies too.
 3. *Colour*: the low-frequency chroma may not drift (skin tone, clothing and background colour are not for a
-   restoration model to change), within a limit that is a little larger for low-light lifts, whose input chroma is weak.
+   restoration model to change). A low-light lift changes brightness by design, so it is judged on the chromaticity of linear
+   light instead: the colours must not turn pale or grey, over-saturate, or rotate in hue.
 4. *Artifacts*: no pixel overshoot beyond the parent's local range (halos, ringing), no growth in highlight clipping,
    and no more noise than the parent unless the operation is a lift that a denoise stage will follow.
 5. *Identity*, for every candidate when the original has a face that could be embedded: the worst per-face embedding
@@ -28,6 +29,8 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+from .colour import lift_colour_metrics
+
 
 @dataclass(frozen=True)
 class Limits:
@@ -35,7 +38,15 @@ class Limits:
     consistency_psnr_min_lowlight: float = 12.0   # a lift changes brightness by design; structure is checked instead
     structure_ssim_min_lowlight: float = 0.70     # SSIM of brightness-normalised luminance
     chroma_shift_max: float = 6.0           # mean |delta| of the low-frequency a and b channels (8-bit LAB units)
-    chroma_shift_max_lowlight: float = 12.0
+    chroma_shift_max_lowlight: float = 12.0   # kept for reporting; a lift is judged by the two linear-light limits below instead
+    # A lift is judged on chromaticity in linear light (colour.lift_colour_metrics), which an exposure change leaves unchanged.
+    # Measured on the calibration photographs (scripts/evaluate_lowlight_colour.py, 16 photos x 4 darkening levels): the colour
+    # method in use gives a saturation ratio 0.92-0.99, the raw network 0.62-0.80, the earlier square-root chroma gain 0.46-0.89 and
+    # an over-strong gain 1.14-2.19. The pale limit sits between the raw network's maximum and the used method's minimum; the
+    # over-saturation limit is its reciprocal. Held-out photographs agreed (used method 0.94-0.99, raw 0.63-0.80).
+    lift_saturation_min: float = 0.85
+    lift_saturation_max: float = 1.18
+    lift_hue_shift_max: float = 15.0        # degrees; the used method's mean is 4-5 (its p90 about 7), the other methods' 12-14 at worst
     overshoot_max: float = 0.02             # share of pixels outside the parent's local 5x5 range by more than 10 levels
     overshoot_max_sharpening: float = 0.04
     highlight_clip_growth_max: float = 3.0  # percentage points
@@ -206,8 +217,21 @@ class FinalImageQualityValidator:
             psnr = consistency_psnr(parent, candidate)
             gate("data_consistency", psnr >= limits.consistency_psnr_min, {"psnr": round(psnr, 2)}, "content_not_consistent_with_input")
         shift = chroma_shift(parent, candidate)
-        gate("colour", shift <= (limits.chroma_shift_max_lowlight if lowlight else limits.chroma_shift_max),
-             {"chroma_shift": round(shift, 2)}, "colour_drift")
+        if lowlight:
+            colour = lift_colour_metrics(parent, candidate)
+            hue, saturation = colour["hue_shift"], colour["saturation_ratio"]
+            detail = {"hue_shift": None if hue is None else round(hue, 2),
+                      "saturation_ratio": None if saturation is None else round(saturation, 3), "chroma_shift": round(shift, 2)}
+            if hue is not None and hue > limits.lift_hue_shift_max:
+                gate("colour", False, detail, "colour_drift")
+            elif saturation is not None and saturation < limits.lift_saturation_min:
+                gate("colour", False, detail, "colour_washed_out")
+            elif saturation is not None and saturation > limits.lift_saturation_max:
+                gate("colour", False, detail, "colour_oversaturated")
+            else:
+                gate("colour", True, detail)
+        else:
+            gate("colour", shift <= limits.chroma_shift_max, {"chroma_shift": round(shift, 2)}, "colour_drift")
         if lowlight:
             gate("artifacts", True, {"overshoot": "not applicable to a lift (it raises amplitude by design)"})
         else:
@@ -222,9 +246,13 @@ class FinalImageQualityValidator:
         clip_growth = candidate_report.base["highlight_clipping_percent"] - parent_report.base["highlight_clipping_percent"]
         gate("highlights", clip_growth <= limits.highlight_clip_growth_max, {"clipping_growth": round(clip_growth, 2)},
              "highlight_clipping_increased")
-        noise_before, noise_after = parent_report.noise["estimate"], candidate_report.noise["estimate"]
+        # "level" is the larger of the two noise measures in units of the "moderate" threshold (1.0 = moderate); the 0.25 allowance
+        # matches the earlier one level of the 3x3 estimator against its moderate threshold of 4.
+        noise_before, noise_after = parent_report.noise["level"], candidate_report.noise["level"]
         allowed = limits.noise_growth_max_lowlight if lowlight else limits.noise_growth_max
-        gate("noise", noise_after <= max(noise_before * allowed, noise_before + 1.0),
+        # A lift may take grain up to the "moderate" level (1.0), where the denoise stage that follows takes over; the 3x growth bound
+        # still applies beyond it.
+        gate("noise", noise_after <= max(noise_before * allowed, noise_before + 0.25, 1.0 if lowlight else 0.0),
              {"before": noise_before, "after": noise_after}, "noise_increased")
 
         self._identity_gate(verdict, candidate, candidate_report, operation)
@@ -286,7 +314,7 @@ class FinalImageQualityValidator:
                  {"median_before": median_before, "median_after": median_after}, "no_useful_lift_or_too_bright")
             return float(np.clip(gain, 0, 1))
         if operation == "denoising":
-            reduction = 1.0 - after.noise["estimate"] / max(before.noise["estimate"], 0.5)
+            reduction = 1.0 - after.noise["level"] / max(before.noise["level"], 0.125)
             detail = structure_energy(candidate) / max(structure_energy(parent), 1e-6)
             from enhancement.denoise_guard import DenoiseReference, judge_candidate
 

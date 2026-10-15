@@ -255,6 +255,25 @@ class RealTorchTests(SimpleTestCase):
         self.assertEqual(tiled.shape, (300, 420, 3))
         self.assertLessEqual(int(np.abs(tiled.astype(np.int16) - whole.astype(np.int16)).max()), 1)
 
+    def test_a_passed_deadline_stops_inference_between_tiles_and_is_not_retried_as_out_of_memory(self):
+        import time
+
+        model = self.model(1)
+        with runtime.deadline_until(time.monotonic() - 1.0):
+            with self.assertRaises(runtime.InferenceDeadline):
+                runtime.tiled_inference(self.torch, self.image, model, self.device, 1, 64, 16)
+            calls = []
+
+            def run(tile, overlap):
+                calls.append(tile)
+                return runtime.tiled_inference(self.torch, self.image, model, self.device, 1, tile, overlap)
+
+            with self.assertRaisesRegex(Unavailable, "time budget"):
+                runtime.run_with_memory_fallback(run, device=self.device, tile=64, overlap=16, label="Stand-in", error_class=Unavailable)
+        self.assertEqual(len(calls), 1)   # one attempt: a deadline is not a reason to retry with smaller tiles
+        output = runtime.tiled_inference(self.torch, self.image, model, self.device, 1, 64, 16)   # no deadline outside the block
+        np.testing.assert_array_equal(output, self.image)
+
     def test_a_model_that_returns_the_wrong_size_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "unexpected tile size"):
             runtime.tiled_inference(self.torch, self.image, self.model(3), self.device, 4, 64, 16)

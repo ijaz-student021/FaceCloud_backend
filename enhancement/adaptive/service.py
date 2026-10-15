@@ -23,6 +23,7 @@ because a model ran: it re-measures.
 Time and memory are bounded: at most ``max_candidates`` images, a wall-clock budget after which no further operation
 starts, and the adapters' own tiling and out-of-memory handling.
 """
+import json
 import logging
 import time
 import uuid
@@ -63,7 +64,7 @@ class EngineConfig:
     max_candidates: int = 8
     time_budget_seconds: float = 180.0
     max_output_edge: int = 4096
-    face_upscale_below: int = 96
+    face_upscale_below: int = 0
     max_engines_per_step: int = 2
 
     @classmethod
@@ -107,6 +108,43 @@ class IdentityChecker:
             return {"status": "inconclusive", "similarity": None, "threshold": self.threshold}
         worst = round(min(found), 4)
         return {"status": "verified" if worst >= self.threshold else "failed", "similarity": worst, "threshold": self.threshold}
+
+
+def identity_report(report0, identity, accepted_operations, final_check, allow_biometric_processing):
+    """What was and was not established about identity, in terms that cannot be mistaken for a guarantee.
+
+    ``state`` is the plain-language answer: ``verified`` (every face in the result was compared with the upload and held),
+    ``uncertain`` (a comparison was attempted but could not be made reliably for the result), ``not_verifiable`` (no comparison
+    was possible: no consent, no identity model, or the upload's face was too dark or small to embed), or ``not_applicable`` (no
+    face, or the photograph was not changed). ``status`` keeps the API's existing values (verified / inconclusive / unavailable /
+    failed; null for a photograph without a face). An unavailable comparison is never reported as passed, and ``verified`` only ever
+    means "similar to the photograph that was uploaded" (an embedding is evidence, not proof, and cannot see drift from a clean
+    appearance that was never given).
+    """
+    base = {"threshold": identity.threshold, "similarity": None, "face_restoration_unverified": False,
+            "scope": "Compared with the uploaded photograph only; similarity of face embeddings is evidence, not a guarantee."}
+    if not report0.faces:
+        return {**base, "status": None, "state": "not_applicable", "verified": False, "notice": "", "reason": identity.reason}
+    if not accepted_operations:   # the output is the upload itself, so there is nothing to compare; the status keeps its earlier values
+        return {**base, "status": "verified" if identity.available else "unavailable", "state": "not_applicable",
+                "verified": identity.available, "notice": "", "reason": "The photograph was not changed."}
+    if not identity.available:
+        reason = identity.reason or "No identity model could be used."
+        if not allow_biometric_processing:
+            reason = "Biometric processing is not permitted for this account."
+        return {**base, "status": "unavailable", "state": "not_verifiable", "verified": False, "reason": reason,
+                "notice": f"Identity could not be verified ({reason.rstrip('.')}). No face restoration was applied; the faces in this "
+                          "photograph were not compared with the original."}
+    status = final_check["status"]
+    base["similarity"] = final_check.get("similarity")
+    if status == "verified":
+        return {**base, "status": "verified", "state": "verified", "verified": True, "notice": "", "reason": ""}
+    if status == "failed":   # the validator does not accept such a candidate; reported rather than assumed
+        return {**base, "status": "failed", "state": "uncertain", "verified": False, "reason": "",
+                "notice": "A face in the result no longer matches the uploaded photograph."}
+    return {**base, "status": "inconclusive", "state": "uncertain", "verified": False, "reason": "",
+            "notice": "Identity could not be confirmed for every face after enhancement (a face may be small, dark or turned); "
+                      "no face restoration was applied without it."}
 
 
 class AdaptiveImageEnhancementService:
@@ -171,6 +209,9 @@ class AdaptiveImageEnhancementService:
                     image, models = self._run(step.operation, engine, current.image, variant)
                 except errors as error:
                     record["skipped_engines"].append({"engine": engine, "reason": str(error)})
+                    if "time budget" in str(error):
+                        record["timed_out"] = True
+                        return produced
                     break
                 except PoolFull:
                     break
@@ -218,6 +259,13 @@ class AdaptiveImageEnhancementService:
     # -- the whole run ------------------------------------------------------------------------------------------
     def enhance(self, image, requested_level=EnhancementLevel.AUTO, style="natural", allow_biometric_processing=True,
                 checkpoint=None, debug=None):
+        """The whole run under one wall-clock budget: it stops between operations *and* between the tiles of a model call."""
+        from enhancement import runtime
+
+        with runtime.deadline_until(time.monotonic() + self.config.time_budget_seconds):
+            return self._enhance(image, requested_level, style, allow_biometric_processing, checkpoint, debug)
+
+    def _enhance(self, image, requested_level, style, allow_biometric_processing, checkpoint, debug):
         from enhancement.services import analyze_image_quality, compare_image_quality
 
         checkpoint = checkpoint or (lambda _name: None)
@@ -231,6 +279,8 @@ class AdaptiveImageEnhancementService:
         report0 = analyzer.analyze(original)
         recorder.json("01_quality_analysis", report0.as_dict())
         identity = IdentityChecker(original, allow_biometric_processing and report0.faces != [])
+        if not report0.faces:
+            identity.reason = "No face was found, so there was no identity to check."
         pool = CandidatePool(original, self.config.max_candidates)
         validator = FinalImageQualityValidator(analyzer, report0, identity if identity.available else None)
 
@@ -242,8 +292,9 @@ class AdaptiveImageEnhancementService:
         if report0.faces and not identity.available and allow_biometric_processing:
             warnings.append(identity.reason)
 
+        timed_out = False
         while True:
-            if time.perf_counter() - started > self.config.time_budget_seconds:
+            if time.perf_counter() - started > self.config.time_budget_seconds or timed_out:
                 warnings.append("The time budget was reached; remaining operations were not attempted.")
                 break
             decision = self.router.next_step(report, done)
@@ -275,7 +326,10 @@ class AdaptiveImageEnhancementService:
                 stages.append(record)
                 continue
             produced = self._propose(step, current, report, pool, validator, identity if identity.available else None, record)
+            timed_out = timed_out or bool(record.get("timed_out"))
             record["candidates"] = [candidate.id for candidate in produced]
+            record["seconds"] = round(sum(candidate.seconds for candidate in produced), 2)
+            record["models_run"] = sorted({m["model"] for candidate in produced for m in candidate.models if m.get("model")})
             accepted = [candidate for candidate in produced if candidate.verdict["accepted"]]
             if not accepted:
                 record["status"] = "rejected" if produced else "unavailable"
@@ -301,8 +355,11 @@ class AdaptiveImageEnhancementService:
             outcome = PARTIALLY_ENHANCED
         else:
             outcome = ENHANCED
-        final_identity = identity.check(final) if identity.available and accepted_operations else (
-            {"status": "unavailable" if not identity.available else "verified", "similarity": None, "threshold": identity.threshold})
+        final_identity = identity.check(final) if identity.available and accepted_operations else None
+        identity_block = identity_report(report0, identity, accepted_operations, final_identity, allow_biometric_processing)
+        if any("brightened photograph" in warning for warning in warnings):
+            identity_block["scope"] = ("Compared with the brightened photograph, because the uploaded face was too dark to embed; "
+                                       "the brightening itself could not be checked against the original face.")
         recorder.image("07_final", final)
         recorder.json("candidates", pool.describe())
 
@@ -319,15 +376,8 @@ class AdaptiveImageEnhancementService:
             "quality_before": analyze_image_quality(original), "quality_after": analyze_image_quality(
                 cv2.resize(final, (original.shape[1], original.shape[0]), interpolation=cv2.INTER_AREA) if final.shape != original.shape else final),
             "quality_comparison": quality_comparison, "warnings": warnings,
-            "identity_status": final_identity["status"],
-            "identity_verification": {
-                "status": final_identity["status"], "verified": final_identity["status"] == "verified",
-                "similarity": final_identity.get("similarity"), "threshold": final_identity.get("threshold"),
-                "face_restoration_unverified": False,
-                "notice": "" if final_identity["status"] in ("verified", "unavailable") else
-                          "Identity could not be confirmed for every face; face restoration was not applied without it.",
-                "reason": identity.reason if not identity.available else "",
-            },
+            "identity_status": identity_block["status"],
+            "identity_verification": identity_block,
             "stage_reports": [{"stage": s["operation"], "status": s["status"], "changed_pixels": s["status"] == "accepted"} for s in stages],
             "resolution_contract": {"validated": True, "source_dimensions": [original.shape[1], original.shape[0]],
                                     "actual_output_dimensions": [final.shape[1], final.shape[0]]},
@@ -345,9 +395,24 @@ class AdaptiveImageEnhancementService:
                 "seconds": round(time.perf_counter() - started, 2),
             },
         }
+        self._log_run(parameters, report0, identity_block)
         return (final.copy() if final is original else final), applied_level, parameters
 
     # -- small helpers ------------------------------------------------------------------------------------------
+    @staticmethod
+    def _log_run(parameters, report0, identity_block):
+        """One structured line per run for log aggregation: decisions, timings and reasons, never pixels, paths or user data."""
+        adaptive = parameters["adaptive"]
+        logger.info("adaptive_enhancement %s", json.dumps({
+            "outcome": adaptive["outcome"], "operations": adaptive["operations_applied"], "seconds": adaptive["seconds"],
+            "megapixels": round(report0.width * report0.height / 1e6, 2), "faces": report0.face_count,
+            "conditions": report0.conditions, "identity_state": identity_block["state"],
+            "stages": [{"operation": s["operation"], "status": s["status"], "seconds": s.get("seconds"), "models": s.get("models_run"),
+                        "rejected_for": s.get("rejection_reasons")} for s in adaptive["stages"]],
+            "skipped": [item["operation"] for item in adaptive["operations_skipped"]], "unresolved": adaptive["unresolved_defects"],
+            "colour_method": settings.ADAPTIVE_LOWLIGHT_COLOUR,
+        }, separators=(",", ":")))
+
     @staticmethod
     def _debug_name(operation):
         return {ops.LOW_LIGHT: "02_low_light", ops.DENOISE: "03_denoised", ops.DEBLUR: "04_deblurred",
@@ -365,6 +430,8 @@ class AdaptiveImageEnhancementService:
         done = [words[s["operation"]] for s in stages if s["status"] == "accepted"]
         if outcome == ORIGINAL_PRESERVED:
             rejected = [s for s in stages if s["status"] in ("rejected", "unavailable", "no_engine")]
+            if any(s.get("timed_out") for s in stages):
+                return "The enhancement ran out of time, so the original photograph was kept."
             if rejected and all(s["status"] in ("unavailable", "no_engine") for s in rejected):
                 return "The enhancement models were not available, so the original photograph was kept."
             if rejected:

@@ -18,6 +18,8 @@ import environ
 from celery.schedules import crontab
 from django.core.exceptions import ImproperlyConfigured
 
+from config.celery_routes import task_routes
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -328,8 +330,17 @@ ENHANCEMENT_MIN_TILE_SIZE = env.int("ENHANCEMENT_MIN_TILE_SIZE", default=64)
 ADAPTIVE_MAX_CANDIDATES = env.int("ADAPTIVE_MAX_CANDIDATES", default=8)
 ADAPTIVE_TIME_BUDGET_SECONDS = env.float("ADAPTIVE_TIME_BUDGET_SECONDS", default=180.0)
 ADAPTIVE_MAX_OUTPUT_EDGE = env.int("ADAPTIVE_MAX_OUTPUT_EDGE", default=4096)
-ADAPTIVE_FACE_UPSCALE_BELOW = env.int("ADAPTIVE_FACE_UPSCALE_BELOW", default=96)
+# Enlarge the whole photograph for a degraded face narrower than this many pixels. 0 (the default) never does: a small face alone is
+# not evidence that the photograph is low-resolution, and whole-photograph upscaling costs several times the compute.
+ADAPTIVE_FACE_UPSCALE_BELOW = env.int("ADAPTIVE_FACE_UPSCALE_BELOW", default=0)
 ADAPTIVE_DEBUG_ARTIFACTS = env.bool("ADAPTIVE_DEBUG_ARTIFACTS", default=False)
+# How a low-light lift gets its colour: "chromaticity" (the source's colour ratios in linear light with the network's luminance;
+# measured to keep colour closest to the clean photograph, docs/evaluation/2026-10-15-lowlight-colour.md) or "legacy" (the source's
+# CIELAB chroma scaled by the square root of the lightness gain; measured 20-40 % paler on dark inputs).
+ADAPTIVE_LOWLIGHT_COLOUR = env("ADAPTIVE_LOWLIGHT_COLOUR", default="chromaticity")
+# Production refuses to start with a model whose commercial licence is unverified (CodeFormer, GFPGAN, ArcFace, RetinaFace weights,
+# Zero-DCE under a learned policy) unless this is set deliberately. See config/production_guard.py and docs/model-licenses/.
+NONCOMMERCIAL_MODELS_ACKNOWLEDGED = env.bool("NONCOMMERCIAL_MODELS_ACKNOWLEDGED", default=False)
 ADAPTIVE_DEBUG_RETENTION_HOURS = env.float("ADAPTIVE_DEBUG_RETENTION_HOURS", default=24.0)
 # Which large models stay loaded: "single" (one at a time), "all", or "auto" (single on a machine with under 12 GiB).
 ENHANCEMENT_MODEL_RESIDENCY = env("ENHANCEMENT_MODEL_RESIDENCY", default="auto")
@@ -347,6 +358,8 @@ RETINEXFORMER_MODEL_SHA256 = env(
 )
 RETINEXFORMER_DEVICE = env("RETINEXFORMER_DEVICE", default="auto")
 RETINEXFORMER_TILE_SIZE = env.int("RETINEXFORMER_TILE_SIZE", default=1024)
+# On a CPU the tile is capped at this (memory and time grow quickly with tile area there); GPUs keep RETINEXFORMER_TILE_SIZE.
+RETINEXFORMER_CPU_TILE_SIZE = env.int("RETINEXFORMER_CPU_TILE_SIZE", default=512)
 RETINEXFORMER_TILE_OVERLAP = env.int("RETINEXFORMER_TILE_OVERLAP", default=32)
 ZERO_DCE_ENABLED = env.bool("ZERO_DCE_ENABLED", default=True)
 ZERO_DCE_MODEL_PATH = env(
@@ -855,11 +868,11 @@ if CELERY_BROKER_TRANSPORT_OPTIONS["visibility_timeout"] <= CELERY_TASK_TIME_LIM
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 SYSTEM_HEALTH_TIMEOUT_SECONDS = env.float("SYSTEM_HEALTH_TIMEOUT_SECONDS", default=1.0)
 FACECLOUD_VERSION = env("FACECLOUD_VERSION", default="dev")
-if GFPGAN_QUEUE_ENABLED:
-    CELERY_TASK_ROUTES = {
-        "enhancement.process_image": {"queue": GFPGAN_QUEUE_NAME},
-        "enhancement.process_batch": {"queue": GFPGAN_QUEUE_NAME},
-    }
+# Send the model-loading tasks to their own queue (empty = the default queue, as before); see config/celery_routes.py.
+ENHANCEMENT_QUEUE_NAME = env("ENHANCEMENT_QUEUE_NAME", default="")
+_task_routes = task_routes(ENHANCEMENT_QUEUE_NAME, GFPGAN_QUEUE_ENABLED, GFPGAN_QUEUE_NAME)
+if _task_routes:
+    CELERY_TASK_ROUTES = _task_routes
 # A "processing" job that has not changed for the task time limit plus this
 # grace has lost its worker; "queued" jobs may legitimately wait much longer.
 # See operations/jobs.py.

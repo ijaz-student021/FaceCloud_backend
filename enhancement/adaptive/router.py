@@ -96,8 +96,14 @@ class AdaptiveEnhancementRouter:
                         "The main face is degraded."), ""
         if operation == ops.UPSCALE:
             small_image = report.resolution["status"] == "low"
-            small_face = main is not None and main.quality == "poor" and main.short_edge < self.config.face_upscale_below
+            # A small face in an otherwise adequate photograph is not a reason to enlarge (and re-render) the whole photograph:
+            # that costs several times the compute and changes pixels nowhere near the face. It stays available behind
+            # ADAPTIVE_FACE_UPSCALE_BELOW (0 = off, the default) for deployments that have measured a benefit.
+            small_face = (self.config.face_upscale_below > 0 and main is not None and main.quality == "poor"
+                          and main.short_edge < self.config.face_upscale_below)
             if not (small_image or small_face):
+                if main is not None and main.quality in ("poor", "too_small") and main.short_edge < 96:
+                    return None, "A small face does not justify enlarging the whole photograph."
                 return None, ""
             if not engines:
                 return None, "No super-resolution model is switched on."

@@ -192,6 +192,8 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
         return adaptive.get("outcome") if isinstance(adaptive, dict) else None
 
     def get_enhancement_summary(self, obj) -> str:
+        if obj.status == "failed":
+            return "The photograph could not be enhanced. Your original photograph is unchanged."
         parameters = obj.applied_parameters if isinstance(obj.applied_parameters, dict) else {}
         adaptive = parameters.get("adaptive")
         return str(adaptive.get("summary", "")) if isinstance(adaptive, dict) else ""

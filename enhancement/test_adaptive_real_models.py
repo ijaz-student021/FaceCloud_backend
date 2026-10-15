@@ -48,6 +48,25 @@ class RealInferenceThroughTheEngineTests(SimpleTestCase):
             np.testing.assert_array_equal(output, source)
             self.assertEqual(adaptive["outcome"], ORIGINAL_PRESERVED)
 
+    def test_a_real_lift_of_a_real_photograph_keeps_its_colour(self):
+        """Real Retinexformer on a real photograph darkened in linear light: the colour gate's own measure stays inside its limits."""
+        if not (installed("RETINEXFORMER_MODEL_PATH") and SAMPLES):
+            self.skipTest("The Retinexformer checkpoint or the sample photographs (FACECLOUD_SAMPLE_PHOTOS) are not available.")
+        from enhancement.adaptive.colour import from_linear, lift_colour_metrics, to_linear
+        from validation.services import OpenCVYuNetFaceDetector
+
+        clean = cv2.imread(str(SAMPLES[0]), cv2.IMREAD_COLOR)
+        clean = cv2.resize(clean, None, fx=640 / max(clean.shape[:2]), fy=640 / max(clean.shape[:2]), interpolation=cv2.INTER_AREA)
+        dark = from_linear(to_linear(clean) / 4.0)
+        service = AdaptiveImageEnhancementService(analyzer=__import__("enhancement.adaptive.analyzer", fromlist=["x"]).ImageQualityAnalyzer(
+            detector=OpenCVYuNetFaceDetector()), config=EngineConfig())
+        output, _level, parameters = service.enhance(dark, allow_biometric_processing=False)
+        self.assertIn("low_light_enhancement", parameters["adaptive"]["operations_applied"])
+        metrics = lift_colour_metrics(dark, output)
+        self.assertGreaterEqual(metrics["saturation_ratio"], 0.85)
+        self.assertLessEqual(metrics["saturation_ratio"], 1.18)
+        self.assertLess(metrics["hue_shift"], 15.0)
+
     def test_a_clean_photograph_runs_no_model_and_is_returned_as_it_is(self):
         source = portrait()
         output, _level, parameters = self.service().enhance(source, allow_biometric_processing=False)

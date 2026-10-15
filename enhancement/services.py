@@ -665,7 +665,7 @@ def _preserve_source_chroma(original, candidate):
     return cv2.cvtColor(protected_lab, cv2.COLOR_LAB2BGR)
 
 
-def _amplify_source_chroma(source, protected, max_gain):
+def _amplify_source_chroma(source, protected, max_gain, exponent=0.5):
     """Restore some of the photo's own colour after a large brightening.
 
     ``protected`` has the learned luminance but the source's colour channels, so a
@@ -674,8 +674,11 @@ def _amplify_source_chroma(source, protected, max_gain):
     colour is smoothed first, since in near-black pixels it is mostly sensor noise,
     and only the source's own colour is used, never a model's, so no colour is
     invented. Returns ``(image, metadata)``.
+
+    ``exponent`` is how much of the lightness growth the colour follows (0.5, the square root, is the long-standing
+    default; 1.0 scales colour in proportion to lightness, which keeps CIELAB hue and chroma/lightness constant).
     """
-    metadata = {"applied": False, "max_gain": float(max_gain), "mean_gain": 1.0}
+    metadata = {"applied": False, "max_gain": float(max_gain), "mean_gain": 1.0, "exponent": float(exponent)}
     if max_gain <= 1.0:
         return protected, metadata
     height, width = source.shape[:2]
@@ -688,7 +691,7 @@ def _amplify_source_chroma(source, protected, max_gain):
     lab_source = cv2.cvtColor(source, cv2.COLOR_BGR2LAB).astype(np.float32)
     lab_output = cv2.cvtColor(protected, cv2.COLOR_BGR2LAB).astype(np.float32)
     ratio = to_small(lab_output[:, :, 0]) / np.maximum(to_small(lab_source[:, :, 0]), 6.0)
-    gain = cv2.GaussianBlur(np.sqrt(np.clip(ratio, 1.0, max_gain)), (0, 0), 3.5)
+    gain = cv2.GaussianBlur(np.power(np.clip(ratio, 1.0, max_gain), exponent), (0, 0), 3.5)
     gain = cv2.resize(gain, (width, height), interpolation=cv2.INTER_LINEAR)
     for channel in (1, 2):
         smooth = to_small(lab_source[:, :, channel])
