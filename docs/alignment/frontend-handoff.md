@@ -303,6 +303,46 @@ Detail: `docs/enhancement/lightweight-pipeline.md` section 5.
 * Previews expire after 24 hours (`expires_at`); a `404` on an old preview means
   re-request it. Saved edits do not expire with previews.
 
+### Optional cloud advisor (Phase C)
+Detail: `docs/enhancement/openai-advisor.md`. Off by default: build the UI so it
+is hidden or disabled unless `GET /api/enhancements/advisor/configuration/`
+says `available: true`.
+
+* **Consent first, separately from face-identity consent.** Show
+  `disclosure` (what is sent / not sent, retention) and the `policy_version`,
+  then `POST /api/enhancements/advisor/consent/ {granted, policy_version}`.
+  `consent.granted` false (or `needs_renewal`) means: ask again. `403
+  advisor_consent_required` from any advisor call means the same. Withdrawal
+  is the same endpoint with `granted: false`.
+* **One explicit action only** ("Suggest settings" / cloud Auto). Never call it on
+  a slider move, on a timer or per camera frame; every call is a paid request.
+  `POST /api/enhancements/results/{id}/advisor/ {intent}` returns `202` with a
+  recommendation (`200` if an identical one already exists). Poll `GET
+  advisor/recommendations/{id}/` until `status` is `completed` (or `failed`,
+  `cancelled`, `superseded`).
+* **Several images:** `POST advisor/runs/ {result_ids, intent}` returns the run
+  and one item per image (`queued`, `reused`, or `skipped` with a reason). Poll
+  `GET advisor/runs/{id}/`; each image succeeds or falls back on its own. `POST
+  .../cancel/` exists on runs and recommendations.
+* **Show the result honestly.** `origin: "openai"` is the advisor's suggestion;
+  `origin: "local_fallback"` means the advisor could not be used
+  (`fallback_reason`, e.g. `refused`, `timeout`, `rate_limited`,
+  `budget_exhausted`, `consent_missing`, `guard_rejected`) and these are the
+  local conservative settings. `action` is `apply`, `no_change` (say "nothing
+  needed fixing") or `manual_review` (say the image needs your judgement). Show
+  `rationale` and `caution_flags`; `adjustments` are the exact slider values to
+  preview through the normal `previews/` endpoint (manual mode).
+* **Apply only when `usable` is true.** `unusable_reason` says why not:
+  `cancelled`, `superseded`, `edited_since` (you saved an edit after asking),
+  `source_changed`, `expired`, `nothing_to_apply`, `not_finished`. `POST
+  advisor/recommendations/{id}/apply/` creates a normal edit version (`202`, then
+  poll the edit as usual); `409 recommendation_stale` carries the reason. Ask
+  again instead of showing an old suggestion.
+* `503 advisor_unavailable` carries `reason` (`disabled`, `not_configured`,
+  `model_not_configured`); `429` is the per-user throttle.
+* The auto-intent default never lifts or darkens overall exposure; the advisor is
+  held to the same rule. Offer "Brighten" as a separate intent.
+
 ### Contact form (B07, public)
 `POST /api/contact/` (no authentication) takes
 `{name, email, company?, reason, message}`.

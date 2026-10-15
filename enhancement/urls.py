@@ -1,5 +1,16 @@
 from django.urls import path
 
+from .advisor_views import (
+    AdvisorConfigurationView,
+    AdvisorConsentView,
+    AdvisorRecommendationApplyView,
+    AdvisorRecommendationCancelView,
+    AdvisorRecommendationCreateView,
+    AdvisorRecommendationDetailView,
+    AdvisorRunCancelView,
+    AdvisorRunCreateView,
+    AdvisorRunDetailView,
+)
 from .views import (
     BatchEnhanceView,
     EnhancementComparisonView,
@@ -30,6 +41,15 @@ app_name = "enhancement"
 
 urlpatterns = [
     path("editor/configuration/", GalleryEditorConfigurationView.as_view(), name="editor-configuration"),
+    path("advisor/configuration/", AdvisorConfigurationView.as_view(), name="advisor-configuration"),
+    path("advisor/consent/", AdvisorConsentView.as_view(), name="advisor-consent"),
+    path("results/<int:result_id>/advisor/", AdvisorRecommendationCreateView.as_view(), name="advisor-recommend"),
+    path("advisor/runs/", AdvisorRunCreateView.as_view(), name="advisor-run-create"),
+    path("advisor/runs/<int:pk>/", AdvisorRunDetailView.as_view(), name="advisor-run-detail"),
+    path("advisor/runs/<int:pk>/cancel/", AdvisorRunCancelView.as_view(), name="advisor-run-cancel"),
+    path("advisor/recommendations/<int:pk>/", AdvisorRecommendationDetailView.as_view(), name="advisor-recommendation"),
+    path("advisor/recommendations/<int:pk>/cancel/", AdvisorRecommendationCancelView.as_view(), name="advisor-recommendation-cancel"),
+    path("advisor/recommendations/<int:pk>/apply/", AdvisorRecommendationApplyView.as_view(), name="advisor-recommendation-apply"),
     path("results/<int:result_id>/previews/", EditPreviewListCreateView.as_view(), name="preview-list-create"),
     path("previews/<int:pk>/", EditPreviewDetailView.as_view(), name="preview-detail"),
     path("previews/<int:pk>/image/", EditPreviewImageView.as_view(), name="preview-image"),

@@ -227,6 +227,43 @@ if not 128 <= ENHANCEMENT_PREVIEW_DEFAULT_EDGE <= ENHANCEMENT_PREVIEW_MAX_EDGE <
 if ENHANCEMENT_PREVIEW_RETENTION_HOURS < 1 or ENHANCEMENT_PREVIEW_KEEP_PER_RESULT < 1:
     raise ImproperlyConfigured("Preview retention and keep-per-result must be at least 1.")
 
+# Optional cloud adjustment advisor (enhancement/advisor_*.py). Off until an
+# operator turns it on AND supplies a key and a model; nothing is sent anywhere
+# otherwise. The key lives only in the environment / secret store: it is never
+# logged, returned by an endpoint, or committed. The model name is deliberately
+# not defaulted (choose an image-capable model your account can use). Requests
+# are normal Responses API calls with store=false, one image per call.
+OPENAI_ADVISOR_ENABLED = env.bool("OPENAI_ADVISOR_ENABLED", default=False)
+OPENAI_API_KEY = env("OPENAI_API_KEY", default="")
+OPENAI_ADVISOR_MODEL = env("OPENAI_ADVISOR_MODEL", default="")
+# Empty means the SDK's default (OpenAI). Set only to a local test server in development;
+# the production guard refuses any value, because previews must not be sent anywhere else.
+OPENAI_BASE_URL = env("OPENAI_BASE_URL", default="")
+OPENAI_ADVISOR_POLICY_VERSION = env("OPENAI_ADVISOR_POLICY_VERSION", default="advisor_policy_v1")
+OPENAI_ADVISOR_IMAGE_EDGE = env.int("OPENAI_ADVISOR_IMAGE_EDGE", default=768)
+OPENAI_ADVISOR_IMAGE_DETAIL = env("OPENAI_ADVISOR_IMAGE_DETAIL", default="low")
+OPENAI_ADVISOR_TIMEOUT_SECONDS = env.float("OPENAI_ADVISOR_TIMEOUT_SECONDS", default=30.0)
+OPENAI_ADVISOR_MAX_OUTPUT_TOKENS = env.int("OPENAI_ADVISOR_MAX_OUTPUT_TOKENS", default=700)
+OPENAI_ADVISOR_MAX_ATTEMPTS = env.int("OPENAI_ADVISOR_MAX_ATTEMPTS", default=3)
+OPENAI_ADVISOR_DEADLINE_SECONDS = env.int("OPENAI_ADVISOR_DEADLINE_SECONDS", default=180)
+OPENAI_ADVISOR_MAX_CONCURRENCY = env.int("OPENAI_ADVISOR_MAX_CONCURRENCY", default=3)
+OPENAI_ADVISOR_MAX_IMAGES_PER_RUN = env.int("OPENAI_ADVISOR_MAX_IMAGES_PER_RUN", default=20)
+OPENAI_ADVISOR_DAILY_REQUESTS_PER_USER = env.int("OPENAI_ADVISOR_DAILY_REQUESTS_PER_USER", default=40)
+OPENAI_ADVISOR_DAILY_REQUESTS_TOTAL = env.int("OPENAI_ADVISOR_DAILY_REQUESTS_TOTAL", default=500)
+OPENAI_ADVISOR_DAILY_TOKENS_TOTAL = env.int("OPENAI_ADVISOR_DAILY_TOKENS_TOTAL", default=1_000_000)
+OPENAI_ADVISOR_RECOMMENDATION_TTL_HOURS = env.int("OPENAI_ADVISOR_RECOMMENDATION_TTL_HOURS", default=24)
+OPENAI_ADVISOR_QUEUE_NAME = env("OPENAI_ADVISOR_QUEUE_NAME", default="")
+OPENAI_ADVISOR_RECORD_RETENTION_DAYS = env.int("OPENAI_ADVISOR_RECORD_RETENTION_DAYS", default=30)
+if OPENAI_ADVISOR_IMAGE_DETAIL not in ("low", "high", "auto"):
+    raise ImproperlyConfigured("OPENAI_ADVISOR_IMAGE_DETAIL must be low, high or auto.")
+if not 256 <= OPENAI_ADVISOR_IMAGE_EDGE <= 2048:
+    raise ImproperlyConfigured("OPENAI_ADVISOR_IMAGE_EDGE must be between 256 and 2048.")
+if min(OPENAI_ADVISOR_MAX_ATTEMPTS, OPENAI_ADVISOR_MAX_CONCURRENCY, OPENAI_ADVISOR_MAX_IMAGES_PER_RUN,
+       OPENAI_ADVISOR_MAX_OUTPUT_TOKENS, OPENAI_ADVISOR_DEADLINE_SECONDS) < 1 or OPENAI_ADVISOR_TIMEOUT_SECONDS <= 0:
+    raise ImproperlyConfigured("The OPENAI_ADVISOR_* attempt, concurrency, size, token and time limits must be positive.")
+if OPENAI_ADVISOR_TIMEOUT_SECONDS * OPENAI_ADVISOR_MAX_ATTEMPTS > OPENAI_ADVISOR_DEADLINE_SECONDS * 2:
+    raise ImproperlyConfigured("OPENAI_ADVISOR_DEADLINE_SECONDS is too short for the timeout and attempts configured.")
+
 # Which enhancement stages may run (enhancement/policy.py). "lightweight_v1"
 # (default): OpenCV and Pillow only; the learned-model settings below
 # (ZERO_DCE_ENABLED, HD_RESTORATION_ENABLED, ...) are ignored. "learned_v1": the
@@ -855,6 +892,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "enhancement.cleanup_previews",
         "schedule": crontab(minute=55, hour="*/2"),
     },
+    "cleanup-advisor-records": {
+        "task": "enhancement.cleanup_advisor",
+        "schedule": crontab(minute=20, hour="*/6"),
+    },
     "purge-camera-sessions": {
         "task": "camera.purge_old_sessions",
         "schedule": crontab(minute=45, hour=3),
@@ -989,6 +1030,7 @@ REST_FRAMEWORK = {
         "verification_status": "60/hour",
         "contact": "5/hour",
         "edit_preview": "1200/hour",
+        "advisor": "60/hour",
         "invitation": "30/hour",
         "password_reset": "10/hour",
         "password_change": "10/hour",

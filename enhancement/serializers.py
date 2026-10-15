@@ -5,6 +5,8 @@ from . import comparison as comparison_engine
 from . import watermark as wm
 from .controls import INTENTS, ControlsSerializer
 from .models import (
+    AdvisorRecommendation,
+    AdvisorRun,
     EditMode,
     EditPreview,
     EnhancementBatchJob,
@@ -136,6 +138,7 @@ class ImageEditVersionSerializer(serializers.ModelSerializer):
             "processing_duration_ms", "task_id", "quality_metadata",
             "failure_reason", "is_current", "download_url", "started_at",
             "finished_at", "created_at", "updated_at", "source_version", "from_preview",
+            "advisor_recommendation",
         ]
 
     def get_download_url(self, obj) -> str | None:
@@ -568,3 +571,104 @@ class PreviewListSerializer(serializers.Serializer):
     source_version = serializers.CharField(help_text="The current version of the enhanced image.")
     latest_revision = serializers.IntegerField(allow_null=True)
     previews = EditPreviewSerializer(many=True)
+
+
+# -- cloud adjustment advisor (Phase C) --------------------------------------------
+
+class AdvisorConsentRequestSerializer(serializers.Serializer):
+    granted = serializers.BooleanField()
+    policy_version = serializers.CharField(
+        max_length=40, help_text="The policy_version shown by GET advisor/configuration/; required to grant.",
+    )
+
+
+class AdvisorRecommendRequestSerializer(serializers.Serializer):
+    intent = serializers.ChoiceField(choices=["auto", "preserve", "brighten"], default="auto")
+
+
+class AdvisorRunRequestSerializer(AdvisorRecommendRequestSerializer):
+    result_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), allow_empty=False, max_length=200,
+        help_text="Enhanced results to advise on; one independent job per image.",
+    )
+
+
+class AdvisorRecommendationSerializer(serializers.ModelSerializer):
+    usable = serializers.SerializerMethodField(help_text="True only while this recommendation can still be applied.")
+    unusable_reason = serializers.SerializerMethodField(
+        help_text="cancelled, superseded, source_changed, edited_since, expired, source_unavailable, "
+                  "not_finished, nothing_to_apply, or empty when usable.",
+    )
+    usage = serializers.SerializerMethodField()
+    guard = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AdvisorRecommendation
+        fields = [
+            "id", "enhancement_result", "run", "intent", "status", "origin", "action", "adjustments", "rationale",
+            "caution_flags", "fallback_reason", "failure_reason", "usable", "unusable_reason", "model",
+            "policy_version", "renderer_version", "render_policy", "source_version", "attempts", "usage", "guard",
+            "created_at", "finished_at", "expires_at",
+        ]
+        read_only_fields = fields
+
+    def _state(self, recommendation):
+        from .advisor_service import staleness
+
+        cached = getattr(recommendation, "_advisor_state", None)
+        if cached is None:
+            if recommendation.status != "completed":
+                reason = recommendation.status if recommendation.status in ("cancelled", "superseded") else "not_finished"
+            else:
+                reason = staleness(recommendation)
+                if not reason and recommendation.action != "apply":
+                    reason = "nothing_to_apply"
+            cached = recommendation._advisor_state = reason
+        return cached
+
+    def get_usable(self, recommendation) -> bool:
+        return not self._state(recommendation)
+
+    def get_unusable_reason(self, recommendation) -> str:
+        return self._state(recommendation)
+
+    def get_usage(self, recommendation) -> dict:
+        return {
+            "input_tokens": recommendation.input_tokens, "output_tokens": recommendation.output_tokens,
+            "latency_ms": recommendation.latency_ms,
+        }
+
+    def get_guard(self, recommendation) -> dict:
+        guard = recommendation.guard or {}
+        return {key: guard[key] for key in (
+            "clamps_and_locks", "reductions", "intent_locks", "safety_strength", "guard_reductions", "safety_reasons",
+        ) if key in guard}
+
+
+class AdvisorRunSerializer(serializers.ModelSerializer):
+    status = serializers.SerializerMethodField()
+    counts = serializers.SerializerMethodField()
+    recommendations = AdvisorRecommendationSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = AdvisorRun
+        fields = ["id", "intent", "status", "counts", "recommendations", "cancelled_at", "created_at"]
+        read_only_fields = fields
+
+    def _rows(self, run):
+        return list(run.recommendations.all())
+
+    def get_status(self, run) -> str:
+        rows = self._rows(run)
+        if any(row.status in ("queued", "processing") for row in rows):
+            return "running"
+        return "cancelled" if run.cancelled_at else "completed"
+
+    def get_counts(self, run) -> dict:
+        rows = self._rows(run)
+        counts = {"total": len(rows)}
+        for row in rows:
+            counts[row.status] = counts.get(row.status, 0) + 1
+        counts["from_advisor"] = sum(1 for row in rows if row.origin == "openai")
+        counts["local_fallback"] = sum(1 for row in rows if row.origin == "local_fallback")
+        return counts

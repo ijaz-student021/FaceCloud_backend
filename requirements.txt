@@ -16,4 +16,6 @@ django-environ
 reportlab
 cryptography>=50.0.1
 gunicorn
+# Optional cloud adjustment advisor (disabled until OPENAI_API_KEY and a model are configured).
+openai>=3.31,<4
 # boto3 and django-storages return with Feature 43 (private cloud storage).

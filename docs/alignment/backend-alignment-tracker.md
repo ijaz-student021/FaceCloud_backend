@@ -114,4 +114,4 @@ separately in `frontend-handoff.md`; nothing here claims a frontend change.
 |---|---|---|
 | A | `lightweight_v1` policy; no automatic lift of dark photos; control contract (sharpness added), float-LAB renderer, local recipe, configuration endpoint | implemented `053e8b0`, `4eac545`, `5c4ff92`; tests and schema pass |
 | B | Bounded authenticated previews, revision-specific atomic outputs, full-resolution save from a stable source, preview cleanup, edit-task hardening (alpha, deletion, duplicate delivery) | implemented; migration `0009` (disposable databases only); see `docs/enhancement/lightweight-pipeline.md` section 5 |
-| C | Optional OpenAI advisor (opt-in, separate consent, structured output), per-image jobs, budgets | planned |
+| C | Optional OpenAI advisor (opt-in, separate consent, structured output), per-image jobs, budgets | implemented; migration `0010` (disposable databases only); tested with a **mocked** provider; real-API validation and advisor-assisted comparison **pending** (no key, no authorised images, no cost cap); see `docs/enhancement/openai-advisor.md` |

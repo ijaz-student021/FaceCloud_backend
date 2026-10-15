@@ -1,0 +1,1016 @@
+{
+  "mode": "local",
+  "intent": "auto",
+  "images": 16,
+  "model": null,
+  "paid_requests_made": 0,
+  "tokens_used": 0,
+  "peak_memory_mb": 220.4,
+  "renderer": "local_tone_renderer_v2",
+  "rows": [
+    {
+      "image": "bright__13.jpg",
+      "intent": "auto",
+      "size": [
+        738,
+        1600
+      ],
+      "measured": {
+        "mean_luminance": 240.61,
+        "contrast_stddev": 36.2,
+        "estimated_noise": 0.0,
+        "defects": [
+          "overexposed_highlights",
+          "low_resolution"
+        ]
+      },
+      "local_only": {
+        "action": "apply",
+        "adjustments": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": -13.95,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "rationale": [
+          "Highlights are clipped; recovered a little."
+        ],
+        "caution_flags": [],
+        "render_ms": 107.3,
+        "outcome": "rendered",
+        "applied": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": -13.95,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "safety_strength": 1.0,
+        "guard_reductions": 0,
+        "mean_luminance": [
+          240.61,
+          234.9
+        ],
+        "contrast_stddev": [
+          36.2,
+          35.11
+        ],
+        "highlight_clipping_percent": [
+          58.086,
+          0.0
+        ],
+        "estimated_noise": [
+          0.0,
+          0.0
+        ],
+        "mean_abs_pixel_change": 5.826
+      }
+    },
+    {
+      "image": "bright__14.jpg",
+      "intent": "auto",
+      "size": [
+        1200,
+        1600
+      ],
+      "measured": {
+        "mean_luminance": 178.58,
+        "contrast_stddev": 43.18,
+        "estimated_noise": 1.0,
+        "defects": [
+          "low_resolution"
+        ]
+      },
+      "local_only": {
+        "action": "no_change",
+        "adjustments": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "rationale": [
+          "No clear technical fault was measured; nothing was changed."
+        ],
+        "caution_flags": [],
+        "render_ms": 9.1,
+        "outcome": "no_change",
+        "applied": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "safety_strength": 1.0,
+        "guard_reductions": 0,
+        "mean_luminance": [
+          178.58,
+          178.58
+        ],
+        "contrast_stddev": [
+          43.18,
+          43.18
+        ],
+        "highlight_clipping_percent": [
+          0.03,
+          0.03
+        ],
+        "estimated_noise": [
+          1.0,
+          1.0
+        ],
+        "mean_abs_pixel_change": 0.0
+      }
+    },
+    {
+      "image": "clean_mid__01.jpg",
+      "intent": "auto",
+      "size": [
+        1200,
+        1600
+      ],
+      "measured": {
+        "mean_luminance": 134.39,
+        "contrast_stddev": 56.16,
+        "estimated_noise": 0.0,
+        "defects": [
+          "low_resolution"
+        ]
+      },
+      "local_only": {
+        "action": "no_change",
+        "adjustments": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "rationale": [
+          "No clear technical fault was measured; nothing was changed."
+        ],
+        "caution_flags": [],
+        "render_ms": 8.1,
+        "outcome": "no_change",
+        "applied": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "safety_strength": 1.0,
+        "guard_reductions": 0,
+        "mean_luminance": [
+          134.39,
+          134.39
+        ],
+        "contrast_stddev": [
+          56.16,
+          56.16
+        ],
+        "highlight_clipping_percent": [
+          1.599,
+          1.599
+        ],
+        "estimated_noise": [
+          0.0,
+          0.0
+        ],
+        "mean_abs_pixel_change": 0.0
+      }
+    },
+    {
+      "image": "clean_mid__02.jpg",
+      "intent": "auto",
+      "size": [
+        1440,
+        1440
+      ],
+      "measured": {
+        "mean_luminance": 156.82,
+        "contrast_stddev": 59.1,
+        "estimated_noise": 1.0,
+        "defects": []
+      },
+      "local_only": {
+        "action": "no_change",
+        "adjustments": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "rationale": [
+          "No clear technical fault was measured; nothing was changed."
+        ],
+        "caution_flags": [],
+        "render_ms": 13.1,
+        "outcome": "no_change",
+        "applied": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "safety_strength": 1.0,
+        "guard_reductions": 0,
+        "mean_luminance": [
+          156.82,
+          156.82
+        ],
+        "contrast_stddev": [
+          59.1,
+          59.1
+        ],
+        "highlight_clipping_percent": [
+          0.697,
+          0.697
+        ],
+        "estimated_noise": [
+          1.0,
+          1.0
+        ],
+        "mean_abs_pixel_change": 0.0
+      }
+    },
+    {
+      "image": "clean_mid__03.jpg",
+      "intent": "auto",
+      "size": [
+        1200,
+        1600
+      ],
+      "measured": {
+        "mean_luminance": 131.76,
+        "contrast_stddev": 60.49,
+        "estimated_noise": 0.0,
+        "defects": [
+          "low_resolution"
+        ]
+      },
+      "local_only": {
+        "action": "no_change",
+        "adjustments": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "rationale": [
+          "No clear technical fault was measured; nothing was changed."
+        ],
+        "caution_flags": [],
+        "render_ms": 9.3,
+        "outcome": "no_change",
+        "applied": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "safety_strength": 1.0,
+        "guard_reductions": 0,
+        "mean_luminance": [
+          131.76,
+          131.76
+        ],
+        "contrast_stddev": [
+          60.49,
+          60.49
+        ],
+        "highlight_clipping_percent": [
+          0.0,
+          0.0
+        ],
+        "estimated_noise": [
+          0.0,
+          0.0
+        ],
+        "mean_abs_pixel_change": 0.0
+      }
+    },
+    {
+      "image": "clean_mid__04.jpg",
+      "intent": "auto",
+      "size": [
+        1200,
+        1600
+      ],
+      "measured": {
+        "mean_luminance": 130.55,
+        "contrast_stddev": 55.19,
+        "estimated_noise": 0.0,
+        "defects": [
+          "low_resolution"
+        ]
+      },
+      "local_only": {
+        "action": "no_change",
+        "adjustments": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "rationale": [
+          "No clear technical fault was measured; nothing was changed."
+        ],
+        "caution_flags": [],
+        "render_ms": 8.4,
+        "outcome": "no_change",
+        "applied": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "safety_strength": 1.0,
+        "guard_reductions": 0,
+        "mean_luminance": [
+          130.55,
+          130.55
+        ],
+        "contrast_stddev": [
+          55.19,
+          55.19
+        ],
+        "highlight_clipping_percent": [
+          0.0,
+          0.0
+        ],
+        "estimated_noise": [
+          0.0,
+          0.0
+        ],
+        "mean_abs_pixel_change": 0.0
+      }
+    },
+    {
+      "image": "jpeg_artifacts__01.jpg",
+      "intent": "auto",
+      "size": [
+        1200,
+        1600
+      ],
+      "measured": {
+        "mean_luminance": 134.41,
+        "contrast_stddev": 56.13,
+        "estimated_noise": 0.0,
+        "defects": [
+          "low_resolution"
+        ]
+      },
+      "local_only": {
+        "action": "no_change",
+        "adjustments": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "rationale": [
+          "No clear technical fault was measured; nothing was changed."
+        ],
+        "caution_flags": [],
+        "render_ms": 7.8,
+        "outcome": "no_change",
+        "applied": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "safety_strength": 1.0,
+        "guard_reductions": 0,
+        "mean_luminance": [
+          134.41,
+          134.41
+        ],
+        "contrast_stddev": [
+          56.13,
+          56.13
+        ],
+        "highlight_clipping_percent": [
+          1.575,
+          1.575
+        ],
+        "estimated_noise": [
+          0.0,
+          0.0
+        ],
+        "mean_abs_pixel_change": 0.0
+      }
+    },
+    {
+      "image": "jpeg_artifacts__02.jpg",
+      "intent": "auto",
+      "size": [
+        1440,
+        1440
+      ],
+      "measured": {
+        "mean_luminance": 156.86,
+        "contrast_stddev": 59.12,
+        "estimated_noise": 1.0,
+        "defects": []
+      },
+      "local_only": {
+        "action": "no_change",
+        "adjustments": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "rationale": [
+          "No clear technical fault was measured; nothing was changed."
+        ],
+        "caution_flags": [],
+        "render_ms": 12.8,
+        "outcome": "no_change",
+        "applied": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "safety_strength": 1.0,
+        "guard_reductions": 0,
+        "mean_luminance": [
+          156.86,
+          156.86
+        ],
+        "contrast_stddev": [
+          59.12,
+          59.12
+        ],
+        "highlight_clipping_percent": [
+          0.648,
+          0.648
+        ],
+        "estimated_noise": [
+          1.0,
+          1.0
+        ],
+        "mean_abs_pixel_change": 0.0
+      }
+    },
+    {
+      "image": "low_key__05.jpg",
+      "intent": "auto",
+      "size": [
+        1024,
+        1536
+      ],
+      "measured": {
+        "mean_luminance": 65.82,
+        "contrast_stddev": 65.09,
+        "estimated_noise": 1.0,
+        "defects": [
+          "low_light",
+          "low_resolution"
+        ]
+      },
+      "local_only": {
+        "action": "no_change",
+        "adjustments": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "rationale": [
+          "The photo is dark; it was not brightened because that may be intended. Choose brighten to lift it."
+        ],
+        "caution_flags": [
+          "dark_photo_not_lifted"
+        ],
+        "render_ms": 15.3,
+        "outcome": "no_change",
+        "applied": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "safety_strength": 1.0,
+        "guard_reductions": 0,
+        "mean_luminance": [
+          65.82,
+          65.82
+        ],
+        "contrast_stddev": [
+          65.09,
+          65.09
+        ],
+        "highlight_clipping_percent": [
+          0.058,
+          0.058
+        ],
+        "estimated_noise": [
+          1.0,
+          1.0
+        ],
+        "mean_abs_pixel_change": 0.0
+      }
+    },
+    {
+      "image": "low_key__06.jpg",
+      "intent": "auto",
+      "size": [
+        1600,
+        1600
+      ],
+      "measured": {
+        "mean_luminance": 93.42,
+        "contrast_stddev": 47.32,
+        "estimated_noise": 0.0,
+        "defects": [
+          "low_light"
+        ]
+      },
+      "local_only": {
+        "action": "no_change",
+        "adjustments": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "rationale": [
+          "The photo is dark; it was not brightened because that may be intended. Choose brighten to lift it."
+        ],
+        "caution_flags": [
+          "dark_photo_not_lifted"
+        ],
+        "render_ms": 10.7,
+        "outcome": "no_change",
+        "applied": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "safety_strength": 1.0,
+        "guard_reductions": 0,
+        "mean_luminance": [
+          93.42,
+          93.42
+        ],
+        "contrast_stddev": [
+          47.32,
+          47.32
+        ],
+        "highlight_clipping_percent": [
+          0.0,
+          0.0
+        ],
+        "estimated_noise": [
+          0.0,
+          0.0
+        ],
+        "mean_abs_pixel_change": 0.0
+      }
+    },
+    {
+      "image": "low_key__07.jpg",
+      "intent": "auto",
+      "size": [
+        720,
+        1600
+      ],
+      "measured": {
+        "mean_luminance": 38.65,
+        "contrast_stddev": 49.58,
+        "estimated_noise": 0.0,
+        "defects": [
+          "severe_low_light",
+          "low_resolution"
+        ]
+      },
+      "local_only": {
+        "action": "no_change",
+        "adjustments": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "rationale": [
+          "The photo is dark; it was not brightened because that may be intended. Choose brighten to lift it."
+        ],
+        "caution_flags": [
+          "dark_photo_not_lifted"
+        ],
+        "render_ms": 5.7,
+        "outcome": "no_change",
+        "applied": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "safety_strength": 1.0,
+        "guard_reductions": 0,
+        "mean_luminance": [
+          38.65,
+          38.65
+        ],
+        "contrast_stddev": [
+          49.58,
+          49.58
+        ],
+        "highlight_clipping_percent": [
+          1.786,
+          1.786
+        ],
+        "estimated_noise": [
+          0.0,
+          0.0
+        ],
+        "mean_abs_pixel_change": 0.0
+      }
+    },
+    {
+      "image": "low_key__08.jpg",
+      "intent": "auto",
+      "size": [
+        900,
+        1600
+      ],
+      "measured": {
+        "mean_luminance": 68.05,
+        "contrast_stddev": 68.62,
+        "estimated_noise": 1.0,
+        "defects": [
+          "low_light",
+          "low_resolution"
+        ]
+      },
+      "local_only": {
+        "action": "no_change",
+        "adjustments": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "rationale": [
+          "The photo is dark; it was not brightened because that may be intended. Choose brighten to lift it."
+        ],
+        "caution_flags": [
+          "dark_photo_not_lifted"
+        ],
+        "render_ms": 6.2,
+        "outcome": "no_change",
+        "applied": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "safety_strength": 1.0,
+        "guard_reductions": 0,
+        "mean_luminance": [
+          68.05,
+          68.05
+        ],
+        "contrast_stddev": [
+          68.62,
+          68.62
+        ],
+        "highlight_clipping_percent": [
+          0.0,
+          0.0
+        ],
+        "estimated_noise": [
+          1.0,
+          1.0
+        ],
+        "mean_abs_pixel_change": 0.0
+      }
+    },
+    {
+      "image": "textured__09.jpg",
+      "intent": "auto",
+      "size": [
+        1023,
+        1537
+      ],
+      "measured": {
+        "mean_luminance": 187.9,
+        "contrast_stddev": 68.12,
+        "estimated_noise": 0.0,
+        "defects": [
+          "low_resolution"
+        ]
+      },
+      "local_only": {
+        "action": "no_change",
+        "adjustments": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "rationale": [
+          "No clear technical fault was measured; nothing was changed."
+        ],
+        "caution_flags": [],
+        "render_ms": 9.1,
+        "outcome": "no_change",
+        "applied": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "safety_strength": 1.0,
+        "guard_reductions": 0,
+        "mean_luminance": [
+          187.9,
+          187.9
+        ],
+        "contrast_stddev": [
+          68.12,
+          68.12
+        ],
+        "highlight_clipping_percent": [
+          0.049,
+          0.049
+        ],
+        "estimated_noise": [
+          0.0,
+          0.0
+        ],
+        "mean_abs_pixel_change": 0.0
+      }
+    },
+    {
+      "image": "textured__10.jpg",
+      "intent": "auto",
+      "size": [
+        866,
+        1600
+      ],
+      "measured": {
+        "mean_luminance": 227.28,
+        "contrast_stddev": 60.34,
+        "estimated_noise": 1.0,
+        "defects": [
+          "overexposed_highlights",
+          "low_resolution"
+        ]
+      },
+      "local_only": {
+        "action": "apply",
+        "adjustments": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": -13.95,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "rationale": [
+          "Highlights are clipped; recovered a little."
+        ],
+        "caution_flags": [],
+        "render_ms": 20.6,
+        "outcome": "rendered",
+        "applied": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": -13.95,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "safety_strength": 1.0,
+        "guard_reductions": 0,
+        "mean_luminance": [
+          227.28,
+          221.86
+        ],
+        "contrast_stddev": [
+          60.34,
+          58.56
+        ],
+        "highlight_clipping_percent": [
+          69.432,
+          0.0
+        ],
+        "estimated_noise": [
+          1.0,
+          1.0
+        ],
+        "mean_abs_pixel_change": 5.438
+      }
+    },
+    {
+      "image": "textured__11.jpg",
+      "intent": "auto",
+      "size": [
+        1023,
+        1537
+      ],
+      "measured": {
+        "mean_luminance": 187.42,
+        "contrast_stddev": 65.71,
+        "estimated_noise": 0.0,
+        "defects": [
+          "low_resolution"
+        ]
+      },
+      "local_only": {
+        "action": "no_change",
+        "adjustments": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "rationale": [
+          "No clear technical fault was measured; nothing was changed."
+        ],
+        "caution_flags": [],
+        "render_ms": 9.0,
+        "outcome": "no_change",
+        "applied": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "safety_strength": 1.0,
+        "guard_reductions": 0,
+        "mean_luminance": [
+          187.42,
+          187.42
+        ],
+        "contrast_stddev": [
+          65.71,
+          65.71
+        ],
+        "highlight_clipping_percent": [
+          0.032,
+          0.032
+        ],
+        "estimated_noise": [
+          0.0,
+          0.0
+        ],
+        "mean_abs_pixel_change": 0.0
+      }
+    },
+    {
+      "image": "textured__12.jpg",
+      "intent": "auto",
+      "size": [
+        755,
+        1157
+      ],
+      "measured": {
+        "mean_luminance": 79.16,
+        "contrast_stddev": 56.74,
+        "estimated_noise": 1.0,
+        "defects": [
+          "low_light",
+          "low_resolution"
+        ]
+      },
+      "local_only": {
+        "action": "no_change",
+        "adjustments": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "rationale": [
+          "The photo is dark; it was not brightened because that may be intended. Choose brighten to lift it."
+        ],
+        "caution_flags": [
+          "dark_photo_not_lifted"
+        ],
+        "render_ms": 9.1,
+        "outcome": "no_change",
+        "applied": {
+          "brightness": 0.0,
+          "contrast": 0.0,
+          "shadows": 0.0,
+          "highlights": 0.0,
+          "saturation": 0.0,
+          "warmth": 0.0,
+          "sharpness": 0.0
+        },
+        "safety_strength": 1.0,
+        "guard_reductions": 0,
+        "mean_luminance": [
+          79.16,
+          79.16
+        ],
+        "contrast_stddev": [
+          56.74,
+          56.74
+        ],
+        "highlight_clipping_percent": [
+          0.0,
+          0.0
+        ],
+        "estimated_noise": [
+          1.0,
+          1.0
+        ],
+        "mean_abs_pixel_change": 0.0
+      }
+    }
+  ]
+}

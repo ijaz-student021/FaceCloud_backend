@@ -512,3 +512,44 @@ def cleanup_edit_previews():
     from .previews import cleanup_expired
 
     return cleanup_expired()
+
+
+@shared_task(
+    bind=True,
+    name="enhancement.advisor_recommend",
+    acks_late=True,
+    autoretry_for=TRANSIENT_INFRASTRUCTURE_ERRORS,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    max_retries=200,  # database errors and waits behind the concurrency limit; the job's own deadline ends it sooner
+)
+def advisor_recommend(self, recommendation_id):
+    """Produce the cloud advisor's suggestion for ONE image (see advisor_service.py).
+
+    Each image is its own job, so one failing never fails another. A wait behind the
+    concurrency limit or a transient provider error re-queues this job; its deadline,
+    capped attempts and the daily budgets bound the total work and spend.
+    """
+    from .advisor_service import RetryLater, run_recommendation
+
+    try:
+        status = run_recommendation(recommendation_id)
+    except RetryLater as wait:
+        raise self.retry(countdown=wait.countdown, exc=wait) from None
+    return {"recommendation_id": recommendation_id, "status": status}
+
+
+@shared_task(
+    name="enhancement.cleanup_advisor",
+    autoretry_for=TRANSIENT_INFRASTRUCTURE_ERRORS,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    max_retries=3,
+)
+def cleanup_advisor_records():
+    """Close advisor jobs no worker finished, and delete old records (counts and codes only; no images are kept)."""
+    from .advisor_service import cleanup_records
+
+    return cleanup_records()

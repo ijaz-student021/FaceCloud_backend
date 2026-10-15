@@ -1,0 +1,128 @@
+[
+  {
+    "scenario": "concurrency_limit_across_processes",
+    "expects": "6 jobs on 3 workers; at most 2 provider requests at once; all completed",
+    "passed": true,
+    "peak_in_flight": 2,
+    "provider_requests": 6,
+    "outcomes": [
+      [
+        "completed",
+        "openai",
+        ""
+      ],
+      [
+        "completed",
+        "openai",
+        ""
+      ],
+      [
+        "completed",
+        "openai",
+        ""
+      ],
+      [
+        "completed",
+        "openai",
+        ""
+      ],
+      [
+        "completed",
+        "openai",
+        ""
+      ],
+      [
+        "completed",
+        "openai",
+        ""
+      ]
+    ]
+  },
+  {
+    "scenario": "failures_stay_with_their_image",
+    "expects": "one 429 retried and then served, one 401 falls back, four unaffected; each paid attempt in the ledger",
+    "passed": true,
+    "outcomes": [
+      [
+        "completed",
+        "openai",
+        ""
+      ],
+      [
+        "completed",
+        "openai",
+        ""
+      ],
+      [
+        "completed",
+        "openai",
+        ""
+      ],
+      [
+        "completed",
+        "openai",
+        ""
+      ],
+      [
+        "completed",
+        "local_fallback",
+        "not_authorized"
+      ],
+      [
+        "completed",
+        "openai",
+        ""
+      ]
+    ],
+    "ledger": [
+      "not_authorized",
+      "ok",
+      "ok",
+      "ok",
+      "ok",
+      "ok",
+      "rate_limited"
+    ],
+    "provider_requests": 7
+  },
+  {
+    "scenario": "duplicate_delivery_sends_once",
+    "expects": "one provider request, attempts == 1",
+    "passed": true,
+    "provider_requests": 1
+  },
+  {
+    "scenario": "cancel_discards_inflight_answers",
+    "expects": "every job of the run ends cancelled; no answer is published",
+    "passed": true,
+    "outcomes": [
+      [
+        "cancelled",
+        "",
+        ""
+      ],
+      [
+        "cancelled",
+        "",
+        ""
+      ],
+      [
+        "cancelled",
+        "",
+        ""
+      ],
+      [
+        "cancelled",
+        "",
+        ""
+      ]
+    ],
+    "provider_requests": 2
+  },
+  {
+    "scenario": "requests_carry_no_identity",
+    "expects": "no email, username or file name in any request body",
+    "passed": true,
+    "requests": 2
+  }
+]

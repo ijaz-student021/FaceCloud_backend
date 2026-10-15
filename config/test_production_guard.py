@@ -129,6 +129,15 @@ class GuardRuleTests(SimpleTestCase):
         self.assertTrue(any("CACHE_URL" in problem for problem in self.problems(CACHES=local)))
         self.assertTrue(any("CACHE_URL" in problem for problem in self.problems(CACHES={})))
 
+    def test_the_cloud_advisor_may_be_off_or_complete_but_never_half_configured(self):
+        self.assertEqual(self.problems(OPENAI_ADVISOR_ENABLED=False), [])
+        self.assertFlags("OPENAI_API_KEY", OPENAI_ADVISOR_ENABLED=True, OPENAI_API_KEY="", OPENAI_ADVISOR_MODEL="m")
+        self.assertFlags("OPENAI_API_KEY", OPENAI_ADVISOR_ENABLED=True, OPENAI_API_KEY="changeme", OPENAI_ADVISOR_MODEL="m")
+        self.assertFlags("OPENAI_ADVISOR_MODEL", OPENAI_ADVISOR_ENABLED=True, OPENAI_API_KEY=random_secret(48), OPENAI_ADVISOR_MODEL="")
+        self.assertFlags("OPENAI_BASE_URL", OPENAI_ADVISOR_ENABLED=True, OPENAI_API_KEY=random_secret(48),
+                         OPENAI_ADVISOR_MODEL="m", OPENAI_BASE_URL="http://127.0.0.1:9/v1")
+        self.assertEqual(self.problems(OPENAI_ADVISOR_ENABLED=True, OPENAI_API_KEY=random_secret(48), OPENAI_ADVISOR_MODEL="m"), [])
+
     def test_policy_rules(self):
         self.assertFlags("BIOMETRIC_CONSENT_REQUIRED must be True", BIOMETRIC_CONSENT_REQUIRED=False)
         for threshold in (0, 2, 21):

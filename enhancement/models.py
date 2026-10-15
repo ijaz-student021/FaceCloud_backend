@@ -232,6 +232,9 @@ class ImageEditVersion(models.Model):
     from_preview = models.ForeignKey(
         "EditPreview", null=True, blank=True, on_delete=models.SET_NULL, related_name="saved_edits",
     )
+    advisor_recommendation = models.ForeignKey(
+        "AdvisorRecommendation", null=True, blank=True, on_delete=models.SET_NULL, related_name="applied_edits",
+    )
     claim_token = models.CharField(max_length=32, blank=True, default="")
     claimed_at = models.DateTimeField(null=True, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
@@ -338,6 +341,134 @@ def delete_preview_source_files(sender, instance, **kwargs):
     for field in (instance.file, instance.baseline_file):
         if field:
             field.storage.delete(field.name)
+
+
+class AdvisorConsent(models.Model):
+    """Append-only history of the user's permission to send an image preview to the cloud advisor.
+
+    Separate from identity (biometric) consent: it is about sending a bounded
+    preview of a photo to an external service, nothing to do with faces or
+    embeddings. The newest row is the current state; a grant counts only for the
+    ``policy_version`` it names.
+    """
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="advisor_consents")
+    granted = models.BooleanField()
+    policy_version = models.CharField(max_length=40)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [models.Index(fields=["user", "-created_at"])]
+
+
+class AdvisorStatus(models.TextChoices):
+    QUEUED = "queued", "Queued"
+    PROCESSING = "processing", "Processing"
+    COMPLETED = "completed", "Completed"
+    FAILED = "failed", "Failed"
+    CANCELLED = "cancelled", "Cancelled"
+    SUPERSEDED = "superseded", "Superseded"
+
+
+ADVISOR_ACTIVE_STATUSES = (AdvisorStatus.QUEUED, AdvisorStatus.PROCESSING)
+
+
+class AdvisorRun(models.Model):
+    """A group of per-image recommendations requested together; each image is its own job."""
+
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="advisor_runs")
+    intent = models.CharField(max_length=10, default="auto")
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["owner", "-created_at"])]
+
+
+class AdvisorRecommendation(models.Model):
+    """A suggestion of editor settings for one image, tied to the exact conditions it was made under.
+
+    It carries no pixels. It is usable only while its ``source_version`` is still
+    the image's current one, no newer edit exists (``baseline_edit_id``), it has
+    not been cancelled and it has not expired.
+    """
+
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="advisor_recommendations")
+    enhancement_result = models.ForeignKey(
+        ImageEnhancementResult, on_delete=models.CASCADE, related_name="advisor_recommendations",
+    )
+    run = models.ForeignKey(AdvisorRun, null=True, blank=True, on_delete=models.CASCADE, related_name="recommendations")
+    # What it was made for.
+    intent = models.CharField(max_length=10, default="auto")
+    model = models.CharField(max_length=80, blank=True)
+    policy_version = models.CharField(max_length=40)
+    renderer_version = models.CharField(max_length=40)
+    render_policy = models.CharField(max_length=40, blank=True)
+    source_version = models.CharField(max_length=32)
+    baseline_edit_id = models.PositiveBigIntegerField(default=0)
+    request_key = models.CharField(max_length=64, db_index=True)
+    # State.
+    status = models.CharField(max_length=12, choices=AdvisorStatus.choices, default=AdvisorStatus.QUEUED)
+    origin = models.CharField(max_length=16, blank=True)  # "openai" | "local_fallback"
+    action = models.CharField(max_length=14, blank=True)  # apply | no_change | manual_review
+    suggested = models.JSONField(default=dict, blank=True)     # the reply as received, validated
+    adjustments = models.JSONField(default=dict, blank=True)   # what may be applied, after every guard
+    rationale = models.TextField(blank=True)
+    caution_flags = models.JSONField(default=list, blank=True)
+    guard = models.JSONField(default=dict, blank=True)         # clamps, intent locks, render-guard reductions
+    local_recipe = models.JSONField(default=dict, blank=True)
+    fallback_reason = models.CharField(max_length=48, blank=True)
+    failure_reason = models.TextField(blank=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    input_tokens = models.PositiveIntegerField(default=0)
+    output_tokens = models.PositiveIntegerField(default=0)
+    latency_ms = models.PositiveIntegerField(default=0)
+    task_id = models.CharField(max_length=255, blank=True, db_index=True)
+    claim_token = models.CharField(max_length=32, blank=True, default="")
+    deadline_at = models.DateTimeField()
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["enhancement_result", "request_key", "-created_at"]),
+            models.Index(fields=["owner", "-created_at"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["enhancement_result"],
+                condition=Q(status__in=["queued", "processing"]),
+                name="enhancement_one_active_advisor_per_result",
+            ),
+        ]
+
+
+class AdvisorApiCall(models.Model):
+    """One paid request to the provider: the ledger that daily request and token budgets are counted from.
+
+    Holds counts and an outcome code only, never an image, a prompt or a reply.
+    """
+
+    recommendation = models.ForeignKey(
+        AdvisorRecommendation, null=True, on_delete=models.SET_NULL, related_name="api_calls",
+    )
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    model = models.CharField(max_length=80, blank=True)
+    outcome = models.CharField(max_length=32, default="started")
+    input_tokens = models.PositiveIntegerField(default=0)
+    output_tokens = models.PositiveIntegerField(default=0)
+    latency_ms = models.PositiveIntegerField(default=0)
+    started_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-started_at", "-id"]
+        indexes = [models.Index(fields=["started_at"]), models.Index(fields=["owner", "started_at"])]
 
 
 def comparison_upload_path(instance, filename):

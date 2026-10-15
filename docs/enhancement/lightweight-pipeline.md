@@ -2,7 +2,8 @@
 
 Status: implemented and tested on branch `feat/lightweight-enhancement`.
 Phase A is sections 1-4; Phase B (previews, full-resolution saving, versions)
-is section 5. Phase C (optional OpenAI advisor) is not part of this document yet.
+is section 5. Phase C (optional OpenAI advisor) is documented in
+`openai-advisor.md`.
 
 ## 1. Rendering policy
 

@@ -451,7 +451,7 @@ class GalleryEditListCreateView(APIView):
         )
 
 
-def start_edit(request, result, mode, adjustments, *, claimed_version="", preview=None):
+def start_edit(request, result, mode, adjustments, *, claimed_version="", preview=None, advisor_recommendation=None):
     """Queue a full-resolution edit of ``result``; shared by a direct save and a save from a preview."""
     if not result.enhanced_file:
         return Response({"detail": "The enhanced image is unavailable."}, status=status.HTTP_410_GONE)
@@ -463,6 +463,7 @@ def start_edit(request, result, mode, adjustments, *, claimed_version="", previe
         edit = ImageEditVersion.objects.create(
             owner=request.user, enhancement_result=result, mode=mode, requested_adjustments=adjustments,
             status=EnhancementStatus.QUEUED, task_id=task_id, source_version=version, from_preview=preview,
+            advisor_recommendation=advisor_recommendation,
         )
     except IntegrityError as error:
         raise ValidationError("This image already has an active gallery-edit operation.") from error
