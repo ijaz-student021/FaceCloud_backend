@@ -70,6 +70,15 @@ identity is **never** accepted. Among candidates that pass, `improvement - 2 x c
 
 Multi-face photographs: after CodeFormer, each face is composited back **only if its own identity check passes**.
 
+## 4a. Face restoration is off by default, deliberately
+
+`CODEFORMER_ENABLED` and `GFPGAN_ENABLED` default to `False`, so under `adaptive_v1` the engine does low light, denoise, deblur and
+upscaling but **does not restore faces** until an operator switches a face restorer on, and it says so in `operations_skipped`.
+Reason: the identity gate can only compare a restored face with the *degraded input* it was given. In the benchmark it measured
+0.85-0.91 where ArcFace similarity to the true clean photograph had fallen by 0.07-0.13, so the gate cannot see the drift that
+matters, and the 0.70 ArcFace threshold rests on five data points. Raising the threshold alone would not make that guarantee.
+Turn restoration on only after validating it on a larger, more diverse set of faces than was available here.
+
 ## 5. Outcomes and the API contract
 
 `GET /api/enhancements/results/{id}/` now also returns:
