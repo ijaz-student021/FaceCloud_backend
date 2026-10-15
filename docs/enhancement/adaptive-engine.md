@@ -61,13 +61,21 @@ Several independent signals, each with measured thresholds (`scripts/calibrate_a
 ## 4. The validator (`validator.py`)
 
 A candidate must pass every **gate**: geometry, data consistency (shrunk back and softened it must still look like its parent,
-the main defence against hallucination), colour (low-frequency chroma may not drift), artifacts (overshoot/halos, highlight
-clipping, noise growth), **identity** (per-face embedding similarity at or above the provider's threshold, and landmarks that
-did not move) and an operation-specific **does it fix the defect** test. A generative face restoration with no verifiable
-identity is **never** accepted. Among candidates that pass, `improvement - 2 x change` decides, never "sharpest" or
-"brightest". Limits and their provenance are in `Limits`. PSNR, SSIM and optional LPIPS exist for reference-based tests
-(`reference_metrics`); there is no reference in the wild, and no number here replaces looking at the photograph.
+the main defence against hallucination), colour, artifacts (overshoot/halos, highlight clipping, noise growth), **identity**
+(per-face embedding similarity at or above the provider's threshold, and landmarks that did not move) and an operation-specific
+**does it fix the defect** test. A generative face restoration with no verifiable identity is **never** accepted. Among candidates that
+pass, `improvement - 2 x change` decides, never "sharpest" or "brightest" (the factor 2 is a heuristic, not a fitted value). Limits and
+their provenance are in `Limits`. PSNR, SSIM and optional LPIPS exist for reference-based tests (`reference_metrics`); there is no
+reference in the wild, and no number here replaces looking at the photograph.
 
+*Colour.* Most operations: the low-frequency CIELAB chroma may not drift. A **low-light lift** changes brightness by design, so it is
+judged on chromaticity in linear light instead (hue shift, and *saturation ratio* against its parent, limits 0.85-1.18): a lift that
+turns colours grey (`colour_washed_out`), over-saturates (`colour_oversaturated`) or rotates hue (`colour_drift`) is rejected. The lift
+itself takes its colours from the photograph and only its brightness from Retinexformer
+(`adaptive/colour.py`, measured in `docs/evaluation/2026-10-15-lowlight-colour.md`).
+
+*Noise.* `noise.level` is the larger of two measures (the 3x3 residual and a flat-region grain measure that sees the coarse grain a
+lift leaves), 1.0 = "moderate". A lift may raise it up to 1.0 (the denoise stage takes over from there) and at most 3x beyond that.
 Multi-face photographs: after CodeFormer, each face is composited back **only if its own identity check passes**.
 
 ## 4a. Face restoration is off by default, deliberately
@@ -79,6 +87,18 @@ Reason: the identity gate can only compare a restored face with the *degraded in
 matters, and the 0.70 ArcFace threshold rests on five data points. Raising the threshold alone would not make that guarantee.
 Turn restoration on only after validating it on a larger, more diverse set of faces than was available here.
 
+## 4b. Routing decisions that were measured
+
+* **Motion deblurring** is routed from the blur type; on held-out degradations the typing is approximate (defocus sent to the model
+  10/32, motion missed 16/40 by how the copy was made), but the router captured 90 % of the model's gain and the validator is the
+  second gate. Measured in `docs/evaluation/2026-10-15-blur-routing.md`; no threshold was changed.
+* **Super-resolution** runs only for a small photograph (short edge under 480 px) at x2. A small face alone no longer enlarges the
+  whole photograph (`ADAPTIVE_FACE_UPSCALE_BELOW=0`; the router records "A small face does not justify enlarging the whole
+  photograph"): that is several times the compute for pixels nowhere near the face, with no measured benefit. Pixel metrics rate Real-ESRGAN
+  1-3 dB *below* bicubic (model sheet), so it is a visual-quality option, not a measured gain.
+* **Denoising** offers blend 1.0 and 0.65 and lets the validator choose, because 65 % beat full strength on light-to-moderate noise and
+  full strength won on heavy noise (`docs/evaluation/2026-10-15-denoising.md`).
+
 ## 5. Outcomes and the API contract
 
 `GET /api/enhancements/results/{id}/` now also returns:
@@ -89,7 +109,18 @@ Turn restoration on only after validating it on a larger, more diverse set of fa
 | `enhancement_summary` | one plain sentence, safe to show: "Enhanced: brightened the dark subject, reduced noise. Not fully corrected: Defocus blur cannot be recovered reliably." |
 
 plus the existing `status` (`queued/processing/completed/failed`), `output_width`, `output_height`, `download_url`,
-`identity_status`. `original_preserved` means the output file holds the original pixels; the UI must not call it enhanced.
+`identity_status`. `original_preserved` means the output file holds the original pixels; the UI must not call it enhanced. A failed job
+returns `enhancement_outcome: "failed"` and the summary "The photograph could not be enhanced. Your original photograph is unchanged."
+(never an internal error text).
+
+`applied_parameters.identity_verification` (additive, existing keys unchanged) now carries `state`, the plain answer:
+`verified` (every face in the result compared with the upload and held), `uncertain` (a comparison was attempted but was not
+reliable), `not_verifiable` (no comparison was possible: no consent, no identity model, or the uploaded face too dark or small to embed;
+`notice` says so), `not_applicable` (no face, or the photograph was not changed). `status` keeps its earlier values. An unavailable
+comparison is never reported as passed, and `verified` only means similar to the uploaded photograph, not a guarantee.
+Each run also writes one structured log line (`adaptive_enhancement {...}`: outcome, operations, per-stage seconds, models, rejection
+reasons; no pixels, paths or user data) and `python manage.py adaptive_report --days 7` aggregates outcome rates, P50/P95 latency, queue
+wait, rejection reasons and models run from the stored job records.
 `applied_parameters.adaptive` has the full record (analysis, stages, skipped operations with reasons); intermediate images are
 **not** stored in production.
 

@@ -3,6 +3,11 @@
 Prepared 2026-10-15 for the 2026-10-20 defence. Branch `feat/focused-model-set`, Draft PR #72 (base `feat/lightweight-enhancement`, stacked on #71).
 Nothing is merged or deployed. Implementation is frozen except for verified critical defects; one was found and fixed (section 5).
 
+> **Update, later on 2026-10-15 (engineering review, `docs/ENGINEERING_REPORT_2026-10-15.md`).** After this report was written a review found and fixed the
+> grey-brown colour of lifted photographs (the brown shirt now stays brown; section 4's "visual honesty" paragraph is superseded), made identity reporting explicit
+> (`verified` / `uncertain` / `not_verifiable`), bounded model calls by the time budget, and added a production guard against unlicensed models. The local suite is now
+> 1,914 tests (11 skipped without the optional real-model inputs). CI for the new commit is reported in the engineering report. Everything else below still stands, including section 6.
+
 ## 1. Continuous integration (PR #72)
 
 All three jobs **passed** on the final code commit `5f5edc6` (GitHub Actions run 38761435937, 2026-10-15):
