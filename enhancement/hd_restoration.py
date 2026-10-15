@@ -52,7 +52,15 @@ def _device(torch):
     )
 
 
-def _build_nafnet(nn, functional):
+# NAFNet variants (megvii-research/NAFNet, MIT): block counts per encoder stage, middle and decoder stage.
+NAFNET_CONFIGS = {
+    "nafnet": {"enc": (1, 1, 1, 28), "middle": 1, "dec": (1, 1, 1, 1)},        # GoPro-width64: motion deblurring
+    "nafnet_sidd": {"enc": (2, 2, 4, 8), "middle": 12, "dec": (2, 2, 2, 2)},   # SIDD-width64: real-noise denoising
+}
+
+
+def _build_nafnet(nn, functional, kind="nafnet"):
+    config = NAFNET_CONFIGS[kind]
     torch, _nn, _functional = _runtime()
 
     class LayerNorm2d(nn.Module):
@@ -112,12 +120,12 @@ def _build_nafnet(nn, functional):
             self.downs = nn.ModuleList()
             self.ups = nn.ModuleList()
             channels = width
-            for count in (1, 1, 1, 28):
+            for count in config["enc"]:
                 self.encoders.append(nn.Sequential(*[NAFBlock(channels) for _ in range(count)]))
                 self.downs.append(nn.Conv2d(channels, channels * 2, 2, 2))
                 channels *= 2
-            self.middle_blks = nn.Sequential(NAFBlock(channels))
-            for count in (1, 1, 1, 1):
+            self.middle_blks = nn.Sequential(*[NAFBlock(channels) for _ in range(config["middle"])])
+            for count in config["dec"]:
                 self.ups.append(nn.Sequential(nn.Conv2d(channels, channels * 2, 1, bias=False), nn.PixelShuffle(2)))
                 channels //= 2
                 self.decoders.append(nn.Sequential(*[NAFBlock(channels) for _ in range(count)]))
@@ -200,6 +208,9 @@ def _load_model(kind):
     if kind == "nafnet":
         path = _verified_path(settings.NAFNET_MODEL_PATH, settings.NAFNET_MODEL_SHA256, "NAFNet")
         builder = _build_nafnet
+    elif kind == "nafnet_sidd":
+        path = _verified_path(settings.NAFNET_SIDD_MODEL_PATH, settings.NAFNET_SIDD_MODEL_SHA256, "NAFNet-SIDD")
+        builder = lambda nn_, functional_: _build_nafnet(nn_, functional_, "nafnet_sidd")  # noqa: E731
     else:
         path = _verified_path(settings.REALESRGAN_MODEL_PATH, settings.REALESRGAN_MODEL_SHA256, "Real-ESRGAN")
         builder = _build_realesrgan
@@ -254,6 +265,29 @@ def deblur_with_nafnet(image):
     return output, {
         "provider": "nafnet_gopro_width64",
         "checkpoint_sha256_prefix": settings.NAFNET_MODEL_SHA256[:12],
+        "chroma_shift": round(chroma_shift, 3),
+        "luminance_shift": round(luminance_shift, 3),
+        **inference,
+    }
+
+
+def denoise_with_nafnet(image):
+    """Real-noise denoising with NAFNet-SIDD-width64, held to the same fidelity limits as the deblurring model."""
+    if image is None or image.size == 0:
+        raise HDRestorationUnavailable("The NAFNet-SIDD input image is invalid.")
+    output, inference = _infer("nafnet_sidd", "NAFNet-SIDD", image, 1)
+    source_lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB).astype(np.float32)
+    output_lab = cv2.cvtColor(output, cv2.COLOR_BGR2LAB).astype(np.float32)
+    chroma_shift = float(np.mean(np.abs(output_lab[:, :, 1:] - source_lab[:, :, 1:])))
+    luminance_shift = float(np.mean(np.abs(output_lab[:, :, 0] - source_lab[:, :, 0])))
+    if (
+        chroma_shift > settings.NAFNET_MAX_MEAN_CHROMA_SHIFT
+        or luminance_shift > settings.NAFNET_MAX_MEAN_LUMINANCE_SHIFT
+    ):
+        raise HDRestorationUnavailable("The NAFNet-SIDD candidate failed the image-fidelity guard.")
+    return output, {
+        "provider": "nafnet_sidd_width64",
+        "checkpoint_sha256_prefix": settings.NAFNET_SIDD_MODEL_SHA256[:12],
         "chroma_shift": round(chroma_shift, 3),
         "luminance_shift": round(luminance_shift, 3),
         **inference,

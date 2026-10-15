@@ -1,8 +1,16 @@
 {
-  "generated_at": "2026-09-26T09:43:01+00:00",
+  "generated_at": "2026-10-15T12:58:41+00:00",
   "note": "File names, sizes and SHA-256 checksums only. The model files themselves are not in Git.",
   "roots": {
     "models": {
+      "arcface/w600k_r50.onnx": {
+        "size": 174383860,
+        "sha256": "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43"
+      },
+      "codeformer/codeformer.pth": {
+        "size": 376637898,
+        "sha256": "1009e537e0c2a07d4cabce6355f53cb66767cd4b4297ec7a4a64ca4b8a5684b7"
+      },
       "face_recognition_sface_2021dec.onnx": {
         "size": 38696353,
         "sha256": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
@@ -19,9 +27,17 @@
         "size": 271778961,
         "sha256": "329d3ab4077b8d6b7ff61de376e483714667960bf85be027bf4335cda701196f"
       },
+      "NAFNet-SIDD-width64.pth": {
+        "size": 464154961,
+        "sha256": "cd685efaae01f7c4e9951f2deab05780079c8eb1e49ed664b72f6db04dabb445"
+      },
       "RealESRGAN_x4plus.pth": {
         "size": 67040989,
         "sha256": "4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1"
+      },
+      "Retinexformer_NTIRE.pth": {
+        "size": 6476406,
+        "sha256": "ba460a6882090ff3312c11fe96b3e7dc5be8e013b8c3b3a7ef6a529cc5ff27fa"
       },
       "yunet_s_dynamic.onnx": {
         "size": 237823,

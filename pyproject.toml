@@ -1,6 +1,6 @@
 # Tooling configuration only; the project is installed from requirements.txt.
 [tool.ruff]
-extend-exclude = ["venv", ".runtime", "notebooks", "media"]
+extend-exclude = ["venv", ".runtime", "notebooks", "media", "enhancement/archs"]  # vendored third-party networks
 
 [tool.ruff.lint]
 # Pyflakes (unused imports and variables, undefined names) and syntax errors. Widen deliberately.

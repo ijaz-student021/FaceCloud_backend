@@ -298,6 +298,16 @@ HD_RESTORATION_OUTPUT_SCALE = env.int("HD_RESTORATION_OUTPUT_SCALE", default=2)
 REALESRGAN_OUTPUT_BLEND = env.float("REALESRGAN_OUTPUT_BLEND", default=0.35)
 HD_RESTORATION_TILE_SIZE = env.int("HD_RESTORATION_TILE_SIZE", default=256)
 HD_RESTORATION_TILE_OVERLAP = env.int("HD_RESTORATION_TILE_OVERLAP", default=24)
+NAFNET_SIDD_MODEL_PATH = env(
+    "NAFNET_SIDD_MODEL_PATH",
+    default=str(BASE_DIR / ".runtime" / "models" / "NAFNet-SIDD-width64.pth"),
+)
+NAFNET_SIDD_MODEL_SHA256 = env(
+    "NAFNET_SIDD_MODEL_SHA256",
+    default="cd685efaae01f7c4e9951f2deab05780079c8eb1e49ed664b72f6db04dabb445",
+)
+# NAFNet-SIDD (real-noise denoising) replaces the classical non-local-means pass when switched on.
+NAFNET_DENOISE_ENABLED = env.bool("NAFNET_DENOISE_ENABLED", default=False)
 NAFNET_MAX_MEAN_CHROMA_SHIFT = env.float("NAFNET_MAX_MEAN_CHROMA_SHIFT", default=8.0)
 NAFNET_MAX_MEAN_LUMINANCE_SHIFT = env.float("NAFNET_MAX_MEAN_LUMINANCE_SHIFT", default=30.0)
 HD_RESTORATION_MAX_NATIVE_OUTPUT_PIXELS = env.int(
@@ -313,6 +323,19 @@ HD_RESTORATION_MAX_OUTPUT_PIXELS = env.int("HD_RESTORATION_MAX_OUTPUT_PIXELS", d
 # After that the stage gives up and the pipeline keeps its last safe image.
 ENHANCEMENT_OOM_MAX_RETRIES = env.int("ENHANCEMENT_OOM_MAX_RETRIES", default=2)
 ENHANCEMENT_MIN_TILE_SIZE = env.int("ENHANCEMENT_MIN_TILE_SIZE", default=64)
+# Retinexformer (ICCV 2023, MIT): the preferred low-light model when switched on; Zero-DCE is the fallback.
+RETINEXFORMER_ENABLED = env.bool("RETINEXFORMER_ENABLED", default=False)
+RETINEXFORMER_MODEL_PATH = env(
+    "RETINEXFORMER_MODEL_PATH",
+    default=str(BASE_DIR / ".runtime" / "models" / "Retinexformer_NTIRE.pth"),
+)
+RETINEXFORMER_MODEL_SHA256 = env(
+    "RETINEXFORMER_MODEL_SHA256",
+    default="ba460a6882090ff3312c11fe96b3e7dc5be8e013b8c3b3a7ef6a529cc5ff27fa",
+)
+RETINEXFORMER_DEVICE = env("RETINEXFORMER_DEVICE", default="auto")
+RETINEXFORMER_TILE_SIZE = env.int("RETINEXFORMER_TILE_SIZE", default=1024)
+RETINEXFORMER_TILE_OVERLAP = env.int("RETINEXFORMER_TILE_OVERLAP", default=32)
 ZERO_DCE_ENABLED = env.bool("ZERO_DCE_ENABLED", default=True)
 ZERO_DCE_MODEL_PATH = env(
     "ZERO_DCE_MODEL_PATH",
@@ -472,6 +495,21 @@ GFPGAN_DEVICE = env("GFPGAN_DEVICE", default="auto")
 GFPGAN_RESTORATION_WEIGHT = env.float(
     "GFPGAN_RESTORATION_WEIGHT", default=0.30
 )
+# CodeFormer (NeurIPS 2022; S-Lab License 1.0: non-commercial use only): the preferred face restorer when
+# switched on; GFPGAN is the alternative. ``fidelity`` is CodeFormer's w: 0 = quality, 1 = fidelity to the input.
+CODEFORMER_ENABLED = env.bool("CODEFORMER_ENABLED", default=False)
+CODEFORMER_MODEL_PATH = env(
+    "CODEFORMER_MODEL_PATH",
+    default=str(BASE_DIR / ".runtime" / "models" / "codeformer" / "codeformer.pth"),
+)
+CODEFORMER_MODEL_SHA256 = env(
+    "CODEFORMER_MODEL_SHA256",
+    default="1009e537e0c2a07d4cabce6355f53cb66767cd4b4297ec7a4a64ca4b8a5684b7",
+)
+CODEFORMER_DEVICE = env("CODEFORMER_DEVICE", default="auto")
+CODEFORMER_FIDELITY = env.float("CODEFORMER_FIDELITY", default=0.7)
+CODEFORMER_MAX_FACES = env.int("CODEFORMER_MAX_FACES", default=5)
+CODEFORMER_MAX_INPUT_PIXELS = env.int("CODEFORMER_MAX_INPUT_PIXELS", default=12_000_000)
 GFPGAN_OUTPUT_BLEND = env.float("GFPGAN_OUTPUT_BLEND", default=0.25)
 GFPGAN_MIN_OUTPUT_BLEND = env.float("GFPGAN_MIN_OUTPUT_BLEND", default=0.08)
 GFPGAN_ALLOW_MILD_BLUR = env.bool("GFPGAN_ALLOW_MILD_BLUR", default=True)

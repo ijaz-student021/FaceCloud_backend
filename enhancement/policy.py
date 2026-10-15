@@ -24,9 +24,12 @@ POLICIES = (LIGHTWEIGHT, BALANCED, LEARNED)
 # Per-model setting -> the stage it switches, as reported to users.
 LEARNED_STAGES = {
     "ZERO_DCE_ENABLED": "zero_dce",
+    "RETINEXFORMER_ENABLED": "retinexformer",
     "HD_RESTORATION_ENABLED": "hd_restoration",
     "NAFNET_DEBLUR_ENABLED": "nafnet_deblur",
+    "NAFNET_DENOISE_ENABLED": "nafnet_denoise",
     "GFPGAN_ENABLED": "gfpgan_face_restoration",
+    "CODEFORMER_ENABLED": "codeformer_face_restoration",
 }
 
 # Which learned stages each policy may run (a stage also needs its own setting on). ``balanced_v1`` allows
@@ -41,13 +44,13 @@ ALLOWED_STAGES = {
 DESCRIPTIONS = {
     LIGHTWEIGHT: (
         "OpenCV and Pillow only. No learned enhancement model runs: no Zero-DCE, "
-        "NAFNet, Real-ESRGAN or GFPGAN."
+        "Retinexformer, NAFNet, Real-ESRGAN, GFPGAN or CodeFormer."
     ),
     BALANCED: (
         "OpenCV and Pillow, plus Zero-DCE (CPU, OpenCV DNN) when a lift is requested by an explicit level or "
         "style. Automatic mode still never lifts a dark photo. No PyTorch model runs."
     ),
-    LEARNED: "Each learned model (Zero-DCE, NAFNet, Real-ESRGAN, GFPGAN) runs when its own setting is on.",
+    LEARNED: "Each learned model (Retinexformer, Zero-DCE, NAFNet, Real-ESRGAN, GFPGAN, CodeFormer) runs when its own setting is on.",
 }
 
 

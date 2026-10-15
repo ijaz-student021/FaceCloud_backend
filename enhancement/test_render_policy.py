@@ -22,6 +22,9 @@ ADAPTERS = (
     "enhancement.services.deblur_with_nafnet",
     "enhancement.services.upscale_with_realesrgan",
     "enhancement.services.restore_faces",
+    "enhancement.services.enhance_with_retinexformer",
+    "enhancement.services.denoise_with_nafnet",
+    "enhancement.services.restore_faces_codeformer",
 )
 
 
@@ -150,6 +153,7 @@ class LightweightPolicyTests(SimpleTestCase):
 class LearnedPolicyIsStillReachableTests(SimpleTestCase):
     """Reversibility: the adapters and their settings still work under learned_v1."""
 
+    @override_settings(RETINEXFORMER_ENABLED=False)  # Retinexformer is preferred when on; test the Zero-DCE fallback here
     def test_learned_v1_runs_a_learned_stage_when_its_setting_is_on(self):
         source = PHOTOS["dark"]()
         with patch("enhancement.services.enhance_with_zero_dce",

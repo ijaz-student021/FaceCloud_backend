@@ -33,6 +33,14 @@ MODELS = {
     # The official link is a Google Drive file (megvii-research/NAFNet, docs/GoPro.md); needs `gdown`.
     "nafnet": (".runtime/models/NAFNet-GoPro-width64.pth", "models/NAFNet-GoPro-width64.pth",
                ("drive", "1S0PVRbyTakYY9a82kujgZLbMihfNBLfC")),
+    "nafnet_sidd": (".runtime/models/NAFNet-SIDD-width64.pth", "models/NAFNet-SIDD-width64.pth",
+                    ("drive", "14Fht1QQJ2gMlk4N1ERCRuElg8JfjrWWR")),  # megvii-research/NAFNet readme, SIDD-width64
+    "retinexformer": (".runtime/models/Retinexformer_NTIRE.pth", "models/Retinexformer_NTIRE.pth",
+                      ("drive", "1K-QR-A_CPe6iAgjE6_04Q20DkkVwaVta")),  # caiyuanhao1998/Retinexformer pretrained_weights/NTIRE.pth
+    "codeformer": (".runtime/models/codeformer/codeformer.pth", "models/codeformer/codeformer.pth",
+                   ("url", "https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth")),
+    "arcface": (".runtime/models/arcface/w600k_r50.onnx", "models/arcface/w600k_r50.onnx",
+                ("zip", "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip|w600k_r50.onnx")),
     "realesrgan": (".runtime/models/RealESRGAN_x4plus.pth", "models/RealESRGAN_x4plus.pth",
                    ("url", "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth")),
     "gfpgan": (".runtime/models/gfpgan/GFPGANv1.4.pth", "models/gfpgan/GFPGANv1.4.pth",
@@ -69,6 +77,19 @@ def fetch(kind, source, target):
         request = urllib.request.Request(source, headers={"User-Agent": "facecloud-fetch-models"})
         with urllib.request.urlopen(request, timeout=120) as response, open(target, "wb") as out:  # nosec B310 - https only, fixed table
             shutil.copyfileobj(response, out, 1024 * 1024)
+    elif kind == "zip":
+        import zipfile
+
+        url, member = source.split("|")
+        if not url.startswith("https://"):
+            raise ValueError("only https sources are allowed")
+        with tempfile.TemporaryDirectory() as scratch:
+            archive = Path(scratch) / "archive.zip"
+            request = urllib.request.Request(url, headers={"User-Agent": "facecloud-fetch-models"})
+            with urllib.request.urlopen(request, timeout=300) as response, open(archive, "wb") as out:  # nosec B310 - https only, fixed table
+                shutil.copyfileobj(response, out, 1024 * 1024)
+            with zipfile.ZipFile(archive) as bundle, bundle.open(member) as source_file, open(target, "wb") as out:  # nosec B310
+                shutil.copyfileobj(source_file, out, 1024 * 1024)
     elif kind == "drive":
         subprocess.run(["uvx", "gdown", source, "-O", str(target)], check=True)  # nosec B603 B607 - fixed table
     else:

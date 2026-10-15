@@ -179,6 +179,9 @@ def check_models():
         "sface": (settings.IDENTITY_MODEL_PATH, settings.IDENTITY_MODEL_SHA256, True),
         "zero_dce": (settings.ZERO_DCE_MODEL_PATH, settings.ZERO_DCE_MODEL_SHA256, learned_stage_enabled("ZERO_DCE_ENABLED")),
         "nafnet": (settings.NAFNET_MODEL_PATH, settings.NAFNET_MODEL_SHA256, learned_stage_enabled("NAFNET_DEBLUR_ENABLED")),
+        "nafnet_sidd": (settings.NAFNET_SIDD_MODEL_PATH, settings.NAFNET_SIDD_MODEL_SHA256, learned_stage_enabled("NAFNET_DENOISE_ENABLED")),
+        "retinexformer": (settings.RETINEXFORMER_MODEL_PATH, settings.RETINEXFORMER_MODEL_SHA256, learned_stage_enabled("RETINEXFORMER_ENABLED")),
+        "codeformer": (settings.CODEFORMER_MODEL_PATH, settings.CODEFORMER_MODEL_SHA256, learned_stage_enabled("CODEFORMER_ENABLED")),
         "realesrgan": (
             settings.REALESRGAN_MODEL_PATH, settings.REALESRGAN_MODEL_SHA256,
             learned_stage_enabled("HD_RESTORATION_ENABLED") and bool(settings.REALESRGAN_MODEL_PATH),

@@ -51,6 +51,7 @@ from .models import (
     ImageEnhancementResult,
 )
 from .denoise_guard import DenoiseReference, judge_candidate
+from .codeformer import restore_faces_codeformer
 from .face_fidelity import check_face_regions
 from .gfpgan import GFPGANUnavailable, restore_faces
 from .identity_guard import (
@@ -63,8 +64,10 @@ from .identity_guard import (
 from .hd_restoration import (
     HDRestorationUnavailable,
     deblur_with_nafnet,
+    denoise_with_nafnet,
     upscale_with_realesrgan,
 )
+from .lowlight import LowLightUnavailable, enhance_with_retinexformer
 from .zero_dce import ZeroDCEUnavailable, enhance_with_zero_dce
 
 
@@ -1002,9 +1005,9 @@ def _build_processing_plan(context):
             ),
             "upscale": {**step(upscaler is not None, upscaler_reason), "upscaler": upscaler},
             "face_restoration": step(
-                face_restoration_wanted and learned_stage_enabled("GFPGAN_ENABLED"),
+                face_restoration_wanted and _face_restoration_enabled(),
                 "Blur or low resolution on a face-restoration-enabled deployment."
-                if face_restoration_wanted and learned_stage_enabled("GFPGAN_ENABLED")
+                if face_restoration_wanted and _face_restoration_enabled()
                 else "Face restoration is disabled." if face_restoration_wanted
                 else "No blur or low-resolution defect.",
             ),
@@ -1099,19 +1102,31 @@ def exposure_enhancement_stage(context):
     source = context.source_image
     working = source
     # A lift withheld by the routing (automatic mode on a dark photo) is not made by Zero-DCE either.
+    learned_lowlight = learned_stage_enabled("RETINEXFORMER_ENABLED") or learned_stage_enabled("ZERO_DCE_ENABLED")
     if (
-        context.zero_dce["requested"] and learned_stage_enabled("ZERO_DCE_ENABLED") and context.use_zero_dce
+        context.zero_dce["requested"] and learned_lowlight and context.use_zero_dce
         and not context.policy.get("skip_exposure")
     ):
-        try:
-            working, zero_metadata = enhance_with_zero_dce(source)
-            context.zero_dce.update(zero_metadata)
-            context.zero_dce["applied"] = True
-        except ZeroDCEUnavailable as error:
-            context.zero_dce["fallback_reason"] = str(error)
+        # Retinexformer is preferred; Zero-DCE (OpenCV, no PyTorch) is the fallback, then the OpenCV correction.
+        if learned_stage_enabled("RETINEXFORMER_ENABLED"):
+            try:
+                working, lowlight_metadata = enhance_with_retinexformer(source)
+                context.zero_dce.update(lowlight_metadata)
+                context.zero_dce["applied"] = True
+            except LowLightUnavailable as error:
+                context.zero_dce["retinexformer_fallback_reason"] = str(error)
+        if not context.zero_dce["applied"] and learned_stage_enabled("ZERO_DCE_ENABLED"):
+            try:
+                working, zero_metadata = enhance_with_zero_dce(source)
+                context.zero_dce.update(zero_metadata)
+                context.zero_dce["applied"] = True
+            except ZeroDCEUnavailable as error:
+                context.zero_dce["fallback_reason"] = str(error)
+        if not context.zero_dce["applied"] and not context.zero_dce.get("fallback_reason"):
+            context.zero_dce["fallback_reason"] = context.zero_dce.get("retinexformer_fallback_reason", "")
     elif context.zero_dce["requested"]:
         context.zero_dce["fallback_reason"] = (
-            rendering_policy.disabled_reason("Zero-DCE") if not learned_stage_enabled("ZERO_DCE_ENABLED")
+            rendering_policy.disabled_reason("Zero-DCE") if not learned_lowlight
             else "The lift was withheld (automatic mode); choose a level to lift."
             if context.policy.get("skip_exposure") else "Zero-DCE was switched off for this run."
         )
@@ -1319,7 +1334,18 @@ def adaptive_denoise_stage(context):
     }
     if reference is not None:
         metadata["faces_checked"] = reference.set_faces(_denoise_face_boxes(before))
-        candidate = _edge_aware_denoise(before, requested)
+        candidate = None
+        if learned_stage_enabled("NAFNET_DENOISE_ENABLED"):
+            # A network trained on real sensor noise; the same candidate guard judges it as the NLM candidate.
+            try:
+                candidate, denoise_model = denoise_with_nafnet(before)
+                metadata["method"] = "nafnet_sidd_width64"
+                metadata["model"] = denoise_model
+            except HDRestorationUnavailable as error:
+                metadata["learned_fallback_reason"] = str(error)
+                context.warnings.append(str(error))
+        if candidate is None:
+            candidate = _edge_aware_denoise(before, requested)
         accepted_image, verdict = judge_candidate(reference, candidate)
         decisive = verdict["attempts"][-1 if verdict["accepted"] else 0]
         frame = decisive["frame"]
@@ -1425,8 +1451,13 @@ def hd_restoration_stage(context):
     return context
 
 
+def _face_restoration_enabled():
+    """A face restorer is on: CodeFormer (preferred) or GFPGAN."""
+    return learned_stage_enabled("CODEFORMER_ENABLED") or learned_stage_enabled("GFPGAN_ENABLED")
+
+
 def restore_degraded_faces(image, input_quality):
-    """Build a conservative GFPGAN candidate for genuinely degraded faces."""
+    """Build a conservative CodeFormer (or GFPGAN) candidate for genuinely degraded faces."""
     eligible_defect_names = {"severe_blur", "low_resolution"}
     if settings.GFPGAN_ALLOW_MILD_BLUR:
         eligible_defect_names.add("mild_blur")
@@ -1437,9 +1468,9 @@ def restore_degraded_faces(image, input_quality):
     metadata = {
         "requested": bool(eligible_defects),
         "eligible_defects": eligible_defects,
-        "enabled": bool(learned_stage_enabled("GFPGAN_ENABLED")),
+        "enabled": bool(_face_restoration_enabled()),
         "applied": False,
-        "provider": "private_gfpgan_v1_4",
+        "provider": "codeformer_v0_1" if learned_stage_enabled("CODEFORMER_ENABLED") else "private_gfpgan_v1_4",
         "fallback_reason": "",
         "identity_safeguard": (
             "bounded_change_quality_guard_not_identity_verification"
@@ -1449,13 +1480,16 @@ def restore_degraded_faces(image, input_quality):
     if not metadata["requested"]:
         metadata["fallback_reason"] = "Face restoration is not required."
         return image, metadata
-    if not learned_stage_enabled("GFPGAN_ENABLED"):
+    if not _face_restoration_enabled():
         metadata["fallback_reason"] = rendering_policy.disabled_reason("Private face restoration")
         return image, metadata
 
     blend = min(max(float(settings.GFPGAN_OUTPUT_BLEND), 0.0), 0.60)
     try:
-        candidate, provider_metadata = restore_faces(image)
+        if learned_stage_enabled("CODEFORMER_ENABLED"):
+            candidate, provider_metadata = restore_faces_codeformer(image)
+        else:
+            candidate, provider_metadata = restore_faces(image)
         blended, guard = _face_restoration_guard(image, candidate, blend)
         metadata.update(provider_metadata)
         metadata["candidate_guard"] = guard
@@ -1609,7 +1643,7 @@ def face_restoration_stage(context):
     if context.face_restoration_withdrawn:
         return context  # the withdrawn record written by enhance_bgr stands
     refusal = ""
-    if learned_stage_enabled("GFPGAN_ENABLED") and context.plan.get("steps", {}).get("face_restoration", {}).get("planned", True):
+    if _face_restoration_enabled() and context.plan.get("steps", {}).get("face_restoration", {}).get("planned", True):
         refusal = _face_restoration_gate(context)
     if refusal:
         restored, metadata = context.current_image, {
@@ -2178,7 +2212,7 @@ def enhance_bgr(
         context.output_quality = analyze_image_quality(context.current_image)
     if (
         context.zero_dce["requested"] and not context.zero_dce["applied"]
-        and learned_stage_enabled("ZERO_DCE_ENABLED")  # only a model that could have run is "unavailable"
+        and (learned_stage_enabled("ZERO_DCE_ENABLED") or learned_stage_enabled("RETINEXFORMER_ENABLED"))  # only a model that could have run is "unavailable"
     ):
         context.warnings.append(
             "Zero-DCE was requested for low light but was unavailable; "
@@ -2197,13 +2231,18 @@ def enhance_bgr(
             "the baseline avoids inventing facial detail."
         )
 
-    algorithm = (
-        "zero_dce_hybrid_v1"
-        if context.zero_dce["applied"]
-        else "opencv_adaptive_restoration_router_v2"
-    )
+    if context.zero_dce["applied"]:
+        algorithm = (
+            "retinexformer_hybrid_v1" if str(context.zero_dce.get("provider", "")).startswith("retinexformer")
+            else "zero_dce_hybrid_v1"
+        )
+    else:
+        algorithm = "opencv_adaptive_restoration_router_v2"
     if context.face_restoration["applied"]:
-        algorithm = f"{algorithm}+private_gfpgan_v1_4"
+        algorithm = f"{algorithm}+" + (
+            "codeformer_v0_1" if str(context.face_restoration.get("provider", "")).startswith("codeformer")
+            else "private_gfpgan_v1_4"
+        )
     if context.hd_restoration["deblur"]["applied"]:
         algorithm = f"{algorithm}+nafnet_gopro"
     if context.hd_restoration["applied"]:
@@ -2278,6 +2317,9 @@ def enhance_bgr(
         "feature_flags": {
             "adaptive_denoise_enabled": settings.ADAPTIVE_DENOISE_ENABLED,
             "gfpgan_enabled": learned_stage_enabled("GFPGAN_ENABLED"),
+            "codeformer_enabled": learned_stage_enabled("CODEFORMER_ENABLED"),
+            "retinexformer_enabled": learned_stage_enabled("RETINEXFORMER_ENABLED"),
+            "nafnet_denoise_enabled": learned_stage_enabled("NAFNET_DENOISE_ENABLED"),
             "gfpgan_queue_enabled": settings.GFPGAN_QUEUE_ENABLED,
             "hd_restoration_enabled": learned_stage_enabled("HD_RESTORATION_ENABLED"),
             "nafnet_deblur_enabled": learned_stage_enabled("NAFNET_DEBLUR_ENABLED"),
