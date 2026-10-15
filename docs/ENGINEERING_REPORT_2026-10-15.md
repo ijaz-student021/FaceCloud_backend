@@ -101,7 +101,7 @@ No licensor was contacted, nothing was bought, nothing is assumed. As configured
 
 ## 15. Automated test results
 
-Local, this commit: **1,914 tests OK, 11 skipped** (the skips are real-model and real-photo tests that need checkpoints and `FACECLOUD_SAMPLE_PHOTOS`); `ruff` clean; `bandit -ll` no medium/high; no pending migrations; OpenAPI schema without warnings. CI result for the pushed commit: see section 16 addendum.
+Local, this commit: **1,914 tests OK, 11 skipped** (the skips are real-model and real-photo tests that need checkpoints and `FACECLOUD_SAMPLE_PHOTOS`); `ruff` clean; `bandit -ll` no medium/high; no pending migrations; OpenAPI schema without warnings. CI on commit `245a6ec` (GitHub Actions run 38781782859): all three jobs passed (tests and schema, dependency audit and static analysis, production configuration starts).
 These are mostly mocked tests (stand-in model runners, stand-in identity, simulated S3): they show decisions and contracts, not photograph quality. Test kinds: `docs/evaluation/test-evidence-matrix.md`.
 
 ## 16. Real-model integration test results
