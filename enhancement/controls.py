@@ -14,7 +14,7 @@ linear, ``factor = 1 + k * value``, with k below. The renderer works in CIE
 LAB (see ``tone.py``), not on RGB as Pillow does, so a Pillow factor is an
 approximation of a control, except contrast and sharpness, which are the same
 operator on the L channel (a test measures the differences). Shadows,
-highlights, warmth and denoise have no Pillow equivalent.
+highlights, warmth and the model-backed sliders have no Pillow equivalent.
 
 Manual and automatic ranges are separate. Manual input may use the whole
 range; the local recipe and the cloud advisor are held to the much smaller
@@ -42,6 +42,7 @@ class Control:
     description: str       # exact renderer semantics, as given to the advisor
     pillow_k: float = None  # factor = 1 + pillow_k * value; None: no Pillow equivalent
     pillow_enhancer: str = ""
+    model: str = ""         # a model-backed slider (enhancement/model_controls.py); empty for a tone control
     neutral: float = NEUTRAL_VALUE
     recommended: tuple = (-50.0, 50.0)
 
@@ -84,13 +85,30 @@ CONTROLS = {
             pillow_k=0.01, pillow_enhancer="Sharpness",
         ),
         Control(
+            "lowlight", "Low-light enhancement", (0.0, 100.0), (0.0, 0.0),
+            "Blends in a learned low-light result by value / 100: Retinexformer when it is switched on, otherwise "
+            "Zero-DCE, otherwise an OpenCV gamma lift. Runs before every other control. 0 is off. Manual only: the "
+            "local recipe and the advisor never set it.",
+            model="lowlight", recommended=(0.0, 60.0),
+        ),
+        Control(
             "denoise", "Noise reduction", (0.0, 100.0), (0.0, 0.0),
-            "Edge-preserving noise reduction, applied before every other control: lightness is smoothed with a "
-            "bilateral filter and the colour channels with a bilateral filter of larger radius, then blended "
-            "with the unsmoothed photo by value / 100. The radius is proportional to the image's longer edge "
-            "(1024 px is the reference), so a preview and a full-resolution save look alike. 0 is off; it cannot "
-            "go below 0. It is manual only: the local recipe and the advisor never set it.",
-            recommended=(0.0, 60.0),
+            "Blends in a denoised copy by value / 100: NAFNet-SIDD (real sensor noise) when it is switched on, "
+            "otherwise an edge-preserving OpenCV bilateral filter. Runs after low light. 0 is off. Manual only.",
+            model="denoise", recommended=(0.0, 60.0),
+        ),
+        Control(
+            "deblur", "Deblur", (0.0, 100.0), (0.0, 0.0),
+            "Blends in a deblurred copy by value / 100: NAFNet-GoPro (motion blur) when it is switched on, "
+            "otherwise an OpenCV unsharp mask. It cannot restore detail that was never captured. 0 is off. Manual only.",
+            model="deblur", recommended=(0.0, 50.0),
+        ),
+        Control(
+            "face_restore", "Face restoration", (0.0, 100.0), (0.0, 0.0),
+            "Blends in CodeFormer's restored faces by value / 100, only where a face is found. It invents plausible "
+            "detail, so it is checked by the pipeline's identity gate when it runs there. Needs CodeFormer to be switched "
+            "on; with no engine it is reported as not applied. 0 is off. Manual only.",
+            model="face_restore", recommended=(0.0, 50.0),
         ),
     )
 }
@@ -139,7 +157,10 @@ class ControlsSerializer(serializers.Serializer):
     highlights = _manual_field(CONTROLS["highlights"])
     warmth = _manual_field(CONTROLS["warmth"])
     sharpness = _manual_field(CONTROLS["sharpness"])
+    lowlight = _manual_field(CONTROLS["lowlight"])
     denoise = _manual_field(CONTROLS["denoise"])
+    deblur = _manual_field(CONTROLS["deblur"])
+    face_restore = _manual_field(CONTROLS["face_restore"])
     intensity = _manual_field(INTENSITY)
 
     def to_internal_value(self, data):
@@ -180,7 +201,7 @@ def clamp_to_auto_range(controls):
 def pillow_factors(controls):
     """Approximate Pillow ``ImageEnhance`` factors for the controls that have one (neutral 1.0).
 
-    ``None`` for shadows, highlights, warmth and denoise, which have no Pillow equivalent.
+    ``None`` for the controls with no Pillow equivalent (shadows, highlights, warmth and the model-backed sliders).
     """
     return {
         control.name: (1.0 + control.pillow_k * float(controls.get(control.name, 0.0)) if control.pillow_k else None)
@@ -249,6 +270,9 @@ def recommend_local_adjustments(quality, intent="auto", *, blockiness_detected=F
 # -- the contract, as served to clients and (in Phase C) to the advisor --------
 
 def contract():
+    from .model_controls import engine_status
+
+    engines = engine_status()
     controls = {}
     for control in (*CONTROLS.values(), INTENSITY):
         controls[control.name] = {
@@ -260,5 +284,10 @@ def contract():
             "description": control.description,
             "pillow_enhancer": control.pillow_enhancer or None,
             "pillow_factor_per_unit": control.pillow_k,
+            # Model-backed sliders say what will run, so a client can label or disable them.
+            "model_backed": bool(control.model),
+            "engine": engines[control.model]["engine"] if control.model else None,
+            "available": engines[control.model]["available"] if control.model else True,
+            "uses_model": engines[control.model]["uses_model"] if control.model else False,
         }
     return controls

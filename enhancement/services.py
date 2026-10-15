@@ -68,6 +68,7 @@ from .hd_restoration import (
     upscale_with_realesrgan,
 )
 from .lowlight import LowLightUnavailable, enhance_with_retinexformer
+from .model_controls import MODEL_CONTROL_NAMES, apply_model_controls
 from .zero_dce import ZeroDCEUnavailable, enhance_with_zero_dce
 
 
@@ -2920,8 +2921,16 @@ def _auto_editor_adjustments(quality, intent="auto", blockiness_detected=False):
 
 
 def _render_editor_controls(source, controls, strength=1.0):
-    """Apply bounded tone controls in float LAB (enhancement/tone.py)."""
-    return render_tone(source, controls, strength)
+    """Model-backed sliders first (enhancement/model_controls.py), then bounded tone controls in float LAB (tone.py).
+
+    Returns ``(image, effective, model_report, model_reasons)``.
+    """
+    modelled, model_report, model_reasons = apply_model_controls(source, controls, strength)
+    tone_controls = {name: value for name, value in controls.items() if name not in MODEL_CONTROL_NAMES}
+    rendered, effective = render_tone(modelled, tone_controls, strength)
+    for name in MODEL_CONTROL_NAMES:
+        effective[name] = float(controls.get(name, 0.0)) * strength
+    return rendered, effective, model_report, model_reasons
 
 
 def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline=None):
@@ -2969,10 +2978,11 @@ def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline
     reasons = []
     guard_reductions = []
     rendered, effective = source.copy(), {name: 0.0 for name in CONTROL_NAMES}
+    model_report, model_reasons = [], []
     after = before
     if not is_neutral(controls):
         for _attempt in range(10):
-            rendered, effective = _render_editor_controls(source, controls, strength)
+            rendered, effective, model_report, model_reasons = _render_editor_controls(source, controls, strength)
             after = analyze_image_quality(rendered)
             contrast_floor = before["contrast_stddev"] * 0.70
             if (
@@ -3022,7 +3032,8 @@ def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline
         "safety_strength": round(strength, 4),
         "safety_reasons": reasons,
         "guard_reductions": guard_reductions,
-        "fallback_reasons": fallback_reasons,
+        "fallback_reasons": fallback_reasons + [reason for reason in model_reasons if reason not in fallback_reasons],
+        "model_controls": model_report,
         "quality_before": before,
         "quality_after": after,
         "dimensions_preserved": source.shape[:2] == rendered.shape[:2],
