@@ -27,10 +27,16 @@ conservative pipeline to repair.
 * **Night skies are lifted too.** In the two street scenes the black sky becomes a lighter grey-violet; some would
   call that less true to the scene. This is a property of a global lift, and the face-aware exposure that might
   avoid it was deliberately not built (it would bias skin tones).
-* **One photo is sharpened visibly harder than the others:** the golden-stone photo (`4a5343a3`), whose laplacian
+* **One photo was pushed harder than the others:** the golden-stone photo (`4a5343a3`), whose laplacian
   sharpness went from 205 to 329 (+60 %) and estimated noise from 1 to 2 at `high`. At 1:1 the stone
-  texture looks crisper but slightly crunchy. This is the setting a reviewer would most reasonably question; a
-  smaller sharpening cap for already-sharp photos would be the fix. It is not changed here.
+  texture looked crisp but slightly crunchy. Tracing the stages showed that about half of the increase
+  (205 to 277) came from the local-contrast step of the exposure stage and the rest from sharpening.
+  **Change made:** sharpening is now bounded for a photo that was already measured as sharp
+  (`SHARP_PHOTO_MAX_SHARPNESS_GAIN = 1.25`, measured against the original); soft photos are not limited.
+  On this photo `high` now ends at 277 (+35 %) instead of 329. The local-contrast part is **not** changed.
+  Re-running the synthetic benchmark on 8 of these photos with the cap on and off (`high`): structure SSIM
+  0.9409 against 0.9358, noise 1.58 against 2.04, exposure error 60.1 against 60.5; balanced `high`: SSIM
+  0.9141 against 0.9104, noise 1.33 against 1.71. Slightly better on every metric. The full test suite passes (1785).
 
 ## Honest conclusions
 
@@ -40,4 +46,5 @@ conservative pipeline to repair.
    change them into well-lit photos.
 3. Nothing was measured against a real ground truth. The earlier benchmark
    (`2026-10-15-lowlight-benchmark.md`) uses synthetic darkening and is the only scored comparison.
-4. The unfinished items remain: sharpening cap, Zero-DCE licence check, real OpenAI advisor validation.
+4. The unfinished items remain: the Zero-DCE licence evidence (the owner states a licence is approved; the document is not on
+   file here and was not checked by the author of this report), and real OpenAI advisor validation.

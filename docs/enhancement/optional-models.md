@@ -39,8 +39,8 @@ public source and is not installed on this machine.
 | `learned_v1` | every model whose own setting is on | PyTorch for six of the eight |
 
 On the low-light benchmark `balanced_v1` has the best exposure and colour of the CPU options
-(`docs/evaluation/2026-10-15-lowlight-benchmark.md`). Zero-DCE's own licence terms were not checked here: confirm
-them before any commercial use.
+(`docs/evaluation/2026-10-15-lowlight-benchmark.md`). The project owner states that an approved licence covers Zero-DCE; that approval is not on file in this repository and was not
+checked here, so add the document (or its reference) to `docs/model-licenses/` when it can be uploaded.
 
 ## Showing it (for the panel)
 

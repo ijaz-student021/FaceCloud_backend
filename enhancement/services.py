@@ -1889,9 +1889,37 @@ def sharpen_stage(context):
         detail = image.astype(np.float32) - blurred.astype(np.float32)
         edge_strength = _gradient_edge_strength(image)
         edge_strength = cv2.merge([edge_strength] * 3).astype(np.float32)
-        sharpened = image.astype(np.float32) + detail * strength * edge_strength
-        context.current_image = np.clip(sharpened, 0, 255).astype(np.uint8)
+        source = context.source_image
+        gray_source = cv2.cvtColor(source if source.shape == image.shape else image, cv2.COLOR_BGR2GRAY)
+        already_sharp = measure_blur(gray_source)["verdict"] == "sharp"
+        sharpened = _sharpen(image, detail, edge_strength, strength)
+        if already_sharp:
+            # A photo that was already sharp gains little from more and starts to look crunchy, so the
+            # total increase over the original (local contrast and sharpening together) is bounded. A soft
+            # photo is not limited.
+            ceiling = _laplacian_sharpness(gray_source) * SHARP_PHOTO_MAX_SHARPNESS_GAIN
+            current = _laplacian_sharpness(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY))
+            after = _laplacian_sharpness(cv2.cvtColor(sharpened, cv2.COLOR_BGR2GRAY))
+            if after > ceiling:
+                headroom = max(0.0, ceiling - current)
+                strength *= headroom / (after - current) if after > current else 0.0
+                context.policy["sharpen"] = round(strength, 4)
+                context.policy["sharpen_capped"] = "Already sharp: sharpening limited to keep the result natural."
+                sharpened = _sharpen(image, detail, edge_strength, strength) if strength > 0 else image
+        context.current_image = sharpened
     return context
+
+
+# The most that sharpening may raise the Laplacian sharpness of a photo that is already sharp.
+SHARP_PHOTO_MAX_SHARPNESS_GAIN = 1.25
+
+
+def _laplacian_sharpness(gray):
+    return float(cv2.meanStdDev(cv2.Laplacian(gray, cv2.CV_64F))[1][0][0] ** 2)
+
+
+def _sharpen(image, detail, edge_strength, strength):
+    return np.clip(image.astype(np.float32) + detail * strength * edge_strength, 0, 255).astype(np.uint8)
 
 
 def _guard_b_reference(context):

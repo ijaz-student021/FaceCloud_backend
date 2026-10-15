@@ -173,7 +173,9 @@ class DefectDrivenRoutingTests(SimpleTestCase):
             context.input_quality["compression_artifacts"] = measure_compression_artifacts(context.source_image)
             return []
 
-        with patch("enhancement.services._apply_conservative_routing", side_effect=measure_only):
+        # The sharpness cap would also soften this counterfactual, so it is switched off for the comparison.
+        with patch("enhancement.services._apply_conservative_routing", side_effect=measure_only), \
+                patch("enhancement.services.SHARP_PHOTO_MAX_SHARPNESS_GAIN", 1e9):
             unrouted_output, _level, _parameters = enhance_bgr(compressed, "high")
         routed = measure_compression_artifacts(output)["blockiness"][0]
         unrouted = measure_compression_artifacts(unrouted_output)["blockiness"][0]
@@ -199,3 +201,26 @@ class TextureIsNotNoiseTests(SimpleTestCase):
         _output, _level, parameters = enhance_bgr(grainy, "auto")
         self.assertTrue(parameters["adaptive_denoise"]["applied"])
         self.assertEqual(parameters["adaptive_denoise"]["reason"], "measured_noise_accepted")
+
+
+class SharpPhotoSharpeningCapTests(SimpleTestCase):
+    """A photo that is already sharp is not pushed further than a bounded gain; a soft one is not limited."""
+
+    def test_a_sharp_photo_is_sharpened_less_than_without_the_cap(self):
+        sharp = detailed()
+        _output, _level, capped = enhance_bgr(sharp, "high")
+        with patch("enhancement.services.SHARP_PHOTO_MAX_SHARPNESS_GAIN", 1e9):
+            _output, _level, uncapped = enhance_bgr(sharp, "high")
+
+        self.assertEqual(capped["quality_before"]["blur"]["verdict"], "sharp")
+        self.assertIn("sharpen_capped", capped)
+        self.assertNotIn("sharpen_capped", uncapped)
+        self.assertLess(capped["sharpen"], uncapped["sharpen"])
+        self.assertLess(capped["quality_after"]["laplacian_sharpness"], uncapped["quality_after"]["laplacian_sharpness"])
+
+    def test_a_soft_photo_is_still_sharpened_in_full(self):
+        soft = cv2.GaussianBlur(detailed(), (0, 0), 2.2)
+        _output, _level, parameters = enhance_bgr(soft, "high")
+        self.assertNotIn("sharpen_capped", parameters)
+        self.assertGreater(parameters["quality_after"]["laplacian_sharpness"],
+                           parameters["quality_before"]["laplacian_sharpness"] * 1.3)
