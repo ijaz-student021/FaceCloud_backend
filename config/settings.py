@@ -270,9 +270,9 @@ if OPENAI_ADVISOR_TIMEOUT_SECONDS * OPENAI_ADVISOR_MAX_ATTEMPTS > OPENAI_ADVISOR
 # earlier behaviour, where each of those settings decides. Adapters and
 # checkpoints stay installed either way, so the change is reversible.
 ENHANCEMENT_RENDER_POLICY = env("ENHANCEMENT_RENDER_POLICY", default="lightweight_v1")
-if ENHANCEMENT_RENDER_POLICY not in ("lightweight_v1", "learned_v1"):
+if ENHANCEMENT_RENDER_POLICY not in ("lightweight_v1", "balanced_v1", "learned_v1"):
     raise ImproperlyConfigured(
-        "ENHANCEMENT_RENDER_POLICY must be lightweight_v1 or learned_v1, "
+        "ENHANCEMENT_RENDER_POLICY must be lightweight_v1, balanced_v1 or learned_v1, "
         f"not {ENHANCEMENT_RENDER_POLICY!r}."
     )
 
@@ -374,6 +374,15 @@ EXTREME_LOW_LIGHT_MODEL_STRENGTH = env.float(
 # effective boost is its square root, so 9 means at most 3x). It never uses the
 # model's colours, which show false green/magenta casts. 1 or less switches it off.
 ENHANCEMENT_DARK_COLOUR_GAIN_MAX = env.float("ENHANCEMENT_DARK_COLOUR_GAIN_MAX", default=9.0)
+
+# Gentle noise reduction BEFORE a requested lift of a dark photo (enhancement/services.py::_prefilter_for_lift):
+# a lift amplifies sensor noise, so removing a little first leaves less of it afterwards. Off for clean or
+# well-lit photos and whenever a lift was not requested. "chroma" smooths only colour noise (cheap, edge-aware);
+# "nlm" also applies mild non-local-means to a bounded copy; "off" disables it.
+ENHANCEMENT_PREFILTER_MODE = env("ENHANCEMENT_PREFILTER_MODE", default="chroma")
+if ENHANCEMENT_PREFILTER_MODE not in ("off", "chroma", "nlm"):
+    raise ImproperlyConfigured("ENHANCEMENT_PREFILTER_MODE must be off, chroma or nlm.")
+ENHANCEMENT_PREFILTER_MAX_LUMINANCE = env.float("ENHANCEMENT_PREFILTER_MAX_LUMINANCE", default=90.0)
 
 # Identity-preserving enhancement: after the pipeline, the final image's faces
 # are compared to the source's faces with the same SFace embeddings used for

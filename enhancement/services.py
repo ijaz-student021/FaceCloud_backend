@@ -159,6 +159,7 @@ class EnhancementPipelineContext:
     dynamic_style: dict = field(default_factory=dict)
     identity_guard: dict = field(default_factory=dict)
     zero_dce: dict = field(default_factory=dict)
+    prefilter: dict = field(default_factory=dict)
     quality_guards: dict = field(default_factory=dict)
     post_exposure_noise: dict = field(default_factory=dict)
     adaptive_denoise: dict = field(default_factory=dict)
@@ -1009,7 +1010,7 @@ def _apply_conservative_routing(context):
     dark = defects & {"low_light", "severe_low_light"}
     withheld = (
         automatic and bool(dark) and "overexposed_highlights" not in defects
-        and rendering_policy.active_policy() == rendering_policy.LIGHTWEIGHT
+        and rendering_policy.active_policy() != rendering_policy.LEARNED
     )
     if withheld:
         policy["skip_exposure"] = True
@@ -1167,11 +1168,60 @@ def analyze_original_stage(context):
     return context
 
 
+_PREFILTER_NLM_MAX_PIXELS = 4_000_000
+
+
+def _chroma_prefilter(image):
+    """Smooth colour noise only: chroma planes denoised on a bounded copy, then re-aligned to the luminance edges."""
+    height, width = image.shape[:2]
+    ycc = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
+    luma, red, blue = cv2.split(ycc)
+    scale = min(1.0, 1024.0 / max(height, width))
+    small = (max(1, round(width * scale)), max(1, round(height * scale)))
+    planes = []
+    for plane in (red, blue):
+        reduced = cv2.resize(plane, small, interpolation=cv2.INTER_AREA) if scale < 1.0 else plane
+        smooth = cv2.fastNlMeansDenoising(reduced, None, 9, 5, 15)
+        smooth = cv2.resize(smooth, (width, height), interpolation=cv2.INTER_CUBIC) if scale < 1.0 else smooth
+        # a guided filter keeps the smoothed colour from bleeding across luminance edges
+        planes.append(cv2.ximgproc.guidedFilter(luma, smooth, 8, 25.0))
+    return cv2.cvtColor(cv2.merge((luma, planes[0], planes[1])), cv2.COLOR_YCrCb2BGR)
+
+
+def _prefilter_for_lift(context, source):
+    """The image to lift, and what was done to it. Only a requested lift of a clearly dark photo is filtered."""
+    mode = settings.ENHANCEMENT_PREFILTER_MODE
+    metadata = {"mode": mode, "applied": False, "reason": ""}
+    context.prefilter = metadata
+    if mode == "off":
+        metadata["reason"] = "switched off"
+        return source
+    if context.input_quality["mean_luminance"] > settings.ENHANCEMENT_PREFILTER_MAX_LUMINANCE:
+        metadata["reason"] = "the photo is not dark enough for a lift to amplify noise"
+        return source
+    height, width = source.shape[:2]
+    if mode == "nlm" and height * width <= _PREFILTER_NLM_MAX_PIXELS:
+        filtered = cv2.fastNlMeansDenoisingColored(source, None, 2, 12, 5, 15)
+        metadata["method"] = "colour non-local-means (h=2, hColor=12)"
+    else:
+        filtered = _chroma_prefilter(source)
+        metadata["method"] = "chroma-only, guided by luminance"
+        if mode == "nlm":
+            metadata["reason"] = "too large for non-local-means; chroma-only used"
+    metadata["applied"] = True
+    metadata["mean_change"] = round(float(np.mean(np.abs(filtered.astype(np.int16) - source.astype(np.int16)))), 3)
+    return filtered
+
+
 def exposure_enhancement_stage(context):
     """Apply learned exposure curves or the auditable OpenCV fallback."""
     source = context.source_image
     working = source
-    if context.zero_dce["requested"] and learned_stage_enabled("ZERO_DCE_ENABLED") and context.use_zero_dce:
+    # A lift withheld by the routing (automatic mode on a dark photo) is not made by Zero-DCE either.
+    if (
+        context.zero_dce["requested"] and learned_stage_enabled("ZERO_DCE_ENABLED") and context.use_zero_dce
+        and not context.policy.get("skip_exposure")
+    ):
         try:
             working, zero_metadata = enhance_with_zero_dce(source)
             context.zero_dce.update(zero_metadata)
@@ -1181,7 +1231,8 @@ def exposure_enhancement_stage(context):
     elif context.zero_dce["requested"]:
         context.zero_dce["fallback_reason"] = (
             rendering_policy.disabled_reason("Zero-DCE") if not learned_stage_enabled("ZERO_DCE_ENABLED")
-            else "Zero-DCE was switched off for this run."
+            else "The lift was withheld (automatic mode); choose a level to lift."
+            if context.policy.get("skip_exposure") else "Zero-DCE was switched off for this run."
         )
 
     if context.zero_dce["applied"]:
@@ -1197,6 +1248,7 @@ def exposure_enhancement_stage(context):
     if policy.get("skip_exposure"):
         # Nothing about this photo's light was found wanting; leave it alone.
         return context
+    source = _prefilter_for_lift(context, source)
     lab = cv2.cvtColor(source, cv2.COLOR_BGR2LAB)
     luminance, channel_a, channel_b = cv2.split(lab)
     corrected = cv2.LUT(luminance, _gamma_lut(policy["gamma"]))
@@ -2488,6 +2540,7 @@ def enhance_bgr(
         "face_restoration": context.face_restoration,
         "colorization": context.colorization,
         "zero_dce": context.zero_dce,
+        "prefilter": context.prefilter,
         "stage_order": context.stage_order,
         "stage_timings_ms": context.stage_timings_ms,
         "feature_flags": {

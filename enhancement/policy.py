@@ -17,8 +17,9 @@ detection, the face-fidelity check and consented identity features.
 from django.conf import settings
 
 LIGHTWEIGHT = "lightweight_v1"
+BALANCED = "balanced_v1"
 LEARNED = "learned_v1"
-POLICIES = (LIGHTWEIGHT, LEARNED)
+POLICIES = (LIGHTWEIGHT, BALANCED, LEARNED)
 
 # Per-model setting -> the stage it switches, as reported to users.
 LEARNED_STAGES = {
@@ -32,10 +33,23 @@ LEARNED_STAGES = {
     "COLORIZATION_ENABLED": "colorization",
 }
 
+# Which learned stages each policy may run (a stage also needs its own setting on). ``balanced_v1`` allows
+# only Zero-DCE, which runs on the CPU through OpenCV (no PyTorch, no GPU); it is used only when a
+# lift was asked for (an explicit level or style), never by automatic mode.
+ALLOWED_STAGES = {
+    LIGHTWEIGHT: frozenset(),
+    BALANCED: frozenset({"ZERO_DCE_ENABLED"}),
+    LEARNED: frozenset(LEARNED_STAGES),
+}
+
 DESCRIPTIONS = {
     LIGHTWEIGHT: (
         "OpenCV and Pillow only. No learned enhancement model runs: no Zero-DCE, EDSR, "
         "NAFNet, Real-ESRGAN, GFPGAN, PureVision, PureScale or colourisation."
+    ),
+    BALANCED: (
+        "OpenCV and Pillow, plus Zero-DCE (CPU, OpenCV DNN) when a lift is requested by an explicit level or "
+        "style. Automatic mode still never lifts a dark photo. No PyTorch model runs."
     ),
     LEARNED: "Each learned model runs when its own setting is on (earlier behaviour).",
 }
@@ -52,14 +66,13 @@ def learned_stage_enabled(flag):
     """Whether a learned stage may run: the policy allows it *and* its setting is on."""
     if flag not in LEARNED_STAGES:
         raise KeyError(f"{flag} is not a learned-stage setting.")
-    return active_policy() == LEARNED and bool(getattr(settings, flag))
+    return flag in ALLOWED_STAGES[active_policy()] and bool(getattr(settings, flag))
 
 
 def disabled_by_policy():
     """Stage names whose setting is on but which the active policy keeps off."""
-    if active_policy() == LEARNED:
-        return []
-    return sorted(stage for flag, stage in LEARNED_STAGES.items() if getattr(settings, flag))
+    allowed = ALLOWED_STAGES[active_policy()]
+    return sorted(stage for flag, stage in LEARNED_STAGES.items() if flag not in allowed and getattr(settings, flag))
 
 
 def describe():
@@ -68,7 +81,8 @@ def describe():
     return {
         "name": name,
         "description": DESCRIPTIONS[name],
-        "learned_stages_allowed": name == LEARNED,
+        "learned_stages_allowed": bool(ALLOWED_STAGES[name]),
+        "allowed_stages": sorted(LEARNED_STAGES[flag] for flag in ALLOWED_STAGES[name]),
         "learned_stages": sorted(LEARNED_STAGES.values()),
         "configured_on_but_disabled_by_policy": disabled_by_policy(),
         "heavy_restoration_available": name == LEARNED and any(
@@ -79,6 +93,6 @@ def describe():
 
 def disabled_reason(stage):
     """The sentence for a stage that is off: the policy, or its own setting."""
-    if active_policy() == LIGHTWEIGHT:
-        return f"{stage} is disabled by the {LIGHTWEIGHT} rendering policy."
+    if active_policy() in (LIGHTWEIGHT, BALANCED):
+        return f"{stage} is disabled by the {active_policy()} rendering policy."
     return f"{stage} is disabled."

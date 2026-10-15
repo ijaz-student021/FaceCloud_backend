@@ -30,6 +30,18 @@ GFPGAN is used under a private permission recorded outside the repository; colou
 is BSD-2-Clause. The private curve model (`facecloud_curve_best_opencv.onnx`) has no
 public source and is not installed on this machine.
 
+## Three policies
+
+| `ENHANCEMENT_RENDER_POLICY` | What runs | Needs |
+|---|---|---|
+| `lightweight_v1` (default) | OpenCV and Pillow only | nothing |
+| `balanced_v1` | the same, plus **Zero-DCE on the CPU, only when a lift is requested** (a chosen level or style; automatic mode still never lifts a dark photo) | the Zero-DCE file (OpenCV DNN); no PyTorch, no GPU |
+| `learned_v1` | every model whose own setting is on | PyTorch for six of the eight |
+
+On the low-light benchmark `balanced_v1` has the best exposure and colour of the CPU options
+(`docs/evaluation/2026-10-15-lowlight-benchmark.md`). Zero-DCE's own licence terms were not checked here: confirm
+them before any commercial use.
+
 ## Showing it (for the panel)
 
 1. **They are there and verified:** `GET /api/system/health/` (administrator) lists every
