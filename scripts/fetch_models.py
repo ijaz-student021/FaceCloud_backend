@@ -1,7 +1,7 @@
 """Download the optional model checkpoints from their public sources and check each against its pinned SHA-256.
 
     python scripts/fetch_models.py                 # everything that is missing
-    python scripts/fetch_models.py --only zero_dce,edsr
+    python scripts/fetch_models.py --only zero_dce,realesrgan
     python scripts/fetch_models.py --list
 
 The checkpoints are not in Git (``docs/gpu/model_manifest.json`` records their names,
@@ -30,8 +30,9 @@ ARCHIVE = Path.home() / "FaceCloud_retired_2026-10-15"
 MODELS = {
     "zero_dce": (".runtime/models/zero_dce_epoch99.onnx", "models/zero_dce_epoch99.onnx",
                  ("local", "zero_dce_epoch99.onnx")),  # exported locally from the official Epoch99.pth; see the provenance doc
-    "edsr": (".runtime/models/EDSR_x2.pb", "models/EDSR_x2.pb",
-             ("url", "https://github.com/Saafke/EDSR_Tensorflow/raw/master/models/EDSR_x2.pb")),
+    # The official link is a Google Drive file (megvii-research/NAFNet, docs/GoPro.md); needs `gdown`.
+    "nafnet": (".runtime/models/NAFNet-GoPro-width64.pth", "models/NAFNet-GoPro-width64.pth",
+               ("drive", "1S0PVRbyTakYY9a82kujgZLbMihfNBLfC")),
     "realesrgan": (".runtime/models/RealESRGAN_x4plus.pth", "models/RealESRGAN_x4plus.pth",
                    ("url", "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth")),
     "gfpgan": (".runtime/models/gfpgan/GFPGANv1.4.pth", "models/gfpgan/GFPGANv1.4.pth",
@@ -40,15 +41,6 @@ MODELS = {
                         ("url", "https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_Resnet50_Final.pth")),
     "gfpgan_parser": ("gfpgan/weights/parsing_parsenet.pth", "gfpgan_weights/parsing_parsenet.pth",
                       ("url", "https://github.com/xinntao/facexlib/releases/download/v0.2.2/parsing_parsenet.pth")),
-    "purevision": (".runtime/models/PureVision_1x.pth", "models/PureVision_1x.pth",
-                   ("url", "https://github.com/limitlesslab/AI-upscaling-models/releases/download/PureVision/1x_PureVision.pth")),
-    "purescale": (".runtime/models/PureScale_2x.pth", "models/PureScale_2x.pth",
-                  ("url", "https://github.com/limitlesslab/AI-upscaling-models/releases/download/PureScale2/2x_SAFMN_PureScale.pth")),
-    "colorization": (".runtime/models/colorization_siggraph17.pth", "models/colorization_siggraph17.pth",
-                     ("url", "https://colorizers.s3.us-east-2.amazonaws.com/siggraph17-df00044c.pth")),
-    # The official link is a Google Drive file (megvii-research/NAFNet, docs/GoPro.md); needs `gdown`.
-    "nafnet": (".runtime/models/NAFNet-GoPro-width64.pth", "models/NAFNet-GoPro-width64.pth",
-               ("drive", "1S0PVRbyTakYY9a82kujgZLbMihfNBLfC")),
 }
 
 
@@ -78,7 +70,7 @@ def fetch(kind, source, target):
         with urllib.request.urlopen(request, timeout=120) as response, open(target, "wb") as out:  # nosec B310 - https only, fixed table
             shutil.copyfileobj(response, out, 1024 * 1024)
     elif kind == "drive":
-        subprocess.run(["uvx", "gdown", source, "-O", str(target)], check=True)
+        subprocess.run(["uvx", "gdown", source, "-O", str(target)], check=True)  # nosec B603 B607 - fixed table
     else:
         raise ValueError(kind)
 

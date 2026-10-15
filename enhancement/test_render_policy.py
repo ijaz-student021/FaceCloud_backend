@@ -19,13 +19,9 @@ from .test_blur_measure import blurred_photo, darkened, dead_leaves, resized
 ALL_LEARNED_ON = {flag: True for flag in policy.LEARNED_STAGES}
 ADAPTERS = (
     "enhancement.services.enhance_with_zero_dce",
-    "enhancement.services._load_edsr_model",
     "enhancement.services.deblur_with_nafnet",
     "enhancement.services.upscale_with_realesrgan",
     "enhancement.services.restore_faces",
-    "enhancement.services.restore_with_purevision",
-    "enhancement.services.upscale_with_purescale",
-    "enhancement.services.colorize_with_siggraph17",
 )
 
 
@@ -75,8 +71,7 @@ class LightweightPolicyTests(SimpleTestCase):
                             _out, _level, parameters = enhance_bgr(make(), level, style=style)
                             self.assertEqual(parameters["render_policy"]["name"], "lightweight_v1")
                             self.assertEqual(parameters["algorithm"].split("+")[0], "opencv_adaptive_restoration_router_v2")
-                            for part in ("private_gfpgan", "realesrgan", "nafnet", "purescale", "purevision",
-                                         "colorization", "zero_dce"):
+                            for part in ("private_gfpgan", "realesrgan", "nafnet", "zero_dce"):
                                 self.assertNotIn(part, parameters["algorithm"])
         for mock in mocks:
             mock.assert_not_called()
@@ -87,8 +82,6 @@ class LightweightPolicyTests(SimpleTestCase):
             _out, _level, parameters = enhance_bgr(PHOTOS["grayscale"](), "auto")
         for report in parameters["stage_reports"]:
             self.assertNotIn(report["status"], {"fallback", "failed"}, report)
-        self.assertFalse(parameters["colorization"]["applied"])
-        self.assertTrue(parameters["colorization"]["requested"])  # a grayscale source asks for it
         self.assertFalse(any("unavailable" in warning for warning in parameters["warnings"]), parameters["warnings"])
 
     def test_the_policy_is_recorded_with_what_it_overrode(self):
@@ -101,8 +94,7 @@ class LightweightPolicyTests(SimpleTestCase):
         self.assertEqual(recorded["configured_on_but_disabled_by_policy"], sorted(policy.LEARNED_STAGES.values()))
         flags = parameters["feature_flags"]
         self.assertFalse(any(flags[key] for key in (
-            "gfpgan_enabled", "hd_restoration_enabled", "nafnet_deblur_enabled", "purevision_enabled",
-            "purescale_enabled", "colorization_enabled")))
+            "gfpgan_enabled", "hd_restoration_enabled", "nafnet_deblur_enabled")))
 
     def test_ai_max_says_what_it_did_and_what_it_could_not(self):
         stack, _mocks = forbid_every_learned_adapter()

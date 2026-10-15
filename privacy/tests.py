@@ -204,13 +204,13 @@ class ConsentEnforcementTests(MediaIsolatedTestCase):
     @patch("enhancement.services.apply_identity_guard")
     def test_identity_guard_is_skipped_without_consent(self, guard):
         source = np.full((80, 80, 3), 120, dtype=np.uint8)
-        with override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=False):
+        with override_settings(ZERO_DCE_ENABLED=False):
             _out, _level, parameters = enhance_bgr(source, "auto", allow_biometric_processing=False)
         self.assertEqual(parameters["identity_guard"]["status"], "skipped")
         self.assertIn("consent", parameters["identity_guard"]["fallback_reason"])
         guard.assert_not_called()
 
-    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=False)
+    @override_settings(ZERO_DCE_ENABLED=False)
     def test_the_enhancement_task_passes_the_consent_decision_to_the_pipeline(self):
         success, encoded = cv2.imencode(".jpg", np.full((64, 64, 3), 120, dtype=np.uint8))
         self.assertTrue(success)

@@ -55,16 +55,12 @@ def model_table(settings):
 
     return [
         ("zero_dce", on("ZERO_DCE_ENABLED"), settings.ZERO_DCE_MODEL_PATH, ""),
-        ("edsr", on("AI_RESTORATION_ENABLED"), settings.AI_RESTORATION_EDSR_MODEL_PATH, ""),
         ("yunet_detector", True, settings.YUNET_MODEL_PATH, settings.YUNET_MODEL_SHA256),
         ("sface_identity", on("IDENTITY_AUTO_ANALYZE") or on("IDENTITY_GUARD_ENABLED"),
          settings.IDENTITY_MODEL_PATH, settings.IDENTITY_MODEL_SHA256),
         ("nafnet_deblur", on("HD_RESTORATION_ENABLED") and on("NAFNET_DEBLUR_ENABLED"),
          settings.NAFNET_MODEL_PATH, settings.NAFNET_MODEL_SHA256),
         ("realesrgan_hd", on("HD_RESTORATION_ENABLED"), settings.REALESRGAN_MODEL_PATH, settings.REALESRGAN_MODEL_SHA256),
-        ("purescale", on("PURESCALE_ENABLED"), settings.PURESCALE_MODEL_PATH, settings.PURESCALE_MODEL_SHA256),
-        ("purevision", on("PUREVISION_ENABLED"), settings.PUREVISION_MODEL_PATH, settings.PUREVISION_MODEL_SHA256),
-        ("colorization", on("COLORIZATION_ENABLED"), settings.COLORIZATION_MODEL_PATH, settings.COLORIZATION_MODEL_SHA256),
         ("gfpgan", on("GFPGAN_ENABLED"), settings.GFPGAN_MODEL_PATH, settings.GFPGAN_MODEL_SHA256),
         ("gfpgan_detector", on("GFPGAN_ENABLED"), settings.GFPGAN_DETECTION_MODEL_PATH, settings.GFPGAN_DETECTION_MODEL_SHA256),
         ("gfpgan_parser", on("GFPGAN_ENABLED"), settings.GFPGAN_PARSING_MODEL_PATH, settings.GFPGAN_PARSING_MODEL_SHA256),
@@ -121,9 +117,8 @@ def check_stages(settings):
     for name, label in (
         ("ZERO_DCE_ENABLED", "Zero-DCE exposure"), ("ADAPTIVE_DENOISE_ENABLED", "Adaptive denoise"),
         ("HD_RESTORATION_ENABLED", "HD restoration (Real-ESRGAN)"), ("NAFNET_DEBLUR_ENABLED", "NAFNet deblur"),
-        ("PUREVISION_ENABLED", "PureVision"), ("PURESCALE_ENABLED", "PureScale"),
         ("GFPGAN_ENABLED", "GFPGAN face restoration"), ("GFPGAN_QUEUE_ENABLED", "GFPGAN on its own queue"),
-        ("COLORIZATION_ENABLED", "Colorization"), ("IDENTITY_GUARD_ENABLED", "Identity guard"),
+        ("IDENTITY_GUARD_ENABLED", "Identity guard"),
     ):
         rows.append((PASS, label, "ON" if getattr(settings, name, False) else "off"))
     return rows

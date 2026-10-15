@@ -20,8 +20,8 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 # A model's raw output is expected in [0, 1]. A tile whose output leaves this
-# band by more than the margin has diverged (NAFNet does on some near-black
-# tiles: about +-390 on a dark hair tile, on CPU and MPS alike); it is replaced
+# band by more than the margin has diverged (a restoration network can on some near-black
+# tiles: about +-390 on a dark hair tile in earlier tests, on CPU and MPS alike); it is replaced
 # by its own input, resized, rather than clamped into colour noise.
 VALID_OUTPUT_MARGIN = 0.5
 _TILE_STATS = threading.local()

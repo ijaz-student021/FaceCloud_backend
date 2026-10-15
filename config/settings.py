@@ -209,7 +209,6 @@ PREPROCESS_MAX_HEIGHT = int(os.environ.get("PREPROCESS_MAX_HEIGHT", "4096"))
 PREPROCESS_JPEG_QUALITY = int(os.environ.get("PREPROCESS_JPEG_QUALITY", "95"))
 PREPROCESS_TRANSPARENT_BACKGROUND = os.environ.get("PREPROCESS_TRANSPARENT_BACKGROUND", "#FFFFFF")
 
-AI_RESTORATION_ENABLED = env.bool("AI_RESTORATION_ENABLED", default=True)
 # Editor previews (enhancement/previews.py). A preview is a bounded copy rendered
 # from a cached bounded source of the enhanced image, so a slider never decodes
 # the full-resolution file. Retention is separate from originals and saved
@@ -276,25 +275,6 @@ if ENHANCEMENT_RENDER_POLICY not in ("lightweight_v1", "balanced_v1", "learned_v
         f"not {ENHANCEMENT_RENDER_POLICY!r}."
     )
 
-AI_RESTORATION_EDSR_MODEL_PATH = env(
-    "AI_RESTORATION_EDSR_MODEL_PATH",
-    default=str(BASE_DIR / ".runtime" / "models" / "EDSR_x2.pb"),
-)
-# The EDSR file must match this SHA-256 (docs/gpu/model_manifest.json): any
-# other file at the path is refused at load time, not only by the offline
-# manifest check.
-AI_RESTORATION_EDSR_MODEL_SHA256 = env(
-    "AI_RESTORATION_EDSR_MODEL_SHA256",
-    default="585623221baa070279a0d1e7e113a4c3faba0f318ca7fdd9a65d9afc0763d9b4",
-)
-AI_RESTORATION_SCALE = env.int("AI_RESTORATION_SCALE", default=2)
-AI_RESTORATION_MAX_INPUT_EDGE = env.int(
-    "AI_RESTORATION_MAX_INPUT_EDGE",
-    default=480,
-)
-AI_RESTORATION_MAX_OUTPUT_PIXELS = env.int(
-    "AI_RESTORATION_MAX_OUTPUT_PIXELS", default=20_000_000
-)
 HD_RESTORATION_ENABLED = env.bool("HD_RESTORATION_ENABLED", default=False)
 NAFNET_DEBLUR_ENABLED = env.bool("NAFNET_DEBLUR_ENABLED", default=False)
 NAFNET_MODEL_PATH = env(
@@ -351,12 +331,8 @@ ZERO_DCE_FULL_RESOLUTION_TILE_EDGE = env.int(
     "ZERO_DCE_FULL_RESOLUTION_TILE_EDGE", default=1024
 )
 # Photos this dark cannot be safely brightened within the normal
-# per-level guard limits, and their residual sensor noise is out of
-# distribution for PureVision/PureScale (trained on compression artifacts,
-# not extreme low-light grain) -- those models hallucinate texture on
-# input this noisy instead of cleaning it. Below this threshold, the
-# exposure guard is allowed a much larger luminance gain, and PureVision/
-# PureScale are skipped entirely regardless of their own enabled flags.
+# per-level guard limits. Below this threshold the exposure guard is allowed a
+# much larger luminance gain.
 EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD = env.float(
     "EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD", default=25.0
 )
@@ -503,70 +479,6 @@ GFPGAN_MAX_FACES = env.int("GFPGAN_MAX_FACES", default=5)
 GFPGAN_MAX_INPUT_PIXELS = env.int(
     "GFPGAN_MAX_INPUT_PIXELS", default=12_000_000
 )
-# PureScale and PureVision are third-party, non-commercially licensed
-# (CC BY-NC-SA 4.0) checkpoints from limitlesslab/AI-upscaling-models. They
-# stay disabled by default until visual QA and a license review clear them
-# for the intended deployment (see docs/features/purescale-purevision.md).
-PURESCALE_ENABLED = env.bool("PURESCALE_ENABLED", default=False)
-PURESCALE_MODEL_PATH = env(
-    "PURESCALE_MODEL_PATH",
-    default=str(BASE_DIR / ".runtime" / "models" / "PureScale_2x.pth"),
-)
-PURESCALE_MODEL_SHA256 = env(
-    "PURESCALE_MODEL_SHA256",
-    default="c8fb698766f502be6409cf3cee1a69d63381c6eebf3ff5de7df6ed87f6c9a5cb",
-)
-PURESCALE_DEVICE = env("PURESCALE_DEVICE", default="auto")
-PURESCALE_TILE_SIZE = env.int("PURESCALE_TILE_SIZE", default=256)
-PURESCALE_TILE_OVERLAP = env.int("PURESCALE_TILE_OVERLAP", default=24)
-PURESCALE_MAX_OUTPUT_PIXELS = env.int(
-    "PURESCALE_MAX_OUTPUT_PIXELS", default=20_000_000
-)
-
-PUREVISION_ENABLED = env.bool("PUREVISION_ENABLED", default=False)
-PUREVISION_MODEL_PATH = env(
-    "PUREVISION_MODEL_PATH",
-    default=str(BASE_DIR / ".runtime" / "models" / "PureVision_1x.pth"),
-)
-PUREVISION_MODEL_SHA256 = env(
-    "PUREVISION_MODEL_SHA256",
-    default="3c3bec2111d0f7c3926f3171f37ce28e72502b744e084c566d8960c06a6a06a3",
-)
-PUREVISION_DEVICE = env("PUREVISION_DEVICE", default="auto")
-PUREVISION_TILE_SIZE = env.int("PUREVISION_TILE_SIZE", default=256)
-PUREVISION_TILE_OVERLAP = env.int("PUREVISION_TILE_OVERLAP", default=24)
-PUREVISION_MAX_MEAN_CHROMA_SHIFT = env.float(
-    "PUREVISION_MAX_MEAN_CHROMA_SHIFT", default=8.0
-)
-PUREVISION_MAX_MEAN_LUMINANCE_SHIFT = env.float(
-    "PUREVISION_MAX_MEAN_LUMINANCE_SHIFT", default=30.0
-)
-
-# Automatic colorization (richzhang/colorization SIGGRAPH17, BSD-2-Clause).
-# Only ever predicts colour (ab) channels; the source luminance channel is
-# always preserved exactly. Disabled by default pending rollout QA, and only
-# runs automatically when the source image is detected as near-grayscale.
-COLORIZATION_ENABLED = env.bool("COLORIZATION_ENABLED", default=False)
-COLORIZATION_MODEL_PATH = env(
-    "COLORIZATION_MODEL_PATH",
-    default=str(BASE_DIR / ".runtime" / "models" / "colorization_siggraph17.pth"),
-)
-COLORIZATION_MODEL_SHA256 = env(
-    "COLORIZATION_MODEL_SHA256",
-    default="df00044c0a4d7c3edcecf6f75437ce346a66e7a42612d9b968e1a7e17dbc6f66",
-)
-COLORIZATION_DEVICE = env("COLORIZATION_DEVICE", default="auto")
-COLORIZATION_MAX_INFERENCE_EDGE = env.int("COLORIZATION_MAX_INFERENCE_EDGE", default=768)
-COLORIZATION_MAX_INPUT_PIXELS = env.int(
-    "COLORIZATION_MAX_INPUT_PIXELS", default=30_000_000
-)
-COLORIZATION_GRAYSCALE_CHROMA_THRESHOLD = env.float(
-    "COLORIZATION_GRAYSCALE_CHROMA_THRESHOLD", default=3.0
-)
-COLORIZATION_MAX_MEAN_LUMINANCE_SHIFT = env.float(
-    "COLORIZATION_MAX_MEAN_LUMINANCE_SHIFT", default=6.0
-)
-
 # Guards the optional GFPGAN face-restoration candidate: accepted only if it
 # stays structurally close to the source (see enhancement/services.py
 # _face_restoration_guard).

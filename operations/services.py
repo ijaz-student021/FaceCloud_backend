@@ -178,10 +178,6 @@ def check_models():
         "yunet": (settings.YUNET_MODEL_PATH, settings.YUNET_MODEL_SHA256, True),
         "sface": (settings.IDENTITY_MODEL_PATH, settings.IDENTITY_MODEL_SHA256, True),
         "zero_dce": (settings.ZERO_DCE_MODEL_PATH, settings.ZERO_DCE_MODEL_SHA256, learned_stage_enabled("ZERO_DCE_ENABLED")),
-        "edsr": (
-            settings.AI_RESTORATION_EDSR_MODEL_PATH, settings.AI_RESTORATION_EDSR_MODEL_SHA256,
-            learned_stage_enabled("AI_RESTORATION_ENABLED"),
-        ),
         "nafnet": (settings.NAFNET_MODEL_PATH, settings.NAFNET_MODEL_SHA256, learned_stage_enabled("NAFNET_DEBLUR_ENABLED")),
         "realesrgan": (
             settings.REALESRGAN_MODEL_PATH, settings.REALESRGAN_MODEL_SHA256,
@@ -190,11 +186,6 @@ def check_models():
         "gfpgan": (
             settings.GFPGAN_MODEL_PATH, settings.GFPGAN_MODEL_SHA256,
             learned_stage_enabled("GFPGAN_ENABLED") and bool(settings.GFPGAN_MODEL_PATH),
-        ),
-        "purevision": (settings.PUREVISION_MODEL_PATH, settings.PUREVISION_MODEL_SHA256, learned_stage_enabled("PUREVISION_ENABLED")),
-        "purescale": (settings.PURESCALE_MODEL_PATH, settings.PURESCALE_MODEL_SHA256, learned_stage_enabled("PURESCALE_ENABLED")),
-        "colorization": (
-            settings.COLORIZATION_MODEL_PATH, settings.COLORIZATION_MODEL_SHA256, learned_stage_enabled("COLORIZATION_ENABLED"),
         ),
     }
     models = {

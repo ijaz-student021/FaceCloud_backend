@@ -6,7 +6,7 @@ records time, noise, brightness, colour, detail, which stages actually ran (or w
 fell back) and, for face photos, the identity guard's similarity. It never touches the
 database or the stored media.
 
-    python scripts/evaluate_gpu_stages.py --configs baseline,purevision,hd --count 60
+    python scripts/evaluate_gpu_stages.py --configs baseline,hd,gfpgan --count 60
     python scripts/evaluate_gpu_stages.py --configs baseline,gfpgan --faces-dir People --face-count 20
 
 Output goes to ``.runtime/gpu_eval/<run name>/``: ``results.jsonl`` (one line per photo and
@@ -29,17 +29,15 @@ ROOT = Path(__file__).resolve().parents[1]
 # name -> settings to switch on for that configuration. ``baseline`` is the current default.
 CONFIGS = {
     "baseline": {},
-    "purevision": {"PUREVISION_ENABLED": True},
-    "purescale": {"PURESCALE_ENABLED": True},
     "hd": {"HD_RESTORATION_ENABLED": True},
     "hd_deblur": {"HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True},
     "gfpgan": {"GFPGAN_ENABLED": True, "GFPGAN_QUEUE_ENABLED": False},
-    "combo": {"PUREVISION_ENABLED": True, "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True,
+    "combo": {"HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True,
               "GFPGAN_ENABLED": True, "GFPGAN_QUEUE_ENABLED": False},
     "no_colour_gain": {"ENHANCEMENT_DARK_COLOUR_GAIN_MAX": 1.0},
 }
 # The result of each stage is recorded from these keys of the pipeline's parameters.
-STAGE_KEYS = ("purevision", "purescale", "hd_restoration", "face_restoration", "restoration", "colorization", "zero_dce")
+STAGE_KEYS = ("hd_restoration", "face_restoration", "zero_dce")
 VISIBLE_NOISE = 5.0
 
 

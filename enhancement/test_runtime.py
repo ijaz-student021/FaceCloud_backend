@@ -15,8 +15,6 @@ from django.test import SimpleTestCase, override_settings
 
 from . import runtime
 from .hd_restoration import HDRestorationUnavailable, deblur_with_nafnet, upscale_with_realesrgan
-from .purescale import PureScaleUnavailable, upscale_with_purescale
-from .purevision import PureVisionUnavailable, restore_with_purevision
 
 TORCH_INSTALLED = importlib.util.find_spec("torch") is not None
 
@@ -184,29 +182,17 @@ class AdapterMemoryPathTests(SimpleTestCase):
             deblur_with_nafnet, HDRestorationUnavailable,
         )
 
-    def test_purescale(self):
-        self.exhausted(
-            "enhancement.purescale._tiled_inference", "enhancement.purescale._load_model",
-            upscale_with_purescale, PureScaleUnavailable,
-        )
-
-    def test_purevision(self):
-        self.exhausted(
-            "enhancement.purevision._tiled_inference", "enhancement.purevision._load_model",
-            restore_with_purevision, PureVisionUnavailable,
-        )
-
     def test_a_retry_at_a_smaller_tile_succeeds_and_is_recorded(self):
         doubled = cv2.resize(self.source, (192, 128), interpolation=cv2.INTER_CUBIC)
         with (
-            patch("enhancement.purescale._load_model", return_value=(object(), "cuda")),
+            patch("enhancement.hd_restoration._load_model", return_value=(object(), "cuda")),
             patch(
-                "enhancement.purescale._tiled_inference",
+                "enhancement.hd_restoration._tiled_inference",
                 side_effect=[RuntimeError("CUDA out of memory"), doubled],
             ),
             self.assertLogs("enhancement.runtime", level="WARNING"),
         ):
-            output, metadata = upscale_with_purescale(self.source)
+            output, metadata = upscale_with_realesrgan(self.source)
 
         self.assertEqual(output.shape, (128, 192, 3))
         self.assertEqual((metadata["device"], metadata["tile_size"], metadata["memory_retries"]), ("cuda", 128, 1))

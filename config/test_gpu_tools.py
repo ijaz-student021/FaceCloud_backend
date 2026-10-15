@@ -116,8 +116,8 @@ class PreflightJudgementTests(SimpleTestCase):
 
     def test_every_model_the_pipeline_can_load_is_in_the_table(self):
         names = {row[0] for row in preflight.model_table(settings)}
-        self.assertTrue({"zero_dce", "edsr", "purevision", "purescale", "realesrgan_hd", "nafnet_deblur",
-                         "colorization", "gfpgan", "gfpgan_detector", "gfpgan_parser", "sface_identity"} <= names)
+        self.assertTrue({"zero_dce", "realesrgan_hd", "nafnet_deblur",
+                         "gfpgan", "gfpgan_detector", "gfpgan_parser", "sface_identity"} <= names)
 
     def test_gfpgan_files_are_only_needed_when_it_is_switched_on(self):
         def needed(enabled):
