@@ -291,7 +291,10 @@ class AdaptiveImageEnhancementService:
 
         final = current.image
         accepted_operations = [s["operation"] for s in stages if s["status"] == "accepted"]
-        remaining = [c for c in report.conditions if c in ADDRESSABLE] if accepted_operations else []
+        # A defect is unresolved only if the ORIGINAL had it and the result still does. (Counting whatever the analyzer finds in the
+        # result was wrong: a brightened photograph is smoother and read as "blurred", which then reported a defect that was never there.)
+        remaining = [c for c in report.conditions if c in ADDRESSABLE and c in report0.conditions] if accepted_operations else []
+        introduced = [c for c in report.conditions if c in ADDRESSABLE and c not in report0.conditions] if accepted_operations else []
         if not accepted_operations:
             outcome = ORIGINAL_PRESERVED
         elif remaining:
@@ -331,6 +334,7 @@ class AdaptiveImageEnhancementService:
             "adaptive": {
                 "outcome": outcome, "summary": summary, "operations_applied": accepted_operations,
                 "operations_skipped": skipped, "stages": stages, "unresolved_defects": remaining,
+                "conditions_seen_only_after_enhancement": introduced,
                 "quality_report": report0.as_dict(), "final_quality_report": report.as_dict(),
                 # The full candidate record (models, timings, verdicts) is for development; a user-facing result keeps the gist.
                 "candidates": pool.describe() if recorder.enabled else [

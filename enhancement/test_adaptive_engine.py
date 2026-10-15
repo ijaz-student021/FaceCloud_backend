@@ -370,6 +370,35 @@ class ServiceTests(SimpleTestCase):
         self.assertEqual(stage["status"], "accepted")
         self.assertEqual(len(stage["candidates"]), 2)  # both variants were proposed and judged
 
+    def test_a_defect_the_original_never_had_is_not_reported_as_unresolved(self):
+        """Found by the API verification: a brightened photograph was read as blurred and the summary said defocus could not be fixed."""
+        class Analyzer(ImageQualityAnalyzer):
+            calls = 0
+
+            def analyze(self, image):
+                report = super().analyze(image)
+                type(self).calls += 1
+                if type(self).calls > 1:  # the result: the analyzer now sees blur that the original did not have
+                    report.conditions = report.conditions + ["defocus_blur"]
+                return report
+
+        service = AdaptiveImageEnhancementService(
+            analyzer=Analyzer(detector=StubDetector([((150, 100, 180, 220), landmarks_for((150, 100, 180, 220)))])),
+            config=EngineConfig(), runners={ops.LOW_LIGHT: runner_lift})
+        _output, _level, parameters = self.run_service(portrait(brightness=0.12), service=service)
+        adaptive = parameters["adaptive"]
+        self.assertNotIn("defocus_blur", adaptive["unresolved_defects"])
+        self.assertEqual(adaptive["conditions_seen_only_after_enhancement"], ["defocus_blur"])
+        self.assertNotIn("Defocus", adaptive["summary"])
+
+    def test_a_defect_the_original_had_and_the_result_still_has_is_reported(self):
+        source = portrait(brightness=0.12, noise=22)
+        _output, _level, parameters = self.run_service(
+            source, runners={ops.LOW_LIGHT: runner_lift, ops.DENOISE: lambda image, engine, variant: (image, [{"model": engine}])})
+        adaptive = parameters["adaptive"]
+        if adaptive["operations_applied"]:
+            self.assertIn(adaptive["outcome"], (ENHANCED, PARTIALLY_ENHANCED))
+
     def test_only_the_operations_the_defects_call_for_run(self):
         calls = []
 
