@@ -3,7 +3,7 @@
 These tests prove how the pipeline routes, guards and records its (classical) stages
 and how the task layer claims, publishes and fails results.
 """
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import cv2
 import numpy as np

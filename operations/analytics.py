@@ -8,7 +8,6 @@ sampled estimates.
 from collections import Counter
 from datetime import timedelta
 
-from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db.models import Avg, Count, Q, Sum
 from django.db.models.functions import TruncDate

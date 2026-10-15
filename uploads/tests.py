@@ -118,7 +118,7 @@ class ImageUploadTests(APITestCase):
 
     def test_batch_cancel_sets_cooperative_cancellation_state(self):
         batch = UploadBatch.objects.create(owner=self.user, upload_type="multiple", total_files=1, accepted_files=1)
-        image = ImageUpload.objects.create(owner=self.user, batch=batch, original_name="cancel.jpg", status="uploaded")
+        ImageUpload.objects.create(owner=self.user, batch=batch, original_name="cancel.jpg", status="uploaded")
         response = self.client.post(reverse("upload-batch-cancel", args=[batch.pk]))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         batch.refresh_from_db()

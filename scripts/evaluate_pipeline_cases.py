@@ -183,7 +183,6 @@ def main():
     django.setup()
     import cv2
     import numpy as np
-    from django.conf import settings
 
     from enhancement.services import _attach_alpha, _structural_similarity, analyze_image_quality, enhance_bgr
 

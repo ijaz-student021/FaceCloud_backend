@@ -108,7 +108,7 @@ class EnhancementCapacityTests(TestCase):
             processed_file="users/1/preprocessed/ready.png",
         )
 
-        with patch("enhancement.views.process_enhancement_batch.apply_async"):
+        with patch("enhancement.tasks.process_enhancement_batch.apply_async"):
             response = self.client.post(
                 reverse("enhancement:batch-enhance", kwargs={"batch_id": self.batch.pk}), {}, format="json",
             )

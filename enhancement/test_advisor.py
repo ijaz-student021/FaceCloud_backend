@@ -35,7 +35,7 @@ from uploads.models import UploadBatch
 
 from . import advisor_client, advisor_service as service
 from .advisor_schema import (
-    CAUTION_FLAGS, INTENT_LOCKS, InvalidAdvice, build_instructions, build_user_text, response_schema, validate_advice,
+    INTENT_LOCKS, InvalidAdvice, build_instructions, build_user_text, response_schema, validate_advice,
 )
 from .controls import CONTROL_NAMES, CONTROLS
 from .editor_source import source_version

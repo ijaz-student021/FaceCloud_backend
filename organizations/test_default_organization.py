@@ -1,7 +1,7 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from .models import Organization, OrganizationMembership
+from .models import OrganizationMembership
 from .services import create_organization, create_personal_organization, get_default_organization
 
 User = get_user_model()

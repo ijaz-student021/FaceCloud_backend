@@ -268,7 +268,7 @@ class AuthenticationTests(APITestCase):
         self.assertEqual(rejected.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_login_accepts_email_and_returns_user_dashboard(self):
-        user = self.create_user()
+        self.create_user()
         response = self.client.post(
             reverse("login"),
             {"email": "ALICE@EXAMPLE.COM", "password": self.password},

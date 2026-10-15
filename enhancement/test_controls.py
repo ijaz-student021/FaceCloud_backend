@@ -8,17 +8,17 @@ import json
 
 import cv2
 import numpy as np
-from django.test import SimpleTestCase, TestCase, override_settings
+from django.test import SimpleTestCase, override_settings
 from PIL import Image, ImageEnhance
 from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIClient
 
 from . import controls
 from .controls import (
-    CONTROL_NAMES, CONTROLS, INTENSITY, ControlsSerializer, clamp_to_auto_range, neutral_settings,
+    CONTROL_NAMES, CONTROLS, INTENSITY, clamp_to_auto_range, neutral_settings,
     pillow_factors, recommend_local_adjustments, validate_controls,
 )
-from .serializers import GalleryAdjustmentSerializer, GalleryEditRequestSerializer
+from .serializers import GalleryAdjustmentSerializer
 from .services import analyze_image_quality, apply_gallery_adjustments
 from .test_blur_measure import blurred_photo, darkened, dead_leaves, noisy, resized
 from .test_pipeline_regressions import NO_MODELS, ResultFixture

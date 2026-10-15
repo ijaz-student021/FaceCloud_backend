@@ -2,7 +2,6 @@ from django.http import FileResponse
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.db.models import OuterRef, Prefetch, Q, Subquery
-from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, permissions, serializers, status
@@ -16,7 +15,7 @@ from enhancement.models import ImageEnhancementResult
 from identities.models import IdentityFace, IdentityMembership
 
 from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
-from .progress import batch_progress_payload, sync_image_progress
+from .progress import batch_progress_payload
 from .serializers import (
     ImagePreprocessingResultSerializer,
     ImageUploadSerializer,

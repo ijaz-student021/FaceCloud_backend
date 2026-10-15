@@ -50,6 +50,8 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - run: pip check
+      - name: Lint (unused imports and variables, undefined names)
+        run: pip install ruff && ruff check .
       - name: Django system check
         run: python manage.py check
       - name: No missing migrations
@@ -111,6 +113,8 @@ jobs:
       EMAIL_BACKEND: django.core.mail.backends.smtp.EmailBackend
       EMAIL_HOST: smtp.mailer-service.net
       CELERY_TASK_ALWAYS_EAGER: "False"
+      # Rate limits need a shared cache in production; the guard checks only that one is configured.
+      CACHE_URL: redis://127.0.0.1:6379/2
       BIOMETRIC_CONSENT_REQUIRED: "True"
       FACIAL_DATA_RETENTION_DAYS: "365"
       IMAGE_ENCRYPTION_ENABLED: "True"

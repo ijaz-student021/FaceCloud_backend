@@ -23,7 +23,6 @@ import json
 from datetime import timedelta
 
 import cv2
-import numpy as np
 from django.conf import settings
 from django.core.files.base import ContentFile
 from django.db import IntegrityError, transaction

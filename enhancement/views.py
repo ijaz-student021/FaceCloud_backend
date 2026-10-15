@@ -26,7 +26,6 @@ from .models import (
     ModelComparisonOutput,
 )
 from .comparison import (
-    PROFILES as COMPARISON_PROFILES,
     build_report_csv,
     ensure_comparison_capacity,
     validate_profiles,
@@ -52,11 +51,10 @@ from .controls import INTENTS, RENDERER_VERSION, neutral_settings
 from .controls import contract as editor_contract
 from .editor_source import source_version, transparency_policy
 from .previews import StaleSource, create_preview
-from .batch_jobs import BatchEnhancementConflict, BatchEnhancementFailed, start_batch_enhancement
+from .batch_jobs import start_batch_enhancement
 from .services import create_enhancement_result, ensure_enhancement_capacity
 from .watermark import WatermarkError, render_watermarked
 from .tasks import (
-    process_enhancement_batch,
     process_enhancement_image,
     process_gallery_edit,
     run_model_comparison,

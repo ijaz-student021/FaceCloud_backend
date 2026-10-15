@@ -10,7 +10,6 @@ from functools import lru_cache
 
 import cv2
 import numpy as np
-from unittest.mock import patch
 
 from django.test import SimpleTestCase, override_settings
 
@@ -18,7 +17,6 @@ from .models import EnhancementLevel, EnhancementStyle
 from .services import (
     BLUR_PROXY_LONG_EDGE,
     EnhancementPipelineContext,
-    _build_processing_plan,
     analyze_image_quality,
     analyze_original_stage,
     measure_blur,

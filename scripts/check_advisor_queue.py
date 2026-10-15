@@ -37,7 +37,7 @@ def parse_arguments():
     parser.add_argument("--name", default=time.strftime("%Y%m%d-%H%M%S"))
     parser.add_argument("--redis-port", type=int, default=6392)
     parser.add_argument("--database", default="facecloud_advisor_itest")
-    parser.add_argument("--db-host", default="/tmp")
+    parser.add_argument("--db-host", default=os.environ.get("PGHOST", "/tmp"))  # nosec B108 - the usual PostgreSQL socket directory
     parser.add_argument("--db-port", default="5432")
     parser.add_argument("--db-user", default=os.environ.get("USER", "postgres"))
     parser.add_argument("--workers", type=int, default=3)
@@ -95,10 +95,11 @@ def log(message):
 
 
 def start_infrastructure():
+    # The name goes in as a psql variable (quoted by psql), never into the SQL text.
     existing = subprocess.run(
-        ["psql", "-h", ARGUMENTS.db_host, "-p", str(ARGUMENTS.db_port), "-U", ARGUMENTS.db_user, "-d", "postgres", "-Atc",
-         f"select 1 from pg_database where datname = '{ARGUMENTS.database}'"],
-        capture_output=True, text=True, check=True,
+        ["psql", "-h", ARGUMENTS.db_host, "-p", str(ARGUMENTS.db_port), "-U", ARGUMENTS.db_user, "-d", "postgres",
+         "-Atq", "-v", f"wanted={ARGUMENTS.database}"],
+        input="select 1 from pg_database where datname = :'wanted'", capture_output=True, text=True, check=True,
     ).stdout.strip()
     if existing:
         raise SystemExit(f"Database {ARGUMENTS.database} already exists; refusing to touch it.")

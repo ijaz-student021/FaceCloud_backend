@@ -33,7 +33,6 @@ from .services import (
 )
 from .tasks import process_enhancement_batch, process_enhancement_image
 from .test_pipeline_regressions import NO_MODELS, ResultFixture, textured
-from .test_blur_measure import blurred_photo
 
 WHOLE_IMAGE = [(0.0, 0.0, 1.0, 1.0)]
 

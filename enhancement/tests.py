@@ -1,5 +1,5 @@
 import tempfile
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import cv2
 import numpy as np
@@ -33,7 +33,6 @@ from .services import (
     _quality_guard,
     output_guard_a_stage,
     process_enhancement_result,
-    process_image_edit,
 )
 from .tasks import (
     process_enhancement_batch,

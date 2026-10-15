@@ -237,6 +237,14 @@ def update_member(*, membership, actor_membership, role=None, status_value=None,
     _assert_can_manage(actor_membership, locked)
     if role == OrganizationMembership.Role.OWNER and actor_membership.role != OrganizationMembership.Role.OWNER:
         raise PermissionDenied("Only an organization owner can grant the owner role.")
+    # The same rule as an invitation (invite_member): a moderator hands out only the plain member role.
+    if (
+        role is not None
+        and role != OrganizationMembership.Role.MEMBER
+        and role != locked.role
+        and actor_membership.role != OrganizationMembership.Role.OWNER
+    ):
+        raise PermissionDenied("Moderators may only set the normal member role.")
     previous = {"role": locked.role, "status": locked.status}
     demoting_last_owner = (
         locked.role == OrganizationMembership.Role.OWNER
