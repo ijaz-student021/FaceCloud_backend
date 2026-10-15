@@ -4,6 +4,7 @@ These prove that real inference is wired into the engine end to end (the right m
 validator, the final image is brighter and the record says so). They do not prove that any photograph looks better.
 """
 import importlib.util
+import os
 from pathlib import Path
 
 import cv2
@@ -15,7 +16,8 @@ from .adaptive.service import ORIGINAL_PRESERVED, AdaptiveImageEnhancementServic
 from .test_adaptive_engine import ALL_ON, analyzer_with, portrait
 
 TORCH = importlib.util.find_spec("torch") is not None and importlib.util.find_spec("einops") is not None
-SAMPLES = sorted(Path("/Users/Ali/Desktop/images").glob("*.jpeg"))
+# Optional: a folder of real portraits to run the detector on (never committed). Without it those tests skip.
+SAMPLES = sorted(Path(os.environ["FACECLOUD_SAMPLE_PHOTOS"]).glob("*.jp*g")) if os.environ.get("FACECLOUD_SAMPLE_PHOTOS") else []
 
 
 def installed(setting):

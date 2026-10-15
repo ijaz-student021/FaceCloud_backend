@@ -4,6 +4,7 @@ SFace stays the default and keeps the settings-based thresholds; ArcFace has its
 Tests that need a real model skip when the file or the runtime is not on this machine.
 """
 import importlib.util
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -113,9 +114,10 @@ class RetinaFaceProviderTests(SimpleTestCase):
     def test_the_real_detector_finds_a_face_and_five_landmarks(self):
         if importlib.util.find_spec("facexlib") is None or not Path(settings.GFPGAN_DETECTION_MODEL_PATH).is_file():
             self.skipTest("facexlib or the RetinaFace weights are not available in this environment.")
-        photos = sorted(Path("/Users/Ali/Desktop/images").glob("*.jpeg"))
+        folder = os.environ.get("FACECLOUD_SAMPLE_PHOTOS")  # a folder of real portraits, never committed
+        photos = sorted(Path(folder).glob("*.jp*g")) if folder else []
         if not photos:
-            self.skipTest("No sample portrait is available.")
+            self.skipTest("Set FACECLOUD_SAMPLE_PHOTOS to a folder of portraits to run this test.")
         detection = validation_services.RetinaFaceDetector().detect(cv2.imread(str(photos[0])))
         self.assertGreaterEqual(len(detection.boxes), 1)
         self.assertEqual(len(detection.landmarks[0]), 5)
