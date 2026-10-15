@@ -128,6 +128,25 @@ def _worst_face_similarity(source_faces, trial, detector, provider):
     return min(similarities) if similarities else None
 
 
+def compare_faces(reference, trial):
+    """Per-face similarity of ``trial`` to the source faces in ``reference``: ``[{"box", "similarity"}]``.
+
+    ``similarity`` is ``None`` for a source face that could not be found again in ``trial`` (inconclusive, not proof of
+    change: the detector misses faces on grainy frames). ``trial`` may have any size; it is compared at the reference's.
+    """
+    comparable = cv2.resize(trial, (reference.width, reference.height), interpolation=cv2.INTER_AREA)
+    lenient_edge = max(1, settings.IDENTITY_GUARD_MIN_FACE_EDGE // 2)
+    trial_faces = _embed_faces(comparable, _detect_faces(comparable, reference.detector, lenient_edge), reference.provider)
+    results = []
+    for source_face in reference.records:
+        best = max(trial_faces, key=lambda face: _iou(source_face["box"], face["box"]), default=None)
+        similarity = None
+        if best is not None and _iou(source_face["box"], best["box"]) >= _MIN_MATCH_IOU:
+            similarity = float(reference.provider.similarity(source_face["embedding"], best["embedding"]))
+        results.append({"box": source_face["box"], "similarity": similarity})
+    return results
+
+
 # Every outcome of the guard, reduced to what a reader needs to know about the
 # saved image: was identity checked against the source, and did it hold?
 IDENTITY_VERIFIED = "verified"          # compared with the source and preserved

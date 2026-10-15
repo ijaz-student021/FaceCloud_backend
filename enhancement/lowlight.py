@@ -18,7 +18,7 @@ class LowLightUnavailable(RuntimeError):
 
 
 _MODEL_LOCK = runtime.INFERENCE_LOCK
-_MODEL_CACHE = {}
+_MODEL_CACHE = runtime.register_model_cache({})
 
 
 def _torch():
@@ -78,6 +78,7 @@ def _load_model():
     key = (str(path), str(device))
     if key in _MODEL_CACHE:
         return _MODEL_CACHE[key], device
+    runtime.make_room(_MODEL_CACHE)
     model = _build(torch)
     try:
         checkpoint = torch.load(path, map_location="cpu", weights_only=True)

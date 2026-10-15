@@ -111,6 +111,24 @@ class PreviewBasicsTests(PreviewFixture):
         too_far = self.preview(2, {"mode": "manual", "adjustments": {"denoise": 101}})
         self.assertEqual(too_far.status_code, 400)
 
+    def test_a_model_slider_drives_a_preview_and_the_response_names_the_engine(self):
+        from enhancement import model_controls
+
+        model_controls.clear_cache()
+        self.addCleanup(model_controls.clear_cache)
+        runner = {"opencv_gamma": lambda image: (cv2.add(image, 50), {"provider": "stand_in"})}
+        with patch.dict(model_controls._RUNNERS, runner), self.settings(
+                RETINEXFORMER_ENABLED=False, ZERO_DCE_ENABLED=False):
+            neutral = self.preview(1, {"mode": "manual", "adjustments": {"brightness": 1}})
+            lifted = self.preview(2, {"mode": "manual", "adjustments": {"lowlight": 80}})
+        self.assertEqual(lifted.status_code, 201, lifted.content)
+        render = lifted.json()["render"]
+        self.assertEqual(render["model_controls"][0]["control"], "lowlight")
+        self.assertEqual(render["model_controls"][0]["engine"], "opencv_gamma")
+        self.assertEqual(lifted.json()["applied_adjustments"]["lowlight"], 80.0)
+        bright = lambda response: float(np.asarray(Image.open(io.BytesIO(self.image_of(response.json()["id"])[0]))).mean())  # noqa: E731
+        self.assertGreater(bright(lifted), bright(neutral) + 10)
+
     def test_the_requested_size_is_honoured_and_bounded(self):
         self.assertEqual(max(self.preview(1, size=400).json()["width"], 0), 400)
         for size in (64, settings.ENHANCEMENT_PREVIEW_MAX_EDGE + 1):

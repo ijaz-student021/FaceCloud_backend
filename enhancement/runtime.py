@@ -10,6 +10,7 @@ so a deployment without it still starts and falls back cleanly.
 """
 import gc
 import logging
+import os
 import sys
 import threading
 
@@ -35,6 +36,63 @@ def last_tile_stats():
 # One heavy inference at a time in a worker process, whichever model runs it.
 # Two models on one GPU at once is the usual way to run out of memory.
 INFERENCE_LOCK = threading.RLock()
+
+
+# Large models loaded in this process, by adapter: each adapter registers the dict it caches its models in.
+_MODEL_CACHES = []
+
+
+def register_model_cache(cache):
+    """An adapter registers the dict its loaded models live in, so residency can be managed across adapters."""
+    if all(cache is not other for other in _MODEL_CACHES):
+        _MODEL_CACHES.append(cache)
+    return cache
+
+
+def physical_memory_gib():
+    try:
+        return os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") / 2 ** 30
+    except (ValueError, OSError, AttributeError):
+        return None
+
+
+def single_model_mode():
+    """Whether only one large model should stay loaded at a time.
+
+    ``ENHANCEMENT_MODEL_RESIDENCY``: ``single`` or ``all`` force it; ``auto`` (the default) chooses single-model residency on a
+    machine with under 12 GiB of memory. The engine loads models one operation at a time, so evicting the others costs a
+    reload and saves several hundred megabytes each: on an 8 GiB laptop that is the difference between finishing and swapping
+    until the GPU stalls.
+    """
+    mode = str(getattr(settings, "ENHANCEMENT_MODEL_RESIDENCY", "auto")).lower()
+    if mode in ("single", "all"):
+        return mode == "single"
+    memory = physical_memory_gib()
+    return memory is not None and memory < 12
+
+
+def make_room(cache, keep_key=None):
+    """Before loading a model into ``cache``: in single-model mode, drop every other loaded model (and this cache's others)."""
+    if not single_model_mode():
+        return
+    released = False
+    for other in _MODEL_CACHES:
+        for key in list(other):
+            if other is cache and key == keep_key:
+                continue
+            del other[key]
+            released = True
+    if released:
+        gc.collect()
+        torch = sys.modules.get("torch")
+        if torch is not None:
+            try:
+                if hasattr(torch, "mps") and torch.backends.mps.is_available():
+                    torch.mps.empty_cache()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except RuntimeError:
+                logger.warning("Could not release cached device memory after unloading models.")
 
 
 class InferenceMemoryError(RuntimeError):

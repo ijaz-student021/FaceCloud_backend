@@ -134,15 +134,17 @@ class OpenCVYuNetFaceDetector:
 
 
 class RetinaFaceDetector:
-    """RetinaFace (ResNet-50) through facexlib: five landmarks per face, strong on small and profile faces.
+    """RetinaFace (ResNet-50): five landmarks per face, strong on small and profile faces.
 
-    It needs the isolated PyTorch worker environment (facexlib is not in the main one) and the checksummed
-    ``detection_Resnet50_Final.pth`` already pinned for the GFPGAN stack; it never downloads anything.
+    The network is vendored (``enhancement/archs/retinaface*.py``, MIT, from facexlib), so it runs in the main environment as
+    well as the worker; only PyTorch is needed. It loads the checksum-pinned ``detection_Resnet50_Final.pth`` that the GFPGAN
+    stack already uses, and never downloads anything.
     """
 
     name = "retinaface_resnet50"
     version = "facexlib_v0_3_0"
     confidence_type = "retinaface_score"
+    _models = {}
 
     def __init__(self):
         from enhancement import runtime
@@ -154,23 +156,24 @@ class RetinaFaceDetector:
             raise ValidationError("The RetinaFace weights are unavailable.") from error
         try:
             import torch
-            from enhancement.gfpgan import _restore_removed_torchvision_module
-
-            _restore_removed_torchvision_module()
-            from facexlib.detection import init_detection_model
-        except (ImportError, OSError) as error:
-            raise ValidationError("The RetinaFace runtime (facexlib) is unavailable in this environment.") from error
+        except ImportError as error:
+            raise ValidationError("The RetinaFace runtime (PyTorch) is unavailable in this environment.") from error
         self._torch = torch
-        try:
-            device = runtime.resolve_device(torch, settings.RETINAFACE_DEVICE, "RetinaFace", ValidationError)
-            self.model = init_detection_model(
-                "retinaface_resnet50", half=False, device=device,
-                model_rootpath=str(Path(settings.GFPGAN_DETECTION_MODEL_PATH).parent),
-            )
-        except ValidationError:
-            raise
-        except Exception as error:
-            raise ValidationError("The RetinaFace detector cannot be loaded safely.") from error
+        device = runtime.resolve_device(torch, settings.RETINAFACE_DEVICE, "RetinaFace", ValidationError)
+        key = (settings.GFPGAN_DETECTION_MODEL_PATH, str(device))
+        if key not in self._models:
+            from enhancement.archs.retinaface import RetinaFace
+
+            try:
+                model = RetinaFace(network_name="resnet50", half=False, phase="test", device=device)
+                state = torch.load(settings.GFPGAN_DETECTION_MODEL_PATH, map_location="cpu", weights_only=True)
+                state = {(name[7:] if name.startswith("module.") else name): value for name, value in state.items()}
+                model.load_state_dict(state, strict=True)
+                model.eval().to(device)
+            except Exception as error:
+                raise ValidationError("The RetinaFace detector cannot be loaded safely.") from error
+            self._models[key] = model
+        self.model = self._models[key]
 
     def detect(self, image):
         if image is None or image.size == 0:

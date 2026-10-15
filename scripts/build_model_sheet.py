@@ -143,21 +143,27 @@ def main():
     small = cv2.resize(clean, None, fx=0.45, fy=0.45, interpolation=cv2.INTER_AREA)
     degraded = cv2.imdecode(cv2.imencode(".jpg", cv2.GaussianBlur(small, (0, 0), 1.8), [cv2.IMWRITE_JPEG_QUALITY, 25])[1], 1)
     reference = cv2.resize(clean, (small.shape[1], small.shape[0]), interpolation=cv2.INTER_AREA)
-    identity = {}
+    identity = {}  # label -> a function giving the similarity of a picture's face to the original's
     try:
-        from identities.providers import get_identity_provider
+        from identities.providers import ArcFaceOnnxProvider, SFaceOnnxProvider
         from validation.services import OpenCVYuNetFaceDetector
 
-        provider, detector = get_identity_provider(), OpenCVYuNetFaceDetector()
+        detector = OpenCVYuNetFaceDetector()
+        for label, provider in (("SFace", SFaceOnnxProvider()), ("ArcFace", ArcFaceOnnxProvider())):
+            try:
+                provider.healthcheck()
+            except Exception as error:
+                skipped.append({"model": f"identity similarity ({label})", "reason": f"{type(error).__name__}: {str(error)[:120]}"})
+                continue
 
-        def embed(picture):
-            found = detector.detect(picture)
-            x, y, w, h = found.boxes[0]
-            aligned = provider.prepare_face(picture, {"x": x, "y": y, "width": w, "height": h}, found.landmarks[0])
-            return provider.validate_embedding(provider.embed(aligned))
+            def embed(picture, provider=provider):
+                found = detector.detect(picture)
+                x, y, w, h = found.boxes[0]
+                aligned = provider.prepare_face(picture, {"x": x, "y": y, "width": w, "height": h}, found.landmarks[0])
+                return provider.validate_embedding(provider.embed(aligned))
 
-        base = embed(reference)
-        identity = {"provider": provider.name, "embed": lambda picture: round(float(provider.similarity(base, embed(picture))), 4)}
+            base = embed(reference)
+            identity[label] = lambda picture, base=base, embed=embed, provider=provider: round(float(provider.similarity(base, embed(picture))), 4)
     except Exception as error:
         skipped.append({"model": "identity similarity", "reason": f"{type(error).__name__}: {str(error)[:120]}"})
     candidates = {
@@ -166,16 +172,18 @@ def main():
         "GFPGAN": run("GFPGAN", lambda: restore_faces(degraded)[0]),
     }
     add("face", "portrait", "degraded face (blur + JPEG q25)", degraded, candidates, reference,
-        "Identity similarity to the original (1.0 = same face) is measured with " + (identity.get("provider", "n/a")))
-    if identity:
-        for entry in rows[-1]["scores"]:
-            image = degraded if entry["name"].startswith("degraded") else next(
-                (candidates[key][0] for key in candidates if key == entry["name"]), None)
-            if image is not None:
-                try:
-                    entry["identity"] = identity["embed"](image)
-                except Exception:
-                    entry["identity"] = None
+        "Identity similarity to the original (1.0 = same face): " + ", ".join(identity) + ". Higher is better; a restorer that changes who the person is scores lower.")
+    for entry in rows[-1]["scores"]:
+        image = degraded if entry["name"].startswith("degraded") else next(
+            (candidates[key][0] for key in candidates if key == entry["name"]), None)
+        if image is None:
+            continue
+        entry["identity"] = {}
+        for label, measure in identity.items():
+            try:
+                entry["identity"][label] = measure(image)
+            except Exception:
+                entry["identity"][label] = None
 
     # The low-light slider on a real photo, then the full pipeline on the untouched photo.
     base_photo = load(chosen[0])
@@ -217,7 +225,8 @@ def main():
                 figure(label, file, "<br>PSNR {:.2f} dB · SSIM {:.3f}{}{}".format(
                     score[label]["psnr"], score[label]["ssim"],
                     f" · {score[label]['seconds']} s" if score[label].get("seconds") else "",
-                    f" · identity {score[label]['identity']}" if score[label].get("identity") is not None else ""))
+                    (" · identity " + ", ".join(f"{k} {v}" for k, v in score[label]["identity"].items() if v is not None))
+                    if score[label].get("identity") else ""))
                 for label, file in row["images"] if label in score
             ) + figure("clean original", row["images"][0][1])
             block.append(f"<h3>{html.escape(row['photo'])} — {html.escape(row['defect'])}</h3><div class='row'>{figures}</div>"

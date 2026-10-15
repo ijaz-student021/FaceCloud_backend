@@ -28,7 +28,7 @@ class CodeFormerUnavailable(GFPGANUnavailable):
     """Raised when CodeFormer cannot run safely."""
 
 
-_MODEL_CACHE = {}
+_MODEL_CACHE = runtime.register_model_cache({})
 
 # The 5-point FFHQ template for a 512 px aligned face (the one CodeFormer was trained on).
 _TEMPLATE_512 = np.array(
@@ -71,6 +71,7 @@ def _load_model():
         return _MODEL_CACHE[key], device
     from .archs.codeformer import CodeFormer
 
+    runtime.make_room(_MODEL_CACHE)
     model = CodeFormer(dim_embd=512, codebook_size=1024, n_head=8, n_layers=9, connect_list=["32", "64", "128", "256"])
     try:
         checkpoint = torch.load(path, map_location="cpu", weights_only=True)

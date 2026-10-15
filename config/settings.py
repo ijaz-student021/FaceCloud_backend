@@ -269,9 +269,9 @@ if OPENAI_ADVISOR_TIMEOUT_SECONDS * OPENAI_ADVISOR_MAX_ATTEMPTS > OPENAI_ADVISOR
 # earlier behaviour, where each of those settings decides. Adapters and
 # checkpoints stay installed either way, so the change is reversible.
 ENHANCEMENT_RENDER_POLICY = env("ENHANCEMENT_RENDER_POLICY", default="lightweight_v1")
-if ENHANCEMENT_RENDER_POLICY not in ("lightweight_v1", "balanced_v1", "learned_v1"):
+if ENHANCEMENT_RENDER_POLICY not in ("lightweight_v1", "balanced_v1", "learned_v1", "adaptive_v1"):
     raise ImproperlyConfigured(
-        "ENHANCEMENT_RENDER_POLICY must be lightweight_v1, balanced_v1 or learned_v1, "
+        "ENHANCEMENT_RENDER_POLICY must be lightweight_v1, balanced_v1, learned_v1 or adaptive_v1, "
         f"not {ENHANCEMENT_RENDER_POLICY!r}."
     )
 
@@ -323,6 +323,18 @@ HD_RESTORATION_MAX_OUTPUT_PIXELS = env.int("HD_RESTORATION_MAX_OUTPUT_PIXELS", d
 # After that the stage gives up and the pipeline keeps its last safe image.
 ENHANCEMENT_OOM_MAX_RETRIES = env.int("ENHANCEMENT_OOM_MAX_RETRIES", default=2)
 ENHANCEMENT_MIN_TILE_SIZE = env.int("ENHANCEMENT_MIN_TILE_SIZE", default=64)
+# The adaptive enhancement engine (ENHANCEMENT_RENDER_POLICY=adaptive_v1; enhancement/adaptive/): bounds, and the
+# development-only debug artifacts (never on in production).
+ADAPTIVE_MAX_CANDIDATES = env.int("ADAPTIVE_MAX_CANDIDATES", default=8)
+ADAPTIVE_TIME_BUDGET_SECONDS = env.float("ADAPTIVE_TIME_BUDGET_SECONDS", default=180.0)
+ADAPTIVE_MAX_OUTPUT_EDGE = env.int("ADAPTIVE_MAX_OUTPUT_EDGE", default=4096)
+ADAPTIVE_FACE_UPSCALE_BELOW = env.int("ADAPTIVE_FACE_UPSCALE_BELOW", default=96)
+ADAPTIVE_DEBUG_ARTIFACTS = env.bool("ADAPTIVE_DEBUG_ARTIFACTS", default=False)
+ADAPTIVE_DEBUG_RETENTION_HOURS = env.float("ADAPTIVE_DEBUG_RETENTION_HOURS", default=24.0)
+# Which large models stay loaded: "single" (one at a time), "all", or "auto" (single on a machine with under 12 GiB).
+ENHANCEMENT_MODEL_RESIDENCY = env("ENHANCEMENT_MODEL_RESIDENCY", default="auto")
+# Memory the editor sliders may keep for cached model results (enhancement/model_controls.py), per process.
+EDITOR_MODEL_CACHE_MB = env.int("EDITOR_MODEL_CACHE_MB", default=256)
 # Retinexformer (ICCV 2023, MIT): the preferred low-light model when switched on; Zero-DCE is the fallback.
 RETINEXFORMER_ENABLED = env.bool("RETINEXFORMER_ENABLED", default=False)
 RETINEXFORMER_MODEL_PATH = env(
@@ -708,6 +720,49 @@ STORAGES = {
     "default": {"BACKEND": "config.storage.EncryptedFileSystemStorage"},
     "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
 }
+
+# Private object storage (Feature 43). ``filesystem`` (the default) keeps media on local disk; ``s3`` keeps every
+# stored file in a private S3 (or S3-compatible) bucket, encrypted client-side first when IMAGE_ENCRYPTION_ENABLED
+# is on (config/s3_storage.py). Credentials come from the boto3 chain (an IAM role, or an IAM user's keys): never
+# the AWS account's root keys. See docs/deployment/aws-s3-private-storage.md.
+STORAGE_BACKEND = env("STORAGE_BACKEND", default="filesystem")
+if STORAGE_BACKEND not in ("filesystem", "s3"):
+    raise ImproperlyConfigured(f"STORAGE_BACKEND must be filesystem or s3, not {STORAGE_BACKEND!r}.")
+AWS_STORAGE_BUCKET_NAME = env("AWS_STORAGE_BUCKET_NAME", default="")
+# These two names are also read by django-storages itself, so an unset value must be None, not "".
+AWS_S3_REGION_NAME = env("AWS_S3_REGION_NAME", default="") or None
+AWS_S3_ENDPOINT_URL = env("AWS_S3_ENDPOINT_URL", default="") or None  # only for an S3-compatible store (MinIO, R2, ...)
+AWS_S3_KEY_PREFIX = env("AWS_S3_KEY_PREFIX", default="media")
+AWS_S3_SERVER_SIDE_ENCRYPTION = env("AWS_S3_SERVER_SIDE_ENCRYPTION", default="AES256")  # AES256 | aws:kms | (empty)
+AWS_S3_KMS_KEY_ID = env("AWS_S3_KMS_KEY_ID", default="")
+AWS_S3_SIGNED_URL_SECONDS = env.int("AWS_S3_SIGNED_URL_SECONDS", default=300)
+if STORAGE_BACKEND == "s3":
+    if not AWS_STORAGE_BUCKET_NAME:
+        raise ImproperlyConfigured("STORAGE_BACKEND=s3 needs AWS_STORAGE_BUCKET_NAME.")
+    if AWS_S3_SERVER_SIDE_ENCRYPTION not in ("AES256", "aws:kms", ""):
+        raise ImproperlyConfigured("AWS_S3_SERVER_SIDE_ENCRYPTION must be AES256, aws:kms or empty.")
+    if AWS_S3_SERVER_SIDE_ENCRYPTION == "aws:kms" and not AWS_S3_KMS_KEY_ID:
+        raise ImproperlyConfigured("aws:kms server-side encryption needs AWS_S3_KMS_KEY_ID.")
+    _object_parameters = {}
+    if AWS_S3_SERVER_SIDE_ENCRYPTION:
+        _object_parameters["ServerSideEncryption"] = AWS_S3_SERVER_SIDE_ENCRYPTION
+        if AWS_S3_SERVER_SIDE_ENCRYPTION == "aws:kms":
+            _object_parameters["SSEKMSKeyId"] = AWS_S3_KMS_KEY_ID
+    STORAGES["default"] = {
+        "BACKEND": "config.s3_storage.EncryptedS3Storage",
+        "OPTIONS": {
+            "bucket_name": AWS_STORAGE_BUCKET_NAME,
+            "region_name": AWS_S3_REGION_NAME,
+            "endpoint_url": AWS_S3_ENDPOINT_URL,
+            "location": AWS_S3_KEY_PREFIX,
+            "default_acl": None,            # never a per-object public ACL
+            "querystring_auth": True,       # a URL, if one is ever made, is signed and expires
+            "querystring_expire": AWS_S3_SIGNED_URL_SECONDS,
+            "signature_version": "s3v4",
+            "file_overwrite": False,
+            "object_parameters": _object_parameters,
+        },
+    }
 
 # Biometric privacy controls (Feature 41). Consent is recorded either way;
 # enforcement is opt-in so existing deployments keep working, and

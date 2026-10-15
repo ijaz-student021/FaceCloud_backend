@@ -16,7 +16,7 @@ class HDRestorationUnavailable(RuntimeError):
 
 # Shared with every other adapter: one heavy inference at a time per process.
 _MODEL_LOCK = runtime.INFERENCE_LOCK
-_MODEL_CACHE = {}
+_MODEL_CACHE = runtime.register_model_cache({})
 
 
 def _runtime():
@@ -218,6 +218,7 @@ def _load_model(kind):
     key = (kind, str(path), str(device))
     if key in _MODEL_CACHE:
         return _MODEL_CACHE[key], device
+    runtime.make_room(_MODEL_CACHE)  # on a small machine only one large model stays loaded
     model = builder(nn, functional)
     try:
         checkpoint = torch.load(path, map_location="cpu", weights_only=True)
@@ -296,11 +297,12 @@ def denoise_with_nafnet(image):
     }
 
 
-def upscale_with_realesrgan(image):
+def upscale_with_realesrgan(image, output_scale=None):
+    """Upscale by ``output_scale`` (2 or 4; the HD_RESTORATION_OUTPUT_SCALE setting when not given)."""
     if image is None or image.size == 0:
         raise HDRestorationUnavailable("The Real-ESRGAN input image is invalid.")
     height, width = image.shape[:2]
-    scale = int(settings.HD_RESTORATION_OUTPUT_SCALE)
+    scale = int(output_scale or settings.HD_RESTORATION_OUTPUT_SCALE)
     if scale not in (2, 4):
         raise HDRestorationUnavailable("HD_RESTORATION_OUTPUT_SCALE must be 2 or 4.")
     # The model is 4x, but tiles are reduced to the output scale before they are

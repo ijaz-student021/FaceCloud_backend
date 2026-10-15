@@ -316,3 +316,38 @@ class DivergedTileTests(SimpleTestCase):
         )
         self.assertEqual(metadata["tiles_rejected"], 1)
         self.assertEqual(output.shape, image.shape)
+
+
+class ModelResidencyTests(SimpleTestCase):
+    """On a small machine only one large model stays loaded; on a large one every model may."""
+
+    def setUp(self):
+        self.first, self.second = {"a": object()}, {"b": object(), "c": object()}
+        saved = list(runtime._MODEL_CACHES)
+        runtime._MODEL_CACHES[:] = [self.first, self.second]
+        self.addCleanup(lambda: runtime._MODEL_CACHES.__setitem__(slice(None), saved))
+
+    @override_settings(ENHANCEMENT_MODEL_RESIDENCY="single")
+    def test_single_mode_unloads_every_other_model_but_keeps_the_one_being_used(self):
+        runtime.make_room(self.second, keep_key="b")
+        self.assertEqual((dict(self.first), sorted(self.second)), ({}, ["b"]))
+
+    @override_settings(ENHANCEMENT_MODEL_RESIDENCY="all")
+    def test_all_mode_keeps_everything_loaded(self):
+        runtime.make_room(self.second)
+        self.assertEqual((sorted(self.first), sorted(self.second)), (["a"], ["b", "c"]))
+
+    @override_settings(ENHANCEMENT_MODEL_RESIDENCY="auto")
+    def test_auto_mode_follows_the_machines_memory(self):
+        with patch.object(runtime, "physical_memory_gib", return_value=8.0):
+            self.assertTrue(runtime.single_model_mode())
+        with patch.object(runtime, "physical_memory_gib", return_value=32.0):
+            self.assertFalse(runtime.single_model_mode())
+        with patch.object(runtime, "physical_memory_gib", return_value=None):
+            self.assertFalse(runtime.single_model_mode())
+
+    def test_an_adapter_registers_its_cache_once(self):
+        cache = {}
+        runtime.register_model_cache(cache)
+        runtime.register_model_cache(cache)
+        self.assertEqual(sum(1 for other in runtime._MODEL_CACHES if other is cache), 1)

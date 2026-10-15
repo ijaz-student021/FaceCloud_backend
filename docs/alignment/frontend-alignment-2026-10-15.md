@@ -52,13 +52,13 @@ backend. The backend contract now covers all five (a `denoise` control was added
 These are copy and documentation, not code; they matter because a reviewer will read
 both repositories.
 
-* **Models.** The frontend names Zero-DCE, GFPGAN, Real-ESRGAN, NAFNet, PureVision,
-  PureScale, colourisation, InsightFace and MediaPipe in 30 mock entries, the landing page,
-  the live-enhancement panel, About, the footer and the README. In the backend the learned
-  models are **installed but off by default** (`lightweight_v1` policy; see
-  `docs/enhancement/optional-models.md`), so the copy should say "optional, disabled by
-  default" rather than imply they run on every photo. InsightFace and MediaPipe are not
-  used at all: detection and identity use YuNet and SFace.
+* **Models.** The frontend names Zero-DCE, GFPGAN, Real-ESRGAN, NAFNet, PureVision, PureScale, colourisation,
+  InsightFace and MediaPipe in 30 mock entries, the landing page, the live-enhancement panel, About, the footer and the
+  README. The backend's set is now: Retinexformer and Zero-DCE (low light), NAFNet-SIDD (denoise), NAFNet-GoPro (deblur),
+  CodeFormer and GFPGAN (faces), Real-ESRGAN (super-resolution), YuNet or RetinaFace (detection) and SFace or ArcFace
+  (identity; ArcFace is InsightFace's model). **PureVision, PureScale and colourisation were removed** and should leave the
+  frontend copy; MediaPipe is not used. All are installed but **off by default** (`docs/enhancement/optional-models.md`),
+  so the copy should say "optional, disabled by default" rather than imply they run on every photo.
 * **`README_BACKEND_ROADMAP.md`** describes a NestJS, Prisma, BullMQ and Python-worker
   architecture that was never built; the backend is Django, DRF, Celery and Redis.
 * **`WORK_LOG.md` §1/§5** still say the queue and workers are "not started", the

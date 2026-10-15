@@ -135,7 +135,9 @@ def _candidate(control, engine, image):
         raise ValueError("A slider model must not change the image size.")
     with _LOCK:
         _CACHE[key] = (candidate, metadata)
-        while len(_CACHE) > _CACHE_SIZE:
+        budget = int(settings.EDITOR_MODEL_CACHE_MB) * 1024 * 1024
+        # Bounded by count and by bytes: a full-resolution candidate is tens of megabytes.
+        while len(_CACHE) > _CACHE_SIZE or (len(_CACHE) > 1 and sum(item[0].nbytes for item in _CACHE.values()) > budget):
             _CACHE.popitem(last=False)
     return candidate, {**metadata, "cached": False}
 

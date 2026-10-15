@@ -830,20 +830,26 @@ Provides the final relational database foundation for concurrent processing and 
 - PostgreSQL test-database support
 - Preserved rollback backup
 
-### Feature 43: Private cloud storage — Partial (encryption at rest done)
+### Feature 43: Private cloud storage — Implemented, verified against an in-process S3 (not yet against a real AWS account)
 
-Stored images are already encrypted at rest on local storage (AES-256-GCM, key ids and
-rotation, conversion command): [stored-image-encryption.md](features/stored-image-encryption.md).
-Moving media to a private object store, signed URLs and quotas remain.
+Select it with `STORAGE_BACKEND=s3`: every stored file then lives in a private S3 (or S3-compatible) bucket,
+**encrypted client-side first** (AES-256-GCM, key ids and rotation as in
+[stored-image-encryption.md](features/stored-image-encryption.md)) with S3 server-side encryption on top. Setup, the
+account hardening checklist, the bucket script, the IAM policy and the acceptance check are in
+[deployment/aws-s3-private-storage.md](deployment/aws-s3-private-storage.md).
 
-Moves production assets from local media storage to private object storage.
-
-- AWS S3 or compatible private bucket
-- Secure object keys
-- Signed download URLs
-- Original, enhanced, report, and ZIP storage
-- Storage quotas and analytics
-- Lifecycle and deletion policies
+- AWS S3 or compatible private bucket: `config/s3_storage.py` (`EncryptedS3Storage`); `scripts/aws_provision_bucket.py`
+  creates it with Block Public Access, TLS-only policy, default encryption, versioning and lifecycle
+- Secure object keys: `media/users/<id>/<kind>/<uuid>.<ext>`, the original name is never in a key
+- Original, enhanced, report, and ZIP storage: all go through the default storage, so all are covered
+- Downloads: streamed through the authenticated API (ownership checked, then decrypted); no signed URL is made for
+  ciphertext. Signed, expiring URLs exist only with client-side encryption off
+- `manage.py check_storage`: refuses root credentials, checks Block Public Access, encryption, versioning and a
+  write/read/delete round trip
+- `manage.py copy_media_to_s3`: copies existing local media, verifying each file by SHA-256, never deleting the source
+- Lifecycle and deletion: versioning, 30-day expiry of old versions, 7-day abort of incomplete uploads; deleting an
+  image deletes its objects
+- **Still open:** per-user storage quotas and analytics
 
 ### Feature 44: API documentation and developer support — Complete
 

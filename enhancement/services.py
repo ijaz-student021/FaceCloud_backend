@@ -2151,6 +2151,13 @@ def enhance_bgr(
     The source array is never modified. Every stage that changes pixels proposes
     a candidate; ``stage_reports`` records whether it was accepted and why not.
     """
+    if rendering_policy.active_policy() == rendering_policy.ADAPTIVE:
+        # The adaptive engine (enhancement/adaptive/) analyses, routes, validates candidates and returns one image.
+        from .adaptive.service import AdaptiveImageEnhancementService
+
+        return AdaptiveImageEnhancementService().enhance(
+            image, requested_level, style, allow_biometric_processing=allow_biometric_processing, checkpoint=checkpoint,
+        )
     if style == EnhancementStyle.AI_MAX:
         requested_level = EnhancementLevel.HIGH
     context = EnhancementPipelineContext(

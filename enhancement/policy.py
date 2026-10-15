@@ -19,7 +19,8 @@ from django.conf import settings
 LIGHTWEIGHT = "lightweight_v1"
 BALANCED = "balanced_v1"
 LEARNED = "learned_v1"
-POLICIES = (LIGHTWEIGHT, BALANCED, LEARNED)
+ADAPTIVE = "adaptive_v1"
+POLICIES = (LIGHTWEIGHT, BALANCED, LEARNED, ADAPTIVE)
 
 # Per-model setting -> the stage it switches, as reported to users.
 LEARNED_STAGES = {
@@ -39,6 +40,7 @@ ALLOWED_STAGES = {
     LIGHTWEIGHT: frozenset(),
     BALANCED: frozenset({"ZERO_DCE_ENABLED"}),
     LEARNED: frozenset(LEARNED_STAGES),
+    ADAPTIVE: frozenset(LEARNED_STAGES),
 }
 
 DESCRIPTIONS = {
@@ -51,6 +53,11 @@ DESCRIPTIONS = {
         "style. Automatic mode still never lifts a dark photo. No PyTorch model runs."
     ),
     LEARNED: "Each learned model (Retinexformer, Zero-DCE, NAFNet, Real-ESRGAN, GFPGAN, CodeFormer) runs when its own setting is on.",
+    ADAPTIVE: (
+        "The adaptive engine (enhancement/adaptive/): the photograph is analysed, only the operations its defects call for "
+        "run, each candidate is validated (quality, colour, artifacts, identity), and one final image is selected or the "
+        "original is kept. Uses the models whose own setting is on."
+    ),
 }
 
 
@@ -84,7 +91,7 @@ def describe():
         "allowed_stages": sorted(LEARNED_STAGES[flag] for flag in ALLOWED_STAGES[name]),
         "learned_stages": sorted(LEARNED_STAGES.values()),
         "configured_on_but_disabled_by_policy": disabled_by_policy(),
-        "heavy_restoration_available": name == LEARNED and any(
+        "heavy_restoration_available": name in (LEARNED, ADAPTIVE) and any(
             bool(getattr(settings, flag)) for flag in LEARNED_STAGES
         ),
     }

@@ -18,4 +18,6 @@ cryptography>=50.0.1
 gunicorn
 # Optional cloud adjustment advisor (disabled until OPENAI_API_KEY and a model are configured).
 openai>=3.31,<4
-# boto3 and django-storages return with Feature 43 (private cloud storage).
+# Private object storage (Feature 43): used only when STORAGE_BACKEND=s3.
+boto3>=1.40
+django-storages[s3]>=1.14
