@@ -11,7 +11,7 @@ feathered mask. Everything is OpenCV and PyTorch: no facexlib or basicsr is need
 environment as well as the isolated worker.
 
 ``fidelity`` is CodeFormer's ``w``: 0 favours quality (more invented detail), 1 favours fidelity to the input.
-Licence: S-Lab License 1.0, non-commercial use only (docs/model-licenses/codeformer.md).
+Licence: S-Lab License 1.0, non-commercial use only (docs/model-licenses/model-set-2026-10.md).
 """
 import hashlib
 from pathlib import Path

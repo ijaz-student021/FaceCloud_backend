@@ -276,8 +276,10 @@ def denoise_with_nafnet(image):
     if image is None or image.size == 0:
         raise HDRestorationUnavailable("The NAFNet-SIDD input image is invalid.")
     output, inference = _infer("nafnet_sidd", "NAFNet-SIDD", image, 1)
-    source_lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB).astype(np.float32)
-    output_lab = cv2.cvtColor(output, cv2.COLOR_BGR2LAB).astype(np.float32)
+    # Removing noise legitimately changes every pixel a little, so the fidelity limits are applied to the
+    # low-frequency colour and brightness (both sides softened), where a real drift would show.
+    source_lab = cv2.cvtColor(cv2.GaussianBlur(image, (0, 0), 2.0), cv2.COLOR_BGR2LAB).astype(np.float32)
+    output_lab = cv2.cvtColor(cv2.GaussianBlur(output, (0, 0), 2.0), cv2.COLOR_BGR2LAB).astype(np.float32)
     chroma_shift = float(np.mean(np.abs(output_lab[:, :, 1:] - source_lab[:, :, 1:])))
     luminance_shift = float(np.mean(np.abs(output_lab[:, :, 0] - source_lab[:, :, 0])))
     if (

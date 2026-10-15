@@ -44,7 +44,7 @@ def main():
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--photos", type=int, default=3, help="How many photos to evaluate.")
     parser.add_argument("--max-edge", type=int, default=800)
-    parser.add_argument("--face-photo", type=int, default=-1, help="Index of a close portrait for the face test (default: the last).")
+    parser.add_argument("--face-image", type=Path, default=None, help="A close portrait for the face test (default: the last photo).")
     arguments = parser.parse_args()
 
     import cv2
@@ -87,12 +87,12 @@ def main():
         entry = {"section": section, "photo": photo, "defect": defect, "note": note, "images": [], "scores": []}
         entry["images"].append(("clean original", save(f"{section}_{photo}_clean.jpg", clean)))
         entry["images"].append((defect, save(f"{section}_{photo}_input.jpg", degraded)))
-        entry["scores"].append({"name": defect, "psnr": round(psnr(clean, degraded), 2), "seconds": None})
+        entry["scores"].append({"name": defect, "psnr": round(psnr(clean, degraded), 2), "ssim": round(_structural_similarity(clean, degraded), 4), "seconds": None})
         for name, (image, seconds) in candidates.items():
             if image is None:
                 continue
             entry["images"].append((name, save(f"{section}_{photo}_{name.replace(' ', '_')}.jpg", image)))
-            entry["scores"].append({"name": name, "psnr": round(psnr(clean, image), 2), "seconds": seconds,
+            entry["scores"].append({"name": name, "psnr": round(psnr(clean, image), 2), "ssim": round(_structural_similarity(clean, image), 4), "seconds": seconds,
                                     "luminance": round(float(image.mean()), 1)})
         rows.append(entry)
 
@@ -138,7 +138,7 @@ def main():
         add("lowres", name, "low-resolution input (4x down, bicubic up)", bicubic, {"Real-ESRGAN": (esrgan, seconds)}, clean)
 
     # Face restoration on the portrait chosen for it, with identity measured.
-    face_path = chosen[arguments.face_photo] if chosen else paths[-1]
+    face_path = arguments.face_image or (chosen[-1] if chosen else paths[-1])
     clean = load(face_path)
     small = cv2.resize(clean, None, fx=0.45, fy=0.45, interpolation=cv2.INTER_AREA)
     degraded = cv2.imdecode(cv2.imencode(".jpg", cv2.GaussianBlur(small, (0, 0), 1.8), [cv2.IMWRITE_JPEG_QUALITY, 25])[1], 1)
@@ -214,8 +214,8 @@ def main():
         for row in [r for r in rows if r["section"] == key]:
             score = {item["name"]: item for item in row["scores"]}
             figures = "".join(
-                figure(label, file, "<br>PSNR {:.2f} dB{}{}".format(
-                    score[label]["psnr"],
+                figure(label, file, "<br>PSNR {:.2f} dB · SSIM {:.3f}{}{}".format(
+                    score[label]["psnr"], score[label]["ssim"],
                     f" · {score[label]['seconds']} s" if score[label].get("seconds") else "",
                     f" · identity {score[label]['identity']}" if score[label].get("identity") is not None else ""))
                 for label, file in row["images"] if label in score

@@ -133,10 +133,73 @@ class OpenCVYuNetFaceDetector:
         )
 
 
+class RetinaFaceDetector:
+    """RetinaFace (ResNet-50) through facexlib: five landmarks per face, strong on small and profile faces.
+
+    It needs the isolated PyTorch worker environment (facexlib is not in the main one) and the checksummed
+    ``detection_Resnet50_Final.pth`` already pinned for the GFPGAN stack; it never downloads anything.
+    """
+
+    name = "retinaface_resnet50"
+    version = "facexlib_v0_3_0"
+    confidence_type = "retinaface_score"
+
+    def __init__(self):
+        from enhancement import runtime
+        from identities.providers import verify_model_checksum
+
+        try:
+            verify_model_checksum(settings.GFPGAN_DETECTION_MODEL_PATH, settings.GFPGAN_DETECTION_MODEL_SHA256)
+        except OSError as error:
+            raise ValidationError("The RetinaFace weights are unavailable.") from error
+        try:
+            import torch
+            from enhancement.gfpgan import _restore_removed_torchvision_module
+
+            _restore_removed_torchvision_module()
+            from facexlib.detection import init_detection_model
+        except (ImportError, OSError) as error:
+            raise ValidationError("The RetinaFace runtime (facexlib) is unavailable in this environment.") from error
+        self._torch = torch
+        try:
+            device = runtime.resolve_device(torch, settings.RETINAFACE_DEVICE, "RetinaFace", ValidationError)
+            self.model = init_detection_model(
+                "retinaface_resnet50", half=False, device=device,
+                model_rootpath=str(Path(settings.GFPGAN_DETECTION_MODEL_PATH).parent),
+            )
+        except ValidationError:
+            raise
+        except Exception as error:
+            raise ValidationError("The RetinaFace detector cannot be loaded safely.") from error
+
+    def detect(self, image):
+        if image is None or image.size == 0:
+            raise ValidationError("The image cannot be inspected for faces safely.")
+        if image.ndim == 2:
+            image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+        try:
+            with self._torch.no_grad():
+                rows = self.model.detect_faces(image, settings.RETINAFACE_SCORE_THRESHOLD)
+        except Exception as error:
+            raise ValidationError("RetinaFace face detection failed safely.") from error
+        boxes, scores, landmarks = [], [], []
+        for row in rows if rows is not None else []:
+            x1, y1, x2, y2 = (float(value) for value in row[:4])
+            boxes.append((int(round(x1)), int(round(y1)), int(round(x2 - x1)), int(round(y2 - y1))))
+            scores.append(round(float(row[4]), 6))
+            landmarks.append([(float(row[5 + 2 * k]), float(row[6 + 2 * k])) for k in range(5)])
+        return FaceDetection(
+            boxes=boxes, scores=scores, landmarks=landmarks, landmark_scores=list(scores),
+            detector=self.name, detector_version=self.version, confidence_type=self.confidence_type,
+        )
+
+
 def get_face_detector():
     """Return the configured detector through a replaceable adapter contract."""
     if settings.FACE_DETECTOR_PROVIDER == "yunet_v1":
         return OpenCVYuNetFaceDetector()
+    if settings.FACE_DETECTOR_PROVIDER == "retinaface_v1":
+        return RetinaFaceDetector()
     return OpenCVHaarFaceDetector()
 
 

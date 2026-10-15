@@ -2,7 +2,7 @@
 
 Source: https://github.com/sczhou/CodeFormer, basicsr/archs/vqgan_arch.py
 Licence: S-Lab License 1.0 (c) 2022 S-Lab, Nanyang Technological University: redistribution and use for
-NON-COMMERCIAL purposes only. See docs/model-licenses/codeformer.md. The only changes are the removed
+NON-COMMERCIAL purposes only. See docs/model-licenses/model-set-2026-10.md. The only changes are the removed
 dependency on basicsr's registry and logger (replaced by the standard library), so the network loads the
 authors' released checkpoint (codeformer.pth) strictly.
 """

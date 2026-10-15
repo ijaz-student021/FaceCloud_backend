@@ -554,7 +554,10 @@ FACE_FIDELITY_MAX_EDGE = env.int("FACE_FIDELITY_MAX_EDGE", default=1024)
 FACE_FIDELITY_MIN_FACE_EDGE = env.int("FACE_FIDELITY_MIN_FACE_EDGE", default=40)
 PER_FACE_METRICS_ENABLED = env.bool("PER_FACE_METRICS_ENABLED", default=False)
 IDENTITY_EMBEDDING_ENABLED = env.bool("IDENTITY_EMBEDDING_ENABLED", default=False)
+# haar_v1 (default), yunet_v1, or retinaface_v1 (RetinaFace ResNet-50 via facexlib; needs the isolated PyTorch environment).
 FACE_DETECTOR_PROVIDER = env("FACE_DETECTOR_PROVIDER", default="haar_v1")
+RETINAFACE_SCORE_THRESHOLD = env.float("RETINAFACE_SCORE_THRESHOLD", default=0.8)
+RETINAFACE_DEVICE = env("RETINAFACE_DEVICE", default="auto")
 YUNET_MODEL_PATH = env(
     "YUNET_MODEL_PATH",
     default=str(BASE_DIR / ".runtime" / "models" / "yunet_s_dynamic.onnx"),
@@ -638,6 +641,15 @@ IDENTITY_MODEL_PATH = env(
 IDENTITY_MODEL_SHA256 = env("IDENTITY_MODEL_SHA256", default="")
 IDENTITY_LICENSE_RECORD_PATH = env("IDENTITY_LICENSE_RECORD_PATH", default="")
 IDENTITY_EMBEDDING_DIMENSION = env.int("IDENTITY_EMBEDDING_DIMENSION", default=128)
+# ArcFace (InsightFace w600k_r50) as an alternative provider: IDENTITY_PROVIDER=arcface_w600k_r50_v1. Its cosine scale
+# differs from SFace's, so it has its own thresholds. These are starting values, not validated on a labelled set.
+ARCFACE_MODEL_PATH = env("ARCFACE_MODEL_PATH", default=str(BASE_DIR / ".runtime" / "models" / "arcface" / "w600k_r50.onnx"))
+ARCFACE_MODEL_SHA256 = env("ARCFACE_MODEL_SHA256", default="4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43")
+ARCFACE_LICENSE_RECORD_PATH = env("ARCFACE_LICENSE_RECORD_PATH", default=str(BASE_DIR / "docs" / "model-licenses" / "model-set-2026-10.md"))
+ARCFACE_GUARD_MIN_SIMILARITY = env.float("ARCFACE_GUARD_MIN_SIMILARITY", default=0.70)
+ARCFACE_MATCH_THRESHOLD = env.float("ARCFACE_MATCH_THRESHOLD", default=0.60)
+ARCFACE_NEW_GROUP_THRESHOLD = env.float("ARCFACE_NEW_GROUP_THRESHOLD", default=0.35)
+ARCFACE_AMBIGUITY_MARGIN = env.float("ARCFACE_AMBIGUITY_MARGIN", default=0.06)
 IDENTITY_MATCH_THRESHOLD = env.float("IDENTITY_MATCH_THRESHOLD", default=0.82)
 IDENTITY_NEW_GROUP_THRESHOLD = env.float("IDENTITY_NEW_GROUP_THRESHOLD", default=0.68)
 IDENTITY_AMBIGUITY_MARGIN = env.float("IDENTITY_AMBIGUITY_MARGIN", default=0.06)

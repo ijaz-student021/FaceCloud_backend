@@ -16,7 +16,7 @@ from validation.models import FaceValidationResult
 from validation.services import get_face_detector
 
 from .models import IdentityAnalysis, IdentityFace, IdentityGroup, IdentityMembership
-from .providers import get_identity_provider
+from .providers import get_identity_provider, thresholds_for
 from .storage import protect_embedding, reveal_embedding
 
 logger = logging.getLogger(__name__)
@@ -65,11 +65,12 @@ def _refresh_group(group):
 def _choose_group(owner, provider, vector):
     groups = IdentityGroup.objects.filter(owner=owner, state=IdentityGroup.State.ACTIVE, provider=provider.name, embedding_dimension=provider.dimension).exclude(protected_centroid=b"").order_by("-updated_at")[:settings.IDENTITY_MAX_CANDIDATE_GROUPS]
     scored = sorted(((provider.similarity(vector, reveal_embedding(group.protected_centroid, group.embedding_dimension)), group) for group in groups), key=lambda item: item[0], reverse=True)
-    if not scored or scored[0][0] < settings.IDENTITY_NEW_GROUP_THRESHOLD:
+    limits = thresholds_for(provider)
+    if not scored or scored[0][0] < limits["new_group"]:
         return "new", None, None, None
     best_score, best_group = scored[0]
     second_score = scored[1][0] if len(scored) > 1 else None
-    if best_score >= settings.IDENTITY_MATCH_THRESHOLD and (second_score is None or best_score - second_score >= settings.IDENTITY_AMBIGUITY_MARGIN):
+    if best_score >= limits["match"] and (second_score is None or best_score - second_score >= limits["margin"]):
         return "match", best_group, best_score, second_score
     return "review", best_group, best_score, second_score
 
@@ -157,7 +158,8 @@ def search_by_face(owner, uploaded_file):
         ),
         key=lambda item: item[0], reverse=True,
     )
-    matches = [{"group": group, "similarity": score} for score, group in scored if score >= settings.IDENTITY_MATCH_THRESHOLD]
+    match_threshold = thresholds_for(provider)["match"]
+    matches = [{"group": group, "similarity": score} for score, group in scored if score >= match_threshold]
     return {"faces_detected": True, "matches": matches}
 
 

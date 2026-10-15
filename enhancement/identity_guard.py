@@ -223,6 +223,11 @@ def apply_identity_guard(source, candidate, reference=None):
     metadata["reference_checked"] = True
     source_records = reference.records
     detector, provider = reference.detector, reference.provider
+    from identities.providers import thresholds_for
+
+    threshold = thresholds_for(provider)["guard"]  # each embedding model has its own similarity scale
+    metadata["threshold"] = threshold
+    metadata["model"] = getattr(provider, "embedding_model_label", metadata["model"])
     metadata["faces_compared"] = len(source_records)
 
     height, width = reference.height, reference.width
