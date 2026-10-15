@@ -14,7 +14,7 @@ linear, ``factor = 1 + k * value``, with k below. The renderer works in CIE
 LAB (see ``tone.py``), not on RGB as Pillow does, so a Pillow factor is an
 approximation of a control, except contrast and sharpness, which are the same
 operator on the L channel (a test measures the differences). Shadows,
-highlights and warmth have no Pillow equivalent.
+highlights, warmth and denoise have no Pillow equivalent.
 
 Manual and automatic ranges are separate. Manual input may use the whole
 range; the local recipe and the cloud advisor are held to the much smaller
@@ -83,6 +83,15 @@ CONTROLS = {
             "below 0.5 px), so a preview and a full-resolution save look alike.",
             pillow_k=0.01, pillow_enhancer="Sharpness",
         ),
+        Control(
+            "denoise", "Noise reduction", (0.0, 100.0), (0.0, 0.0),
+            "Edge-preserving noise reduction, applied before every other control: lightness is smoothed with a "
+            "bilateral filter and the colour channels with a bilateral filter of larger radius, then blended "
+            "with the unsmoothed photo by value / 100. The radius is proportional to the image's longer edge "
+            "(1024 px is the reference), so a preview and a full-resolution save look alike. 0 is off; it cannot "
+            "go below 0. It is manual only: the local recipe and the advisor never set it.",
+            recommended=(0.0, 60.0),
+        ),
     )
 }
 CONTROL_NAMES = tuple(CONTROLS)
@@ -130,6 +139,7 @@ class ControlsSerializer(serializers.Serializer):
     highlights = _manual_field(CONTROLS["highlights"])
     warmth = _manual_field(CONTROLS["warmth"])
     sharpness = _manual_field(CONTROLS["sharpness"])
+    denoise = _manual_field(CONTROLS["denoise"])
     intensity = _manual_field(INTENSITY)
 
     def to_internal_value(self, data):
@@ -170,7 +180,7 @@ def clamp_to_auto_range(controls):
 def pillow_factors(controls):
     """Approximate Pillow ``ImageEnhance`` factors for the controls that have one (neutral 1.0).
 
-    ``None`` for shadows, highlights and warmth, which have no Pillow equivalent.
+    ``None`` for shadows, highlights, warmth and denoise, which have no Pillow equivalent.
     """
     return {
         control.name: (1.0 + control.pillow_k * float(controls.get(control.name, 0.0)) if control.pillow_k else None)

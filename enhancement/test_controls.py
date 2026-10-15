@@ -31,7 +31,7 @@ def photo(long_edge=640):
 
 class ContractTests(SimpleTestCase):
     def test_every_control_is_defined_once_with_ranges_that_nest(self):
-        self.assertEqual(CONTROL_NAMES, ("brightness", "contrast", "shadows", "highlights", "saturation", "warmth", "sharpness"))
+        self.assertEqual(CONTROL_NAMES, ("brightness", "contrast", "shadows", "highlights", "saturation", "warmth", "sharpness", "denoise"))
         for control in CONTROLS.values():
             with self.subTest(control=control.name):
                 self.assertEqual(control.neutral, 0.0)
@@ -176,12 +176,45 @@ class RendererTests(SimpleTestCase):
         big = resized(dead_leaves(), 1600)
         small = resized(big, 400)
         for name, value in (("brightness", 30), ("contrast", 30), ("shadows", 40), ("highlights", -40),
-                            ("saturation", 40), ("warmth", 30), ("sharpness", 50)):
+                            ("saturation", 40), ("warmth", 30), ("sharpness", 50), ("denoise", 60)):
             with self.subTest(control=name):
                 full_then_shrink = resized(render_tone(big, {name: value})[0], 400)
                 shrink_then_render = render_tone(small, {name: value})[0]
                 difference = float(np.abs(full_then_shrink.astype(int) - shrink_then_render.astype(int)).mean())
-                self.assertLess(difference, 1.5, f"{name}: mean difference {difference:.2f} levels")
+                # Noise reduction is a neighbourhood filter on a chart of fine texture, so it commutes with
+                # shrinking less exactly than the global controls do (measured 1.55 against under 1.0).
+                limit = 2.0 if name == "denoise" else 1.5
+                self.assertLess(difference, limit, f"{name}: mean difference {difference:.2f} levels")
+
+    def test_noise_reduction_removes_noise_and_keeps_edges(self):
+        clean = cv2.GaussianBlur(photo(800), (0, 0), 1.5)
+        grainy = noisy(clean, 9.0)
+
+        def noise(image):
+            return float(np.abs(image.astype(np.float32) - clean.astype(np.float32)).mean())
+
+        def edge_contrast(image):
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32)
+            return float(np.abs(cv2.Sobel(gray, cv2.CV_32F, 1, 0)).mean())
+
+        low = render_tone(grainy, {"denoise": 30})[0]
+        high = render_tone(grainy, {"denoise": 100})[0]
+        self.assertLess(noise(low), noise(grainy))
+        self.assertLess(noise(high), noise(low))                       # more slider, less noise
+        self.assertGreater(edge_contrast(high), 0.5 * edge_contrast(clean))  # real edges are not wiped out
+
+    def test_noise_reduction_at_zero_changes_nothing_and_does_not_brighten(self):
+        source = photo(500)
+        np.testing.assert_array_equal(render_tone(source, {"denoise": 0})[0], source)
+        smoothed = render_tone(noisy(source, 6.0), {"denoise": 100})[0]
+        self.assertLess(abs(float(smoothed.mean()) - float(source.mean())), 2.0)
+
+    def test_noise_reduction_is_manual_only(self):
+        self.assertEqual(CONTROLS["denoise"].auto, (0.0, 0.0))
+        self.assertEqual(clamp_to_auto_range({"denoise": 80})["denoise"], 0.0)
+        self.assertEqual(validate_controls({"denoise": 80})["denoise"], 80.0)
+        with self.assertRaises(ValidationError):
+            validate_controls({"denoise": -1})
 
     def test_agreement_with_pillow_is_close_for_the_controls_pillow_has(self):
         """At 1024 px, where the sharpness radius equals Pillow's SMOOTH kernel (sigma 0.68).

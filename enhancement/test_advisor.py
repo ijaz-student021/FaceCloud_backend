@@ -234,7 +234,7 @@ class ReplyContractTests(unittest.TestCase):
             result = validate_advice(reply, intent)
             for name in CONTROL_NAMES:
                 with self.subTest(intent=intent, control=name):
-                    if name in locked:
+                    if name in locked or CONTROLS[name].auto == (0.0, 0.0):  # manual-only controls stay at zero
                         self.assertEqual(result["adjustments"][name], 0.0)
                     else:
                         self.assertNotEqual(result["adjustments"][name], 0.0)

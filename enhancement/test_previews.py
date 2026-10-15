@@ -89,6 +89,28 @@ class PreviewBasicsTests(PreviewFixture):
         self.assertEqual(response["Content-Type"], "image/jpeg")
         self.assertEqual(Image.open(io.BytesIO(data)).size, (body["width"], body["height"]))
 
+    def test_the_dashboard_sliders_drive_a_preview_including_noise_reduction(self):
+        """The five dashboard sliders (strength, brightness, contrast, skin detail, noise reduction), as the
+        frontend maps them (docs/enhancement/dashboard-sliders.md), at their default positions."""
+        dashboard = {"strength": 75, "brightness": 50, "contrast": 60, "detail": 45, "noise_reduction": 40}
+        adjustments = {
+            "intensity": dashboard["strength"],
+            "brightness": (dashboard["brightness"] - 50) * 2,
+            "contrast": (dashboard["contrast"] - 50) * 2,
+            "sharpness": (dashboard["detail"] - 50) * 2,
+            "denoise": dashboard["noise_reduction"],
+        }
+        response = self.preview(1, {"mode": "manual", "adjustments": adjustments})
+        self.assertEqual(response.status_code, 201, response.content)
+        body = response.json()
+        self.assertEqual(body["render"]["outcome"], "rendered")
+        self.assertEqual(body["applied_adjustments"]["denoise"], 40.0)
+        self.assertEqual(body["applied_adjustments"]["contrast"], 20.0)
+        self.assertEqual(body["applied_adjustments"]["sharpness"], -10.0)
+
+        too_far = self.preview(2, {"mode": "manual", "adjustments": {"denoise": 101}})
+        self.assertEqual(too_far.status_code, 400)
+
     def test_the_requested_size_is_honoured_and_bounded(self):
         self.assertEqual(max(self.preview(1, size=400).json()["width"], 0), 400)
         for size in (64, settings.ENHANCEMENT_PREVIEW_MAX_EDGE + 1):

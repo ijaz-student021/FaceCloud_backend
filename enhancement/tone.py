@@ -33,6 +33,31 @@ def sharpness_sigma(shape):
     return max(SHARPNESS_MIN_SIGMA, SHARPNESS_SIGMA_AT_1024 * max(shape[:2]) / 1024.0)
 
 
+# Noise reduction: bilateral radius per 1024 px of the longer edge, and how much of the colour-range it tolerates.
+DENOISE_SIGMA_SPACE_AT_1024 = 2.0
+DENOISE_LIGHTNESS_SIGMA_COLOUR = 14.0   # on the 0-255 lightness scale
+DENOISE_CHROMA_SIGMA_COLOUR = 10.0
+DENOISE_CHROMA_RADIUS_FACTOR = 2.5
+
+
+def denoise_sigma(shape):
+    return max(0.5, DENOISE_SIGMA_SPACE_AT_1024 * max(shape[:2]) / 1024.0)
+
+
+def _denoise(lightness, channel_a, channel_b, amount, shape):
+    """Blend each channel with an edge-preserving smoothed copy by ``amount`` (0-1)."""
+    sigma = denoise_sigma(shape)
+    smooth_lightness = cv2.bilateralFilter(lightness.astype(np.float32), 0, DENOISE_LIGHTNESS_SIGMA_COLOUR, sigma)
+    chroma_sigma = sigma * DENOISE_CHROMA_RADIUS_FACTOR
+    smooth_a = cv2.bilateralFilter(channel_a.astype(np.float32), 0, DENOISE_CHROMA_SIGMA_COLOUR, chroma_sigma)
+    smooth_b = cv2.bilateralFilter(channel_b.astype(np.float32), 0, DENOISE_CHROMA_SIGMA_COLOUR, chroma_sigma)
+    return (
+        lightness + amount * (smooth_lightness - lightness),
+        channel_a + amount * (smooth_a - channel_a),
+        channel_b + amount * (smooth_b - channel_b),
+    )
+
+
 def render_tone(source, controls, strength=1.0):
     """Return ``(rendered_bgr_uint8, effective)`` for 8-bit BGR ``source``.
 
@@ -47,6 +72,11 @@ def render_tone(source, controls, strength=1.0):
     lightness = lab[:, :, 0] * _L_SCALE
     channel_a = lab[:, :, 1] + _AB_CENTRE
     channel_b = lab[:, :, 2] + _AB_CENTRE
+
+    if effective["denoise"]:
+        lightness, channel_a, channel_b = _denoise(
+            lightness, channel_a, channel_b, min(effective["denoise"], 100.0) / 100.0, source.shape,
+        )
 
     lightness = lightness + effective["brightness"] * 0.35
     midpoint = float(np.median(lightness))

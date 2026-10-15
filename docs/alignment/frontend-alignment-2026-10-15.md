@@ -43,6 +43,10 @@ New backend capabilities the frontend can adopt when it wants them (contracts in
 `frontend-handoff.md`): editor sliders including sharpness and warmth with bounded
 previews and saved versions; the optional advisor; per-model health reporting (installed, verified, disabled).
 
+**Dashboard sliders:** the five sliders of the live-enhancement panel currently apply browser filters only and send nothing to the
+backend. The backend contract now covers all five (a `denoise` control was added for Noise Reduction); the exact mapping is in
+`docs/enhancement/dashboard-sliders.md`.
+
 ## 4. Where the frontend's words no longer match the backend
 
 These are copy and documentation, not code; they matter because a reviewer will read
