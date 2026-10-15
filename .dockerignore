@@ -14,3 +14,4 @@ __pycache__/
 .ruff_cache/
 audit-output/
 fix-validation/
+gfpgan/weights/

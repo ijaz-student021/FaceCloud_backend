@@ -71,14 +71,9 @@ python scripts/train_facecloud_curve_model.py \
 - `split.json`: exact train and validation sets.
 - `history.jsonl`: epoch metrics.
 
-> **2026-10-15:** the application no longer loads any enhancement model
-> (`enhancement/zero_dce.py` and the curve-model path were retired; see
-> `docs/enhancement/retired-capabilities.md`). This page and its training script are
-> kept as the record of the private curve-model *training* work, which runs in
-> Colab; nothing in the backend consumes its output today.
-
-The ONNX output was compatible with the eight-iteration curve application of the
-removed `enhancement/zero_dce.py`.
+The ONNX output is compatible with the eight-iteration curve application in
+`enhancement/zero_dce.py`. It must pass visual, quality, bias and regression
+testing before becoming the configured production model.
 
 ## Commercial controls
 

@@ -1,6 +1,6 @@
 # Reference-quality evaluation
 
-`scripts/evaluate_reference_quality.py` answers a question that comparing configurations on unlabelled photos
+`scripts/evaluate_reference_quality.py` answers a question `evaluate_gpu_stages.py`
 cannot: does enhancement recover the *original* face, and only that face? It takes a
 clean, undamaged face from a reference dataset, damages it in a controlled way
 (darkens, blurs, shrinks), runs it through the real pipeline, and checks whether the
@@ -55,14 +55,11 @@ similarity): **-0.2896 (negative — no margin)**.
   face (`identity_guard`'s `skipped`/`inconclusive` states, which are why
   `apply_identity_guard` blends destructive candidates back toward the source rather
   than shipping them outright) — the missing piece this result points at is that a
-  face too degraded for automatic re-verification is a case the lightweight pipeline
-  does not try to repair: the retired restoration models (GFPGAN, PureVision, HD
-  restoration) were the only thing that could have helped, and generative face
-  restoration was retired because it cannot be shown to keep the person.
+  face too degraded for automatic re-verification is exactly the case the disabled
+  GFPGAN/PureVision/HD-restoration stages exist to help with.
 - **N=6 is small.** Treat these exact numbers as a first signal, not a final
   measurement. A larger run (`--count 40`+) firms this up; at roughly 40-55 seconds
-  per photo per severity on this CPU (that timing was measured with the learned
-  stages on; the classical pipeline is much faster), a large run is realistic overnight.
+  per photo per severity on this CPU, a large run is realistically a GPU-day task.
 - **The synthetic darkening (multiply + Gaussian noise) is cruder than a real camera's
   low-light noise**, and its specific high-frequency grain pattern may be part of why
   `dark` (no blur) failed detection more often than `dark_blur` (the incidental
@@ -74,7 +71,8 @@ similarity): **-0.2896 (negative — no margin)**.
   recognise; this tool measures what the automated guard can verify, not human
   perception.
 
-**Update 2026-10-15:** the restoration stages this section proposed re-running
-(PureVision, HD restoration, GFPGAN) were retired instead
-([retired-capabilities.md](../enhancement/retired-capabilities.md)). Re-run the tool on
-the lightweight pipeline to refresh the numbers.
+**Recommended for the GPU session:** re-run this same tool on the same damaged photos
+with PureVision, HD restoration and GFPGAN switched on one at a time
+(`--images-dir` pointed at the exported sample, following
+[GPU_SESSION_RUNBOOK.md](../GPU_SESSION_RUNBOOK.md)) to see whether any of them close
+this gap before deciding what to enable by default.

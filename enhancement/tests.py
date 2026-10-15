@@ -1,5 +1,5 @@
 import tempfile
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import cv2
 import numpy as np
@@ -30,15 +30,16 @@ from .services import (
     enhance_bgr,
     exposure_enhancement_stage,
     measure_post_exposure_noise_stage,
-    _quality_guard,
     output_guard_a_stage,
     process_enhancement_result,
+    restore_low_resolution,
 )
 from .tasks import (
     process_enhancement_batch,
     process_enhancement_image,
     process_gallery_edit,
 )
+from .zero_dce import _apply_curves_tiled
 from .test_blur_measure import blurred_photo
 
 User = get_user_model()
@@ -139,7 +140,13 @@ class EnhancementModelTests(TestCase):
 
 class OpenCVPolicyTests(SimpleTestCase):
     @override_settings(
+        AI_RESTORATION_ENABLED=False,
+        ZERO_DCE_ENABLED=False,
         ADAPTIVE_DENOISE_ENABLED=False,
+        GFPGAN_ENABLED=False,
+        GFPGAN_QUEUE_ENABLED=False,
+        HD_RESTORATION_ENABLED=False,
+        NAFNET_DEBLUR_ENABLED=False,
         IDENTITY_GUARD_ENABLED=False,
     )
     def test_rollout_flags_default_to_safe_disabled_pipeline(self):
@@ -154,14 +161,24 @@ class OpenCVPolicyTests(SimpleTestCase):
             parameters["feature_flags"],
             {
                 "adaptive_denoise_enabled": False,
+                "gfpgan_enabled": False,
+                "gfpgan_queue_enabled": False,
+                "hd_restoration_enabled": False,
+                "nafnet_deblur_enabled": False,
+                "purevision_enabled": False,
+                "purescale_enabled": False,
+                "colorization_enabled": False,
                 "identity_guard_enabled": False,
                 "face_fidelity_enabled": True,
+                "gfpgan_require_identity_check": True,
             },
         )
         self.assertFalse(parameters["adaptive_denoise"]["enabled"])
         self.assertFalse(parameters["adaptive_denoise"]["applied"])
 
     @override_settings(
+        AI_RESTORATION_ENABLED=False,
+        ZERO_DCE_ENABLED=False,
         ADAPTIVE_DENOISE_ENABLED=False,
         IDENTITY_GUARD_ENABLED=False,
     )
@@ -179,9 +196,15 @@ class OpenCVPolicyTests(SimpleTestCase):
             "output_guard_a",
             "measure_post_exposure_noise",
             "adaptive_denoise",
+            "purevision_restoration",
+            "low_resolution_restoration",
+            "hd_restoration",
+            "purescale_super_resolution",
+            "face_restoration",
             "sharpen",
             "output_guard_b",
             "face_fidelity",
+            "colorization",
             "dynamic_style",
             "identity_guard",
             "validate_output",
@@ -202,6 +225,10 @@ class OpenCVPolicyTests(SimpleTestCase):
             {"guard_a", "guard_b"},
         )
 
+    @override_settings(
+        AI_RESTORATION_ENABLED=False,
+        ZERO_DCE_ENABLED=False,
+    )
     def test_individual_exposure_stages_share_a_pipeline_context(self):
         source = np.full((96, 96, 3), 55, dtype=np.uint8)
         context = EnhancementPipelineContext(
@@ -223,6 +250,8 @@ class OpenCVPolicyTests(SimpleTestCase):
         self.assertEqual(context.current_image.shape, source.shape)
 
     @override_settings(
+        AI_RESTORATION_ENABLED=False,
+        ZERO_DCE_ENABLED=False,
         ADAPTIVE_DENOISE_ENABLED=True,
         ADAPTIVE_DENOISE_BREAKPOINTS=(),
         ADAPTIVE_DENOISE_STRENGTHS=(4,),
@@ -250,6 +279,57 @@ class OpenCVPolicyTests(SimpleTestCase):
         self.assertEqual(metadata["measurement_point"], "after_guard_a")
 
     @override_settings(
+        AI_RESTORATION_ENABLED=True,
+        ZERO_DCE_ENABLED=False,
+        ADAPTIVE_DENOISE_ENABLED=True,
+        ADAPTIVE_DENOISE_BREAKPOINTS=(),
+        ADAPTIVE_DENOISE_STRENGTHS=(3,),
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
+    @patch("enhancement.services._load_edsr_model")
+    @patch("enhancement.services.cv2.fastNlMeansDenoisingColored")
+    def test_edsr_runs_after_denoise_for_still_low_resolution_image(
+        self,
+        denoise,
+        load_model,
+    ):
+        events = []
+        source = np.random.default_rng(19).integers(
+            20,
+            130,
+            size=(120, 100, 3),
+            dtype=np.uint8,
+        )
+
+        def apply_denoise(image, *_args):
+            events.append("denoise")
+            return image.copy()
+
+        model = Mock()
+
+        def apply_edsr(image):
+            events.append("edsr")
+            return cv2.resize(image, (200, 240), interpolation=cv2.INTER_CUBIC)
+
+        denoise.side_effect = apply_denoise
+        model.upsample.side_effect = apply_edsr
+        load_model.return_value = model
+
+        enhanced, _level, parameters = enhance_bgr(
+            source,
+            EnhancementLevel.HIGH,
+        )
+
+        self.assertEqual(events, ["denoise", "edsr"])
+        self.assertEqual(enhanced.shape[:2], (240, 200))
+        self.assertTrue(parameters["restoration"]["applied"])
+        self.assertEqual(
+            parameters["restoration"]["stage"],
+            "after_adaptive_denoise",
+        )
+
+    @override_settings(
+        AI_RESTORATION_ENABLED=False,
+        ZERO_DCE_ENABLED=False,
         ADAPTIVE_DENOISE_ENABLED=True,
         ADAPTIVE_DENOISE_BREAKPOINTS=(1.0, 2.0, 3.5, 5.0, 7.0),
         ADAPTIVE_DENOISE_STRENGTHS=(0, 3, 4, 5, 6, 7),
@@ -314,12 +394,25 @@ class OpenCVPolicyTests(SimpleTestCase):
             comparisons["bright_portrait"]["before"]["mean_luminance"] + 1.0,
         )
 
+    def test_zero_curve_tiles_preserve_full_pixel_grid_without_seams(self):
+        source = np.random.default_rng(2026).integers(
+            0, 256, size=(260, 270, 3), dtype=np.uint8
+        )
+        curves = np.zeros((1, 24, 32, 32), dtype=np.float32)
+
+        output = _apply_curves_tiled(source, curves, tile_edge=128)
+
+        self.assertEqual(output.shape, source.shape)
+        np.testing.assert_array_equal(output, source)
+
+    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=False)
     def test_style_natural_is_the_default_and_unchanged(self):
         source = np.full((80, 80, 3), 120, dtype=np.uint8)
         _enhanced, _level, parameters = enhance_bgr(source, EnhancementLevel.AUTO)
         self.assertEqual(parameters["style"], EnhancementStyle.NATURAL)
         self.assertFalse(parameters["dynamic_style"]["applied"])
 
+    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=False)
     def test_style_dynamic_applies_a_bounded_vivid_boost(self):
         source = np.zeros((80, 80, 3), dtype=np.uint8)
         source[:, :40] = (60, 90, 120)
@@ -339,7 +432,10 @@ class OpenCVPolicyTests(SimpleTestCase):
         vivid_saturation = cv2.cvtColor(vivid, cv2.COLOR_BGR2HSV)[:, :, 1].mean()
         self.assertGreater(vivid_saturation, natural_saturation)
 
-    @override_settings(ADAPTIVE_DENOISE_ENABLED=False)
+    @override_settings(
+        AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=False,
+        ADAPTIVE_DENOISE_ENABLED=False,
+    )
     def test_style_ai_max_forces_high_level_and_adaptive_denoise(self):
         source = np.full((80, 80, 3), 120, dtype=np.uint8)
 
@@ -350,6 +446,16 @@ class OpenCVPolicyTests(SimpleTestCase):
         self.assertEqual(level, EnhancementLevel.HIGH)
         self.assertTrue(parameters["adaptive_denoise"]["enabled"])
 
+    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=False)
+    @override_settings(ENHANCEMENT_RENDER_POLICY="learned_v1")
+    def test_under_learned_v1_auto_selects_high_for_dark_image_and_improves_luminance(self):
+        source = np.full((80, 80, 3), 35, dtype=np.uint8)
+        enhanced, level, parameters = enhance_bgr(source, EnhancementLevel.AUTO)
+
+        self.assertEqual(level, EnhancementLevel.HIGH)
+        self.assertGreater(float(np.mean(enhanced)), float(np.mean(source)))
+        self.assertEqual(parameters["colour_policy"], "preserve_lab_chroma_channels")
+
     def test_under_lightweight_v1_auto_leaves_a_dark_image_dark_and_a_level_lifts_it(self):
         source = np.full((80, 80, 3), 35, dtype=np.uint8)
         auto, level, _parameters = enhance_bgr(source, EnhancementLevel.AUTO)
@@ -359,54 +465,92 @@ class OpenCVPolicyTests(SimpleTestCase):
         self.assertEqual(level, EnhancementLevel.HIGH)
         self.assertGreater(float(np.mean(lifted)), float(np.mean(source)) + 5)
 
-    def test_an_extremely_dark_source_gets_a_larger_brightening_allowance(self):
-        """A normal HIGH-level gain limit of 30 would cap a luminance-12 source at ~42;
-        the extreme-low-light allowance lets an explicitly requested lift go further."""
+    @override_settings(
+        AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True,
+        EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD=25.0,
+        EXTREME_LOW_LIGHT_MAX_LUMINANCE_GAIN=90.0,
+        EXTREME_LOW_LIGHT_MODEL_STRENGTH=0.85,
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
+    @patch("enhancement.services.enhance_with_zero_dce")
+    def test_extremely_dark_source_gets_a_larger_brightening_allowance(self, zero_dce):
+        """A normal HIGH-level max_luminance_gain of 30 would cap a
+        luminance-12 source at ~42; the extreme-low-light allowance must
+        let it end up meaningfully brighter than that."""
         source = np.full((80, 80, 3), 12, dtype=np.uint8)
-        bright = np.full_like(source, 100)
-        _guarded, _quality, guard = _quality_guard(source, bright, EnhancementLevel.HIGH, analyze_image_quality(source))
-        self.assertEqual(guard["limits"]["max_luminance_gain"], 90.0)
-        ordinary = np.full((80, 80, 3), 120, dtype=np.uint8)
-        _guarded, _quality, guard = _quality_guard(
-            ordinary, np.full_like(ordinary, 220), EnhancementLevel.HIGH, analyze_image_quality(ordinary))
-        self.assertEqual(guard["limits"]["max_luminance_gain"], 30.0)
+        zero_dce.return_value = (
+            np.full_like(source, 220),
+            {"provider": "official_zero_dce_onnx_opencv_dnn", "curve_iterations": 8},
+        )
 
-    def test_the_guard_cannot_over_brighten_or_shift_source_chroma(self):
+        enhanced, level, parameters = enhance_bgr(source, EnhancementLevel.AUTO)
+
+        self.assertEqual(level, EnhancementLevel.HIGH)
+        self.assertTrue(parameters["zero_dce"]["applied"])
+        self.assertGreater(float(enhanced.mean()), 60.0)
+
+    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True, ENHANCEMENT_RENDER_POLICY="learned_v1")
+    @patch("enhancement.services.enhance_with_zero_dce")
+    def test_dark_image_routes_through_genuine_zero_dce_provider(self, zero_dce):
+        source = np.full((80, 80, 3), 35, dtype=np.uint8)
+        zero_dce.return_value = (
+            np.full_like(source, 95),
+            {"provider": "official_zero_dce_onnx_opencv_dnn", "curve_iterations": 8},
+        )
+
+        enhanced, level, parameters = enhance_bgr(source, EnhancementLevel.AUTO)
+
+        self.assertEqual(level, EnhancementLevel.HIGH)
+        self.assertTrue(parameters["zero_dce"]["applied"])
+        self.assertEqual(parameters["algorithm"], "zero_dce_hybrid_v1")
+        self.assertEqual(parameters["colour_policy"], "learned_rgb_curves")
+        self.assertGreater(float(enhanced.mean()), float(source.mean()))
+
+    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True, ENHANCEMENT_RENDER_POLICY="learned_v1")
+    @patch("enhancement.services.enhance_with_zero_dce")
+    def test_learned_model_cannot_over_brighten_or_shift_source_chroma(
+        self, zero_dce
+    ):
         source = np.zeros((96, 96, 3), dtype=np.uint8)
         source[:, :] = (35, 55, 85)
-        candidate = np.full_like(source, (245, 180, 230))
+        zero_dce.return_value = (
+            np.full_like(source, (245, 180, 230)),
+            {"provider": "private_facecloud_curve", "curve_iterations": 8},
+        )
 
-        guarded, after, guard = _quality_guard(
-            source, candidate, EnhancementLevel.MEDIUM, analyze_image_quality(source))
+        enhanced, level, parameters = enhance_bgr(source, EnhancementLevel.MEDIUM)
 
-        before = analyze_image_quality(source)
-        self.assertLessEqual(after["mean_luminance"] - before["mean_luminance"], 18.5)
+        before = parameters["quality_before"]
+        after = parameters["quality_after"]
+        guard = parameters["quality_guard"]
+        self.assertEqual(level, EnhancementLevel.MEDIUM)
+        self.assertLessEqual(
+            after["mean_luminance"] - before["mean_luminance"], 18.5
+        )
         self.assertLessEqual(guard["mean_chroma_shift"], 3.5)
         self.assertIn("luminance_gain_limited", guard["reasons"])
-        self.assertEqual(guarded.shape, source.shape)
+        self.assertEqual(
+            parameters["zero_dce"]["chroma_protection"],
+            "preserve_source_lab_chroma",
+        )
 
-    def test_the_guard_preserves_source_contrast(self):
+    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True, ENHANCEMENT_RENDER_POLICY="learned_v1")
+    @patch("enhancement.services.enhance_with_zero_dce")
+    def test_learned_model_guard_preserves_source_contrast(self, zero_dce):
         source = np.full((96, 96, 3), 40, dtype=np.uint8)
         source[:, 48:] = 100
-        candidate = np.full_like(source, 180)
+        zero_dce.return_value = (
+            np.full_like(source, 180),
+            {"provider": "private_facecloud_curve", "curve_iterations": 8},
+        )
 
-        _guarded, after, guard = _quality_guard(
-            source, candidate, EnhancementLevel.HIGH, analyze_image_quality(source))
+        _enhanced, _, parameters = enhance_bgr(source, EnhancementLevel.HIGH)
 
-        self.assertGreaterEqual(after["contrast_stddev"], analyze_image_quality(source)["contrast_stddev"] * 0.75)
-        self.assertIn("contrast_preserved", guard["reasons"])
+        before = parameters["quality_before"]["contrast_stddev"]
+        after = parameters["quality_after"]["contrast_stddev"]
+        self.assertGreaterEqual(after, before * 0.75)
+        self.assertIn("contrast_preserved", parameters["quality_guard"]["reasons"])
 
-    def test_a_low_resolution_source_keeps_its_pixel_grid(self):
-        """Nothing upscales: the saved image is on the source's grid, and the limit is reported, not hidden."""
-        source = np.random.default_rng(19).integers(20, 130, size=(120, 100, 3), dtype=np.uint8)
-
-        enhanced, _level, parameters = enhance_bgr(source, EnhancementLevel.HIGH)
-
-        self.assertEqual(enhanced.shape, source.shape)
-        self.assertIn("low_resolution", parameters["quality_before"]["defects"])
-        self.assertEqual(parameters["resolution_contract"]["pixel_grid_source"], "original_pixel_grid")
-        self.assertTrue(any("cannot be corrected by the lightweight pipeline" in w for w in parameters["warnings"]))
-
+    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=False)
     def test_overexposed_input_is_not_brightened(self):
         source = np.full((96, 96, 3), 225, dtype=np.uint8)
 
@@ -414,6 +558,21 @@ class OpenCVPolicyTests(SimpleTestCase):
 
         self.assertEqual(parameters["exposure_mode"], "darken")
         self.assertLessEqual(float(enhanced.mean()), float(source.mean()))
+
+    @override_settings(AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=True, ENHANCEMENT_RENDER_POLICY="learned_v1")
+    @patch("enhancement.services.enhance_with_zero_dce")
+    def test_zero_dce_failure_uses_auditable_opencv_fallback(self, zero_dce):
+        from enhancement.zero_dce import ZeroDCEUnavailable
+
+        zero_dce.side_effect = ZeroDCEUnavailable("model missing")
+        source = np.full((80, 80, 3), 35, dtype=np.uint8)
+
+        enhanced, _, parameters = enhance_bgr(source, EnhancementLevel.AUTO)
+
+        self.assertFalse(parameters["zero_dce"]["applied"])
+        self.assertEqual(parameters["zero_dce"]["fallback_reason"], "model missing")
+        self.assertEqual(parameters["algorithm"], "opencv_adaptive_restoration_router_v2")
+        self.assertGreater(float(enhanced.mean()), float(source.mean()))
 
     def test_well_lit_image_uses_low_policy(self):
         source = np.full((40, 40, 3), 190, dtype=np.uint8)
@@ -531,9 +690,69 @@ class OpenCVPolicyTests(SimpleTestCase):
         self.assertEqual(comparison["after"]["width"], 120)
         self.assertIn("laplacian_sharpness", comparison["deltas"])
 
+    @override_settings(AI_RESTORATION_ENABLED=True, ENHANCEMENT_RENDER_POLICY="learned_v1")
+    @patch("enhancement.services._load_edsr_model")
+    def test_low_resolution_image_is_restored_at_two_times_scale(self, load_model):
+        source = np.full((120, 100, 3), 90, dtype=np.uint8)
+        model = Mock()
+        model.upsample.return_value = cv2.resize(
+            source, (200, 240), interpolation=cv2.INTER_CUBIC
+        )
+        load_model.return_value = model
+
+        restored, metadata = restore_low_resolution(
+            source, analyze_image_quality(source)
+        )
+
+        self.assertTrue(metadata["requested"])
+        self.assertTrue(metadata["applied"])
+        self.assertEqual(restored.shape[:2], (240, 200))
+        self.assertEqual(metadata["input_dimensions"], [100, 120])
+        self.assertEqual(metadata["output_dimensions"], [200, 240])
+
+    @override_settings(
+        AI_RESTORATION_ENABLED=True,
+        AI_RESTORATION_MAX_INPUT_EDGE=480,
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
+    @patch("enhancement.services._load_edsr_model")
+    def test_medium_resolution_image_preserves_original_grid(self, load_model):
+        source = np.full((1194, 670, 3), 90, dtype=np.uint8)
+        quality = analyze_image_quality(source)
+        quality["defects"] = sorted(set(quality["defects"]) | {"low_resolution"})
+
+        restored, metadata = restore_low_resolution(source, quality)
+
+        self.assertIs(restored, source)
+        self.assertTrue(metadata["requested"])
+        self.assertFalse(metadata["applied"])
+        self.assertEqual(metadata["maximum_input_edge"], 480)
+        self.assertIn("original pixel grid", metadata["fallback_reason"])
+        load_model.assert_not_called()
+
+    @override_settings(AI_RESTORATION_ENABLED=True, ENHANCEMENT_RENDER_POLICY="learned_v1")
+    @patch("enhancement.services._load_edsr_model")
+    def test_restoration_failure_falls_back_without_breaking_enhancement(
+        self, load_model
+    ):
+        load_model.side_effect = RuntimeError("EDSR runtime unavailable")
+        source = np.full((120, 100, 3), 90, dtype=np.uint8)
+
+        enhanced, _, parameters = enhance_bgr(source, EnhancementLevel.AUTO)
+
+        self.assertEqual(enhanced.shape, source.shape)
+        self.assertFalse(parameters["restoration"]["applied"])
+        self.assertEqual(
+            parameters["restoration"]["fallback_reason"],
+            "EDSR runtime unavailable",
+        )
+        self.assertTrue(parameters["warnings"])
+
 
 @override_settings(
     MEDIA_ROOT=tempfile.mkdtemp(),
+    AI_RESTORATION_ENABLED=False,
+    ZERO_DCE_ENABLED=False,
+    GFPGAN_ENABLED=False,
     CELERY_TASK_ALWAYS_EAGER=True,
     CELERY_TASK_EAGER_PROPAGATES=True,
 )

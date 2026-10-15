@@ -1,9 +1,9 @@
 """Tests for the staged candidate pipeline: plan, stage reports, face checks,
 identity status, ownership claims, cancellation and output verification.
 
-These tests establish what the (classical) pipeline does with a candidate, a
-failure or a refusal: its plan, stage reports, face checks, identity status,
-claims, cancellation and output verification.
+Models are mocked throughout. These tests establish what the pipeline does with
+a candidate, a failure or a refusal; they say nothing about what a real
+checkpoint produces.
 """
 import io
 from datetime import timedelta
@@ -21,6 +21,7 @@ from uploads.models import ImagePreprocessingResult, ImageUpload
 
 from . import face_fidelity
 from .face_fidelity import check_face_regions
+from .gfpgan import GFPGANUnavailable
 from .identity_guard import identity_status
 from .models import EnhancementBatchJob, EnhancementLevel, ImageEnhancementResult
 from .services import (
@@ -33,6 +34,7 @@ from .services import (
 )
 from .tasks import process_enhancement_batch, process_enhancement_image
 from .test_pipeline_regressions import NO_MODELS, ResultFixture, textured
+from .test_blur_measure import blurred_photo
 
 WHOLE_IMAGE = [(0.0, 0.0, 1.0, 1.0)]
 
@@ -64,8 +66,9 @@ class StageReportTests(SimpleTestCase):
         self.assertEqual(report(parameters, "exposure_enhancement")["status"], "accepted")
         self.assertEqual(report(parameters, "exposure_enhancement")["provider"], "opencv_lab_gamma_clahe")
         self.assertEqual(report(parameters, "exposure_enhancement")["device"], "cpu")
+        self.assertEqual(report(parameters, "hd_restoration")["status"], "skipped")
         self.assertEqual(report(parameters, "output_guard_b")["status"], "completed")
-        self.assertEqual(parameters["pipeline_version"], "staged_candidate_pipeline_v5")
+        self.assertEqual(parameters["pipeline_version"], "staged_candidate_pipeline_v4")
 
     @override_settings(**NO_MODELS)
     def test_the_source_array_is_never_modified(self):
@@ -75,29 +78,77 @@ class StageReportTests(SimpleTestCase):
         np.testing.assert_array_equal(source, untouched)
         self.assertIsNot(output, source)
 
-    @override_settings(**{**NO_MODELS, "IDENTITY_GUARD_ENABLED": True})
-    def test_an_unexpected_error_in_an_optional_stage_keeps_the_last_safe_image(self):
-        source = textured()
-        for error in (RuntimeError("unexpected tensor shape"), MemoryError()):
-            with self.subTest(error=type(error).__name__), \
-                    patch("enhancement.services.apply_identity_guard", side_effect=error), \
-                    self.assertLogs("enhancement.services", level="ERROR") as logged:
-                output, _level, parameters = enhance_bgr(source, "low")
+    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+    @patch("enhancement.services.upscale_with_purescale")
+    def test_an_accepted_model_stage_records_its_model_device_and_tile(self, purescale):
+        purescale.side_effect = lambda image: (
+            cv2.resize(image, (image.shape[1] * 2, image.shape[0] * 2), interpolation=cv2.INTER_CUBIC),
+            {"provider": "purescale_safmn_2x", "checkpoint_sha256_prefix": "c8fb698766f5",
+             "device": "cuda", "tile_size": 128, "memory_retries": 1},
+        )
+        _output, _level, parameters = enhance_bgr(textured(), "low")
 
-            self.assertEqual(output.shape, source.shape)
-            entry = report(parameters, "identity_guard")
-            self.assertEqual(entry["status"], "failed")
-            self.assertFalse(parameters["identity_guard"]["applied"])
-            self.assertTrue(parameters["identity_guard"]["failed"])
-            self.assertTrue(any("identity guard stage failed safely" in w for w in parameters["warnings"]))
-            self.assertTrue(logged.output)
-            self.assertEqual(parameters["resolution_contract"]["pixel_grid_source"], "original_pixel_grid")
+        entry = report(parameters, "purescale_super_resolution")
+        self.assertEqual(entry["status"], "accepted")
+        self.assertTrue(entry["changed_pixels"])
+        self.assertEqual(
+            (entry["provider"], entry["device"], entry["tile_size"], entry["memory_retries"]),
+            ("purescale_safmn_2x", "cuda", 128, 1),
+        )
+        self.assertEqual(entry["checkpoint_sha256_prefix"], "c8fb698766f5")
+
+    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+    @patch("enhancement.services.upscale_with_purescale", side_effect=RuntimeError("unexpected tensor shape"))
+    def test_an_unexpected_model_error_keeps_the_last_safe_image(self, _purescale):
+        source = textured()
+        with self.assertLogs("enhancement.services", level="ERROR") as logged:
+            output, _level, parameters = enhance_bgr(source, "low")
+
+        self.assertEqual(output.shape, source.shape)  # no upscale happened
+        entry = report(parameters, "purescale_super_resolution")
+        self.assertEqual(entry["status"], "failed")
+        self.assertFalse(entry["changed_pixels"])
+        self.assertFalse(parameters["purescale"]["applied"])
+        self.assertTrue(parameters["purescale"]["failed"])
+        self.assertTrue(any("purescale super resolution stage failed safely" in w for w in parameters["warnings"]))
+        self.assertIn("unexpected tensor shape", "\n".join(logged.output))
+        self.assertEqual(parameters["resolution_contract"]["pixel_grid_source"], "original_pixel_grid")
+
+    @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+    @patch("enhancement.services.upscale_with_realesrgan", side_effect=MemoryError())
+    @patch("enhancement.services.deblur_with_nafnet", side_effect=MemoryError())
+    def test_running_out_of_host_memory_in_a_model_stage_does_not_fail_the_image(self, _deblur, _upscale):
+        source = textured()
+        with self.assertLogs("enhancement.services", level="ERROR"):
+            output, _level, parameters = enhance_bgr(source, "low")
+
+        self.assertEqual(output.shape, source.shape)
+        self.assertEqual(report(parameters, "hd_restoration")["status"], "failed")
+        self.assertFalse(parameters["hd_restoration"]["deblur"]["applied"])
+        self.assertNotIn("nafnet", parameters["algorithm"])
 
     @override_settings(**NO_MODELS)
     @patch("enhancement.services._quality_guard", side_effect=cv2.error("guard could not run"))
     def test_a_guard_that_cannot_run_fails_the_enhancement_instead_of_passing_it(self, _guard):
         with self.assertRaises(cv2.error):
             enhance_bgr(textured(), "low")
+
+    @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+    @patch("enhancement.services.upscale_with_realesrgan")
+    @patch("enhancement.services.deblur_with_nafnet")
+    def test_a_kept_deblur_with_a_failed_upscale_is_reported_as_partial(self, deblur, upscale):
+        from .hd_restoration import HDRestorationUnavailable
+
+        deblur.side_effect = lambda image: (cv2.add(image, 5), {"provider": "nafnet_gopro_width64", "device": "mps"})
+        upscale.side_effect = HDRestorationUnavailable("Real-ESRGAN ran out of memory on mps; the image was left as it was.")
+        _output, _level, parameters = enhance_bgr(textured(), "low")
+
+        entry = report(parameters, "hd_restoration")
+        self.assertEqual(entry["status"], "partially_accepted")
+        self.assertEqual(entry["models"][0], {"provider": "nafnet_gopro_width64", "device": "mps", "applied": True})
+        self.assertFalse(entry["models"][1]["applied"])
+        self.assertIn("ran out of memory", entry["fallback_reason"])
+
 
 class ProcessingPlanTests(SimpleTestCase):
     @override_settings(**NO_MODELS)
@@ -112,7 +163,8 @@ class ProcessingPlanTests(SimpleTestCase):
         self.assertFalse(plan["minimal_processing"])
         self.assertTrue(plan["steps"]["exposure"]["planned"])
         self.assertTrue(plan["steps"]["denoise"]["planned"])
-        self.assertEqual(set(plan["steps"]), {"exposure", "denoise", "sharpen", "style"})
+        self.assertFalse(plan["steps"]["upscale"]["planned"])
+        self.assertIsNone(plan["steps"]["upscale"]["upscaler"])
 
     @override_settings(**NO_MODELS)
     def test_an_already_good_image_gets_minimal_processing(self):
@@ -132,6 +184,21 @@ class ProcessingPlanTests(SimpleTestCase):
         good = textured(720, 960, base=135)
         self.assertFalse(enhance_bgr(good, "high")[2]["plan"]["minimal_processing"])
         self.assertFalse(enhance_bgr(good, "auto", style="dynamic")[2]["plan"]["minimal_processing"])
+
+    def test_the_plan_names_exactly_one_upscaler(self):
+        small = textured()  # 96x64: low resolution
+        with override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"}):
+            with patch("enhancement.services.upscale_with_realesrgan", side_effect=RuntimeError("no model")), \
+                    self.assertLogs("enhancement.services", level="ERROR"):
+                plan = enhance_bgr(small, "low")[2]["plan"]
+            self.assertEqual(plan["steps"]["upscale"]["upscaler"], "realesrgan_x4plus")
+        with override_settings(**{**NO_MODELS, "AI_RESTORATION_ENABLED": True, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"}):
+            with patch("enhancement.services._load_edsr_model", side_effect=RuntimeError("no model")), \
+                    patch("enhancement.services.upscale_with_purescale", side_effect=RuntimeError("no model")), \
+                    self.assertLogs("enhancement.services", level="ERROR"):
+                plan = enhance_bgr(small, "low")[2]["plan"]
+            self.assertEqual(plan["steps"]["upscale"]["upscaler"], "opencv_dnn_edsr")
+
 
 class IdentityStatusTests(SimpleTestCase):
     def test_guard_outcomes_map_onto_four_states(self):
@@ -162,6 +229,107 @@ class IdentityStatusTests(SimpleTestCase):
                 candidate, {"status": status, "applied": False, "reference_checked": True},
             )
             self.assertEqual(enhance_bgr(textured(), "low")[2]["identity_status"], expected)
+
+
+GFPGAN_ON = {**NO_MODELS, "GFPGAN_ENABLED": True, "IDENTITY_GUARD_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"}
+
+
+def gentle_restoration(image):
+    restored = cv2.addWeighted(image, 0.9, cv2.GaussianBlur(image, (0, 0), 1.0), 0.1, 2)
+    return restored, {"provider": "private_gfpgan_v1_4", "faces_restored": 1, "device": "cpu"}
+
+
+class FaceRestorationIdentityGateTests(SimpleTestCase):
+    """Generative face restoration runs only when its result can be checked."""
+
+    def setUp(self):
+        self.blurred = blurred_photo()  # severe blur: eligible
+
+    @override_settings(**GFPGAN_ON)
+    @patch("enhancement.services.restore_faces")
+    def test_natural_mode_does_not_restore_when_identity_cannot_be_checked(self, restore):
+        # No consent: nothing to compare the restored face with.
+        _output, _level, parameters = enhance_bgr(self.blurred, "low", allow_biometric_processing=False)
+
+        restore.assert_not_called()
+        self.assertFalse(parameters["face_restoration"]["applied"])
+        self.assertEqual(parameters["face_restoration"]["identity_gate"], "refused")
+        self.assertIn("identity cannot be verified", parameters["face_restoration"]["fallback_reason"])
+        self.assertEqual(report(parameters, "face_restoration")["status"], "rejected")
+
+    @override_settings(**GFPGAN_ON)
+    @patch("enhancement.services._identity_model_configured", return_value=True)
+    @patch("enhancement.services.build_identity_reference", return_value=(None, "No face large enough to judge was found in the source."))
+    @patch("enhancement.services.restore_faces")
+    def test_no_reliable_source_face_also_refuses(self, restore, _reference, _configured):
+        _output, _level, parameters = enhance_bgr(self.blurred, "low")
+
+        restore.assert_not_called()
+        self.assertIn("No face large enough", parameters["face_restoration"]["fallback_reason"])
+        self.assertEqual(parameters["identity_status"], "inconclusive")
+
+    @override_settings(**GFPGAN_ON)
+    @patch("enhancement.services.restore_faces", side_effect=gentle_restoration)
+    def test_ai_max_is_an_explicit_request_and_is_not_gated(self, restore):
+        _output, _level, parameters = enhance_bgr(self.blurred, "low", style="ai_max", allow_biometric_processing=False)
+        restore.assert_called_once()
+        self.assertTrue(parameters["face_restoration"]["applied"])
+
+    @override_settings(**{**GFPGAN_ON, "GFPGAN_REQUIRE_IDENTITY_CHECK": False})
+    @patch("enhancement.services.restore_faces", side_effect=gentle_restoration)
+    def test_the_gate_can_be_switched_off_by_the_operator(self, restore):
+        enhance_bgr(self.blurred, "low", allow_biometric_processing=False)
+        restore.assert_called_once()
+
+    @override_settings(**GFPGAN_ON)
+    @patch("enhancement.services.apply_identity_guard")
+    @patch("enhancement.services.build_identity_reference", return_value=(object(), ""))
+    @patch("enhancement.services.restore_faces", side_effect=gentle_restoration)
+    def test_a_verified_restoration_is_kept(self, restore, _reference, guard):
+        guard.side_effect = lambda source, candidate, reference=None: (
+            candidate, {"status": "preserved", "applied": False, "similarity": 0.93, "reference_checked": True},
+        )
+        _output, _level, parameters = enhance_bgr(self.blurred, "low")
+
+        restore.assert_called_once()
+        self.assertTrue(parameters["face_restoration"]["applied"])
+        self.assertEqual(parameters["identity_status"], "verified")
+        self.assertIn("private_gfpgan_v1_4", parameters["algorithm"])
+
+    @override_settings(**GFPGAN_ON)
+    @patch("enhancement.services.apply_identity_guard")
+    @patch("enhancement.services.build_identity_reference", return_value=(object(), ""))
+    @patch("enhancement.services.restore_faces", side_effect=gentle_restoration)
+    def test_a_restoration_that_cannot_be_verified_afterwards_is_withdrawn(self, restore, _reference, guard):
+        guard.side_effect = lambda source, candidate, reference=None: (
+            candidate, {"status": "inconclusive", "applied": False, "reference_checked": True},
+        )
+        output, _level, parameters = enhance_bgr(self.blurred, "low")
+
+        with override_settings(GFPGAN_ENABLED=False):
+            without_restoration, _level, _parameters = enhance_bgr(self.blurred, "low")
+
+        restore.assert_called_once()  # tried once, not again on the second pass
+        np.testing.assert_array_equal(output, without_restoration)
+        self.assertFalse(parameters["face_restoration"]["applied"])
+        self.assertTrue(parameters["face_restoration"]["withdrawn"])
+        self.assertNotIn("gfpgan", parameters["algorithm"])
+        self.assertTrue(any("withdrawn" in warning for warning in parameters["warnings"]))
+        self.assertEqual(parameters["stage_order"].count("face_restoration"), 2)
+
+    @override_settings(**GFPGAN_ON)
+    @patch("enhancement.services.apply_identity_guard")
+    @patch("enhancement.services.build_identity_reference", return_value=(object(), ""))
+    @patch("enhancement.services.restore_faces", side_effect=GFPGANUnavailable("GFPGAN ran out of memory; the faces were left as they were."))
+    def test_restoration_running_out_of_memory_falls_back_without_a_second_pass(self, _restore, _reference, guard):
+        guard.side_effect = lambda source, candidate, reference=None: (
+            candidate, {"status": "preserved", "applied": False, "reference_checked": True},
+        )
+        _output, _level, parameters = enhance_bgr(self.blurred, "low")
+
+        self.assertFalse(parameters["face_restoration"]["applied"])
+        self.assertIn("ran out of memory", parameters["face_restoration"]["fallback_reason"])
+        self.assertEqual(parameters["stage_order"].count("face_restoration"), 1)
 
 
 @override_settings(FACE_FIDELITY_ENABLED=True)
@@ -275,18 +443,17 @@ class FaceFidelityTests(SimpleTestCase):
             detect.assert_not_called()
         self.assertEqual(parameters["face_fidelity"]["faces_adjusted"], 0)
 
-    @override_settings(**NO_MODELS)
-    def test_the_pipeline_reduces_a_late_stage_that_waxes_a_face(self):
-        from . import services
-
-        def waxing_stage(context):
-            context.current_image = cv2.GaussianBlur(context.current_image, (0, 0), 5.0)
-            return context
-
-        tail = (("sharpen", waxing_stage, True, None), *services._TAIL_STAGES[1:])
+    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+    @patch("enhancement.services.upscale_with_purescale")
+    def test_the_pipeline_reduces_an_upscaler_that_waxes_a_face(self, purescale):
+        purescale.side_effect = lambda image: (
+            cv2.GaussianBlur(
+                cv2.resize(image, (image.shape[1] * 2, image.shape[0] * 2), interpolation=cv2.INTER_CUBIC), (0, 0), 5.0,
+            ),
+            {"provider": "purescale_safmn_2x"},
+        )
         source = skin(200, 200)
-        with patch.object(services, "_TAIL_STAGES", tail), \
-                patch.object(face_fidelity, "_detect_boxes", return_value=[(0.1, 0.1, 0.8, 0.8)]):
+        with patch.object(face_fidelity, "_detect_boxes", return_value=[(0.1, 0.1, 0.8, 0.8)]):
             _output, _level, parameters = enhance_bgr(source, "low")
 
         self.assertEqual(parameters["face_fidelity"]["faces_adjusted"], 1)
@@ -303,22 +470,20 @@ class CheckpointTests(SimpleTestCase):
     def test_the_checkpoint_runs_before_each_expensive_stage(self):
         seen = []
         enhance_bgr(textured(), "low", checkpoint=seen.append)
-        self.assertEqual(seen[:2], ["exposure_enhancement", "adaptive_denoise"])
+        self.assertEqual(seen[:3], ["exposure_enhancement", "adaptive_denoise", "purevision_restoration"])
         self.assertIn("identity_guard", seen)
         self.assertNotIn("output_guard_a", seen)
 
-    @override_settings(**NO_MODELS)
-    def test_cancelling_stops_before_the_next_expensive_stage(self):
-        reached = []
-
-        def cancel_at_denoise(stage):
-            reached.append(stage)
-            if stage == "adaptive_denoise":
+    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+    @patch("enhancement.services.upscale_with_purescale")
+    def test_cancelling_stops_before_the_next_expensive_stage(self, purescale):
+        def cancel_at_upscale(stage):
+            if stage == "purescale_super_resolution":
                 raise EnhancementCancelled()
 
         with self.assertRaises(EnhancementCancelled):
-            enhance_bgr(textured(), "low", checkpoint=cancel_at_denoise)
-        self.assertEqual(reached, ["exposure_enhancement", "adaptive_denoise"])
+            enhance_bgr(textured(), "low", checkpoint=cancel_at_upscale)
+        purescale.assert_not_called()
 
 
 class EncodedOutputTests(SimpleTestCase):
@@ -720,3 +885,26 @@ class EvaluationDrivenBehaviourTests(SimpleTestCase):
         self.assertIn("No identity model is configured", parameters["identity_guard"]["fallback_reason"])
 
 
+@override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+class DeblurRoutingTests(SimpleTestCase):
+    """Deblurring runs only on a photo whose blur was measured."""
+
+    @patch("enhancement.services.upscale_with_realesrgan", side_effect=__import__("enhancement.hd_restoration", fromlist=["x"]).HDRestorationUnavailable("off"))
+    @patch("enhancement.services.deblur_with_nafnet")
+    def test_a_sharp_photo_is_not_deblurred(self, deblur, _upscale):
+        from .test_conservative_routing import detailed
+
+        sharp = detailed()
+        parameters = enhance_bgr(sharp, "auto")[2]
+        self.assertFalse({"mild_blur", "severe_blur"} & set(parameters["quality_before"]["defects"]))
+        deblur.assert_not_called()
+        self.assertIn("No blur was measured", parameters["hd_restoration"]["deblur"]["fallback_reason"])
+
+    @patch("enhancement.services.upscale_with_realesrgan", side_effect=__import__("enhancement.hd_restoration", fromlist=["x"]).HDRestorationUnavailable("off"))
+    @patch("enhancement.services.deblur_with_nafnet")
+    def test_a_blurred_photo_is(self, deblur, _upscale):
+        deblur.side_effect = lambda image: (image.copy(), {"provider": "nafnet_gopro_width64", "tiles_rejected": 2})
+        blurred = blurred_photo()
+        parameters = enhance_bgr(blurred, "auto")[2]
+        deblur.assert_called_once()
+        self.assertTrue(any("diverged on 2 tile" in warning for warning in parameters["warnings"]))

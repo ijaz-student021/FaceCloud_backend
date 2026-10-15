@@ -1,24 +1,20 @@
 # Features 10–12: Image Enhancement
 
-> **2026-10-15:** the learned enhancement models (Zero-DCE, EDSR, NAFNet,
-> Real-ESRGAN, GFPGAN, PureVision, PureScale, colourisation) were retired.
-> Enhancement is OpenCV and Pillow only, with an optional OpenAI advisor that only
-> suggests slider values. What was retired, and how to recover it, is in
-> `docs/enhancement/retired-capabilities.md`. The pipeline, controls, previews and
-> advisor are described in `docs/enhancement/lightweight-pipeline.md` and
-> `docs/enhancement/openai-advisor.md`. This page keeps the parts that still apply.
-
 ## 1. Overview
 
 This feature enhances standardized images while preserving the uploaded original.
 It provides Low, Medium, High, and Auto enhancement levels and records every
 single-image or batch operation so progress and failures can be reported safely.
 
-Current status: **Complete backend**. Enhancement levels, adaptive OpenCV
-processing, Celery execution, progress, owner-only APIs, comparison metadata,
-secure downloads, adaptive natural-output protection, the per-face fidelity check,
-the identity guard (YuNet and SFace), full-resolution source preservation and the
-non-destructive Auto/Manual gallery editor are implemented.
+Current status: **Complete backend**. Enhancement levels, adaptive OpenCV processing,
+optional EDSR restoration, private FaceCloud curve-model inference, Celery execution,
+progress, owner-only APIs, comparison metadata, secure downloads, and adaptive
+natural-output protection are implemented. Full-resolution source preservation and
+the non-destructive Auto/Manual gallery editor are also implemented. A private,
+checksum-pinned GFPGAN v1.4 face-restoration stage is implemented and verified in
+an isolated Python 3.11 worker. Portable defaults remain disabled because private
+model artifacts are not distributed with the repository; an authorized deployment
+enables the stage only after its startup preflight passes.
 
 ## 2. Implemented foundation
 
@@ -26,43 +22,66 @@ non-destructive Auto/Manual gallery editor are implemented.
 - Low, Medium, High, and Auto enhancement-level choices
 - Pending, queued, processing, completed, partial, failed, and cancelled states
 - Batch-level progress counters and processing metadata
-- Per-image enhancement result records, linked to the original and owned by one user
+- Per-image enhancement result records
+- Original image-to-enhanced output relationship
+- Owner relationship on jobs and results
 - One active enhancement operation per source image
 - Output format, dimensions, size, parameters, error, and timing fields
 - Enhanced-output cleanup when its database record is deleted
-- Luminance-only OpenCV correction in LAB colour space (gamma, CLAHE, bounded
-  sharpening, measured denoising); colour channels are left alone
-- Automatic level selection from measured defects; darkness alone never lifts a
-  photo in automatic mode
+- Django administration support
+- PostgreSQL migration and model tests
+- Luminance-only OpenCV correction in LAB colour space
+- Automatic level selection using input luminance
+- Gamma correction, CLAHE, optional denoising, and controlled sharpening
 - Separate enhanced-file storage without modifying the original
 - Celery batch enhancement with progress and success/failure counters
+- Authenticated single-image and batch creation APIs
 - Asynchronous single-image enhancement with HTTP 202 queued responses
-- Per-result Celery task identifiers and superseded-task protection; safe `missing`
-  results for stale identifiers
+- Per-result Celery task identifiers and superseded-task protection
+- Safe `missing` results for stale Celery identifiers after deletion, rollback,
+  or queue recovery instead of uncaught database lookup failures
 - Owner-only result, job, comparison-link, and download APIs
+- Automated processing, batch-progress, auto-level, and cross-user privacy tests
 - Image-quality analysis for exposure, contrast, blur, noise, clipping, and resolution
 - Source-resolution-normalized before/after quality comparisons
-- Defect-driven routing: a correction runs only for a measured defect
-- Adaptive natural-output guard (Guard A after exposure, Guard B at the end) that
-  limits brightness gain, contrast loss, highlight/shadow clipping, and colour drift
-- Named, independently testable pipeline stages with per-stage timings and reports
+- Separate native-output quality metadata for full-resolution inspection
+- Adaptive defect routing and conservative over-enhancement fallback
+- Exposure-aware routing for dark, normally exposed, and overexposed images
+- Adaptive natural-output guard that limits brightness gain, contrast loss,
+  highlight/shadow clipping, and colour drift
+- Source-chroma preservation for learned curve-model output
+- Automatic blending toward the original whenever a candidate is too aggressive
+- Auditable guard metadata with raw-candidate and final-output measurements
+- Named, independently testable pipeline stages with per-stage timings
+- Separate post-exposure Guard A and final-output Guard B safety decisions
+- Post-Guard-A noise measurement and feature-flagged adaptive denoising
+- EDSR ordering after denoise so enlargement does not amplify avoidable noise
+- AI-restoration warning for severe blur and low-resolution inputs
+- Optional CPU EDSR 2x super-resolution routing for low-resolution inputs
+- EDSR activation limited to genuinely small inputs (shortest edge at or below
+  480 pixels by default), avoiding unnecessary enlargement of medium-size images
+- Bounded output-pixel safety limit and automatic OpenCV fallback
+- Auditable restoration provider, dimensions, outcome, and failure metadata
 - Full-resolution original selected for final enhancement rendering
+- Bounded proxy used only for learned curve prediction; curve maps are applied
+  to the complete source pixel grid
+- Full-resolution curve application runs in bounded tiles to avoid constructing
+  a full-size floating-point curve tensor for very large uploads
 - JPEG quality 95 with 4:4:4 chroma sampling when supported by OpenCV
-- No upscaling: the saved image is on the source's pixel grid
 
-## 3. Workflow
+## 3. Intended workflow
 
 ```text
 Standardized image
   -> choose Low, Medium, High, or Auto
   -> create an owner-scoped enhancement job
-  -> queue processing through Celery and Redis (default queue)
+  -> queue processing through Celery and Redis
   -> analyse the original and apply exposure enhancement
   -> apply output Guard A
   -> measure revealed noise and optionally denoise
+  -> route still-low-resolution output through optional EDSR 2x restoration
+  -> restore eligible degraded faces through guarded private GFPGAN
   -> apply bounded sharpening and output Guard B
-  -> check each detected face against the pre-sharpening image
-  -> optional dynamic style, then the identity guard (consent permitting)
   -> validate the final datatype and pixel-grid contract
   -> save the enhanced output separately
   -> update progress and terminal status
@@ -121,7 +140,7 @@ Allowed levels are `low`, `medium`, `high`, and `auto`.
 
 The single-image endpoint creates the result, assigns a task identifier, changes
 the result to `queued`, submits `enhancement.process_image` to Redis, and returns
-HTTP 202 without waiting for processing.
+HTTP 202 without waiting for EDSR or OpenCV processing.
 
 Example initial response fields:
 
@@ -153,8 +172,8 @@ Recommended frontend polling behavior:
 
 `quality_before` describes the standardized source. `quality_after` describes the
 native enhanced output at its real output dimensions. These native values are
-useful for inspecting the stored result. The grid never changes now, but results made
-before 2026-10-15 may be 2x larger (EDSR) and must not be compared natively.
+useful for inspecting the stored result but must not be directly compared when
+EDSR changed the resolution.
 
 `quality_comparison` provides a fair before/after comparison by measuring both
 images on the original source pixel grid:
@@ -175,9 +194,8 @@ images on the original source pixel grid:
 }
 ```
 
-This separation prevented a 2x output from being marked severely blurred only
-because Laplacian variance changes with the pixel scale (it matters for results
-made before the upscaling stages were retired). Frontend comparison
+This separation prevents a 2x output from being marked severely blurred only
+because Laplacian variance changes with the pixel scale. Frontend comparison
 cards should use `quality_comparison`; technical details may additionally show
 the native `quality_after` values.
 
@@ -202,39 +220,108 @@ State and privacy behavior:
 - A completed result whose stored files are gone returns HTTP 410.
 - A completed legacy result without normalized measurements returns HTTP 409.
 
-## 9. Natural-output protection
+## 9. EDSR restoration behavior
 
-Every result passes through `adaptive_natural_output_guard_v2` immediately after
-exposure enhancement (Guard A). A second guard runs after denoising and sharpening
-(Guard B). The guards improve an image without turning a normally exposed face
-unnaturally bright or washing out skin colour and contrast.
+- EDSR is requested only when the quality router identifies low resolution.
+- EDSR executes after post-exposure noise measurement and denoising.
+- The configured model is OpenCV DNN EDSR at 2x scale.
+- EDSR runs only when the source shortest edge is at or below the configured
+  `AI_RESTORATION_MAX_INPUT_EDGE` (480 pixels by default).
+- A larger image classified as low resolution keeps its original grid and records
+  a safe skip reason instead of being enlarged merely to satisfy the classifier.
+- The model is cached in each Celery worker process after its first load.
+- The maximum output-pixel setting prevents unsafe memory growth.
+- Missing or failed restoration falls back to the OpenCV enhancement path.
+- Restoration metadata records whether EDSR was requested and applied, its
+  provider, scale, dimensions, and safe fallback reason.
+- EDSR improves enlargement quality but does not guarantee recovery of facial
+  information absent from the source.
 
-- Dark inputs are lifted only when a level or style is chosen (automatic mode
-  withholds the lift and records `lift_withheld`); overexposed inputs use a
-  darkening policy.
-- Low, Medium and High levels use progressively larger, still bounded, corrections.
+### Natural-output protection
+
+Every learned-model result passes through `adaptive_natural_output_guard_v2`
+immediately after exposure enhancement (Guard A). A second guard runs after
+denoising, optional EDSR, and sharpening (Guard B). The guards are designed to
+improve an image without turning a
+normally exposed face unnaturally bright or washing out skin colour and contrast.
+
+- Dark inputs use a controlled brightening policy.
+- Normally exposed inputs use a balanced policy with a smaller model blend.
+- Overexposed inputs use a darkening policy and cannot receive additional
+  brightening from the learned model.
+- Low, Medium, and High levels use progressively larger—but still bounded—model
+  strengths. Auto selects a level from the source measurements.
+- The learned luminance is combined with the source LAB chroma channels to reduce
+  unwanted skin-tone and colour shifts.
 - Candidate strength is reduced iteratively when luminance gain, luminance loss,
-  contrast retention, clipping, or chroma shift exceeds the selected level's limits.
-- Photos darker than `EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD` are allowed a larger
-  luminance gain (`EXTREME_LOW_LIGHT_MAX_LUMINANCE_GAIN`) when a lift was asked for.
-- A configurable absolute 5% highlight-clipping ceiling is a final safeguard and
-  is recorded in result metadata.
-- The saved parameters include the raw candidate measurements, final applied
-  strength, guard reasons, contrast retention, chroma shift and the limits.
+  contrast retention, clipping, or chroma shift exceeds the selected level's
+  safety limits.
+- Model strength is additionally scaled from normalized scene mean and median
+  luminance. Inputs at or above the configured 0.45 threshold receive no learned
+  brightening; genuinely dark inputs receive only the strength justified by the
+  distance from the 0.60 target.
+- A configurable absolute 5% highlight-clipping ceiling provides a final
+  production safeguard and is recorded in result metadata.
+- The saved processing parameters include the raw candidate measurements, final
+  applied strength, guard reasons, final contrast retention, chroma shift, and
+  applicable limits for auditing and frontend technical details.
 
-This guard cannot reconstruct detail that is not in the source.
+This guard improves realism and consistency, but it cannot reconstruct facial
+detail that does not exist in a severely blurred or extremely compressed source.
+Such restoration remains a separate model and quality-review responsibility.
 
-## 10. Fairness and skin-tone preservation
+## 10. Operational verification
 
-The enhancement pipeline does not classify skin colour. It changes LAB lightness
-while preserving the chroma channels, and the per-face fidelity check and identity
-guard compare each face with the source. Face-aware local exposure correction and
-diverse evaluation images remain required before claiming demographic fairness in
-production.
+The real non-eager Celery pipeline and natural-output guard were verified on
+`image6.jpg`. The latest natural-output verification was performed on July 22,
+2026 with the private FaceCloud ONNX curve model.
 
-## 11. Failure and recovery behavior
+| Check | Result |
+|---|---|
+| Source dimensions | 335 x 597 |
+| EDSR output dimensions | 670 x 1194 |
+| Queue response | HTTP 202 in 324 ms |
+| Initial status | `queued` |
+| Terminal status | `completed` |
+| CPU processing duration | approximately 143.7 seconds |
+| EDSR requested/applied | yes/yes |
+| Normalized comparison method | `source_resolution_normalized_v1` |
+| Normalized sharpness | 69.99 before, 63.1 after |
+| PostgreSQL migration | applied successfully |
+| Guarded source luminance | 76.99 |
+| Raw model candidate gain | +73.35 luminance points |
+| Final guarded luminance | 89.88 (+12.89) |
+| Final contrast retention | 83.5% |
+| Final chroma shift | 0.265 |
+| Final applied model strength | 17.67% |
+| Guard actions | luminance gain limited; contrast preserved |
+| Automated test suite | 146 tests passing |
+| Django system check | no issues |
+| Redis and Celery | connected and ready |
+
+The 324 ms queue response confirms that the user request is no longer blocked by
+the approximately 144-second CPU inference. The current CPU duration remains a
+known performance limitation and must be represented as background progress in
+the frontend.
+
+## 11. Fairness and skin-tone preservation
+
+The enhancement pipeline does not classify skin colour. The OpenCV baseline
+changes LAB lightness while preserving chroma, and the learned-model output is
+also recombined with the source chroma before adaptive guarding. This reduces
+unintended colour shifts between people with different skin tones.
+Face-aware local exposure correction and diverse evaluation images remain required
+before claiming demographic fairness in production.
+
+The EDSR stage improves spatial resolution for eligible small images but cannot
+guarantee recovery of facial detail absent from the source. Severe blur remains
+flagged for a future face-restoration model and quality review.
+
+## 12. Failure and recovery behavior
 
 - A queue submission failure marks the result `failed` with a safe reason.
+- A missing, disabled, or incompatible EDSR model falls back without exposing a
+  server path to the API user.
 - Completed and cancelled results are idempotent when a task is delivered again.
 - A task whose identifier no longer matches the result returns `superseded`.
 - Only one pending, queued, or processing enhancement is allowed per source image.
@@ -243,7 +330,7 @@ production.
 ### Task failure behaviour (2026-10)
 
 - Every unexpected failure is logged with its traceback; the user still sees one
-  safe sentence. Runtime errors (`RuntimeError`, `MemoryError`) mark the
+  safe sentence. Model-runtime errors (`RuntimeError`, `MemoryError`) mark the
   result failed and remove any output file already written.
 - Dropped database connections are retried (three times, with backoff); only the
   last attempt records a failure.
@@ -251,20 +338,41 @@ production.
   images: unfinished results are failed with a reason that says to start again,
   and the job is recorded as partial with that reason.
 
-## 12. Remaining work
+## 13. Curve-model implementation
 
+- The private FaceCloud curve model is trained independently and exported to ONNX.
+- Production inference uses OpenCV DNN and does not require PyTorch.
+- Low-light inputs can request the private model; normally exposed and bright
+  inputs retain conservative, exposure-aware processing.
+- Zero-DCE or the OpenCV exposure fallback runs first. Guarded output is
+  measured and denoised before EDSR is considered for low-resolution input.
+- Eight learned RGB curve maps are applied at the original output dimensions.
+- Source chroma is restored and adaptive output guarding is applied before save.
+- Missing, disabled, corrupt, or incompatible models fall back safely to adaptive OpenCV.
+- Result metadata records whether Zero-DCE was requested and applied, its provider, inference dimensions, model filename, curve iterations, and fallback reason.
+
+The local runtime model is stored under `.runtime/models/`. Runtime model assets
+are intentionally excluded from Git and must be deployed through controlled,
+private model storage.
+
+## 14. Remaining implementation
+
+- Evaluate an identity-preserving face-restoration model for severe blur.
 - Add advanced retry and user-requested cancellation.
-- Add face-aware local exposure correction.
+- Add face-aware local exposure correction after multi-face detection exists.
 - Evaluate colour preservation across diverse, consented test images.
+- Connect the frontend to the real APIs and job states.
 
 ## 15. Non-destructive gallery editing
 
-Completed results can be adjusted in Auto or Manual mode; each final render
-creates an `ImageEditVersion` and never rewrites the source, the standardized file
-or the enhanced result. The controls (brightness, contrast, saturation, shadows,
-highlights, warmth, sharpness), their ranges, the bounded previews with revisions,
-saving, and the optional advisor are specified in
-`docs/enhancement/lightweight-pipeline.md` and `docs/enhancement/openai-advisor.md`.
+Completed results can now be adjusted using Auto or Manual mode. Manual mode
+supports brightness, contrast, shadows, saturation, and highlights. Each final
+render creates an `ImageEditVersion`; it does not rewrite the source upload,
+standardized file, or enhanced result.
+
+The frontend should preview slider movement locally for responsiveness, then
+submit the final values to the backend. The backend renders the authoritative
+full-resolution file through Celery and returns a pollable version record.
 
 | Method | Endpoint | Purpose |
 |---|---|---|
@@ -276,15 +384,39 @@ saving, and the optional advisor are specified in
 | POST | `/api/enhancements/edits/{edit_id}/activate/` | Make an older completed version current |
 | GET | `/api/enhancements/edits/{edit_id}/download/` | Download an owned completed version |
 
+Manual request example:
+
+```json
+{
+  "mode": "manual",
+  "adjustments": {
+    "brightness": 8,
+    "contrast": 12,
+    "shadows": 10,
+    "saturation": 4,
+    "highlights": -8
+  }
+}
+```
+
+Auto request example:
+
+```json
+{"mode": "auto"}
+```
+
 ## 16. Resolution contract
 
 - The original upload remains the authoritative pixel source.
 - The 4096-pixel preprocessing copy remains useful for validation and analysis,
   but it is no longer the final enhancement source when the original is available.
 - EXIF orientation and transparency flattening are handled without resizing.
-- Output dimensions equal the oriented original dimensions; no stage resizes the
-  image. Severe blur and low resolution are reported as beyond the lightweight
-  pipeline (a warning), not "fixed" by inventing detail.
+- The private model may predict curve maps on a bounded proxy; only the curve maps
+  are interpolated per tile and applied to the full-resolution original.
+- Output dimensions equal the oriented original dimensions unless the explicitly
+  requested EDSR restoration stage produces a larger 2x result.
+- Enhancement cannot invent unlimited detail. Severe blur or compression damage
+  still requires a validated restoration model and may need moderator review.
 
 Sources above `ENHANCEMENT_MAX_INPUT_PIXELS` (default 24 MP) are reduced to that
 budget before enhancement and the result says so (`input_pixel_budget`,
@@ -292,67 +424,53 @@ budget before enhancement and the result says so (`input_pixel_budget`,
 
 ## 17. Main implementation files
 
-- `enhancement/models.py`, `admin.py`, `apps.py`, `checks.py`, `policy.py`
-- `enhancement/services.py` (pipeline stages, guards, editor rendering entry points)
-- `enhancement/controls.py`, `tone.py` (editor controls and renderer)
-- `enhancement/denoise_guard.py`, `face_fidelity.py`, `identity_guard.py`
-- `enhancement/tasks.py`, `serializers.py`, `views.py`, `urls.py`
-- `enhancement/tests.py` and the `test_*.py` files beside it
-- `enhancement/migrations/`
-- `config/settings.py`, `config/urls.py`
+- `enhancement/models.py`
+- `enhancement/admin.py`
+- `enhancement/apps.py`
+- `enhancement/services.py`
+- `enhancement/zero_dce.py`
+- `scripts/export_zero_dce_onnx.py`
+- `requirements-model-export.txt`
+- `enhancement/tasks.py`
+- `enhancement/serializers.py`
+- `enhancement/views.py`
+- `enhancement/urls.py`
+- `enhancement/tests.py`
+- `enhancement/migrations/0001_initial.py`
+- `enhancement/migrations/0002_imageenhancementresult_task_id.py`
+- `enhancement/migrations/0003_imageeditversion.py`
+- `config/settings.py`
+- `config/urls.py`
 
-## 18. Staged pipeline
+## 18. Staged pipeline checkpoint (Parts 1-4)
 
-`pipeline_version` is `staged_candidate_pipeline_v5`. Enhancement orchestration
-uses an `EnhancementPipelineContext` and named stages; stored parameters include
-`stage_order` and `stage_timings_ms`. Guard A protects the exposure result before
-noise is measured; optional adaptive denoising maps the measured post-exposure
-noise score to a bounded OpenCV strength (breakpoints and strengths are
-configurable); final sharpening is protected by Guard B. The original
-`quality_guard` key remains an alias of Guard A; new clients should use
-`quality_guards.guard_a` and `quality_guards.guard_b`.
+The first four commercially structured hardening parts are implemented without
+starting face restoration or GFPGAN integration:
 
-Stage order:
+1. Rollout flags were added for `ADAPTIVE_DENOISE_ENABLED`,
+   `GFPGAN_ENABLED`, and `GFPGAN_QUEUE_ENABLED`. Adaptive denoise defaults to
+   `True`; the two private-model flags default to `False` in portable source
+   configuration.
+2. Enhancement orchestration now uses an `EnhancementPipelineContext` and
+   named stages. Stored parameters include `stage_order` and
+   `stage_timings_ms`.
+3. Guard A protects the exposure result before noise is measured. Optional
+   adaptive denoising maps the measured post-exposure noise score to a bounded
+   OpenCV strength using configurable breakpoints and strengths.
+4. EDSR now executes only after denoising and rechecks the current image for
+   low resolution at that point. Final sharpening is protected by Guard B.
 
-```text
-analyze_original            required   measure defects, choose level, write the plan
-exposure_enhancement        optional   OpenCV gamma/CLAHE in LAB lightness
-output_guard_a              required   judge exposure against the source
-measure_post_exposure_noise required
-adaptive_denoise            optional   strength from the measured noise, accepted or rejected by the denoise guard
-sharpen                     optional
-output_guard_b              required   judge the result against the pre-sharpening image
-face_fidelity               optional   each face against the pre-sharpening image
-dynamic_style               optional
-identity_guard              optional   SFace embedding similarity against the source (consent permitting)
-validate_output             required   pixel grid and datatype contract
-```
+The original `quality_guard` metadata key remains an alias of Guard A for
+existing clients. New clients should use `quality_guards.guard_a` and
+`quality_guards.guard_b`.
 
-An optional stage proposes a candidate. If it raises, the image it was given is
-kept and `stage_reports` shows `failed`; the pipeline continues. A required stage
-that cannot run fails the enhancement (ADR-015).
-
-New keys in `applied_parameters`:
-
-| Key | Meaning |
-|---|---|
-| `plan` | Defects found, whether the image gets minimal processing, and which of exposure, denoise, sharpen and style have work |
-| `stage_reports` | Per stage: `status` (`completed`, `accepted`, `rejected`, `fallback`, `skipped`, `failed`), `changed_pixels`, `duration_ms`, and where relevant `provider`, `device`, `fallback_reason` |
-| `identity_status` | `verified`, `inconclusive`, `unavailable` or `failed` |
-| `face_fidelity` | Faces checked and adjusted, with each face's measurements (no coordinates) |
-| `encoded_output` | The stored file decoded again: size, channels, mean absolute error, PSNR |
-| `transparency` | Whether the source had an alpha channel and whether it was kept (PNG output only) |
-| `render_policy` | `lightweight_v1`, the list of retired capabilities and a pointer to their documentation |
-| `quality_after_measurement_point` | Always `final_output` |
-
-Results stored before 2026-10-15 may also hold `zero_dce`, `restoration`,
-`hd_restoration`, `purevision`, `purescale`, `face_restoration` and `colorization`
-blocks; they are history, are returned unchanged, and are never written again.
+Adaptive denoise is enabled by default. A deployment can still disable it to use
+the legacy denoise policy during rollback or compatibility testing.
 
 ### Night-photo grain fixes (2026-09)
 
 A review on 60 real, very dark images from `Dataset/image` (default `auto`
-settings) found two defects in the denoise stage; both are fixed.
+settings, Zero-DCE on) found two defects in the denoise stage; both are fixed.
 
 - **Edges were found on the noisy image.** The edge-aware blend protects edges
   and denoises flat areas, but it located edges by measuring gradients on the
@@ -373,24 +491,108 @@ settings) found two defects in the denoise stage; both are fixed.
 What was **not** changed by the grain fixes: raising the strength table barely
 helped without the edge fix (mean noise 5.42 and 5.38 at stronger settings).
 
+### Colour in very dark photos (`ENHANCEMENT_DARK_COLOUR_GAIN_MAX`)
 
-Automated regression coverage includes extremely dark, normally exposed, bright,
-low-resolution and multi-face scene fixtures. It verifies bounded highlight
-clipping, contrast retention, normalized comparisons, stage ordering and
-feature-flag behaviour.
+When the learned brightening runs, the pipeline keeps the source's LAB colour
+channels (an identity and skin-tone protection). A near-black source has almost
+no colour, so a photo brightened many times over came out grey (mean
+colourfulness 2.9 in, 2.86 out on the 60-image sample).
+
+- **Rejected: using the model's colours.** The raw Zero-DCE output has strong
+  green and magenta casts on pavements and trees, and smoothing or blending it
+  keeps them. Near-black 8-bit pixels do not contain that colour information,
+  so the model invents it.
+- **Shipped: bounded gain on the photo's own colour.** After the brightening,
+  the source's colour channels are smoothed (in near-black pixels they are mostly
+  sensor noise) and scaled by the square root of how much each area's lightness
+  grew, capped by `ENHANCEMENT_DARK_COLOUR_GAIN_MAX` (default 9, so at most 3x).
+  Lightness is not touched, and no colour is introduced that the photo did not
+  already hold. `1` or less switches it off and restores the old output exactly.
+  The applied gain is recorded in `zero_dce.chroma_gain`.
+- **Result (60 dark photos, full pipeline):** mean colourfulness 2.86 to 5.04,
+  largest chroma shift 2.54 (the guard limits are 2.5 to 5.0 and cut it back on
+  0 of 60), brightness unchanged, about 0.55 s more per image. Visible effect:
+  warm shop lights, green courts and coloured clothing return; a few very dark
+  scenes gain a faint tint.
+- **Not verified:** the identity guard judged none of the 60 photos (no face
+  large enough), so its interaction with the gain has not been measured on real
+  faces. The gain only shifts chroma by about 2 to 3 units and the guard still
+  runs afterwards; test with consented portraits before relying on it.
+
+Automated regression coverage includes extremely dark, normally exposed,
+bright, low-resolution, and multi-face scene fixtures. It verifies bounded
+highlight clipping, contrast retention, normalized comparisons, stage ordering,
+feature-flag behavior, and denoise-before-EDSR execution.
+
+Synthetic checkpoint measurements with adaptive denoise enabled and AI model
+files disabled are shown below. These fixtures make the routing deterministic;
+they are regression evidence, not a substitute for the later consented
+photographic evaluation set.
+
+| Fixture | Auto level | Luminance before -> after | Contrast before -> after | Highlight clipping |
+|---|---:|---:|---:|---:|
+| Extremely dark | High | 14.56 -> 24.33 | 5.03 -> 8.94 | 0% |
+| Normal portrait | Low | 144.67 -> 147.67 | 5.97 -> 5.98 | 0% |
+| Bright portrait | Low | 225.50 -> 225.50 | 3.36 -> 3.36 | 0% |
+| Low-resolution portrait | Low | 144.68 -> 151.11 | 5.92 -> 6.87 | 0% |
+| Multi-face group | Medium | 101.69 -> 107.88 | 25.27 -> 25.74 | 0% |
+
+## 18a. Staged candidate pipeline (2026-10)
+
+`pipeline_version` is `staged_candidate_pipeline_v4`. Stage order:
+
+```text
+analyze_original          required   measure defects, choose level, write the plan
+exposure_enhancement      optional   Zero-DCE curves, else OpenCV gamma/CLAHE
+output_guard_a            required   judge exposure against the source
+measure_post_exposure_noise required
+adaptive_denoise          optional   strength from the measured noise
+purevision_restoration    optional   1x artifact removal
+low_resolution_restoration optional  EDSR (only with the HD pipeline off)
+hd_restoration            optional   NAFNet deblur, then Real-ESRGAN
+purescale_super_resolution optional  only if nothing above changed the grid
+face_restoration          optional   GFPGAN, gated on a verifiable identity
+sharpen                   optional
+output_guard_b            required   judge the result against the pre-restoration image
+face_fidelity             optional   each face against the pre-restoration image
+colorization              optional
+dynamic_style             optional
+identity_guard            optional   embedding similarity against the source
+validate_output           required   pixel grid and datatype contract
+```
+
+An optional stage proposes a candidate. If it raises, the image it was given is
+kept and `stage_reports` shows `failed`; the pipeline continues. A required
+stage that cannot run fails the enhancement (ADR-015).
+
+Three references are kept apart: the original source (guard A, identity guard),
+the last accepted image before any restoration model (guard B, face fidelity),
+and that image resized bicubically to the output grid, used only to compare.
+
+New keys in `applied_parameters`:
+
+| Key | Meaning |
+|---|---|
+| `plan` | Defects found, whether the image gets minimal processing, and which stages have work, including the single planned upscaler |
+| `stage_reports` | Per stage: `status` (`completed`, `accepted`, `partially_accepted`, `rejected`, `fallback`, `skipped`, `failed`), `changed_pixels`, `duration_ms`, and where relevant `provider`, `device`, `tile_size`, `memory_retries`, `fallback_reason` |
+| `identity_status` | `verified`, `inconclusive`, `unavailable` or `failed` |
+| `face_fidelity` | Faces checked and adjusted, with each face's measurements (no coordinates) |
+| `encoded_output` | The stored file decoded again: size, channels, mean absolute error, PSNR |
+| `transparency` | Whether the source had an alpha channel and whether it was kept (PNG output only) |
+| `quality_after_measurement_point` | Always `final_output` |
 
 ### Evaluation (2026-10-13)
 
 `scripts/evaluate_pipeline_cases.py` degrades clean photographs in known ways
 and measures whether the output moves toward the clean original. Run on the four
 scikit-image sample photographs (0.14-0.27 MP, one portrait), CPU only, **no model
-checkpoints installed**, so only the classical path ran (which is now the only
-path; the learned stages it lists were retired on 2026-10-15). Mean SSIM to the clean photo, before and after enhancement:
+checkpoints installed** (Zero-DCE, EDSR, NAFNet, Real-ESRGAN, GFPGAN and SFace all
+fell back). Mean SSIM to the clean photo, before and after enhancement:
 
 | Case | Before | After | Reading |
 |---|---|---|---|
 | Already good | 1.000 | 0.976 | Small, bounded change; the portrait stays at 0.994 |
-| Dark | 0.520 | 0.712 | Better, but well short of the original (automatic mode now withholds the lift altogether; choose a level) |
+| Dark | 0.520 | 0.712 | Better, but well short of the original without Zero-DCE |
 | Noisy | 0.720 | 0.790 | Before the ladder was recalibrated the night photo went 0.747 to 0.515 (grainier than its input); it now ends at 0.751, and the portrait at 0.776 from 0.638 |
 | Blurred | 0.791 | 0.792 | No deblurring model ran; effectively unchanged |
 | Compressed | 0.857 | 0.832 | Slightly worse: nothing removes JPEG artifacts on this path |
@@ -400,7 +602,7 @@ path; the learned stages it lists were retired on 2026-10-15). Mean SSIM to the 
 Three of the sample photographs are themselves dim, so their "clean" reference
 is not a correctly exposed image and their scores understate the result.
 
-What this does not cover: real sensor noise, real motion
+What this does not cover: any learned model, real sensor noise, real motion
 blur, real group photographs, or skin tones beyond one subject.
 
 ### Conservative routing (2026-10-13, ADR-020)
@@ -438,3 +640,106 @@ Still true: nothing here removes JPEG artifacts or blur. Those need a model.
 The stage report carries the same `benefit`, `detail` and `acceptance`, and its
 status is `rejected` when a candidate was computed and dropped.
 
+## 19. Private GFPGAN v1.4 rollout checkpoint
+
+The company has confirmed that private commercial permission for the supplied
+GFPGAN v1.4 checkpoint is recorded outside this repository. The agreement,
+checkpoint, and commercial terms must never be committed or returned through an
+API.
+
+Implemented controls:
+
+1. The private checkpoint is stored at
+   `.runtime/models/gfpgan/GFPGANv1.4.pth`; `.runtime/` is Git-ignored.
+2. Its complete SHA-256 is configured and verified before the optional GFPGAN
+   package is imported or the checkpoint is loaded.
+3. No model is downloaded automatically. A missing or modified artifact safely
+   falls back to the existing enhancement pipeline.
+4. Loading is lazy and process-cached. Inference is serialized within a worker
+   to avoid concurrent use of one model instance.
+5. Restoration is eligible only for severe blur, optionally mild blur, or low
+   resolution. Normally exposed, sharp, sufficiently large images skip the model.
+6. GFPGAN uses `upscale=1`, the `clean` architecture, no background upsampler,
+   restoration weight `0.30`, and an initial output blend of `0.25`.
+7. Candidates that contain no face, exceed five faces or the configured pixel
+   limit, change dimensions, contain invalid pixels, or fail inference are
+   rejected without failing the overall enhancement.
+8. A dedicated face-restoration guard measures structural similarity, mean and
+   95th-percentile absolute change, chroma shift, and highlight-clipping growth.
+   It reduces the blend step-by-step or rejects the candidate when any configured
+   natural-image/change boundary is exceeded. This is explicitly recorded as a
+   quality guard, not as embedding-based identity verification.
+9. Stored metadata includes provider, checksum prefix, face count, dimensions,
+   timing, every guard attempt, fallback reason, and identity-safeguard state. It
+   excludes private paths and license terms.
+10. `GFPGAN_ENABLED` and `GFPGAN_QUEUE_ENABLED` default to `False`.
+11. The detector, parser, and GFPGAN checkpoints are all checksum-pinned and must
+    already exist locally; runtime downloads are not permitted.
+12. Final output validation requires a contiguous `uint8` BGR result on the
+    expected original or bounded-EDSR grid. The enhanced output is never silently
+    downscaled.
+
+### Isolated worker setup
+
+Use the separate Python 3.11 environment. Install the authorized CPU or CUDA
+PyTorch build matching `requirements-gfpgan-constraints.txt`, then run:
+
+```powershell
+python -m pip install -r requirements-gfpgan.txt
+```
+
+Verify the checkpoint:
+
+```powershell
+(Get-FileHash `
+  -LiteralPath ".runtime\models\gfpgan\GFPGANv1.4.pth" `
+  -Algorithm SHA256).Hash.ToLowerInvariant()
+```
+
+Expected SHA-256:
+
+```text
+e2cd4703ab14f4d01fd1383a8a8b266f9a5833dacee8e6a79d3bf21a1b6be5ad
+```
+
+Start the isolated worker:
+
+```powershell
+.\scripts\start_gfpgan_worker.ps1
+```
+
+The launcher validates all checkpoint checksums, loads the private model, and
+starts a uniquely named solo Celery worker on the `gfpgan` queue. Only after that
+preflight is healthy should the deployment set `GFPGAN_ENABLED=True` and
+`GFPGAN_QUEUE_ENABLED=True`. Rollback sets both flags to `False`.
+
+### Verified local pipeline evidence
+
+The isolated CPU runtime passed dependency validation and loaded GFPGAN v1.4,
+its face detector, and its face parser without downloading artifacts. A real
+full-pipeline smoke test completed with these results:
+
+| Measurement | Verified result |
+|---|---:|
+| Source and output dimensions | 670 x 1194 |
+| End-to-end CPU time | 36.259 seconds |
+| Faces restored | 1 |
+| GFPGAN output blend | 0.25 |
+| Structural similarity | 0.99878 |
+| Mean absolute pixel change | 0.235 |
+| 95th-percentile absolute change | 2.0 |
+| Chroma shift | 0.106 |
+| Highlight-clipping growth | 0.0% |
+| Final pixel-grid validation | Passed |
+
+The same input was marked low resolution by the quality classifier, but EDSR
+correctly skipped it because its shortest edge exceeded 480 pixels. This reduced
+CPU processing time and preserved the original pixel grid.
+
+### Remaining production enablement gate
+
+Before a broad production rollout, run a consented evaluation set containing
+dark, dim, normal, bright, blurry, low-resolution, multi-face, different-skin-tone,
+and occlusion cases. The current bounded guard is suitable for conservative
+controlled use; aggressive restoration must remain disabled until identity
+fidelity is validated against that evaluation set.

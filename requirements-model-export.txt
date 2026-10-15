@@ -1,0 +1,4 @@
+# Conversion-only dependencies. Production inference uses OpenCV DNN and does not require these.
+torch>=2.14.0
+onnx>=1.23.0
+onnxscript>=0.7.2

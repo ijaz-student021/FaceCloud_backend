@@ -51,6 +51,7 @@ Thumbs.db
 # Temporary review/output files
 .docx_review/
 .runtime/
+gfpgan/weights/
 *.log
 celerybeat-schedule*
 

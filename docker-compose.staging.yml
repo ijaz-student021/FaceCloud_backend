@@ -4,6 +4,9 @@
 #
 #   cp .env.staging.example .env.staging   # then fill in the secrets
 #   docker compose -f docker-compose.staging.yml --env-file .env.staging up --build
+#
+# Optional GFPGAN worker (PyTorch on CPU; Docker on macOS has no MPS/CUDA):
+#   docker compose -f docker-compose.staging.yml --env-file .env.staging --profile gfpgan up --build
 
 x-app: &app
   build: {context: ., target: base}
@@ -75,6 +78,19 @@ services:
   beat:
     <<: *app
     command: ["celery", "-A", "config", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+  gfpgan-worker:
+    <<: *app
+    build: {context: ., target: gfpgan}
+    image: facecloud-backend:staging-gfpgan
+    profiles: [gfpgan]
+    command: ["celery", "-A", "config", "worker", "-Q", "gfpgan", "--loglevel=info", "--concurrency=1"]
+    volumes:
+      - media:/app/media
+      - ./.runtime/models:/app/.runtime/models:ro
+      - ./gfpgan/weights:/app/gfpgan/weights:ro
     depends_on:
       migrate: {condition: service_completed_successfully}
 

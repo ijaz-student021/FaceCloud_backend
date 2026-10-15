@@ -41,19 +41,20 @@ The endpoint for each screen is in `backend-alignment-tracker.md`; all exist.
 
 New backend capabilities the frontend can adopt when it wants them (contracts in
 `frontend-handoff.md`): editor sliders including sharpness and warmth with bounded
-previews and saved versions; the optional advisor; retired-capability reporting.
+previews and saved versions; the optional advisor; per-model health reporting (installed, verified, disabled).
 
 ## 4. Where the frontend's words no longer match the backend
 
 These are copy and documentation, not code; they matter because a reviewer will read
 both repositories.
 
-* **Retired models.** The frontend still names Zero-DCE, GFPGAN, Real-ESRGAN, NAFNet,
-  PureVision, PureScale, colourisation, InsightFace and MediaPipe in 30 mock entries,
-  the landing page, the live-enhancement panel, About, the footer and the README. The
-  backend retired the learned enhancement models on 2026-10-15
-  (`docs/enhancement/retired-capabilities.md`); face detection and identity use YuNet
-  and SFace.
+* **Models.** The frontend names Zero-DCE, GFPGAN, Real-ESRGAN, NAFNet, PureVision,
+  PureScale, colourisation, InsightFace and MediaPipe in 30 mock entries, the landing page,
+  the live-enhancement panel, About, the footer and the README. In the backend the learned
+  models are **installed but off by default** (`lightweight_v1` policy; see
+  `docs/enhancement/optional-models.md`), so the copy should say "optional, disabled by
+  default" rather than imply they run on every photo. InsightFace and MediaPipe are not
+  used at all: detection and identity use YuNet and SFace.
 * **`README_BACKEND_ROADMAP.md`** describes a NestJS, Prisma, BullMQ and Python-worker
   architecture that was never built; the backend is Django, DRF, Celery and Redis.
 * **`WORK_LOG.md` §1/§5** still say the queue and workers are "not started", the
@@ -69,8 +70,7 @@ both repositories.
 
 Done: CI jobs repaired and a lint gate added; typed response schemas with a
 zero-warning OpenAPI gate; migration check; production-configuration guard tested;
-dependency audit and bandit in CI; documented retirement of dead code with recovery
-instructions; protected downloads, ownership checks and audit trails.
+dependency audit and bandit in CI; models kept installed, checksum-verified and visibly disabled by policy; protected downloads, ownership checks and audit trails.
 
 Left, in order of value for a review:
 

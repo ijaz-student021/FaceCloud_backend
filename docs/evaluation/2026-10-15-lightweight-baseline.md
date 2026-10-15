@@ -1,7 +1,7 @@
 # Baseline of the lightweight pipeline, 2026-10-15
 
-Taken after the learned models were retired (`docs/enhancement/retired-capabilities.md`),
-with `scripts/evaluate_pipeline_cases.py`: six real photographs (held out earlier, none
+Taken under the default `lightweight_v1` policy (the learned models are installed but disabled, see
+`docs/enhancement/optional-models.md`), with `scripts/evaluate_pipeline_cases.py`: six real photographs (held out earlier, none
 of them a portrait; they are not committed), each degraded in eight known ways, run
 through the real `enhance_bgr` (level `auto`, style `natural`, longest edge reduced to
 1024 px), CPU only, Apple M1. SSIM is to the clean photograph, so a rise means the
@@ -16,14 +16,15 @@ Images are not kept.
 | blurred | 0.884 | 0.888 | 0.18 s | 0 of 6 | Light sharpening only; blur is reported as beyond the pipeline |
 | compressed | 0.944 | 0.943 | 0.18 s | 5 of 6 | No sharpening is applied to a photo with block artefacts |
 | overexposed | 0.750 | 0.753 | 0.18 s | 0 of 6 | Clipped highlights are not recoverable |
-| grayscale | 1.000 | 1.000 | 0.19 s | 5 of 6 | No colourisation any more |
+| grayscale | 1.000 | 1.000 | 0.19 s | 5 of 6 | No colourisation under the default policy |
 | group | 1.000 | 1.000 | 0.38 s | 5 of 6 | |
 | transparent | 0.657 | 0.657 | 0.19 s | 6 of 6 | Alpha preserved exactly in all six |
 
 Peak process memory 528 MB. Identity was `inconclusive` for every photo (no usable face
 in the set; one blurred photo had one face detected). This run does not show that the
 output is *better* than the learned pipeline for dark, blurred or low-resolution
-photos: it is not, and the retirement accepted that (ADR-024).
+photos: it is not (the learned policy, when switched on, lifts very dark photos far more);
+the default accepts that trade for safety and speed (ADR-024).
 
 ## Regression fixtures that remain (what verifies each concern)
 

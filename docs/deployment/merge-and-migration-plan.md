@@ -130,6 +130,6 @@ development; `CACHE_URL` is required once `DJANGO_DEBUG=False`:
 
 | Hardware | What was run | Result |
 |---|---|---|
-| **CPU / Apple M1** | All test suites (web, worker incl. slow, PostgreSQL); the queue harness (`scripts/check_queue_integration.py`, `scripts/check_advisor_queue.py`); visual evaluation on real photos. Earlier runs also covered the learned models on CPU/MPS (retired 2026-10-15) | Passing. Quality limits are documented in `docs/evaluation/` |
-| **CUDA / MPS** | Not applicable | No retained feature uses a GPU, so there is nothing to validate; the GPU runbook and `validate_models.py` were removed with the learned models |
+| **CPU / Apple M1 (MPS)** | All test suites (web, worker incl. slow, PostgreSQL); real checkpoints for every model on CPU or MPS; queue harness with real GFPGAN on MPS; visual evaluation on real photos | Passing. Quality limits are documented in `docs/evaluation/` |
+| **CUDA (NVIDIA)** | Nothing | **Not validated.** No CUDA timing, memory or numerical results exist. Run `scripts/validate_models.py` and the GPU runbook before enabling GPU-only settings |
 | **Docker (Linux, CPU)** | Configuration validated only (`docker compose config`, Django check) | Not built or run yet |

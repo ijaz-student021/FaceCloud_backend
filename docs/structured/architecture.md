@@ -71,21 +71,20 @@ Generative display outputs must never become recognition inputs.
 ```text
 Source
  -> quality analysis and automatic level
- -> OpenCV exposure correction (only for a measured lighting defect)
+ -> FaceCloud Curve or OpenCV exposure correction
  -> output guard A
  -> measured adaptive denoising
+ -> optional EDSR
+ -> optional NAFNet deblur (disabled pending QA)
+ -> optional Real-ESRGAN HD display upscale
+ -> optional guarded GFPGAN face restoration
  -> bounded sharpening
  -> output guard B
- -> per-face fidelity check
- -> optional style preset, then the identity guard (YuNet/SFace)
  -> auditable derivative
 ```
 
-Enhancement is OpenCV and Pillow only. The learned stages of earlier versions
-(Zero-DCE/FaceCloud Curve, EDSR, NAFNet, Real-ESRGAN, GFPGAN, PureVision,
-PureScale, colourisation) were retired on 2026-10-15 (ADR-024). The optional
-OpenAI advisor only suggests slider values; it never touches pixels. The original
-is never overwritten.
+Each optional adapter verifies the configured artifact and fails closed. The
+original is never overwritten.
 
 ## 6. Recognition architecture
 

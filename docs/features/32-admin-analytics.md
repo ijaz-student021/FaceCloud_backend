@@ -44,7 +44,7 @@ already carrying a time is used exactly as given.
   "success_rate_percent": 16.67,
   "average_processing_time_ms": {"enhancement": 27877.0, "quality_analysis": 100.5},
   "top_rejection_reasons": [{"value": "severe_underexposure", "count": 2}, ...],
-  "model_usage": [{"value": "opencv_adaptive_restoration_router_v2", "count": 8}, ...],
+  "model_usage": [{"value": "zero_dce_hybrid_v1", "count": 3}, ...],
   "storage_bytes": {"originals": 11016397, "enhanced_outputs": 1111560, "total": 12127957},
   "charts": {"uploads_per_day": [{"date": "2026-01-01", "count": 0}, ...], "enhancements_per_day": [...]},
   "generated_at": "..."
@@ -62,11 +62,9 @@ Notes on specific fields:
   is not included; in practice it is empty on accepted platform data and
   structured `rejection_reasons` is the meaningful source.
 - **`model_usage`** splits a compound algorithm string such as
-  `"opencv_adaptive_restoration_router_v2+dynamic_vivid_boost+identity_guard"` on
-  `+` and counts each named component separately (top 10), so a photo that used
-  several contributes to every count. Results stored before the learned stages
-  were retired (2026-10-15) still name them (e.g. `zero_dce_hybrid_v1`,
-  `private_gfpgan_v1_4`) and keep being counted; nothing is rewritten.
+  `"zero_dce_hybrid_v1+private_gfpgan_v1_4"` on `+` and counts each named
+  model separately (top 10), so a photo that used three models contributes to
+  all three counts rather than one combined label nobody else shares.
 - **`charts.*`** are zero-filled for every day in the window, so a frontend
   chart does not have to backfill missing days itself.
 

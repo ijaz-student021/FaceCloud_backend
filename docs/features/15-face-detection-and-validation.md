@@ -64,7 +64,9 @@ auditable `unavailable` metrics state. It does not fabricate measurements.
 The bundled Haar detector does not provide calibrated probability. Its
 `detectMultiScale3` level weight is bounded into a legacy internal score and is
 labelled `internal_heuristic_not_probability`. It must not be displayed as a
-percentage or used as a probability.
+percentage or used as a probability. GFPGAN gating remains disabled until a
+commercially reviewed landmark detector and empirically validated score
+threshold are available.
 
 ## Future detector adapter
 
@@ -73,9 +75,9 @@ landmark scores, detector version, and confidence provenance. The current Haar
 adapter supplies no landmarks, so pose and occlusion are recorded as unavailable
 rather than estimated from an invented heuristic.
 
-`IDENTITY_EMBEDDING_ENABLED` remained disabled by this checkpoint, which
-introduced no embedding dependency. (The GFPGAN gating this page used to mention
-was retired with GFPGAN on 2026-10-15.)
+`IDENTITY_EMBEDDING_ENABLED`, `GFPGAN_ENABLED`, and `GFPGAN_QUEUE_ENABLED`
+remain disabled. No embedding or GFPGAN dependency is introduced by this
+checkpoint.
 
 ## Accuracy, fairness, and verification
 

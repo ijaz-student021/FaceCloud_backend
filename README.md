@@ -3,9 +3,8 @@
 [![CI](https://github.com/ijaz-student021/FaceCloud_backend/actions/workflows/ci.yml/badge.svg)](https://github.com/ijaz-student021/FaceCloud_backend/actions/workflows/ci.yml)
 
 FaceCloud is a facial-image platform: users upload photos, the backend judges
-their quality, enhances them (exposure, denoising and sharpening with OpenCV and
-Pillow, an editor with bounded previews, style presets, and an optional
-OpenAI advisor that only suggests settings), groups the faces it finds by
+their quality, enhances them (low-light recovery, denoising, upscaling, face
+restoration, colorization, style presets), groups the faces it finds by
 identity, and keeps everything private to the owner. This repository is the
 Django REST Framework API and the Celery workers behind it.
 
@@ -29,7 +28,7 @@ feature catalogue and status table; this README does not duplicate it.
 | Uploads | Single, multiple and ZIP upload; content-based validation of JPG, PNG, WebP, BMP, TIFF and static GIF; ZIP-slip and ZIP-bomb protection; UUID storage paths; owner-only access |
 | Gallery | Automatic event/timeline grouping of a user's photos, face-aware collages from an event or a person (asynchronous, consent-gated for person collages), and cached, encrypted JPEG thumbnails so a gallery never loads full originals |
 | Quality control | Sharpness, exposure, contrast, noise and resolution scoring with explainable accept / review / reject decisions |
-| Enhancement | Lightweight OpenCV/Pillow pipeline: measured exposure correction (automatic mode never lifts a dark photo; a chosen level does), adaptive denoise, conditional sharpening, quality and per-face guards, final output-contract validation; an editor (brightness, contrast, saturation, shadows, highlights, warmth, sharpness) with bounded revision-specific previews and full-resolution saved versions; an optional OpenAI advisor, off by default, that only suggests slider values. The learned models of earlier versions (Zero-DCE, EDSR, NAFNet, Real-ESRGAN, GFPGAN, PureVision, PureScale, colourisation) were retired: [docs/enhancement/retired-capabilities.md](docs/enhancement/retired-capabilities.md) |
+| Enhancement | **Default policy `lightweight_v1`: OpenCV and Pillow only (the learned models below are installed but disabled; see [docs/enhancement/optional-models.md](docs/enhancement/optional-models.md)).** Optional adaptive pipeline: Zero-DCE exposure, adaptive denoise, EDSR / NAFNet / Real-ESRGAN / PureScale / PureVision restoration, guarded GFPGAN face restoration, sharpening, colorization, bounded colour recovery for very dark photos, style presets and sliders, final output-contract validation |
 | Identity | YuNet face detection, SFace embeddings, identity grouping, a guard that rejects enhancements that change who a face looks like, ZIP export per identity, consent-gated search by photo |
 | Organizations | Multi-tenant workspaces: owner / moderator / member roles, hashed-token invitations, protected-owner and last-owner rules, an immutable per-organization audit trail, organization-wide data export |
 | Moderation | Organization-scoped review queue for uncertain AI decisions (quality, duplicate, identity), decision write-back to the underlying record, assignment, escalation and batch-failure notifications, batch retry / cancel, organization reports, duplicate-group merging, and automatic release of a removed or demoted moderator's open reviews |
@@ -56,19 +55,21 @@ Celery + Redis background processing
 Orientation, colour, format and size standardization
         |
         v
-Scene analysis and defect-driven enhancement routing
+Scene analysis and adaptive enhancement routing
         |
-        +--> Lighting defect: OpenCV LAB gamma/CLAHE (dark photos only when a level is chosen)
+        +--> Dark image: Zero-DCE / private curve model + guarded blending
         |
-        +--> Normal/bright image: conservative or no correction
-        |
-        v
-Measured denoise (accepted or rejected by the denoise guard), conditional sharpening
+        +--> Normal/bright image: conservative OpenCV correction
         |
         v
-Output-quality guards, per-face fidelity check, style, identity guard
-(YuNet/SFace, consent permitting), output-contract validation,
-face validation and duplicate evidence
+Optional denoise, EDSR/NAFNet/Real-ESRGAN/PureScale/PureVision restoration
+        |
+        v
+Optional guarded GFPGAN face restoration (disabled by default)
+        |
+        v
+Output-quality guards, colorization, style, identity guard, output-contract
+validation, face validation and duplicate evidence
         |
         v
 Accepted / Rejected / Needs review / Failed
@@ -186,14 +187,13 @@ The end-to-end manual flow is in
 
 ### Model files
 
-Model weights are not committed. Only two models are used, both for faces:
-YuNet (detection) and SFace (identity features). Place them under
-`.runtime/models/` (paths and SHA-256 pins are in `.env.example`;
-`python scripts/model_manifest.py verify` checks them against
-[`docs/models/model_manifest.json`](docs/models/model_manifest.json)). Their
-licence records are in [`docs/model-licenses`](docs/model-licenses). There is no
-GPU, PyTorch or isolated model-worker environment to set up: enhancement is
-OpenCV and Pillow, and the optional advisor is a remote API.
+Model weights are not committed. Place them under `.runtime/models/` (paths
+and SHA-256 pins are in `.env.example`). Each adapter refuses to load a file
+whose checksum does not match, and each feature stays off until its flag is
+enabled. Licences matter here: PureScale and PureVision are
+CC BY-NC-SA 4.0 (non-commercial), colorization is BSD-2-Clause. See the
+licence notes in [`docs/features`](docs/features) and
+[`docs/model-licenses`](docs/model-licenses).
 
 Private checkpoints, user media, runtime outputs, datasets, credentials, and
 local database backups must never be committed to Git.
@@ -336,7 +336,7 @@ Then run `python manage.py check --deploy` for Django's own checks.
 - [`docs/SECURITY_AND_PERFORMANCE_REVIEW.md`](docs/SECURITY_AND_PERFORMANCE_REVIEW.md): dependency audit, static analysis and performance findings, and how to repeat them
 - [`docs/FRONTEND_API_GUIDE.md`](docs/FRONTEND_API_GUIDE.md): how a frontend uses the API (auth, upload and polling, thumbnails, enhancement, people, events, collages, sharing, organizations, moderator area, notifications)
 - [`docs/DATASET_TERMS.md`](docs/DATASET_TERMS.md): the third-party face dataset we were granted, its conditions and how the project keeps to them
-- [`docs/enhancement`](docs/enhancement): the lightweight pipeline, the optional OpenAI advisor and the retired capabilities
+- [`docs/GPU_SESSION_RUNBOOK.md`](docs/GPU_SESSION_RUNBOOK.md): preparing, running and deciding a GPU evaluation session (preflight, model manifest, stage comparison)
 - [`docs/API_ERRORS.md`](docs/API_ERRORS.md): error shapes the frontend can rely on
 - [`docs/features`](docs/features): per-feature design, verification and limits
 - [`docs/structured`](docs/structured): architecture, decisions, tasks

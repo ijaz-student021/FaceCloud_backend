@@ -92,7 +92,9 @@ def main():
             "before": compact_quality(before),
             "after": compact_quality(after),
             "quality_comparison": parameters.get("quality_comparison"),
-            "render_policy": parameters.get("render_policy", {}).get("name"),
+            "zero_dce": parameters.get("zero_dce"),
+            "restoration": parameters.get("restoration"),
+            "face_restoration": parameters.get("face_restoration"),
             "warnings": parameters.get("warnings", []),
             "stage_timings_ms": parameters.get("stage_timings_ms", {}),
         })

@@ -7,29 +7,26 @@ is section 5. Phase C (optional OpenAI advisor) is documented in
 
 ## 1. Rendering policy
 
-The pipeline is `lightweight_v1`: OpenCV and Pillow only. It never runs Zero-DCE,
-EDSR, NAFNet, Real-ESRGAN, GFPGAN, PureVision, PureScale or colourisation.
+`ENHANCEMENT_RENDER_POLICY` selects which stages may run.
 
-> **2026-10-15 (cleanup):** this policy was first an explicit setting
-> (`ENHANCEMENT_RENDER_POLICY`) with the learned models kept installed so the change
-> was reversible (`learned_v1`). They have now been **retired**: the adapters,
-> checkpoints, settings, worker environment and the `learned_v1` option are gone.
-> What was retired, and how to recover it, is in
-> [retired-capabilities.md](retired-capabilities.md). A leftover setting in the
-> environment is reported by `manage.py check` (`enhancement.W001`). Wherever this
-> page says `learned_v1`, read "the earlier behaviour, no longer available".
+| Policy | Behaviour |
+|---|---|
+| **`lightweight_v1`** (default) | OpenCV and Pillow only. Never runs Zero-DCE, EDSR, NAFNet, Real-ESRGAN, GFPGAN, PureVision, PureScale or colourisation, whatever their own settings say. |
+| `learned_v1` | The earlier behaviour: each model's own setting (`ZERO_DCE_ENABLED`, ...) decides. |
 
-A retired capability is never a "fallback" and is never replaced by another
-algorithm. Every result records `render_policy` (`name`, `description`,
-`heavy_restoration_available: false`, the `retired_capabilities` list and a pointer
-to the documentation).
+Adapters, checkpoints and their settings are untouched, so going back is one
+setting. A stage the policy keeps off reports *"disabled by the lightweight_v1
+rendering policy"* and is **skipped**, never a "fallback": nothing is tried and
+nothing substitutes for a model. Every result records `render_policy` (name,
+description, which configured stages the policy overrode,
+`heavy_restoration_available`).
 
 YuNet and SFace are not enhancement models and keep working: face detection,
 the face-fidelity check and consented identity features. With no face, or no
 consent or model, the identity status is `inconclusive` or `unavailable`, as
 before.
 
-**Pipeline:** immutable source → shared colour-managed
+**Pipeline under `lightweight_v1`:** immutable source → shared colour-managed
 decoding → OpenCV measurements → exposure (LAB gamma + local contrast, only for
 a measured lighting defect) → measured denoising → conditional sharpening →
 quality guards → face-fidelity and identity checks → validated encoding. Each
@@ -38,9 +35,9 @@ stage runs at most once.
 ### AI Max
 
 AI Max keeps its meaning: level `high` and denoising where noise is measured.
-It does **not** add heavy restoration. The result carries
+It does **not** add heavy restoration under `lightweight_v1`. The result carries
 an `ai_max` block and a warning saying so; face restoration and super-resolution
-were retired. Severe blur and low resolution are reported as
+exist only under `learned_v1`. Severe blur and low resolution are reported as
 beyond the lightweight pipeline, not as a missing model.
 
 ### Automatic mode and dark photos
@@ -48,7 +45,8 @@ beyond the lightweight pipeline, not as a missing model.
 A dark photo is either underexposed or dark by design, and pixels cannot say
 which. Across 498 real photos the 128 with mean luminance below 115 show
 highlight levels (p95) spread from 0 to 255 with no gap, so any automatic
-threshold would be a guess. Therefore level `auto` with the natural style:
+threshold would be a guess. Therefore, under `lightweight_v1`, level `auto`
+with the natural style:
 
 * does **not** lift a dark photo and records a `lift_withheld` routing decision
   (the plan says *"Choose a level"*);
@@ -56,7 +54,7 @@ threshold would be a guess. Therefore level `auto` with the natural style:
 * still recovers blown highlights, flat contrast, noise and measured softness.
 
 Choosing a level (`low`, `medium`, `high`) or a style is the request for the
-lift and works as before.
+lift and works as before. `learned_v1` keeps the earlier automatic behaviour.
 
 ## 2. Editing controls
 
@@ -100,10 +98,10 @@ Hard-edged synthetic charts are a worst case (sharpness then differs by 2.6).
 
 ## 3. Evidence
 
-Historical record, measured before the cleanup. Environment: Apple M1 (CPU for all
-stages). The `learned_v1` columns cannot be reproduced any more (the models were
-retired); they are kept as the evidence behind the decision. No model other than
-Zero-DCE (OpenCV DNN on CPU) ran in the `learned_v1` configuration for these photos.
+Environment: Apple M1 (CPU for all stages; MPS and CUDA not used here). Real
+checkpoints were present but, by policy, unused. No model ran in either
+configuration for these photos; the difference is Zero-DCE (OpenCV DNN on CPU)
+under `learned_v1`.
 
 ### Held-out real photographs (16, evaluation half of an earlier split)
 
@@ -161,15 +159,15 @@ lifted to flat grey, SSIM 0.616): it is no longer touched.
 
 ## 4. Configuration and compatibility
 
-* The `ENHANCEMENT_RENDER_POLICY` setting introduced for Phase A was removed in the
-  cleanup; there is one policy.
+* New setting: `ENHANCEMENT_RENDER_POLICY` (`lightweight_v1` default;
+  `learned_v1` restores the earlier behaviour). Invalid values refuse to start.
 * No migration. New response fields are additive: `render_policy`, `ai_max`,
   the `sharpness` control, `intent`, `renderer_version`, `validated`,
   `applied`, `guard_reductions`, `fallback_reasons`, `outcome`, `auto`.
 * Behaviour changes to know about: automatic mode no longer lifts dark photos;
   the editor rejects unknown control names; the old `fallback` stage status is
-  gone: nothing reports a retired stage; system health checks only YuNet and SFace
-  and lists the retired capabilities.
+  now `skipped` for stages the policy keeps off; system health no longer
+  reports a missing checkpoint for a stage that cannot run.
 * Historical results are unchanged and keep their stored parameters.
 
 ## 5. Editor previews and saved versions (Phase B)

@@ -8,7 +8,7 @@ from pathlib import Path
 import redis
 from django.conf import settings
 
-from enhancement.policy import RETIRED_CAPABILITIES
+from enhancement.policy import learned_stage_enabled
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.core.mail import get_connection
@@ -136,48 +136,75 @@ def _sha256_for_file(path, modified_ns, size):
     return digest.hexdigest()
 
 
-def _model_status(path_value, expected_checksum, enabled=True):
-    if not enabled:
-        return {"status": "disabled"}
+def _file_state(path_value, expected_checksum):
+    """``(status, details)`` for a model file: healthy, or degraded with a code. Never raises."""
     if not path_value:
-        return {"status": DEGRADED, "code": "not_configured"}
+        return DEGRADED, {"code": "not_configured"}
     try:
         path = Path(path_value)
         stat = path.stat()
         if not path.is_file() or stat.st_size == 0:
-            return {"status": DEGRADED, "code": "missing"}
+            return DEGRADED, {"code": "missing"}
         if expected_checksum:
             actual = _sha256_for_file(str(path), stat.st_mtime_ns, stat.st_size)
             if actual.lower() != expected_checksum.strip().lower():
-                return {"status": DEGRADED, "code": "checksum_mismatch"}
-        return {"status": HEALTHY, "size_bytes": stat.st_size}
+                return DEGRADED, {"code": "checksum_mismatch"}
+        return HEALTHY, {"size_bytes": stat.st_size}
     except (OSError, ValueError):
-        return {"status": DEGRADED, "code": "unreadable"}
+        return DEGRADED, {"code": "unreadable"}
+
+
+def _model_status(path_value, expected_checksum, enabled=True, disabled_reason=""):
+    """A model that can run must be present and intact. One that is switched off is not a fault, but it
+    still reports whether its file is installed and verified, so a disabled model can be shown to be there."""
+    state, details = _file_state(path_value, expected_checksum)
+    if enabled:
+        return {"status": state, **details}
+    return {
+        "status": "disabled",
+        "installed": state == HEALTHY,
+        "checksum_verified": state == HEALTHY and bool(expected_checksum),
+        **({"reason": disabled_reason} if disabled_reason else {}),
+        **({"code": details["code"]} if state != HEALTHY else {}),
+    }
 
 
 def check_models():
     started = time.perf_counter()
+    from enhancement import policy
+
+    off = f"disabled by the {policy.active_policy()} rendering policy" if policy.active_policy() == policy.LIGHTWEIGHT else "its setting is off"
     definitions = {
-        "yunet": (
-            settings.YUNET_MODEL_PATH,
-            settings.YUNET_MODEL_SHA256,
-            True,
+        "yunet": (settings.YUNET_MODEL_PATH, settings.YUNET_MODEL_SHA256, True),
+        "sface": (settings.IDENTITY_MODEL_PATH, settings.IDENTITY_MODEL_SHA256, True),
+        "zero_dce": (settings.ZERO_DCE_MODEL_PATH, settings.ZERO_DCE_MODEL_SHA256, learned_stage_enabled("ZERO_DCE_ENABLED")),
+        "edsr": (
+            settings.AI_RESTORATION_EDSR_MODEL_PATH, settings.AI_RESTORATION_EDSR_MODEL_SHA256,
+            learned_stage_enabled("AI_RESTORATION_ENABLED"),
         ),
-        "sface": (
-            settings.IDENTITY_MODEL_PATH,
-            settings.IDENTITY_MODEL_SHA256,
-            True,
+        "nafnet": (settings.NAFNET_MODEL_PATH, settings.NAFNET_MODEL_SHA256, learned_stage_enabled("NAFNET_DEBLUR_ENABLED")),
+        "realesrgan": (
+            settings.REALESRGAN_MODEL_PATH, settings.REALESRGAN_MODEL_SHA256,
+            learned_stage_enabled("HD_RESTORATION_ENABLED") and bool(settings.REALESRGAN_MODEL_PATH),
+        ),
+        "gfpgan": (
+            settings.GFPGAN_MODEL_PATH, settings.GFPGAN_MODEL_SHA256,
+            learned_stage_enabled("GFPGAN_ENABLED") and bool(settings.GFPGAN_MODEL_PATH),
+        ),
+        "purevision": (settings.PUREVISION_MODEL_PATH, settings.PUREVISION_MODEL_SHA256, learned_stage_enabled("PUREVISION_ENABLED")),
+        "purescale": (settings.PURESCALE_MODEL_PATH, settings.PURESCALE_MODEL_SHA256, learned_stage_enabled("PURESCALE_ENABLED")),
+        "colorization": (
+            settings.COLORIZATION_MODEL_PATH, settings.COLORIZATION_MODEL_SHA256, learned_stage_enabled("COLORIZATION_ENABLED"),
         ),
     }
     models = {
-        name: _model_status(path, checksum, enabled)
+        name: _model_status(path, checksum, enabled, "" if enabled else off)
         for name, (path, checksum, enabled) in definitions.items()
     }
     status = DEGRADED if any(
         item["status"] == DEGRADED for item in models.values()
     ) else HEALTHY
-    # Retired capabilities are reported, not checked: their files are no longer required.
-    return _result(status, started, models=models, retired=sorted(RETIRED_CAPABILITIES))
+    return _result(status, started, models=models, render_policy=policy.active_policy())
 
 
 def job_counts():

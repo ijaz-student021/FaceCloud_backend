@@ -603,7 +603,7 @@ class ImageCompareView(APIView):
         examples=[
             OpenApiExample("All profiles", value={"level": "auto"}, request_only=True),
             OpenApiExample(
-                "Two profiles", value={"level": "auto", "profiles": ["natural", "dynamic"]},
+                "Two profiles", value={"level": "auto", "profiles": ["opencv_baseline", "natural"]},
                 request_only=True,
             ),
         ],

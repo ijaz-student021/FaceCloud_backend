@@ -2,7 +2,7 @@
 
 A real run needs the real detector/identity models and the enhancement pipeline
 (seconds per photo), so it is exercised manually, not by this fast suite -- the same
-split ``config/test_model_tools.py`` uses for the sibling scripts.
+split ``config/test_gpu_tools.py`` uses for the sibling script.
 """
 import importlib.util
 import json

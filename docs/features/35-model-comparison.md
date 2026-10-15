@@ -18,15 +18,17 @@ an explainable recommendation. Nothing here changes what users get by default.
 | Profile | What it is |
 |---|---|
 | `original` | The untouched source at the comparison size (always included, for reference) |
-| `natural` | The default pipeline as users get it: classical exposure, measured denoise and conditional sharpening |
+| `opencv_baseline` | Classical exposure, denoise and sharpen only. The learned Zero-DCE model is switched off for this run. |
+| `natural` | The default pipeline as users get it; uses Zero-DCE when the photo is low-light |
 | `dynamic` | The default pipeline plus the bounded, guarded vivid contrast/colour boost |
-| `ai_max` | Highest strength with adaptive denoise: the strongest local correction. No learned restoration model exists. |
+| `ai_max` | Highest strength with adaptive denoise. Licence-gated restoration models still follow the platform flags. |
 
-**Retired profile:** `opencv_baseline` (the pipeline with the Zero-DCE model switched
-off) was retired on 2026-10-15 together with Zero-DCE: it is now identical to
-`natural`. Asking for it is a `400` that says so; it is not run as another
-profile. A comparison made before the retirement still shows its output, labelled
-"OpenCV adaptive baseline (retired)". See `docs/enhancement/retired-capabilities.md`.
+`opencv_baseline` versus `natural` is the "OpenCV against Zero-DCE" comparison the
+project asked for. It is done by a new `use_zero_dce` switch on `enhance_bgr`
+(default on, so nothing else changes) rather than by touching global settings, so
+it is safe under concurrent workers. On a well-lit photo the two are identical,
+because Zero-DCE is only used for low light; the algorithm name in each output
+says what actually ran.
 
 ## What is measured
 
@@ -54,7 +56,7 @@ An explicit rule, not a model's opinion (`recommend` in
    highlights up by more than 5 points (up to -15).
 2. The best profile wins, but any profile within 1 point of the top counts as
    tied and the **more conservative** one is chosen (natural, then
-   dynamic, ai_max). A riskier profile must be meaningfully
+   opencv_baseline, dynamic, ai_max). A riskier profile must be meaningfully
    better.
 3. If no profile beats the original by at least 1 point, the recommendation is
    `original` with the reason "keep the original". A comparison that says nothing
@@ -90,26 +92,35 @@ every profile does.
   (`enhancement.cleanup_comparisons`, 04:30). Users can delete one sooner.
 - Previews live under `users/<id>/comparisons/`, which the orphaned-media scanner
   knows about.
-- Profiles never change the pixel grid. (A comparison made before the upscaling
-  stages were retired may hold a larger preview; its metrics were normalised to the
-  source grid.)
+- A profile that upscales a small image (the low-resolution restorer) produces a
+  larger preview than the source preview; the metrics are still normalised to the
+  source grid.
 
-## Example (historical)
+## Example: a real dark photograph
 
-On 2026-10 a dark night street photograph (mean luminance 11.6 of 255) was run
-through the then-current profiles: the classical baseline lifted it to 18.8
-(quality score 59.9) while the Zero-DCE profiles reached about 100 (score 83-84).
-That gap is what the lightweight policy gave up: automatic mode now withholds the
-lift from dark photos (their intent cannot be read from the pixels), and a chosen
-level lifts them with the classical correction only, which is weaker than Zero-DCE
-was on very dark photos (docs/enhancement/lightweight-pipeline.md, section 3).
+A dark night street photograph (mean luminance 11.6 of 255), CPU only, ~16 s for
+the whole comparison:
+
+| Profile | Mean luminance | Quality score | Time | Ran |
+|---|---|---|---|---|
+| original | 11.6 | 51.5 | | |
+| opencv_baseline | 18.8 | 59.9 | 1.6 s | classical only |
+| natural | 101.1 | 83.4 | 3.9 s | Zero-DCE hybrid |
+| dynamic | 100.4 | 83.7 | 3.8 s | Zero-DCE + vivid boost |
+| ai_max | 100.7 | 84.1 | 6.4 s | Zero-DCE |
+
+The classical baseline barely lifts a photo this dark; the learned model is what
+rescues it. The three learned-model profiles are within 1 point of each other, so
+the rule recommends the conservative `natural`. This run is asserted by
+`enhancement/test_comparison_real_image.py` (skipped when the sample photo or the
+Zero-DCE model is not present).
 
 ## Verification
 
-`enhancement/test_comparison.py`: every branch of the recommendation
+`enhancement/test_comparison.py` (32 tests): every branch of the recommendation
 rule (gap, near-tie, keep-original, guard, faces, clipping, empty); profile
 validation; real-pipeline runs producing metrics and previews for every profile;
-the retired profile being refused with its reason (and still readable in an earlier comparison); failure isolation per profile and overall;
+the baseline never calling Zero-DCE; failure isolation per profile and overall;
 unreadable sources; idempotence; downscaling; the CSV report; and the API
 (queueing, defaults, validation, preprocessing and ownership rules, the
 concurrency limit, an unavailable queue, detail, list, previews, report, deletion

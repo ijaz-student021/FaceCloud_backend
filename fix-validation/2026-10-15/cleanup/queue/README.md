@@ -1,4 +1,4 @@
-# Queue integration after the retirement of the learned models, 2026-10-15
+# Queue integration under the default lightweight policy, 2026-10-15
 
 Real Redis, real Celery workers (web environment, default queue), a throwaway PostgreSQL
 database, the real OpenCV/Pillow pipeline (`scripts/check_queue_integration.py`).

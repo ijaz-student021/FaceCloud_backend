@@ -1,7 +1,8 @@
 """What the face check leaves behind, and what the results then say about it.
 
-Classical processing; the face detector is replaced by a stand-in so the tests
-choose where the faces are.
+Classical processing; the face detector, GFPGAN and the identity guard are
+replaced by stand-ins so the tests choose where the faces are and what the
+models did.
 """
 from unittest.mock import patch
 
@@ -98,3 +99,82 @@ class WholeBoxRevertTests(SimpleTestCase):
         _output, metadata = self.check(face, softened, WHOLE_IMAGE)
         self.assertEqual(metadata["faces"][0]["outcome"], "reduced")
         self.assertEqual(metadata["status"], "strength_reduced")
+
+
+# The face check is made strict enough that a gentle restoration fails every
+# blend; the identity guard confirms identity, so nothing else intervenes.
+STRICT_FACE_CHECK = {"FACE_FIDELITY_ENABLED": True, "FACE_FIDELITY_MIN_STRUCTURAL_SIMILARITY": 0.99999}
+
+
+def verified(source, candidate, reference=None):
+    return candidate, {"status": "preserved", "applied": False, "similarity": 0.95, "reference_checked": True}
+
+
+class ReportingMatchesTheImageTests(SimpleTestCase):
+    """P2-11 / P3-21: what the results say must be what the saved image shows."""
+
+    def setUp(self):
+        from .test_blur_measure import blurred_photo
+
+        self.blurred = blurred_photo()
+
+    def run_pipeline(self, guard=verified):
+        from .services import enhance_bgr
+        from .test_staged_pipeline import gentle_restoration
+
+        with patch("enhancement.services.apply_identity_guard", side_effect=guard), \
+                patch("enhancement.services.build_identity_reference", return_value=(object(), "")), \
+                patch("enhancement.services.restore_faces", side_effect=gentle_restoration) as restore, \
+                patch.object(face_fidelity, "_detect_boxes", return_value=WHOLE_IMAGE):
+            output, _level, parameters = enhance_bgr(self.blurred, "low")
+        return output, parameters, restore
+
+    def test_a_restoration_the_face_check_undid_is_not_reported_as_applied(self):
+        from .test_staged_pipeline import GFPGAN_ON
+
+        with override_settings(**GFPGAN_ON, **STRICT_FACE_CHECK):
+            _output, parameters, restore = self.run_pipeline()
+
+        restore.assert_called_once()
+        self.assertEqual(parameters["face_fidelity"]["status"], "reverted")
+        restoration = parameters["face_restoration"]
+        self.assertFalse(restoration["applied"])
+        self.assertTrue(restoration["reverted_by_face_check"])
+        self.assertNotIn("gfpgan", parameters["algorithm"])
+        self.assertFalse(parameters["identity_verification"]["face_restoration_applied"])
+        self.assertTrue(any("face check" in warning for warning in parameters["warnings"]))
+        stage = [entry for entry in parameters["stage_reports"] if entry["stage"] == "face_restoration"][-1]
+        self.assertEqual(stage["status"], "reverted")
+
+    def test_a_restoration_the_face_check_kept_is_still_reported(self):
+        from .test_staged_pipeline import GFPGAN_ON
+
+        with override_settings(**GFPGAN_ON, FACE_FIDELITY_ENABLED=True):
+            _output, parameters, _restore = self.run_pipeline()
+
+        self.assertTrue(parameters["face_restoration"]["applied"])
+        self.assertIn("private_gfpgan_v1_4", parameters["algorithm"])
+
+    def test_a_withdrawn_pass_leaves_no_trace_in_the_kept_reports(self):
+        """P3-21: the first pass's reports and warnings stayed, and counted toward
+        no_correction_needed."""
+        from .test_staged_pipeline import GFPGAN_ON
+
+        def inconclusive(source, candidate, reference=None):
+            return candidate, {"status": "inconclusive", "applied": False, "reference_checked": True}
+
+        with override_settings(**GFPGAN_ON, FACE_FIDELITY_ENABLED=True):
+            _output, parameters, _restore = self.run_pipeline(guard=inconclusive)
+
+        kept = [entry["stage"] for entry in parameters["stage_reports"]]
+        self.assertEqual(kept.count("face_restoration"), 1)
+        self.assertEqual(kept.count("identity_guard"), 1)
+        discarded = [entry["stage"] for entry in parameters["discarded_stage_reports"]]
+        self.assertIn("face_restoration", discarded)
+        restoration_report = [entry for entry in parameters["stage_reports"] if entry["stage"] == "face_restoration"][0]
+        self.assertFalse(restoration_report["changed_pixels"])
+        self.assertEqual(
+            parameters["no_correction_needed"],
+            not any(entry["changed_pixels"] for entry in parameters["stage_reports"]),
+        )
+        self.assertEqual(len(parameters["warnings"]), len(set(parameters["warnings"])))

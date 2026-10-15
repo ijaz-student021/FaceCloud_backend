@@ -53,14 +53,20 @@ class Profile:
     label: str
     description: str
     style: str
+    use_zero_dce: bool = True
 
 
 PROFILES = {
     profile.key: profile
     for profile in (
         Profile(
+            "opencv_baseline", "OpenCV adaptive baseline",
+            "Classical exposure, denoise and sharpen only; the learned Zero-DCE model is switched off.",
+            EnhancementStyle.NATURAL, use_zero_dce=False,
+        ),
+        Profile(
             "natural", "Natural (default pipeline)",
-            "The pipeline as users get it by default: classical exposure, measured denoise and conditional sharpening.",
+            "The pipeline as users get it by default; uses Zero-DCE when the photo is low-light.",
             EnhancementStyle.NATURAL,
         ),
         Profile(
@@ -70,31 +76,22 @@ PROFILES = {
         ),
         Profile(
             "ai_max", "AI Enhance",
-            "Highest strength with adaptive denoise: the strongest local correction. No learned restoration model exists.",
+            "Highest strength with adaptive denoise; licence-gated restoration models still follow platform flags.",
             EnhancementStyle.AI_MAX,
         ),
     )
 }
 DEFAULT_PROFILES = tuple(PROFILES)
-
-# Profiles that can no longer be requested. They stay readable so earlier
-# comparisons still show a label and a description; a request that names one is
-# refused with the reason instead of being run as a different algorithm.
-RETIRED_PROFILES = {
-    "opencv_baseline": Profile(
-        "opencv_baseline", "OpenCV adaptive baseline (retired)",
-        "Retired 2026-10-15. It differed from 'natural' only by switching the Zero-DCE model off; with Zero-DCE "
-        "retired, 'natural' is this pipeline. Kept so earlier comparisons still read.",
-        EnhancementStyle.NATURAL,
-    ),
-}
 # When two profiles tie, prefer the more conservative one.
-CONSERVATIVE_ORDER = ("natural", "dynamic", "ai_max")
+CONSERVATIVE_ORDER = ("natural", "opencv_baseline", "dynamic", "ai_max")
 
 
 # What each compared profile records about identity, taken from the pipeline's
 # identity_verification summary (enhancement/services.py).
-VERIFICATION_KEYS = ("status", "verified", "reason", "notice")
+VERIFICATION_KEYS = (
+    "status", "verified", "reason", "requirement_bypass",
+    "face_restoration_applied", "face_restoration_unverified", "notice",
+)
 
 
 def ensure_comparison_capacity(owner):
@@ -113,11 +110,6 @@ def ensure_comparison_capacity(owner):
 def validate_profiles(requested):
     if not requested:
         return list(DEFAULT_PROFILES)
-    retired = [key for key in requested if key in RETIRED_PROFILES]
-    if retired:
-        raise ValidationError({"profiles": [
-            f"The profile '{key}' was retired: {RETIRED_PROFILES[key].description}" for key in retired
-        ]})
     unknown = [key for key in requested if key not in PROFILES]
     if unknown:
         raise ValidationError({"profiles": [f"Unknown profile: {', '.join(unknown)}."]})
@@ -151,7 +143,8 @@ def recommend(source, candidates):
             notes.append("the identity guard had to reduce the strength")
         verification = (candidate.get("identity_guard") or {}).get("verification") or {}
         if verification.get("face_restoration_unverified"):
-            # Only comparisons made before face restoration was retired can carry this.
+            # Stated, not scored: whether an unverified restored face should cost
+            # a profile the recommendation is a product decision not made here.
             notes.append("faces were generatively restored without a verified identity check")
         if source.get("faces_detected") and candidate.get("faces_detected") == 0:
             penalty += LOST_FACES_PENALTY
@@ -293,6 +286,7 @@ def process_model_comparison(comparison):
                 enhanced, applied_level, parameters = enhance_bgr(
                     source, comparison.requested_level, style=profile.style,
                     allow_biometric_processing=allow_biometric,
+                    use_zero_dce=profile.use_zero_dce,
                 )
                 metrics = parameters["quality_comparison"]["after"]
                 scores = _scores(metrics)
@@ -379,8 +373,7 @@ def build_report_csv(comparison):
         if output.profile == ORIGINAL:
             label = "Original (untouched)"
         else:
-            known = PROFILES.get(output.profile) or RETIRED_PROFILES.get(output.profile)
-            label = known.label if known else output.profile
+            label = PROFILES[output.profile].label if output.profile in PROFILES else output.profile
         scores, metrics = output.scores or {}, output.metrics or {}
         verification = (output.identity_guard or {}).get("verification") or {}
         writer.writerow([

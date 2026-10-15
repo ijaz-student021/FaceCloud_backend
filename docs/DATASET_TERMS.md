@@ -94,6 +94,5 @@ report. Aggregate results are covered. Ask before using individual images.
 - Folder: `Dataset/generated_photos/` (`Dataset/` is git-ignored). The project folder is
   inside OneDrive, which syncs to a Microsoft cloud; a folder outside OneDrive is the
   cautious choice, and every tool here accepts any path.
-- Copy the dataset only to a machine you control, and delete the copy when the
-  work is done. (The GPU session runbook that used to spell this out was removed
-  with the learned models.)
+- Before a GPU session, follow [GPU_SESSION_RUNBOOK.md](GPU_SESSION_RUNBOOK.md): the copy goes
+  only to a machine you control, and the tear-down step deletes it.

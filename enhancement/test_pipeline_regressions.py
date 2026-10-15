@@ -1,9 +1,9 @@
 """Regression tests for confirmed enhancement-pipeline and task defects.
 
-These tests prove how the pipeline routes, guards and records its (classical) stages
-and how the task layer claims, publishes and fails results.
+Every model here is mocked: these tests prove how the pipeline routes, guards and
+records candidates, not what a real checkpoint does to a photograph.
 """
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import cv2
 import numpy as np
@@ -16,6 +16,7 @@ from rest_framework.exceptions import ValidationError
 
 from uploads.models import ImagePreprocessingResult, ImageUpload, UploadBatch
 
+from .hd_restoration import HDRestorationUnavailable
 from .models import EnhancementBatchJob, EnhancementLevel, ImageEnhancementResult
 from .services import (
     TIME_LIMIT_FAILURE_REASON,
@@ -23,6 +24,7 @@ from .services import (
     _fit_pixel_budget,
     analyze_image_quality,
     enhance_bgr,
+    hd_restoration_stage,
     output_guard_b_stage,
     process_enhancement_result,
 )
@@ -30,9 +32,11 @@ from .tasks import process_enhancement_batch, process_enhancement_image
 
 User = get_user_model()
 
-# Settings for tests that run the pipeline without any identity model, so no face is embedded.
-# (The name is historical: it once switched off the learned enhancement models too, which no longer exist.)
-NO_MODELS = dict(IDENTITY_GUARD_ENABLED=False)
+NO_MODELS = dict(
+    HD_RESTORATION_ENABLED=False, NAFNET_DEBLUR_ENABLED=False, PURESCALE_ENABLED=False,
+    PUREVISION_ENABLED=False, GFPGAN_ENABLED=False, AI_RESTORATION_ENABLED=False,
+    COLORIZATION_ENABLED=False, ZERO_DCE_ENABLED=False, IDENTITY_GUARD_ENABLED=False,
+)
 
 
 def textured(height=64, width=96, base=110):
@@ -43,6 +47,89 @@ def textured(height=64, width=96, base=110):
     return np.clip(image, 0, 255).astype(np.uint8)
 
 
+class DeblurSurvivesFailedUpscaleTests(SimpleTestCase):
+    @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+    @patch("enhancement.services.upscale_with_realesrgan")
+    @patch("enhancement.services.deblur_with_nafnet")
+    def test_stage_keeps_the_deblurred_image_when_the_upscaler_fails(self, deblur, upscale):
+        source = textured()
+        deblurred = cv2.add(source, 7)
+        deblur.return_value = (deblurred, {"provider": "nafnet_gopro_width64"})
+        upscale.side_effect = HDRestorationUnavailable("The Real-ESRGAN checkpoint is unavailable.")
+        context = EnhancementPipelineContext(source, EnhancementLevel.LOW)
+
+        hd_restoration_stage(context)
+
+        np.testing.assert_array_equal(context.current_image, deblurred)
+        self.assertTrue(context.hd_restoration["deblur"]["applied"])
+        self.assertFalse(context.hd_restoration["applied"])
+        self.assertIn("unavailable", context.hd_restoration["fallback_reason"])
+
+    @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+    @patch("enhancement.services.upscale_with_realesrgan")
+    @patch("enhancement.services.deblur_with_nafnet")
+    def test_pipeline_reports_the_deblur_without_claiming_an_upscale(self, deblur, upscale):
+        source = textured()
+        deblur.side_effect = lambda image: (cv2.add(image, 7), {"provider": "nafnet_gopro_width64"})
+        upscale.side_effect = HDRestorationUnavailable("The native 4x output exceeds the configured safety limit.")
+
+        output, _level, parameters = enhance_bgr(source, "low")
+
+        self.assertEqual(output.shape, source.shape)
+        self.assertIn("nafnet_gopro", parameters["algorithm"])
+        self.assertNotIn("realesrgan", parameters["algorithm"])
+        self.assertEqual(parameters["resolution_contract"]["pixel_grid_source"], "original_pixel_grid")
+
+    @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+    @patch("enhancement.services.upscale_with_realesrgan")
+    @patch("enhancement.services.deblur_with_nafnet")
+    def test_both_failing_leaves_the_image_untouched(self, deblur, upscale):
+        source = textured()
+        deblur.side_effect = HDRestorationUnavailable("The NAFNet candidate failed the image-fidelity guard.")
+        upscale.side_effect = HDRestorationUnavailable("The Real-ESRGAN checkpoint is unavailable.")
+        context = EnhancementPipelineContext(source, EnhancementLevel.LOW)
+
+        hd_restoration_stage(context)
+
+        np.testing.assert_array_equal(context.current_image, source)
+
+
+class SingleUpscalerTests(SimpleTestCase):
+    @override_settings(**{**NO_MODELS, "AI_RESTORATION_ENABLED": True, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+    @patch("enhancement.services.upscale_with_purescale")
+    @patch("enhancement.services._load_edsr_model")
+    def test_purescale_does_not_stack_on_edsr(self, load_edsr, purescale):
+        edsr = Mock()
+        edsr.upsample.side_effect = lambda image: cv2.resize(
+            image, (image.shape[1] * 2, image.shape[0] * 2), interpolation=cv2.INTER_CUBIC,
+        )
+        load_edsr.return_value = edsr
+        source = textured()  # 96x64: low resolution, so EDSR is requested
+
+        output, _level, parameters = enhance_bgr(source, "low")
+
+        self.assertTrue(parameters["restoration"]["applied"])
+        self.assertEqual(output.shape[:2], (128, 192))  # 2x once, not 4x
+        purescale.assert_not_called()
+        self.assertFalse(parameters["purescale"]["applied"])
+        self.assertIn("EDSR already upscaled", parameters["purescale"]["fallback_reason"])
+        self.assertEqual(parameters["resolution_contract"]["pixel_grid_source"], "bounded_edsr_output_grid")
+
+    @override_settings(**{**NO_MODELS, "AI_RESTORATION_ENABLED": True, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+    @patch("enhancement.services.upscale_with_purescale")
+    @patch("enhancement.services._load_edsr_model", side_effect=RuntimeError("The configured EDSR model file is unavailable."))
+    def test_purescale_still_runs_when_edsr_was_unavailable(self, _load_edsr, purescale):
+        purescale.side_effect = lambda image: (
+            cv2.resize(image, (image.shape[1] * 2, image.shape[0] * 2), interpolation=cv2.INTER_CUBIC),
+            {"provider": "purescale_safmn_2x"},
+        )
+        output, _level, parameters = enhance_bgr(textured(), "low")
+
+        self.assertFalse(parameters["restoration"]["applied"])
+        self.assertTrue(parameters["purescale"]["applied"])
+        self.assertEqual(output.shape[:2], (128, 192))
+
+
 class FinalMetricsTests(SimpleTestCase):
     @override_settings(**NO_MODELS)
     def test_quality_after_measures_the_styled_pixels_that_are_saved(self):
@@ -51,6 +138,19 @@ class FinalMetricsTests(SimpleTestCase):
         self.assertTrue(parameters["dynamic_style"]["applied"])
         self.assertEqual(parameters["quality_after"], analyze_image_quality(output))
         self.assertEqual(parameters["quality_after_measurement_point"], "final_output")
+
+    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+    @patch("enhancement.services.upscale_with_purescale")
+    def test_quality_after_measures_the_upscaled_output_grid(self, purescale):
+        purescale.side_effect = lambda image: (
+            cv2.resize(image, (image.shape[1] * 2, image.shape[0] * 2), interpolation=cv2.INTER_CUBIC),
+            {"provider": "purescale_safmn_2x"},
+        )
+        output, _level, parameters = enhance_bgr(textured(), "low", style="dynamic")
+
+        self.assertEqual((parameters["quality_after"]["width"], parameters["quality_after"]["height"]), (192, 128))
+        self.assertEqual(parameters["quality_after"], analyze_image_quality(output))
+
 
 class GuardReferenceTests(SimpleTestCase):
     @override_settings(**NO_MODELS)
@@ -74,6 +174,35 @@ class GuardReferenceTests(SimpleTestCase):
         self.assertTrue(guard["fallback_blend_applied"])
         self.assertLessEqual(guard["mean_chroma_shift"], guard["limits"]["max_chroma_shift"])
         self.assertEqual(context.current_image.shape[:2], (128, 192))
+
+    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+    @patch("enhancement.services.upscale_with_purescale")
+    def test_an_upscaler_that_brightens_is_pulled_back_in_the_pipeline(self, purescale):
+        def brightening_upscaler(image):
+            doubled = cv2.resize(image, (image.shape[1] * 2, image.shape[0] * 2), interpolation=cv2.INTER_CUBIC)
+            return cv2.add(doubled, 60), {"provider": "purescale_safmn_2x"}
+
+        purescale.side_effect = brightening_upscaler
+        source = textured(base=120)
+
+        output, _level, parameters = enhance_bgr(source, "low")
+
+        guard = parameters["quality_guards"]["guard_b"]
+        self.assertIn("luminance_gain_limited", guard["reasons"])
+        self.assertLessEqual(guard["luminance_gain"], guard["limits"]["max_luminance_gain"] + 0.5)
+        self.assertLess(float(output.mean()) - float(source.mean()), 30.0)
+
+    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+    @patch("enhancement.services.upscale_with_purescale")
+    def test_a_faithful_upscaler_is_kept_at_full_strength(self, purescale):
+        purescale.side_effect = lambda image: (
+            cv2.resize(image, (image.shape[1] * 2, image.shape[0] * 2), interpolation=cv2.INTER_LANCZOS4),
+            {"provider": "purescale_safmn_2x"},
+        )
+        _output, _level, parameters = enhance_bgr(textured(base=120), "low")
+
+        self.assertFalse(parameters["quality_guards"]["guard_b"]["fallback_blend_applied"])
+
 
 class PixelBudgetTests(SimpleTestCase):
     @override_settings(ENHANCEMENT_MAX_INPUT_PIXELS=24_000_000)

@@ -1,15 +1,14 @@
 """Record and verify the model files FaceCloud needs, so a copy to another machine can be proven intact.
 
-The retained models are the two face models, YuNet (detection) and SFace (identity
-features). They live outside Git, in ``.runtime/models``. After copying them to
-another machine, verify the copy there; after replacing one deliberately, write the
-manifest again.
+The models live outside Git (``.runtime/models`` and ``gfpgan/weights``). Before a
+GPU session, write the manifest on the machine that has the models; after copying
+them to the GPU machine, verify it there.
 
     python scripts/model_manifest.py write
     python scripts/model_manifest.py verify
 
 The manifest holds only file names, sizes and SHA-256 checksums, so it is safe to
-commit (``docs/models/model_manifest.json``). Verification exits non-zero when any file
+commit (``docs/gpu/model_manifest.json``). Verification exits non-zero when any file
 is missing or different, and it lists files present but not in the manifest.
 """
 import argparse
@@ -20,10 +19,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_MANIFEST = ROOT / "docs" / "models" / "model_manifest.json"
+DEFAULT_MANIFEST = ROOT / "docs" / "gpu" / "model_manifest.json"
 # name in the manifest -> folder, relative to the repository root
 ROOTS = {
     "models": Path(".runtime") / "models",
+    "gfpgan_weights": Path("gfpgan") / "weights",
 }
 CHUNK = 4 * 1024 * 1024
 
