@@ -30,6 +30,7 @@ from .comparison import (
     validate_profiles,
 )
 from .serializers import (
+    EditorConfigurationSerializer,
     EnhancementBatchJobSerializer,
     EnhancementRequestSerializer,
     GalleryEditRequestSerializer,
@@ -41,6 +42,9 @@ from .serializers import (
     ModelComparisonSummarySerializer,
     WatermarkOptionsSerializer,
 )
+from . import policy as rendering_policy
+from .controls import INTENTS, RENDERER_VERSION, neutral_settings
+from .controls import contract as editor_contract
 from .batch_jobs import BatchEnhancementConflict, BatchEnhancementFailed, start_batch_enhancement
 from .services import create_enhancement_result, ensure_enhancement_capacity
 from .watermark import WatermarkError, render_watermarked
@@ -365,9 +369,14 @@ class EnhancementComparisonView(APIView):
 
 
 class GalleryEditorConfigurationView(APIView):
+    """The editing contract: controls, ranges, neutral values, renderer and policy.
+
+    Reset sets ``neutral_settings``; Auto and presets are separate requests.
+    """
+
     permission_classes = [permissions.IsAuthenticated]
 
-    @extend_schema(responses={200: OpenApiTypes.OBJECT})
+    @extend_schema(responses={200: EditorConfigurationSerializer})
     def get(self, request):
         return Response(
             {
@@ -375,35 +384,11 @@ class GalleryEditorConfigurationView(APIView):
                 "source": "completed_enhanced_image",
                 "non_destructive": True,
                 "preview_strategy": "client_side_preview_then_server_render",
-                "controls": {
-                    **{
-                        name: {
-                            "minimum": -100,
-                            "maximum": 100,
-                            "step": 1,
-                            "default": 0,
-                            "recommended_minimum": -50,
-                            "recommended_maximum": 50,
-                        }
-                        for name in (
-                            "brightness", "contrast", "shadows", "saturation",
-                            "highlights", "warmth",
-                        )
-                    },
-                    "intensity": {
-                        "minimum": 0,
-                        "maximum": 100,
-                        "step": 1,
-                        "default": 100,
-                        "recommended_minimum": 0,
-                        "recommended_maximum": 100,
-                        "description": (
-                            "How much of the AI enhancement to apply: 100 is "
-                            "the full enhanced result, 0 is the original "
-                            "unenhanced photo. Blends between the two."
-                        ),
-                    },
-                },
+                "renderer_version": RENDERER_VERSION,
+                "render_policy": rendering_policy.describe(),
+                "intents": list(INTENTS),
+                "neutral_settings": neutral_settings(),
+                "controls": editor_contract(),
             }
         )
 

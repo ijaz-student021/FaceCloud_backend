@@ -988,7 +988,7 @@ class EnhancementProcessingAndAPITests(TestCase):
             set(response.data["controls"]),
             {
                 "brightness", "contrast", "shadows", "saturation", "highlights",
-                "warmth", "intensity",
+                "warmth", "sharpness", "intensity",
             },
         )
         self.assertEqual(response.data["controls"]["intensity"]["default"], 100)

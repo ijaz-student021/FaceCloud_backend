@@ -3,6 +3,7 @@ from rest_framework import serializers
 
 from . import comparison as comparison_engine
 from . import watermark as wm
+from .controls import INTENTS, ControlsSerializer
 from .models import (
     EditMode,
     EnhancementBatchJob,
@@ -57,23 +58,34 @@ class WatermarkOptionsSerializer(serializers.Serializer):
         return attrs
 
 
-class GalleryAdjustmentSerializer(serializers.Serializer):
-    brightness = serializers.FloatField(min_value=-100, max_value=100, default=0)
-    contrast = serializers.FloatField(min_value=-100, max_value=100, default=0)
-    shadows = serializers.FloatField(min_value=-100, max_value=100, default=0)
-    saturation = serializers.FloatField(min_value=-100, max_value=100, default=0)
-    highlights = serializers.FloatField(min_value=-100, max_value=100, default=0)
-    warmth = serializers.FloatField(min_value=-100, max_value=100, default=0)
-    intensity = serializers.FloatField(min_value=0, max_value=100, default=100)
+class GalleryAdjustmentSerializer(ControlsSerializer):
+    """Manual control values: signed numbers, 0 neutral (``intensity``: 0-100, 100 neutral).
+
+    Finite numbers only; booleans, NaN, infinity, out-of-range values and unknown
+    control names are field errors. See ``GET /api/enhancements/editor/configuration/``
+    for each control's range, meaning and Pillow-factor mapping.
+    """
 
 
 class GalleryEditRequestSerializer(serializers.Serializer):
     mode = serializers.ChoiceField(choices=EditMode.choices, default=EditMode.AUTO)
-    adjustments = GalleryAdjustmentSerializer(required=False, default=dict)
+    adjustments = GalleryAdjustmentSerializer(
+        required=False, default=dict,
+        help_text="Used in manual mode only. Omitted or empty means neutral (the edit changes nothing).",
+    )
+    intent = serializers.ChoiceField(
+        choices=INTENTS, default="auto",
+        help_text=(
+            "Auto mode only. auto: fix clear technical faults only (never lifts or darkens overall "
+            "exposure); brighten: also lift a dark photo; preserve: leave tonality alone."
+        ),
+    )
 
     def validate(self, attrs):
         if attrs["mode"] == EditMode.AUTO:
-            attrs["adjustments"] = {}
+            attrs["adjustments"] = {"intent": attrs["intent"]}
+        elif self.initial_data.get("intent") not in (None, "auto"):
+            raise serializers.ValidationError({"intent": "Intent applies to auto mode only."})
         return attrs
 
 
@@ -437,3 +449,38 @@ class ModelComparisonSerializer(ModelComparisonSummarySerializer):
         path = f"/api/enhancements/comparisons/{obj.pk}/report/"
         request = self.context.get("request")
         return request.build_absolute_uri(path) if request else path
+
+
+class EditorControlSpecSerializer(serializers.Serializer):
+    label = serializers.CharField()
+    minimum = serializers.FloatField(help_text="Lowest value a person may set.")
+    maximum = serializers.FloatField(help_text="Highest value a person may set.")
+    step = serializers.FloatField()
+    default = serializers.FloatField(help_text="The value Reset sets; the same as neutral.")
+    neutral = serializers.FloatField(help_text="The value that changes nothing.")
+    recommended_minimum = serializers.FloatField()
+    recommended_maximum = serializers.FloatField()
+    auto_minimum = serializers.FloatField(help_text="Lowest value the local recipe or the cloud advisor may set.")
+    auto_maximum = serializers.FloatField(help_text="Highest value the local recipe or the cloud advisor may set.")
+    description = serializers.CharField(help_text="Exact renderer semantics.")
+    pillow_enhancer = serializers.CharField(
+        allow_null=True, help_text="The Pillow ImageEnhance class this approximates; null if none.",
+    )
+    pillow_factor_per_unit = serializers.FloatField(
+        allow_null=True,
+        help_text="Approximate Pillow factor = 1 + this * value (Pillow's neutral is 1.0, ours is 0).",
+    )
+
+
+class EditorConfigurationSerializer(serializers.Serializer):
+    modes = serializers.ListField(child=serializers.CharField())
+    source = serializers.CharField()
+    non_destructive = serializers.BooleanField()
+    preview_strategy = serializers.CharField()
+    renderer_version = serializers.CharField(help_text="Recorded on every saved edit.")
+    render_policy = serializers.DictField(help_text="The active rendering policy (what may run).")
+    intents = serializers.ListField(child=serializers.CharField(), help_text="Auto-mode intents.")
+    neutral_settings = serializers.DictField(
+        child=serializers.FloatField(), help_text="What Reset sets: a render with these values changes nothing.",
+    )
+    controls = serializers.DictField(child=EditorControlSpecSerializer())

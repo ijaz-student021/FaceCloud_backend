@@ -32,6 +32,11 @@ from uploads.models import ImagePreprocessingResult, UploadBatch
 from quality_control.models import ImageQualityDecision
 
 from . import policy as rendering_policy
+from .controls import (
+    CONTROL_NAMES, INTENTS, RENDERER_POLICY_NAME, RENDERER_VERSION, is_neutral,
+    recommend_local_adjustments, validate_controls,
+)
+from .tone import render_tone
 from .policy import learned_stage_enabled
 from .models import (
     EditMode,
@@ -3079,66 +3084,17 @@ def _process_claimed_result(result, token):
         raise ValidationError(UNSAFE_FAILURE_REASON) from error
 
 
-EDITOR_CONTROL_NAMES = (
-    "brightness",
-    "contrast",
-    "shadows",
-    "saturation",
-    "highlights",
-    "warmth",
-)
+EDITOR_CONTROL_NAMES = CONTROL_NAMES
 
 
-def _auto_editor_adjustments(quality):
-    """Create restrained corrections from the image rather than a fixed preset."""
-    percentiles = quality["luminance_percentiles"]
-    brightness = np.clip((135.0 - quality["mean_luminance"]) * 0.22, -16, 16)
-    contrast = np.clip((48.0 - quality["contrast_stddev"]) * 0.65, -8, 20)
-    shadows = np.clip((68.0 - percentiles["p25"]) * 0.35, 0, 22)
-    highlights = -np.clip((percentiles["p95"] - 224.0) * 0.45, 0, 24)
-    return {
-        "brightness": round(float(brightness), 2),
-        "contrast": round(float(contrast), 2),
-        "shadows": round(float(shadows), 2),
-        "saturation": 0.0,
-        "highlights": round(float(highlights), 2),
-        "warmth": 0.0,
-    }
+def _auto_editor_adjustments(quality, intent="auto", blockiness_detected=False):
+    """The control values of the local recipe (see controls.recommend_local_adjustments)."""
+    return recommend_local_adjustments(quality, intent, blockiness_detected=blockiness_detected)["controls"]
 
 
 def _render_editor_controls(source, controls, strength=1.0):
-    """Apply bounded tone controls in LAB while preserving the source pixel grid."""
-    lab = cv2.cvtColor(source, cv2.COLOR_BGR2LAB).astype(np.float32)
-    luminance, channel_a, channel_b = cv2.split(lab)
-    effective = {
-        name: float(controls.get(name, 0.0)) * strength
-        for name in EDITOR_CONTROL_NAMES
-    }
-
-    luminance += effective["brightness"] * 0.35
-    midpoint = float(np.median(luminance))
-    contrast_factor = 1.0 + (effective["contrast"] * 0.005)
-    luminance = midpoint + ((luminance - midpoint) * contrast_factor)
-
-    normalized = np.clip(luminance / 255.0, 0.0, 1.0)
-    shadow_mask = np.square(1.0 - normalized)
-    highlight_mask = np.square(normalized)
-    luminance += shadow_mask * effective["shadows"] * 0.45
-    luminance += highlight_mask * effective["highlights"] * 0.40
-
-    saturation_factor = 1.0 + (effective["saturation"] * 0.004)
-    channel_a = 128.0 + ((channel_a - 128.0) * saturation_factor)
-    channel_b = 128.0 + ((channel_b - 128.0) * saturation_factor)
-    # Warmth shifts the blue-yellow axis: positive is warmer (more yellow).
-    channel_b += effective["warmth"] * 0.30
-    rendered_lab = cv2.merge(
-        (
-            np.clip(luminance, 0, 255).astype(np.uint8),
-            np.clip(channel_a, 0, 255).astype(np.uint8),
-            np.clip(channel_b, 0, 255).astype(np.uint8),
-        )
-    )
-    return cv2.cvtColor(rendered_lab, cv2.COLOR_LAB2BGR), effective
+    """Apply bounded tone controls in float LAB (enhancement/tone.py)."""
+    return render_tone(source, controls, strength)
 
 
 def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline=None):
@@ -3149,71 +3105,97 @@ def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline
     toward it -- this is the "how much AI enhancement" slider: 100 is the
     full enhanced result (the default, matching prior behaviour), 0 is the
     unenhanced original.
+
+    Auto uses the local recipe (``requested_adjustments["intent"]`` may be
+    "auto", "preserve" or "brighten"); Manual uses the validated control values.
+    The returned metadata records what was requested, validated and applied,
+    each guard reduction, any fallback and the renderer version.
     """
     if source is None or source.size == 0:
         raise ValidationError("The enhanced image cannot be edited safely.")
     if mode not in EditMode.values:
         raise ValidationError({"mode": "Choose auto or manual."})
 
+    requested_raw = dict(requested_adjustments or {})
     before = analyze_image_quality(source)
+    recommendation = None
     if mode == EditMode.AUTO:
-        controls = _auto_editor_adjustments(before)
+        intent = requested_raw.get("intent", "auto")
+        if intent not in INTENTS:
+            raise ValidationError({"intent": f"Choose one of: {', '.join(INTENTS)}."})
+        recommendation = recommend_local_adjustments(
+            before, intent, blockiness_detected=measure_compression_artifacts(source)["detected"],
+        )
+        controls = recommendation["controls"]
         intensity = 100.0
     else:
-        requested_adjustments = requested_adjustments or {}
-        controls = {
-            name: float(requested_adjustments.get(name, 0.0))
-            for name in EDITOR_CONTROL_NAMES
-        }
-        intensity = float(np.clip(requested_adjustments.get("intensity", 100.0), 0.0, 100.0))
+        validated = validate_controls({key: value for key, value in requested_raw.items() if key != "intent"})
+        intensity = validated.pop("intensity")
+        controls = validated
 
+    fallback_reasons = []
     strength = 1.0
     clipping_limit = max(
         settings.ENHANCEMENT_MAX_HIGHLIGHT_CLIPPING_PERCENT,
         before["highlight_clipping_percent"] + 2.0,
     )
     reasons = []
-    rendered = source.copy()
-    effective = controls
+    guard_reductions = []
+    rendered, effective = source.copy(), {name: 0.0 for name in CONTROL_NAMES}
     after = before
-    for _attempt in range(10):
-        rendered, effective = _render_editor_controls(source, controls, strength)
-        after = analyze_image_quality(rendered)
-        contrast_floor = before["contrast_stddev"] * 0.70
-        if (
-            after["highlight_clipping_percent"] <= clipping_limit
-            and after["contrast_stddev"] >= contrast_floor
-        ):
-            break
-        if after["highlight_clipping_percent"] > clipping_limit:
-            if "highlight_clipping_limited" not in reasons:
-                reasons.append("highlight_clipping_limited")
-        if after["contrast_stddev"] < contrast_floor:
-            if "contrast_loss_limited" not in reasons:
-                reasons.append("contrast_loss_limited")
-        strength *= 0.78
+    if not is_neutral(controls):
+        for _attempt in range(10):
+            rendered, effective = _render_editor_controls(source, controls, strength)
+            after = analyze_image_quality(rendered)
+            contrast_floor = before["contrast_stddev"] * 0.70
+            if (
+                after["highlight_clipping_percent"] <= clipping_limit
+                and after["contrast_stddev"] >= contrast_floor
+            ):
+                break
+            attempt_reasons = []
+            if after["highlight_clipping_percent"] > clipping_limit:
+                attempt_reasons.append("highlight_clipping_limited")
+            if after["contrast_stddev"] < contrast_floor:
+                attempt_reasons.append("contrast_loss_limited")
+            for reason in attempt_reasons:
+                if reason not in reasons:
+                    reasons.append(reason)
+            guard_reductions.append({"strength": round(strength, 4), "reasons": attempt_reasons})
+            strength *= 0.78
 
     intensity_applied = False
-    if baseline is not None and intensity < 100.0:
-        baseline_reference = baseline
-        if baseline_reference.shape[:2] != rendered.shape[:2]:
-            baseline_reference = cv2.resize(
-                baseline_reference,
-                (rendered.shape[1], rendered.shape[0]),
-                interpolation=cv2.INTER_CUBIC,
-            )
-        blend = intensity / 100.0
-        rendered = cv2.addWeighted(rendered, blend, baseline_reference, 1.0 - blend, 0)
-        after = analyze_image_quality(rendered)
-        intensity_applied = True
+    if intensity < 100.0:
+        if baseline is None:
+            fallback_reasons.append("intensity_not_applied_no_unenhanced_baseline")
+        else:
+            baseline_reference = baseline
+            if baseline_reference.shape[:2] != rendered.shape[:2]:
+                baseline_reference = cv2.resize(
+                    baseline_reference,
+                    (rendered.shape[1], rendered.shape[0]),
+                    interpolation=cv2.INTER_CUBIC,
+                )
+            blend = intensity / 100.0
+            rendered = cv2.addWeighted(rendered, blend, baseline_reference, 1.0 - blend, 0)
+            after = analyze_image_quality(rendered)
+            intensity_applied = True
 
-    return rendered, {
+    unchanged = np.array_equal(rendered, source)
+    metadata = {
         "mode": mode,
-        "policy": "non_destructive_gallery_editor_v1",
+        "policy": RENDERER_POLICY_NAME,
+        "renderer_version": RENDERER_VERSION,
+        "render_policy": rendering_policy.active_policy(),
+        "outcome": "no_change" if unchanged else "rendered",
         "requested": controls,
+        "validated": {**controls, "intensity": round(intensity, 2)},
         "effective": {name: round(value, 3) for name, value in effective.items()},
+        "applied": {name: round(value, 3) for name, value in effective.items()},
         "safety_strength": round(strength, 4),
         "safety_reasons": reasons,
+        "guard_reductions": guard_reductions,
+        "fallback_reasons": fallback_reasons,
         "quality_before": before,
         "quality_after": after,
         "dimensions_preserved": source.shape[:2] == rendered.shape[:2],
@@ -3223,6 +3205,9 @@ def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline
             "policy": "blend_toward_preprocessed_original",
         },
     }
+    if recommendation is not None:
+        metadata["auto"] = {key: recommendation[key] for key in ("action", "intent", "rationale", "caution_flags")}
+    return rendered, metadata
 
 
 def _read_edited_source(edit):
