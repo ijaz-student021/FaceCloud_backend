@@ -276,6 +276,33 @@ sliders from it, do not hard-code):
   `auto.action: "no_change"` means nothing needed fixing: say so, do not show
   an "enhanced" badge.
 
+### Editor previews and saving (Phase B)
+Detail: `docs/enhancement/lightweight-pipeline.md` section 5.
+
+* `POST /api/enhancements/results/{id}/previews/` `{revision, mode, adjustments,
+  size?, source_version?}`. `revision` is a number you increment on every change.
+  `201` new preview, `200` the same revision and settings again (nothing re-rendered).
+  Response: `id`, `revision`, `is_latest`, `latest_revision`, `width`, `height`,
+  `output_format`, `applied_adjustments`, `render` (outcome, guard reductions),
+  `source_version`, `expires_at`.
+* `GET /api/enhancements/previews/{id}/image/` is authenticated: fetch it with
+  the token and show it as a blob; an `<img src>` without the header fails.
+* **Out-of-order answers:** show a preview only if its `revision` is the latest one
+  you sent, or `is_latest` is true. Do not cancel requests to "stop" the server;
+  closing a request cancels nothing and the result is reusable.
+* `409 stale_source` (carries the current `source_version`): the image changed;
+  reload it and the previews. `409 revision_conflict`: reuse of a revision with
+  other settings; send a higher number.
+* **Apply:** `POST /api/enhancements/previews/{id}/save/` returns `202` and an
+  edit version; poll `GET /api/enhancements/edits/{id}/` as before, then use the
+  protected download. `400` if an edit of that image is already running.
+* **Transparency:** `GET editor/configuration/` has `preview` (sizes, retention,
+  keep count) and `transparency`. PNG keeps alpha; a JPEG result has none and a
+  transparent source was flattened onto white before enhancement. Show a
+  checkerboard only for PNG results.
+* Previews expire after 24 hours (`expires_at`); a `404` on an old preview means
+  re-request it. Saved edits do not expire with previews.
+
 ### Contact form (B07, public)
 `POST /api/contact/` (no authentication) takes
 `{name, email, company?, reason, message}`.

@@ -264,10 +264,15 @@ def sample_instance(model):
         # (e.g. an organization-scoped export, which has no single owner).
         return model(requested_by_id=1)
     except TypeError:
-        # Models that reach their owner through a parent (comparison outputs).
-        from enhancement.models import ModelComparison
+        pass
+    # Models that reach their owner through a parent: comparison outputs, and the
+    # cached source of an editor preview (through its enhancement result).
+    from enhancement.models import ImageEnhancementResult, ModelComparison
 
+    try:
         return model(comparison=ModelComparison(owner_id=1))
+    except TypeError:
+        return model(enhancement_result=ImageEnhancementResult(owner_id=1))
 
 
 class MediaLayoutCoverageTests(SimpleTestCase):

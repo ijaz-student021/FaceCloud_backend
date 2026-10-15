@@ -25,6 +25,8 @@ from .services import (
     TIME_LIMIT_FAILURE_REASON,
     TRANSIENT_INFRASTRUCTURE_ERRORS,
     EnhancementCancelled,
+    EditInProgress,
+    EditSuperseded,
     EnhancementSuperseded,
     ResultInProgress,
     process_enhancement_result,
@@ -406,13 +408,9 @@ def _enhance_batch(task, job_id, claim_waits, resume_claims):
     bind=True,
     name="enhancement.process_gallery_edit",
     acks_late=True,
-    autoretry_for=TRANSIENT_INFRASTRUCTURE_ERRORS,
-    retry_backoff=True,
-    retry_backoff_max=60,
-    retry_jitter=True,
-    max_retries=3,
+    max_retries=3,  # database failures
 )
-def process_gallery_edit(self, edit_id):
+def process_gallery_edit(self, edit_id, resume_claim=""):
     task_id = self.request.id or ""
     with transaction.atomic():
         edit = (
@@ -429,25 +427,32 @@ def process_gallery_edit(self, edit_id):
             return {"edit_id": edit_id, "status": edit.status}
         if edit.task_id and task_id and edit.task_id != task_id:
             return {"edit_id": edit_id, "status": "superseded"}
+    token = uuid.uuid4().hex
     try:
-        edit = process_image_edit(edit)
+        edit = process_image_edit(edit, token=token, resume_token=resume_claim)
+    except EditInProgress:
+        logger.warning("Gallery edit %s is being rendered by another worker; leaving it to that worker.", edit_id)
+        return {"edit_id": edit_id, "status": "in_progress"}
+    except EditSuperseded:
+        return {"edit_id": edit_id, "status": "superseded"}
+    except TRANSIENT_INFRASTRUCTURE_ERRORS as error:
+        if _database_retries_remain(self, 0):
+            _retry_after_database_error(self, error, 0, resume_claim=token)
+        logger.exception("Gallery edit %s failed after %s retries.", edit_id, self.max_retries)
+        _fail_edit_if_owner(edit_id, token)
     except Exception:
-        logger.exception("Gallery edit %s failed.", edit_id)
-        edit.refresh_from_db()
-        if edit.status not in (
-            EnhancementStatus.COMPLETED,
-            EnhancementStatus.FAILED,
-            EnhancementStatus.CANCELLED,
-        ):
-            edit.status = EnhancementStatus.FAILED
-            edit.failure_reason = "The background gallery-edit task failed safely."
-            edit.finished_at = timezone.now()
-            edit.save(
-                update_fields=[
-                    "status", "failure_reason", "finished_at", "updated_at",
-                ]
-            )
-    return {"edit_id": edit_id, "status": edit.status}
+        # Recorded on the row by the service, which also logs unexpected causes.
+        logger.warning("Gallery edit %s failed.", edit_id)
+    edit = ImageEditVersion.objects.filter(pk=edit_id).first()
+    return {"edit_id": edit_id, "status": edit.status if edit else "missing"}
+
+
+def _fail_edit_if_owner(edit_id, token):
+    """Close an edit as failed, but only if this execution still holds its claim."""
+    ImageEditVersion.objects.filter(pk=edit_id, claim_token=token).update(
+        status=EnhancementStatus.FAILED, claim_token="", finished_at=timezone.now(),
+        failure_reason="The background gallery-edit task failed safely.",
+    )
 
 
 @shared_task(
@@ -487,3 +492,23 @@ def cleanup_old_comparisons():
         status__in=finished, created_at__lt=cutoff,
     ).delete()
     return {"deleted_comparisons": per_model.get("enhancement.ModelComparison", 0)}
+
+
+@shared_task(
+    name="enhancement.cleanup_previews",
+    autoretry_for=TRANSIENT_INFRASTRUCTURE_ERRORS,
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    max_retries=3,
+)
+def cleanup_edit_previews():
+    """Delete expired editor previews and unused cached sources.
+
+    Previews are disposable and have their own retention
+    (ENHANCEMENT_PREVIEW_RETENTION_HOURS); originals, enhanced results and saved
+    edit versions are never touched here.
+    """
+    from .previews import cleanup_expired
+
+    return cleanup_expired()

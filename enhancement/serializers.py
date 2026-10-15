@@ -6,6 +6,7 @@ from . import watermark as wm
 from .controls import INTENTS, ControlsSerializer
 from .models import (
     EditMode,
+    EditPreview,
     EnhancementBatchJob,
     EnhancementLevel,
     EnhancementStatus,
@@ -81,6 +82,11 @@ class GalleryEditRequestSerializer(serializers.Serializer):
         ),
     )
 
+    source_version = serializers.CharField(
+        required=False, allow_blank=True, max_length=32,
+        help_text="Optional: the source_version this edit is meant for; a 409 stale_source if it is no longer current.",
+    )
+
     def validate(self, attrs):
         if attrs["mode"] == EditMode.AUTO:
             attrs["adjustments"] = {"intent": attrs["intent"]}
@@ -129,7 +135,7 @@ class ImageEditVersionSerializer(serializers.ModelSerializer):
             "output_width", "output_height", "output_file_size",
             "processing_duration_ms", "task_id", "quality_metadata",
             "failure_reason", "is_current", "download_url", "started_at",
-            "finished_at", "created_at", "updated_at",
+            "finished_at", "created_at", "updated_at", "source_version", "from_preview",
         ]
 
     def get_download_url(self, obj) -> str | None:
@@ -478,9 +484,87 @@ class EditorConfigurationSerializer(serializers.Serializer):
     non_destructive = serializers.BooleanField()
     preview_strategy = serializers.CharField()
     renderer_version = serializers.CharField(help_text="Recorded on every saved edit.")
+    preview = serializers.DictField(help_text="Preview bounds, retention and revision rules.")
+    transparency = serializers.DictField(help_text="How alpha and JPEG compositing are handled.")
     render_policy = serializers.DictField(help_text="The active rendering policy (what may run).")
     intents = serializers.ListField(child=serializers.CharField(), help_text="Auto-mode intents.")
     neutral_settings = serializers.DictField(
         child=serializers.FloatField(), help_text="What Reset sets: a render with these values changes nothing.",
     )
     controls = serializers.DictField(child=EditorControlSpecSerializer())
+
+
+class PreviewRequestSerializer(GalleryEditRequestSerializer):
+    """A preview request: the same settings as a saved edit, plus the revision and source it is for."""
+
+    revision = serializers.IntegerField(
+        min_value=1, max_value=2_147_483_647,
+        help_text=(
+            "Chosen by the client, increasing with every change it wants to see. The highest revision is the "
+            "latest; an answer to an older one is stored but reported with is_latest false, and never replaces a "
+            "newer preview. Repeating a revision with the same settings returns the stored preview; with different "
+            "settings it is a 409."
+        ),
+    )
+    source_version = serializers.CharField(
+        required=False, allow_blank=True, max_length=32,
+        help_text="The source_version this request was made against; a 409 stale_source if it is no longer current.",
+    )
+    size = serializers.IntegerField(
+        required=False, min_value=1, max_value=65_535,
+        help_text="Longer edge in pixels (default and maximum are in the editor configuration).",
+    )
+
+
+class PreviewSourceSerializer(serializers.Serializer):
+    width = serializers.IntegerField()
+    height = serializers.IntegerField()
+    full_width = serializers.IntegerField(help_text="Size of the full-resolution image a save renders.")
+    full_height = serializers.IntegerField()
+    has_alpha = serializers.BooleanField()
+
+
+class EditPreviewSerializer(serializers.ModelSerializer):
+    source_version = serializers.CharField(source="source.source_version", read_only=True)
+    source = PreviewSourceSerializer(read_only=True)
+    image_url = serializers.SerializerMethodField(help_text="Authenticated URL of this preview's own image (immutable).")
+    latest_revision = serializers.SerializerMethodField()
+    is_latest = serializers.SerializerMethodField(help_text="False when a newer revision of this image exists.")
+    render = serializers.SerializerMethodField(help_text="What the renderer recorded: outcome, guard reductions, fallbacks, auto recipe.")
+
+    class Meta:
+        model = EditPreview
+        fields = [
+            "id", "enhancement_result", "revision", "source_version", "source", "mode", "requested_adjustments",
+            "applied_adjustments", "render", "output_format", "width", "height", "file_size", "image_url",
+            "latest_revision", "is_latest", "created_at", "expires_at",
+        ]
+        read_only_fields = fields
+
+    def _describe(self, preview):
+        from .previews import describe
+
+        return describe(preview)
+
+    def get_image_url(self, preview) -> str:
+        path = f"/api/enhancements/previews/{preview.pk}/image/"
+        request = self.context.get("request")
+        return request.build_absolute_uri(path) if request else path
+
+    def get_latest_revision(self, preview) -> int:
+        return self._describe(preview)["latest_revision"]
+
+    def get_is_latest(self, preview) -> bool:
+        return self._describe(preview)["is_latest"]
+
+    def get_render(self, preview) -> dict:
+        metadata = preview.render_metadata or {}
+        keys = ("outcome", "renderer_version", "render_policy", "validated", "safety_strength", "safety_reasons",
+                "guard_reductions", "fallback_reasons", "auto", "transparency")
+        return {key: metadata[key] for key in keys if key in metadata}
+
+
+class PreviewListSerializer(serializers.Serializer):
+    source_version = serializers.CharField(help_text="The current version of the enhanced image.")
+    latest_revision = serializers.IntegerField(allow_null=True)
+    previews = EditPreviewSerializer(many=True)

@@ -1,8 +1,8 @@
-# Lightweight enhancement pipeline (Phase A)
+# Lightweight enhancement pipeline (Phases A and B)
 
 Status: implemented and tested on branch `feat/lightweight-enhancement`.
-Phases B (previews, full-resolution saving, versions) and C (optional OpenAI
-advisor) are separate and not part of this document yet.
+Phase A is sections 1-4; Phase B (previews, full-resolution saving, versions)
+is section 5. Phase C (optional OpenAI advisor) is not part of this document yet.
 
 ## 1. Rendering policy
 
@@ -168,3 +168,80 @@ lifted to flat grey, SSIM 0.616): it is no longer touched.
   now `skipped` for stages the policy keeps off; system health no longer
   reports a missing checkpoint for a stage that cannot run.
 * Historical results are unchanged and keep their stored parameters.
+
+## 5. Editor previews and saved versions (Phase B)
+
+### Flow
+
+```
+enhanced result (immutable) --source_version--> bounded lossless copy (once per version)
+   slider move -> POST previews/ {revision, mode, adjustments}   -> small JPEG/PNG, same renderer
+   Apply       -> POST previews/{id}/save/                       -> full-resolution edit version
+                                                                     (Celery task, claim, protected download)
+```
+
+* **Stable source.** `source_version` (hash of the result id, finish time, file
+  size, name and dimensions) names the exact enhanced image. A preview or save
+  that names another version is refused with `409 stale_source`, which carries
+  the current version. The editor always renders from the *enhanced* image,
+  never from an earlier edit, so edits do not stack.
+* **Bounded.** A preview is at most `ENHANCEMENT_PREVIEW_MAX_EDGE` (1600) on its
+  longer edge (`size` 128-max, default 1024) and is rendered from a cached
+  lossless copy of the enhanced image, so moving a slider never decodes the full
+  file. Previews use the same renderer as the full-resolution save; the test
+  suite checks the two agree (mean difference below 2.5 levels, JPEG included).
+* **Revision-specific, never overwritten.** Each preview has its own id, file
+  and `revision` (a client counter). A late answer to an older revision is stored
+  and reported `is_latest: false`; it cannot replace a newer preview. Repeating
+  a revision with the same settings returns the stored preview without
+  rendering (`200`); the same revision with different settings is
+  `409 revision_conflict`.
+* **Atomic.** The file is written first and its row is added under a lock on
+  the result; if the row cannot be added the file is removed. Only the newest
+  `ENHANCEMENT_PREVIEW_KEEP_PER_RESULT` (10) previews are kept; older files are
+  deleted with their rows.
+* **Closing the browser cancels nothing.** A render finishes and is stored; the
+  client re-requests the same revision to fetch it.
+* **Apply / Save.** `POST previews/{id}/save/` (or `results/{id}/edits/` with an
+  optional `source_version`) creates a normal edit version through the existing
+  Celery task. It re-renders at full resolution from the enhanced result with
+  the preview's validated settings. At most one edit per result is active
+  (`400` otherwise). A save is refused (`409`) if the result changed after the
+  preview.
+* **Edit task hardening (found and fixed in this phase, each demonstrated by a
+  failing test first):** edits of a PNG with transparency lost the alpha channel;
+  an edit deleted while rendering was re-created by the worker; a duplicate
+  delivery of the task could render twice. Edits now keep alpha, hidden
+  transparent pixels are not changed, and a claim token with a resume token
+  serialises workers.
+* **Compression.** A saved edit is one more encode of the enhanced image (itself
+  one encode of the pipeline output). Edits do not stack, so it is never a chain
+  of re-compressed JPEGs, but the second generation exists and is documented.
+* **Transparency.** PNG results keep their alpha through every preview and edit.
+  A JPEG result has none: a source with transparency was composited at
+  preprocessing onto `PREPROCESS_TRANSPARENT_BACKGROUND` (white by default),
+  before enhancement. `GET editor/configuration/` states this under `transparency`.
+* **Retention.** Previews expire after `ENHANCEMENT_PREVIEW_RETENTION_HOURS`
+  (24); the Beat task `enhancement.cleanup_previews` (every two hours) deletes expired
+  previews and unused cached sources. It never touches originals, enhanced
+  results or saved edits, which have their own retention. A saved edit survives
+  the deletion of the preview it came from (`from_preview` becomes null). The
+  orphan-file scanner knows the `previews` folder.
+* **Authorisation.** Every preview endpoint is limited to the owner and returns
+  `404` to anyone else, `401` unauthenticated. Preview creation has its own
+  throttle.
+
+### Migration
+
+`0009_edit_previews_and_edit_claims` adds two tables and additive columns to
+`ImageEditVersion`. It was applied only to disposable test databases, never to
+an existing one.
+
+### Evidence and limits
+
+* Tests: `enhancement/test_previews.py` (26) and `test_edit_lifecycle.py`.
+* Preview/full-resolution parity is tested on a generated photo-like texture at
+  900x1400, not on a library of real photographs.
+* Revision ordering under truly concurrent requests is serialised by a row lock
+  on PostgreSQL; the SQLite test database cannot show that, so it is checked
+  separately (see the tracker).

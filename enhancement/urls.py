@@ -13,6 +13,10 @@ from .views import (
     GalleryEditDetailView,
     GalleryEditDownloadView,
     GalleryEditListCreateView,
+    EditPreviewDetailView,
+    EditPreviewImageView,
+    EditPreviewListCreateView,
+    EditPreviewSaveView,
     GalleryEditorConfigurationView,
     ImageCompareView,
     ImageEnhanceView,
@@ -26,6 +30,10 @@ app_name = "enhancement"
 
 urlpatterns = [
     path("editor/configuration/", GalleryEditorConfigurationView.as_view(), name="editor-configuration"),
+    path("results/<int:result_id>/previews/", EditPreviewListCreateView.as_view(), name="preview-list-create"),
+    path("previews/<int:pk>/", EditPreviewDetailView.as_view(), name="preview-detail"),
+    path("previews/<int:pk>/image/", EditPreviewImageView.as_view(), name="preview-image"),
+    path("previews/<int:pk>/save/", EditPreviewSaveView.as_view(), name="preview-save"),
     path("images/<int:image_id>/", ImageEnhanceView.as_view(), name="image-enhance"),
     path("images/<int:image_id>/compare/", ImageCompareView.as_view(), name="image-compare"),
     path("comparisons/", ModelComparisonListView.as_view(), name="comparison-list"),

@@ -210,6 +210,23 @@ PREPROCESS_JPEG_QUALITY = int(os.environ.get("PREPROCESS_JPEG_QUALITY", "95"))
 PREPROCESS_TRANSPARENT_BACKGROUND = os.environ.get("PREPROCESS_TRANSPARENT_BACKGROUND", "#FFFFFF")
 
 AI_RESTORATION_ENABLED = env.bool("AI_RESTORATION_ENABLED", default=True)
+# Editor previews (enhancement/previews.py). A preview is a bounded copy rendered
+# from a cached bounded source of the enhanced image, so a slider never decodes
+# the full-resolution file. Retention is separate from originals and saved
+# outputs: previews are disposable and deleted after ENHANCEMENT_PREVIEW_RETENTION_HOURS
+# (and only the newest ENHANCEMENT_PREVIEW_KEEP_PER_RESULT are kept per image).
+ENHANCEMENT_PREVIEW_DEFAULT_EDGE = env.int("ENHANCEMENT_PREVIEW_DEFAULT_EDGE", default=1024)
+ENHANCEMENT_PREVIEW_MAX_EDGE = env.int("ENHANCEMENT_PREVIEW_MAX_EDGE", default=1600)
+ENHANCEMENT_PREVIEW_JPEG_QUALITY = env.int("ENHANCEMENT_PREVIEW_JPEG_QUALITY", default=88)
+ENHANCEMENT_PREVIEW_RETENTION_HOURS = env.int("ENHANCEMENT_PREVIEW_RETENTION_HOURS", default=24)
+ENHANCEMENT_PREVIEW_KEEP_PER_RESULT = env.int("ENHANCEMENT_PREVIEW_KEEP_PER_RESULT", default=10)
+if not 128 <= ENHANCEMENT_PREVIEW_DEFAULT_EDGE <= ENHANCEMENT_PREVIEW_MAX_EDGE <= 4096:
+    raise ImproperlyConfigured(
+        "ENHANCEMENT_PREVIEW_DEFAULT_EDGE must be between 128 and ENHANCEMENT_PREVIEW_MAX_EDGE (at most 4096)."
+    )
+if ENHANCEMENT_PREVIEW_RETENTION_HOURS < 1 or ENHANCEMENT_PREVIEW_KEEP_PER_RESULT < 1:
+    raise ImproperlyConfigured("Preview retention and keep-per-result must be at least 1.")
+
 # Which enhancement stages may run (enhancement/policy.py). "lightweight_v1"
 # (default): OpenCV and Pillow only; the learned-model settings below
 # (ZERO_DCE_ENABLED, HD_RESTORATION_ENABLED, ...) are ignored. "learned_v1": the
@@ -834,6 +851,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "operations.reap_stuck_jobs",
         "schedule": crontab(minute="*/5"),
     },
+    "cleanup-edit-previews": {
+        "task": "enhancement.cleanup_previews",
+        "schedule": crontab(minute=55, hour="*/2"),
+    },
     "purge-camera-sessions": {
         "task": "camera.purge_old_sessions",
         "schedule": crontab(minute=45, hour=3),
@@ -967,6 +988,7 @@ REST_FRAMEWORK = {
         "verification": "10/hour",
         "verification_status": "60/hour",
         "contact": "5/hour",
+        "edit_preview": "1200/hour",
         "invitation": "30/hour",
         "password_reset": "10/hour",
         "password_change": "10/hour",

@@ -20,6 +20,13 @@ def edited_upload_path(instance, filename):
     return f"users/{instance.owner_id}/edited/{uuid.uuid4().hex}{extension}"
 
 
+def preview_upload_path(instance, filename):
+    """Previews and their cached sources live apart from originals and saved outputs."""
+    extension = Path(filename).suffix.lower()
+    owner_id = getattr(instance, "owner_id", None) or instance.enhancement_result.owner_id
+    return f"users/{owner_id}/previews/{uuid.uuid4().hex}{extension}"
+
+
 class EnhancementLevel(models.TextChoices):
     LOW = "low", "Low"
     MEDIUM = "medium", "Medium"
@@ -219,6 +226,14 @@ class ImageEditVersion(models.Model):
     quality_metadata = models.JSONField(default=dict, blank=True)
     failure_reason = models.TextField(blank=True)
     is_current = models.BooleanField(default=False)
+    # The version of the enhanced image this edit was made from (previews.source_version)
+    # and, when saved from a preview, which one. Only one worker renders an edit.
+    source_version = models.CharField(max_length=32, blank=True)
+    from_preview = models.ForeignKey(
+        "EditPreview", null=True, blank=True, on_delete=models.SET_NULL, related_name="saved_edits",
+    )
+    claim_token = models.CharField(max_length=32, blank=True, default="")
+    claimed_at = models.DateTimeField(null=True, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -243,6 +258,86 @@ class ImageEditVersion(models.Model):
 def delete_edited_image(sender, instance, **kwargs):
     if instance.edited_file:
         instance.edited_file.storage.delete(instance.edited_file.name)
+
+
+class EditPreviewSource(models.Model):
+    """A bounded, lossless copy of one version of an enhanced image, cached for previews.
+
+    Decoded once from the enhanced file (one decode of its compression, no
+    further generation) and reused by every preview of that version, so a slider
+    does not decode a 24-megapixel JPEG per movement. Immutable. ``baseline_file``
+    is the matching bounded copy of the unenhanced photo, made only when a
+    preview needs the intensity blend.
+    """
+
+    enhancement_result = models.ForeignKey(
+        ImageEnhancementResult, on_delete=models.CASCADE, related_name="preview_sources",
+    )
+    source_version = models.CharField(max_length=32)
+    file = models.FileField(upload_to=preview_upload_path)
+    baseline_file = models.FileField(upload_to=preview_upload_path, blank=True)
+    width = models.PositiveIntegerField()
+    height = models.PositiveIntegerField()
+    has_alpha = models.BooleanField(default=False)
+    full_width = models.PositiveIntegerField()
+    full_height = models.PositiveIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["enhancement_result", "source_version"],
+                                    name="enhancement_one_preview_source_per_version"),
+        ]
+
+
+class EditPreview(models.Model):
+    """One rendered, revision-specific preview. Immutable: a newer revision never overwrites an older one.
+
+    ``revision`` is chosen by the client and increases with each change it
+    wants to see. The highest revision of a result is its latest; a response to
+    an older revision that arrives late is stored under its own id and reported
+    as not latest. Retrying the same revision with the same settings returns the
+    stored preview; the same revision with different settings is a conflict.
+    """
+
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="edit_previews")
+    enhancement_result = models.ForeignKey(
+        ImageEnhancementResult, on_delete=models.CASCADE, related_name="edit_previews",
+    )
+    source = models.ForeignKey(EditPreviewSource, on_delete=models.CASCADE, related_name="previews")
+    revision = models.PositiveIntegerField()
+    settings_hash = models.CharField(max_length=64)
+    mode = models.CharField(max_length=8, choices=EditMode.choices)
+    requested_adjustments = models.JSONField(default=dict)
+    applied_adjustments = models.JSONField(default=dict)
+    render_metadata = models.JSONField(default=dict, blank=True)
+    file = models.FileField(upload_to=preview_upload_path)
+    output_format = models.CharField(max_length=10)
+    width = models.PositiveIntegerField()
+    height = models.PositiveIntegerField()
+    file_size = models.PositiveBigIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(db_index=True)
+
+    class Meta:
+        ordering = ["-revision", "-pk"]
+        constraints = [
+            models.UniqueConstraint(fields=["owner", "enhancement_result", "revision"],
+                                    name="enhancement_one_preview_per_revision"),
+        ]
+
+
+@receiver(post_delete, sender=EditPreview)
+def delete_preview_file(sender, instance, **kwargs):
+    if instance.file:
+        instance.file.storage.delete(instance.file.name)
+
+
+@receiver(post_delete, sender=EditPreviewSource)
+def delete_preview_source_files(sender, instance, **kwargs):
+    for field in (instance.file, instance.baseline_file):
+        if field:
+            field.storage.delete(field.name)
 
 
 def comparison_upload_path(instance, filename):

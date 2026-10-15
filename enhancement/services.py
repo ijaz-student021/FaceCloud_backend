@@ -36,6 +36,9 @@ from .controls import (
     CONTROL_NAMES, INTENTS, RENDERER_POLICY_NAME, RENDERER_VERSION, is_neutral,
     recommend_local_adjustments, validate_controls,
 )
+from .editor_source import (
+    attach, read_enhanced_with_alpha, restore_hidden, source_version, transparency_policy, visible_for_measurement,
+)
 from .tone import render_tone
 from .policy import learned_stage_enabled
 from .models import (
@@ -3210,21 +3213,6 @@ def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline
     return rendered, metadata
 
 
-def _read_edited_source(edit):
-    source_file = edit.enhancement_result.enhanced_file
-    if not source_file:
-        raise ValidationError("The enhanced image is unavailable.")
-    source_file.open("rb")
-    try:
-        payload = source_file.read()
-    finally:
-        source_file.close()
-    decoded = cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_COLOR)
-    if decoded is None:
-        raise ValidationError("The enhanced image cannot be decoded safely.")
-    return decoded
-
-
 def _read_preprocessed_baseline(preprocessing):
     """Decode the pre-AI-enhancement image, for the intensity blend slider."""
     if not preprocessing.processed_file:
@@ -3237,78 +3225,140 @@ def _read_preprocessed_baseline(preprocessing):
     return cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_COLOR)
 
 
-def process_image_edit(edit):
-    """Render and persist a gallery edit as a separate immutable file version."""
+class EditSuperseded(Exception):
+    """The edit was deleted (cancelled) or taken over while it rendered; nothing is published."""
+
+
+class EditInProgress(Exception):
+    """Another execution holds a live claim on this edit."""
+
+
+def process_image_edit(edit, token=None, resume_token=""):
+    """Render and persist a gallery edit as a separate immutable file version.
+
+    Only the execution holding the claim renders, and only it publishes, under
+    the row lock: a second delivery of the same task returns without rendering,
+    and an edit deleted (cancelled) while it renders is never brought back.
+    ``token`` is this execution's claim; ``resume_token`` is the claim the
+    caller's previous, ended attempt held, which it may resume.
+
+    The edit is rendered from the enhanced image it was made from
+    (``source_version``), at full resolution, in one pass, and keeps its
+    transparency (see editor_source.py).
+    """
+    token = token or uuid.uuid4().hex
+    lease = timedelta(seconds=settings.ENHANCEMENT_CLAIM_LEASE_SECONDS)
     with transaction.atomic():
-        edit = (
+        locked = (
             ImageEditVersion.objects.select_for_update()
             .select_related("enhancement_result__preprocessing_result", "owner")
-            .get(pk=edit.pk)
+            .filter(pk=edit.pk).first()
         )
+        if locked is None:
+            raise EditSuperseded()
+        edit = locked
         if edit.status == EnhancementStatus.COMPLETED and edit.edited_file:
             return edit
-        if edit.status == EnhancementStatus.CANCELLED:
+        if edit.status in (EnhancementStatus.CANCELLED, EnhancementStatus.FAILED) and edit.finished_at:
             return edit
+        now = timezone.now()
+        if (
+            edit.status == EnhancementStatus.PROCESSING and edit.claim_token and edit.claimed_at
+            and now - edit.claimed_at < lease and not (resume_token and edit.claim_token == resume_token)
+        ):
+            raise EditInProgress()
+        current_version = source_version(edit.enhancement_result)
+        if edit.source_version and edit.source_version != current_version:
+            edit.status = EnhancementStatus.FAILED
+            edit.failure_reason = "The image changed after this edit was requested. Start the edit again."
+            edit.claim_token = ""
+            edit.finished_at = now
+            edit.save(update_fields=["status", "failure_reason", "claim_token", "finished_at", "updated_at"])
+            return edit
+        edit.source_version = edit.source_version or current_version
         edit.status = EnhancementStatus.PROCESSING
-        edit.started_at = edit.started_at or timezone.now()
+        edit.claim_token = token
+        edit.claimed_at = now
+        edit.started_at = edit.started_at or now
         edit.failure_reason = ""
-        edit.save(
-            update_fields=["status", "started_at", "failure_reason", "updated_at"]
-        )
+        edit.save(update_fields=[
+            "status", "claim_token", "claimed_at", "started_at", "failure_reason", "source_version", "updated_at",
+        ])
 
     started = time.perf_counter()
     stored_name = None
     try:
-        source = _read_edited_source(edit)
-        preprocessing = edit.enhancement_result.preprocessing_result
+        result = edit.enhancement_result
+        preprocessing = result.preprocessing_result
+        source, alpha = read_enhanced_with_alpha(result)
         baseline = _read_preprocessed_baseline(preprocessing)
+        requested = dict(edit.requested_adjustments or {})
         rendered, metadata = apply_gallery_adjustments(
-            source,
-            edit.mode,
-            edit.requested_adjustments,
-            baseline=baseline,
+            visible_for_measurement(source, alpha), edit.mode, requested, baseline=baseline,
         )
-        payload, extension, output_format = _encode_output(rendered, preprocessing)
-        source_stem = Path(edit.enhancement_result.output_name).stem
+        rendered = restore_hidden(rendered, source, alpha)
+        output_image = attach(rendered, alpha)
+        payload, extension, output_format = _encode_output(output_image, preprocessing)
+        metadata["encoded_output"] = _verify_encoded_output(payload, output_image, output_format)
+        metadata["transparency"] = {
+            "source_had_alpha": alpha is not None, "preserved": alpha is not None,
+            "policy": transparency_policy(output_format),
+        }
+        metadata["source_version"] = edit.source_version
+        source_stem = Path(result.output_name).stem
         output_name = f"{source_stem}_edit_{edit.pk}{extension}"
         edit.edited_file.save(output_name, ContentFile(payload), save=False)
         stored_name = edit.edited_file.name
-        edit.status = EnhancementStatus.COMPLETED
-        edit.applied_adjustments = metadata["effective"]
-        edit.output_name = output_name
-        edit.output_format = output_format
-        edit.output_width = int(rendered.shape[1])
-        edit.output_height = int(rendered.shape[0])
-        edit.output_file_size = len(payload)
-        edit.processing_duration_ms = max(
-            1, round((time.perf_counter() - started) * 1000)
-        )
-        edit.quality_metadata = metadata
-        edit.failure_reason = ""
-        edit.finished_at = timezone.now()
+        duration = max(1, round((time.perf_counter() - started) * 1000))
         with transaction.atomic():
+            # Publish only as the owner, under the row lock, from the row as it is now.
+            current = ImageEditVersion.objects.select_for_update().filter(pk=edit.pk).first()
+            if (
+                current is None or current.claim_token != token
+                or current.status != EnhancementStatus.PROCESSING
+            ):
+                raise EditSuperseded()
+            current.edited_file.name = stored_name
+            current.status = EnhancementStatus.COMPLETED
+            current.claim_token = ""
+            current.applied_adjustments = metadata["effective"]
+            current.output_name = output_name
+            current.output_format = output_format
+            current.output_width = int(rendered.shape[1])
+            current.output_height = int(rendered.shape[0])
+            current.output_file_size = len(payload)
+            current.processing_duration_ms = duration
+            current.quality_metadata = metadata
+            current.failure_reason = ""
+            current.finished_at = timezone.now()
             ImageEditVersion.objects.filter(
-                enhancement_result=edit.enhancement_result,
-                is_current=True,
-            ).exclude(pk=edit.pk).update(is_current=False)
-            edit.is_current = True
-            edit.save()
-        return edit
+                enhancement_result=current.enhancement_result_id, is_current=True,
+            ).exclude(pk=current.pk).update(is_current=False)
+            current.is_current = True
+            current.save()
+        return current
+    except EditSuperseded:
+        logger.warning("Edit %s was deleted or taken over while it rendered; its output was discarded.", edit.pk)
+        if stored_name:
+            edit.edited_file.storage.delete(stored_name)
+        raise
+    except TRANSIENT_INFRASTRUCTURE_ERRORS:
+        if stored_name:
+            edit.edited_file.storage.delete(stored_name)
+        raise  # the task retries with this claim; its last attempt records the failure
     except Exception as error:
         if stored_name:
             edit.edited_file.storage.delete(stored_name)
-        edit.status = EnhancementStatus.FAILED
-        edit.failure_reason = "The gallery edit could not be rendered safely."
-        edit.processing_duration_ms = max(
-            1, round((time.perf_counter() - started) * 1000)
+        failed = ImageEditVersion.objects.filter(pk=edit.pk, claim_token=token).update(
+            status=EnhancementStatus.FAILED, claim_token="", finished_at=timezone.now(),
+            failure_reason="The gallery edit could not be rendered safely.",
+            processing_duration_ms=max(1, round((time.perf_counter() - started) * 1000)),
         )
-        edit.finished_at = timezone.now()
-        edit.save(
-            update_fields=[
-                "status", "failure_reason", "processing_duration_ms",
-                "finished_at", "updated_at",
-            ]
-        )
+        if not failed:
+            raise EditSuperseded() from error
         if isinstance(error, ValidationError):
             raise
+        logger.exception("Gallery edit %s failed.", edit.pk)
         raise ValidationError("The gallery edit could not be rendered safely.") from error
+
+
