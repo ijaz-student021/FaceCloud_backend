@@ -30,7 +30,7 @@ def noisy_blocks(sigma=14, seed=3):
 
 def context_before_denoise(source, level=EnhancementLevel.HIGH):
     context = EnhancementPipelineContext(
-        source, level, style="natural", allow_biometric_processing=True, use_zero_dce=False,
+        source, level, style="natural", allow_biometric_processing=True,
     )
     for stage in (
         analyze_original_stage, exposure_enhancement_stage,
@@ -68,7 +68,7 @@ class EdgeAwareDenoiseTests(SimpleTestCase):
 
 
 @override_settings(
-    AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=False, ADAPTIVE_DENOISE_ENABLED=True,
+    ADAPTIVE_DENOISE_ENABLED=True,
     ADAPTIVE_DENOISE_BREAKPOINTS=(1.0, 2.0, 3.5, 5.0, 7.0),
     ADAPTIVE_DENOISE_STRENGTHS=(0, 3, 4, 5, 6, 7),
 )

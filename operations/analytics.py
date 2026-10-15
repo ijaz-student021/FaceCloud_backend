@@ -91,9 +91,11 @@ def _model_usage(enhancement_results, limit=TOP_MODELS_LIMIT):
     """Count each restoration/model contributor named in ``algorithm`` strings.
 
     ``applied_parameters["algorithm"]`` is a compound string such as
-    "zero_dce_hybrid_v1+private_gfpgan_v1_4+purescale_safmn_2x"; each
-    "+"-joined component is counted separately so a photo that used three
-    models contributes to all three counts, not one combined label.
+    "opencv_adaptive_restoration_router_v2+dynamic_vivid_boost+identity_guard";
+    each "+"-joined component is counted separately so a photo that used
+    several contributes to every count. Results stored before the learned
+    stages were retired (2026-10-15) still name them, e.g.
+    "zero_dce_hybrid_v1+private_gfpgan_v1_4", and keep being counted.
     """
     counter = Counter()
     values = enhancement_results.exclude(applied_parameters__algorithm="").values_list(

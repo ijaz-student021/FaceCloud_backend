@@ -36,22 +36,15 @@ docker compose -f docker-compose.staging.yml --env-file .env.staging up --build
 | Email | Console (printed in the web and worker logs) | SMTP |
 | TLS | none (localhost only) | Required |
 | Media | Docker volume shared by web and worker; encrypted at rest | Shared, backed-up storage |
-| Models | Mounted read-only from `.runtime/models`; **CPU only** | Pinned checkpoints on the target hardware |
+| Models | YuNet and SFace, mounted read-only from `.runtime/models`; CPU only | Pinned checkpoints (`docs/models/model_manifest.json`) |
 
 ## Models in Docker
 
-Docker on macOS runs Linux containers, so they get **no MPS and no CUDA**.
-The base image has no PyTorch.
-
-* **Run in the base image:** Zero-DCE (OpenCV DNN), EDSR (OpenCV DNN, checksum
-  verified at load), YuNet and SFace.
-* **Off:** HD restoration (NAFNet, Real-ESRGAN), PureVision, PureScale,
-  GFPGAN and colourisation.
-* **GFPGAN:** the `gfpgan` profile builds the PyTorch worker and listens on the
-  `gfpgan` queue on CPU. Enable it with `GFPGAN_ENABLED=True` and
-  `GFPGAN_QUEUE_ENABLED=True`, then
-  `docker compose ... --profile gfpgan up --build`. It is slow on CPU.
-* **Colourisation stays disabled.**
+Only two models are used, both for faces and both run by OpenCV DNN in the base
+image: YuNet (detection) and SFace (identity features). Enhancement is OpenCV and
+Pillow. There is no PyTorch, no GPU worker and no separate model queue; the
+learned enhancement models were retired
+(`docs/enhancement/retired-capabilities.md`). The worker serves the default queue.
 
 ## Checks after start
 

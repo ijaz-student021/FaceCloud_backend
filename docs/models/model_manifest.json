@@ -1,0 +1,16 @@
+{
+  "generated_at": "2026-10-15T07:32:08+00:00",
+  "note": "File names, sizes and SHA-256 checksums only. The model files themselves are not in Git.",
+  "roots": {
+    "models": {
+      "face_recognition_sface_2021dec.onnx": {
+        "size": 38696353,
+        "sha256": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
+      },
+      "yunet_s_dynamic.onnx": {
+        "size": 237823,
+        "sha256": "daede24002cc8590f457998cc5e6c9e8b82f45f6bd969506a8913cd4ed10a2d3"
+      }
+    }
+  }
+}

@@ -274,7 +274,7 @@ validation remains authoritative.
 - Storage currently defaults to the local filesystem; private S3 storage is a later deployment feature.
 - A 2 GB upload also requires compatible proxy and hosting limits.
 - Upload completion does not mean enhancement completion.
-- Resizing, standardization, Zero-DCE, quality assessment, face detection, and identity grouping belong to subsequent processing features.
+- Resizing, standardization, enhancement, quality assessment, face detection, and identity grouping belong to subsequent processing features.
 - Celery background preprocessing is complete for multiple and ZIP batches; live
   percentage/ETA updates remain a separate planned feature.
 

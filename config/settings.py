@@ -125,8 +125,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'config.wsgi.application'
-# Keep the existing BigAutoField schema explicit for both Django 6 web
-# processes and the isolated Django 5.2 GFPGAN worker.
+# Keep the existing BigAutoField schema explicit.
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 
@@ -209,7 +208,6 @@ PREPROCESS_MAX_HEIGHT = int(os.environ.get("PREPROCESS_MAX_HEIGHT", "4096"))
 PREPROCESS_JPEG_QUALITY = int(os.environ.get("PREPROCESS_JPEG_QUALITY", "95"))
 PREPROCESS_TRANSPARENT_BACKGROUND = os.environ.get("PREPROCESS_TRANSPARENT_BACKGROUND", "#FFFFFF")
 
-AI_RESTORATION_ENABLED = env.bool("AI_RESTORATION_ENABLED", default=True)
 # Editor previews (enhancement/previews.py). A preview is a bounded copy rendered
 # from a cached bounded source of the enhanced image, so a slider never decodes
 # the full-resolution file. Retention is separate from originals and saved
@@ -264,117 +262,16 @@ if min(OPENAI_ADVISOR_MAX_ATTEMPTS, OPENAI_ADVISOR_MAX_CONCURRENCY, OPENAI_ADVIS
 if OPENAI_ADVISOR_TIMEOUT_SECONDS * OPENAI_ADVISOR_MAX_ATTEMPTS > OPENAI_ADVISOR_DEADLINE_SECONDS * 2:
     raise ImproperlyConfigured("OPENAI_ADVISOR_DEADLINE_SECONDS is too short for the timeout and attempts configured.")
 
-# Which enhancement stages may run (enhancement/policy.py). "lightweight_v1"
-# (default): OpenCV and Pillow only; the learned-model settings below
-# (ZERO_DCE_ENABLED, HD_RESTORATION_ENABLED, ...) are ignored. "learned_v1": the
-# earlier behaviour, where each of those settings decides. Adapters and
-# checkpoints stay installed either way, so the change is reversible.
-ENHANCEMENT_RENDER_POLICY = env("ENHANCEMENT_RENDER_POLICY", default="lightweight_v1")
-if ENHANCEMENT_RENDER_POLICY not in ("lightweight_v1", "learned_v1"):
-    raise ImproperlyConfigured(
-        "ENHANCEMENT_RENDER_POLICY must be lightweight_v1 or learned_v1, "
-        f"not {ENHANCEMENT_RENDER_POLICY!r}."
-    )
-
-AI_RESTORATION_EDSR_MODEL_PATH = env(
-    "AI_RESTORATION_EDSR_MODEL_PATH",
-    default=str(BASE_DIR / ".runtime" / "models" / "EDSR_x2.pb"),
-)
-# The EDSR file must match this SHA-256 (docs/gpu/model_manifest.json): any
-# other file at the path is refused at load time, not only by the offline
-# manifest check.
-AI_RESTORATION_EDSR_MODEL_SHA256 = env(
-    "AI_RESTORATION_EDSR_MODEL_SHA256",
-    default="585623221baa070279a0d1e7e113a4c3faba0f318ca7fdd9a65d9afc0763d9b4",
-)
-AI_RESTORATION_SCALE = env.int("AI_RESTORATION_SCALE", default=2)
-AI_RESTORATION_MAX_INPUT_EDGE = env.int(
-    "AI_RESTORATION_MAX_INPUT_EDGE",
-    default=480,
-)
-AI_RESTORATION_MAX_OUTPUT_PIXELS = env.int(
-    "AI_RESTORATION_MAX_OUTPUT_PIXELS", default=20_000_000
-)
-HD_RESTORATION_ENABLED = env.bool("HD_RESTORATION_ENABLED", default=False)
-NAFNET_DEBLUR_ENABLED = env.bool("NAFNET_DEBLUR_ENABLED", default=False)
-NAFNET_MODEL_PATH = env(
-    "NAFNET_MODEL_PATH",
-    default=str(BASE_DIR / ".runtime" / "models" / "NAFNet-GoPro-width64.pth"),
-)
-NAFNET_MODEL_SHA256 = env(
-    "NAFNET_MODEL_SHA256",
-    default="329d3ab4077b8d6b7ff61de376e483714667960bf85be027bf4335cda701196f",
-)
-REALESRGAN_MODEL_PATH = env(
-    "REALESRGAN_MODEL_PATH",
-    default=str(BASE_DIR / ".runtime" / "models" / "RealESRGAN_x4plus.pth"),
-)
-REALESRGAN_MODEL_SHA256 = env(
-    "REALESRGAN_MODEL_SHA256",
-    default="4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1",
-)
-HD_RESTORATION_DEVICE = env("HD_RESTORATION_DEVICE", default="auto")
-HD_RESTORATION_OUTPUT_SCALE = env.int("HD_RESTORATION_OUTPUT_SCALE", default=2)
-REALESRGAN_OUTPUT_BLEND = env.float("REALESRGAN_OUTPUT_BLEND", default=0.35)
-HD_RESTORATION_TILE_SIZE = env.int("HD_RESTORATION_TILE_SIZE", default=256)
-HD_RESTORATION_TILE_OVERLAP = env.int("HD_RESTORATION_TILE_OVERLAP", default=24)
-NAFNET_MAX_MEAN_CHROMA_SHIFT = env.float("NAFNET_MAX_MEAN_CHROMA_SHIFT", default=8.0)
-NAFNET_MAX_MEAN_LUMINANCE_SHIFT = env.float("NAFNET_MAX_MEAN_LUMINANCE_SHIFT", default=30.0)
-HD_RESTORATION_MAX_NATIVE_OUTPUT_PIXELS = env.int(
-    "HD_RESTORATION_MAX_NATIVE_OUTPUT_PIXELS", default=20_000_000
-)
-# Real-ESRGAN is a 4x model, but its tiles are reduced to HD_RESTORATION_OUTPUT_SCALE
-# before they are accumulated, so memory follows the output, not the native 4x
-# result. This bounds that output; the native limit above still applies when the
-# output scale is 4.
-HD_RESTORATION_MAX_OUTPUT_PIXELS = env.int("HD_RESTORATION_MAX_OUTPUT_PIXELS", default=20_000_000)
-# Out-of-memory handling for every tiled model (enhancement/runtime.py): each
-# retry halves the tile edge, at most this many times and never below the minimum.
-# After that the stage gives up and the pipeline keeps its last safe image.
-ENHANCEMENT_OOM_MAX_RETRIES = env.int("ENHANCEMENT_OOM_MAX_RETRIES", default=2)
-ENHANCEMENT_MIN_TILE_SIZE = env.int("ENHANCEMENT_MIN_TILE_SIZE", default=64)
-ZERO_DCE_ENABLED = env.bool("ZERO_DCE_ENABLED", default=True)
-ZERO_DCE_MODEL_PATH = env(
-    "ZERO_DCE_MODEL_PATH",
-    default=str(BASE_DIR / ".runtime" / "models" / "zero_dce_epoch99.onnx"),
-)
-# The official Zero-DCE Epoch99 weights exported by scripts/export_zero_dce_onnx.py
-# under PyTorch 2.13.0 (docs/model-licenses/zero-dce-provenance.md). A file that
-# does not match is not loaded, and the OpenCV correction is used instead. Point
-# ZERO_DCE_MODEL_PATH at the private curve model only together with its own checksum.
-ZERO_DCE_MODEL_SHA256 = env(
-    "ZERO_DCE_MODEL_SHA256",
-    default="e5cb6f921c7997f89105f6aa86242f30ff3f5379f5c6cd5282eb2aada14dae14",
-)
-ZERO_DCE_MAX_INFERENCE_EDGE = env.int("ZERO_DCE_MAX_INFERENCE_EDGE", default=1024)
-ZERO_DCE_FULL_RESOLUTION_TILE_EDGE = env.int(
-    "ZERO_DCE_FULL_RESOLUTION_TILE_EDGE", default=1024
-)
-# Photos this dark cannot be safely brightened within the normal
-# per-level guard limits, and their residual sensor noise is out of
-# distribution for PureVision/PureScale (trained on compression artifacts,
-# not extreme low-light grain) -- those models hallucinate texture on
-# input this noisy instead of cleaning it. Below this threshold, the
-# exposure guard is allowed a much larger luminance gain, and PureVision/
-# PureScale are skipped entirely regardless of their own enabled flags.
+# Photos this dark cannot be safely brightened within the normal per-level
+# guard limits. Below this mean luminance the exposure guard is allowed a much
+# larger luminance gain (only when the person asked for a lift: automatic mode
+# does not brighten dark photos at all).
 EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD = env.float(
     "EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD", default=25.0
 )
 EXTREME_LOW_LIGHT_MAX_LUMINANCE_GAIN = env.float(
     "EXTREME_LOW_LIGHT_MAX_LUMINANCE_GAIN", default=90.0
 )
-EXTREME_LOW_LIGHT_MODEL_STRENGTH = env.float(
-    "EXTREME_LOW_LIGHT_MODEL_STRENGTH", default=0.85
-)
-
-# Colour in very dark photos: the learned brightening keeps only the source's
-# colour channels (an identity/skin-tone protection), and a near-black source
-# has almost none, so the result looks grey. This lifts the photo's own smoothed
-# colour in proportion to how much it was brightened, capped at this gain (the
-# effective boost is its square root, so 9 means at most 3x). It never uses the
-# model's colours, which show false green/magenta casts. 1 or less switches it off.
-ENHANCEMENT_DARK_COLOUR_GAIN_MAX = env.float("ENHANCEMENT_DARK_COLOUR_GAIN_MAX", default=9.0)
-
 # Identity-preserving enhancement: after the pipeline, the final image's faces
 # are compared to the source's faces with the same SFace embeddings used for
 # identity grouping. If similarity falls below the minimum, the result is
@@ -399,9 +296,6 @@ IDENTITY_GUARD_MAX_FACES = env.int("IDENTITY_GUARD_MAX_FACES", default=5)
 IDENTITY_GUARD_MAX_EDGE = env.int("IDENTITY_GUARD_MAX_EDGE", default=1024)
 IDENTITY_GUARD_MIN_FACE_EDGE = env.int("IDENTITY_GUARD_MIN_FACE_EDGE", default=40)
 
-# Turned on once the guarded restoration pipeline was completed (see the
-# GFPGAN structural-similarity guard below); was off while that rollout was
-# still being validated.
 ADAPTIVE_DENOISE_ENABLED = env.bool("ADAPTIVE_DENOISE_ENABLED", default=True)
 # Denoise strength (the non-local-means ``h``) by measured noise score. Calibrated
 # against clean originals with synthetic Gaussian noise on four photographs
@@ -443,142 +337,6 @@ DENOISE_MIN_NOISE_REDUCTION = env.float("DENOISE_MIN_NOISE_REDUCTION", default=0
 DENOISE_MIN_RESIDUAL_WHITENESS = env.float("DENOISE_MIN_RESIDUAL_WHITENESS", default=3.0)
 DENOISE_MIN_DETAIL_RETENTION = env.float("DENOISE_MIN_DETAIL_RETENTION", default=0.85)
 DENOISE_MIN_EDGE_RETENTION = env.float("DENOISE_MIN_EDGE_RETENTION", default=0.85)
-# The company has confirmed a private commercial license for the supplied
-# checkpoint.  The artifact and license evidence remain outside source control.
-# Portable source defaults stay disabled because the licensed checkpoint is not
-# distributed with the repository. A deployment enables both switches only
-# after the isolated worker and checkpoint preflight pass.
-GFPGAN_ENABLED = env.bool("GFPGAN_ENABLED", default=False)
-GFPGAN_QUEUE_ENABLED = env.bool("GFPGAN_QUEUE_ENABLED", default=False)
-GFPGAN_QUEUE_NAME = env("GFPGAN_QUEUE_NAME", default="gfpgan")
-GFPGAN_MODEL_PATH = env(
-    "GFPGAN_MODEL_PATH",
-    default=str(BASE_DIR / ".runtime" / "models" / "gfpgan" / "GFPGANv1.4.pth"),
-)
-GFPGAN_MODEL_SHA256 = env(
-    "GFPGAN_MODEL_SHA256",
-    default="e2cd4703ab14f4d01fd1383a8a8b266f9a5833dacee8e6a79d3bf21a1b6be5ad",
-)
-GFPGAN_DETECTION_MODEL_PATH = Path(
-    env(
-        "GFPGAN_DETECTION_MODEL_PATH",
-        default=str(
-            BASE_DIR / "gfpgan" / "weights" / "detection_Resnet50_Final.pth"
-        ),
-    )
-)
-GFPGAN_DETECTION_MODEL_SHA256 = env(
-    "GFPGAN_DETECTION_MODEL_SHA256",
-    default="6d1de9c2944f2ccddca5f5e010ea5ae64a39845a86311af6fdf30841b0a5a16d",
-)
-GFPGAN_PARSING_MODEL_PATH = Path(
-    env(
-        "GFPGAN_PARSING_MODEL_PATH",
-        default=str(BASE_DIR / "gfpgan" / "weights" / "parsing_parsenet.pth"),
-    )
-)
-GFPGAN_PARSING_MODEL_SHA256 = env(
-    "GFPGAN_PARSING_MODEL_SHA256",
-    default="3d558d8d0e42c20224f13cf5a29c79eba2d59913419f945545d8cf7b72920de2",
-)
-GFPGAN_ARCH = env("GFPGAN_ARCH", default="clean")
-GFPGAN_CHANNEL_MULTIPLIER = env.int("GFPGAN_CHANNEL_MULTIPLIER", default=2)
-GFPGAN_DEVICE = env("GFPGAN_DEVICE", default="auto")
-GFPGAN_RESTORATION_WEIGHT = env.float(
-    "GFPGAN_RESTORATION_WEIGHT", default=0.30
-)
-GFPGAN_OUTPUT_BLEND = env.float("GFPGAN_OUTPUT_BLEND", default=0.25)
-GFPGAN_MIN_OUTPUT_BLEND = env.float("GFPGAN_MIN_OUTPUT_BLEND", default=0.08)
-GFPGAN_ALLOW_MILD_BLUR = env.bool("GFPGAN_ALLOW_MILD_BLUR", default=True)
-GFPGAN_MAX_FACES = env.int("GFPGAN_MAX_FACES", default=5)
-GFPGAN_MAX_INPUT_PIXELS = env.int(
-    "GFPGAN_MAX_INPUT_PIXELS", default=12_000_000
-)
-# PureScale and PureVision are third-party, non-commercially licensed
-# (CC BY-NC-SA 4.0) checkpoints from limitlesslab/AI-upscaling-models. They
-# stay disabled by default until visual QA and a license review clear them
-# for the intended deployment (see docs/features/purescale-purevision.md).
-PURESCALE_ENABLED = env.bool("PURESCALE_ENABLED", default=False)
-PURESCALE_MODEL_PATH = env(
-    "PURESCALE_MODEL_PATH",
-    default=str(BASE_DIR / ".runtime" / "models" / "PureScale_2x.pth"),
-)
-PURESCALE_MODEL_SHA256 = env(
-    "PURESCALE_MODEL_SHA256",
-    default="c8fb698766f502be6409cf3cee1a69d63381c6eebf3ff5de7df6ed87f6c9a5cb",
-)
-PURESCALE_DEVICE = env("PURESCALE_DEVICE", default="auto")
-PURESCALE_TILE_SIZE = env.int("PURESCALE_TILE_SIZE", default=256)
-PURESCALE_TILE_OVERLAP = env.int("PURESCALE_TILE_OVERLAP", default=24)
-PURESCALE_MAX_OUTPUT_PIXELS = env.int(
-    "PURESCALE_MAX_OUTPUT_PIXELS", default=20_000_000
-)
-
-PUREVISION_ENABLED = env.bool("PUREVISION_ENABLED", default=False)
-PUREVISION_MODEL_PATH = env(
-    "PUREVISION_MODEL_PATH",
-    default=str(BASE_DIR / ".runtime" / "models" / "PureVision_1x.pth"),
-)
-PUREVISION_MODEL_SHA256 = env(
-    "PUREVISION_MODEL_SHA256",
-    default="3c3bec2111d0f7c3926f3171f37ce28e72502b744e084c566d8960c06a6a06a3",
-)
-PUREVISION_DEVICE = env("PUREVISION_DEVICE", default="auto")
-PUREVISION_TILE_SIZE = env.int("PUREVISION_TILE_SIZE", default=256)
-PUREVISION_TILE_OVERLAP = env.int("PUREVISION_TILE_OVERLAP", default=24)
-PUREVISION_MAX_MEAN_CHROMA_SHIFT = env.float(
-    "PUREVISION_MAX_MEAN_CHROMA_SHIFT", default=8.0
-)
-PUREVISION_MAX_MEAN_LUMINANCE_SHIFT = env.float(
-    "PUREVISION_MAX_MEAN_LUMINANCE_SHIFT", default=30.0
-)
-
-# Automatic colorization (richzhang/colorization SIGGRAPH17, BSD-2-Clause).
-# Only ever predicts colour (ab) channels; the source luminance channel is
-# always preserved exactly. Disabled by default pending rollout QA, and only
-# runs automatically when the source image is detected as near-grayscale.
-COLORIZATION_ENABLED = env.bool("COLORIZATION_ENABLED", default=False)
-COLORIZATION_MODEL_PATH = env(
-    "COLORIZATION_MODEL_PATH",
-    default=str(BASE_DIR / ".runtime" / "models" / "colorization_siggraph17.pth"),
-)
-COLORIZATION_MODEL_SHA256 = env(
-    "COLORIZATION_MODEL_SHA256",
-    default="df00044c0a4d7c3edcecf6f75437ce346a66e7a42612d9b968e1a7e17dbc6f66",
-)
-COLORIZATION_DEVICE = env("COLORIZATION_DEVICE", default="auto")
-COLORIZATION_MAX_INFERENCE_EDGE = env.int("COLORIZATION_MAX_INFERENCE_EDGE", default=768)
-COLORIZATION_MAX_INPUT_PIXELS = env.int(
-    "COLORIZATION_MAX_INPUT_PIXELS", default=30_000_000
-)
-COLORIZATION_GRAYSCALE_CHROMA_THRESHOLD = env.float(
-    "COLORIZATION_GRAYSCALE_CHROMA_THRESHOLD", default=3.0
-)
-COLORIZATION_MAX_MEAN_LUMINANCE_SHIFT = env.float(
-    "COLORIZATION_MAX_MEAN_LUMINANCE_SHIFT", default=6.0
-)
-
-# Guards the optional GFPGAN face-restoration candidate: accepted only if it
-# stays structurally close to the source (see enhancement/services.py
-# _face_restoration_guard).
-GFPGAN_MIN_STRUCTURAL_SIMILARITY = env.float(
-    "GFPGAN_MIN_STRUCTURAL_SIMILARITY", default=0.90
-)
-GFPGAN_MAX_MEAN_ABSOLUTE_CHANGE = env.float(
-    "GFPGAN_MAX_MEAN_ABSOLUTE_CHANGE", default=12.0
-)
-GFPGAN_MAX_P95_ABSOLUTE_CHANGE = env.float(
-    "GFPGAN_MAX_P95_ABSOLUTE_CHANGE", default=42.0
-)
-GFPGAN_MAX_CHROMA_SHIFT = env.float("GFPGAN_MAX_CHROMA_SHIFT", default=3.0)
-GFPGAN_MAX_HIGHLIGHT_CLIPPING_GROWTH = env.float(
-    "GFPGAN_MAX_HIGHLIGHT_CLIPPING_GROWTH", default=1.0
-)
-# Generative face restoration only runs when the result can be compared with a
-# source face (consent, an identity model, and a face reliable enough to embed).
-# The explicit AI Max style is exempt. See enhancement/services.py
-# _face_restoration_gate.
-GFPGAN_REQUIRE_IDENTITY_CHECK = env.bool("GFPGAN_REQUIRE_IDENTITY_CHECK", default=True)
 # Face-region fidelity (enhancement/face_fidelity.py): each detected face is
 # compared with the image as it was before restoration and sharpening, and
 # blended back toward it when it leaves these limits. Texture ratio is fine-detail
@@ -630,12 +388,6 @@ ENHANCEMENT_MAX_ENCODING_ERROR = env.float("ENHANCEMENT_MAX_ENCODING_ERROR", def
 ENHANCEMENT_CLAIM_LEASE_SECONDS = env.int("ENHANCEMENT_CLAIM_LEASE_SECONDS", default=1800)
 if ENHANCEMENT_CLAIM_LEASE_SECONDS < 60:
     raise ImproperlyConfigured("ENHANCEMENT_CLAIM_LEASE_SECONDS must be at least 60 seconds.")
-ENHANCEMENT_MODEL_LUMINANCE_THRESHOLD = env.float(
-    "ENHANCEMENT_MODEL_LUMINANCE_THRESHOLD", default=0.45
-)
-ENHANCEMENT_MODEL_LUMINANCE_TARGET = env.float(
-    "ENHANCEMENT_MODEL_LUMINANCE_TARGET", default=0.60
-)
 ENHANCEMENT_MAX_HIGHLIGHT_CLIPPING_PERCENT = env.float(
     "ENHANCEMENT_MAX_HIGHLIGHT_CLIPPING_PERCENT", default=5.0
 )
@@ -829,11 +581,6 @@ if CELERY_BROKER_TRANSPORT_OPTIONS["visibility_timeout"] <= CELERY_TASK_TIME_LIM
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 SYSTEM_HEALTH_TIMEOUT_SECONDS = env.float("SYSTEM_HEALTH_TIMEOUT_SECONDS", default=1.0)
 FACECLOUD_VERSION = env("FACECLOUD_VERSION", default="dev")
-if GFPGAN_QUEUE_ENABLED:
-    CELERY_TASK_ROUTES = {
-        "enhancement.process_image": {"queue": GFPGAN_QUEUE_NAME},
-        "enhancement.process_batch": {"queue": GFPGAN_QUEUE_NAME},
-    }
 # A "processing" job that has not changed for the task time limit plus this
 # grace has lost its worker; "queued" jobs may legitimately wait much longer.
 # See operations/jobs.py.

@@ -20,8 +20,7 @@ rest of Feature 45 were already in place; see `docs/FEATURES.md`.
 - **`requirements-loadtest.txt`** and **`loadtest/locustfile.py`** -- Locust
   pulls in gevent and its own Flask-based web UI, unrelated to the Django
   app's runtime, so it gets its own isolated environment, the same way
-  `requirements-gfpgan.txt` and `requirements-training.txt` do for the GPU
-  worker:
+  `requirements-training.txt` does for the model-training environment:
 
   ```bash
   python -m venv .runtime/venvs/loadtest
@@ -109,8 +108,7 @@ platform grows.
   flaking unrelated jobs) and is future work, not this pass.
 - **Live-camera and WebSocket load testing.** No live-camera feature exists
   yet (Features 36-40 are Backlog), so there is nothing to load test there.
-- **GPU-pipeline load testing** (enhancement, face validation, duplicate
-  detection under concurrency). These need the rented GPU session to be
-  meaningful at all -- CPU-only enhancement is already known to be far
-  slower than real-time, so load numbers from this machine would not
-  reflect the production path. Tracked as part of the GPU-day plan.
+- **Pipeline load testing** (enhancement, face validation, duplicate
+  detection under concurrency). Not done. There is no GPU path any more (the
+  learned models were retired), so the production path is the classical
+  pipeline on CPU and numbers from a comparable CPU host would be meaningful.

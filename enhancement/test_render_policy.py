@@ -1,42 +1,32 @@
-"""The lightweight rendering policy: no learned stage runs, nothing falls back to one.
+"""The enhancement pipeline is OpenCV and Pillow only; the learned models are retired.
 
-Every learned adapter's entry point is replaced by a function that fails the
-test if it is called, and every learned setting is switched ON, so a stage can
-only stay quiet because the policy keeps it off.
+These tests keep it that way: the adapters and their settings are gone, a new
+result never mentions a retired stage, the retirement is reported explicitly
+(never as a "fallback" and never by substituting another algorithm), and the
+things that were *not* retired (YuNet, SFace, the quality and face guards) still run.
 """
-from contextlib import ExitStack
+import importlib.util
 from functools import lru_cache
-from unittest.mock import patch
 
 import cv2
-import numpy as np
+from django.conf import settings
 from django.test import SimpleTestCase, override_settings
 
-from . import policy
+from . import checks, policy
 from .models import EnhancementLevel
 from .services import enhance_bgr
 from .test_blur_measure import blurred_photo, darkened, dead_leaves, resized
 
-ALL_LEARNED_ON = {flag: True for flag in policy.LEARNED_STAGES}
-ADAPTERS = (
-    "enhancement.services.enhance_with_zero_dce",
-    "enhancement.services._load_edsr_model",
-    "enhancement.services.deblur_with_nafnet",
-    "enhancement.services.upscale_with_realesrgan",
-    "enhancement.services.restore_faces",
-    "enhancement.services.restore_with_purevision",
-    "enhancement.services.upscale_with_purescale",
-    "enhancement.services.colorize_with_siggraph17",
+RETIRED_MODULES = ("zero_dce", "gfpgan", "hd_restoration", "purescale", "purevision", "colorization", "runtime")
+RETIRED_ALGORITHM_PARTS = ("private_gfpgan", "realesrgan", "nafnet", "purescale", "purevision", "colorization", "zero_dce")
+RETIRED_PARAMETER_KEYS = (
+    "zero_dce", "restoration", "hd_restoration", "purevision", "purescale", "face_restoration", "colorization",
+    "discarded_stage_reports",
 )
-
-
-def forbid_every_learned_adapter():
-    stack = ExitStack()
-    mocks = [
-        stack.enter_context(patch(name, side_effect=AssertionError(f"{name} must not run under lightweight_v1")))
-        for name in ADAPTERS
-    ]
-    return stack, mocks
+RETAINED_STAGES = {
+    "analyze_original", "exposure_enhancement", "output_guard_a", "measure_post_exposure_noise", "adaptive_denoise",
+    "sharpen", "output_guard_b", "face_fidelity", "dynamic_style", "identity_guard", "validate_output",
+}
 
 
 @lru_cache(maxsize=1)
@@ -58,124 +48,119 @@ PHOTOS = {
 }
 
 
-@override_settings(**ALL_LEARNED_ON, IDENTITY_GUARD_ENABLED=True)
-class LightweightPolicyTests(SimpleTestCase):
-    def test_the_default_policy_is_lightweight(self):
-        from django.conf import settings
+class RetiredCodeIsGoneTests(SimpleTestCase):
+    def test_the_adapters_are_not_importable(self):
+        for name in RETIRED_MODULES:
+            with self.subTest(name):
+                self.assertIsNone(importlib.util.find_spec(f"enhancement.{name}"), f"enhancement.{name} came back")
 
-        self.assertEqual(settings.ENHANCEMENT_RENDER_POLICY, "lightweight_v1")
-        self.assertEqual(policy.active_policy(), "lightweight_v1")
+    def test_the_retired_settings_no_longer_exist(self):
+        present = [name for name in dir(settings) if name.isupper() and (
+            name.startswith(policy.RETIRED_SETTING_PREFIXES) or name in policy.RETIRED_SETTING_NAMES)]
+        self.assertEqual(present, [])
 
-    def test_no_learned_adapter_runs_for_any_photo_level_or_style(self):
-        stack, mocks = forbid_every_learned_adapter()
-        with stack:
-            for name, make in PHOTOS.items():
-                for level in ("auto", "high"):
-                    for style in ("natural", "ai_max"):
-                        with self.subTest(photo=name, level=level, style=style):
-                            _out, _level, parameters = enhance_bgr(make(), level, style=style)
-                            self.assertEqual(parameters["render_policy"]["name"], "lightweight_v1")
-                            self.assertEqual(parameters["algorithm"].split("+")[0], "opencv_adaptive_restoration_router_v2")
-                            for part in ("private_gfpgan", "realesrgan", "nafnet", "purescale", "purevision",
-                                         "colorization", "zero_dce"):
-                                self.assertNotIn(part, parameters["algorithm"])
-        for mock in mocks:
-            mock.assert_not_called()
+    def test_the_checkpoints_are_no_longer_expected_anywhere(self):
+        from operations.services import check_models
 
-    def test_a_stage_the_policy_keeps_off_is_never_reported_as_a_fallback_or_a_failure(self):
-        stack, _mocks = forbid_every_learned_adapter()
-        with stack:
-            _out, _level, parameters = enhance_bgr(PHOTOS["grayscale"](), "auto")
-        for report in parameters["stage_reports"]:
-            self.assertNotIn(report["status"], {"fallback", "failed"}, report)
-        self.assertFalse(parameters["colorization"]["applied"])
-        self.assertTrue(parameters["colorization"]["requested"])  # a grayscale source asks for it
-        self.assertFalse(any("unavailable" in warning for warning in parameters["warnings"]), parameters["warnings"])
+        health = check_models()
+        self.assertEqual(sorted(health["models"]), ["sface", "yunet"])
+        self.assertEqual(health["retired"], sorted(policy.RETIRED_CAPABILITIES))
 
-    def test_the_policy_is_recorded_with_what_it_overrode(self):
-        stack, _mocks = forbid_every_learned_adapter()
-        with stack:
-            _out, _level, parameters = enhance_bgr(PHOTOS["sharp"](), "auto")
+
+class LightweightPipelineTests(SimpleTestCase):
+    @override_settings(IDENTITY_GUARD_ENABLED=True)
+    def test_a_result_never_mentions_a_retired_stage_whatever_the_photo_level_or_style(self):
+        for name, make in PHOTOS.items():
+            for level in ("auto", "high"):
+                for style in ("natural", "ai_max"):
+                    with self.subTest(photo=name, level=level, style=style):
+                        _out, _level, parameters = enhance_bgr(make(), level, style=style)
+                        self.assertEqual(parameters["render_policy"]["name"], "lightweight_v1")
+                        self.assertEqual(parameters["algorithm"].split("+")[0], "opencv_adaptive_restoration_router_v2")
+                        for part in RETIRED_ALGORITHM_PARTS:
+                            self.assertNotIn(part, parameters["algorithm"])
+                        for key in RETIRED_PARAMETER_KEYS:
+                            self.assertNotIn(key, parameters)
+                        self.assertEqual(parameters["pipeline_version"], "staged_candidate_pipeline_v5")
+                        self.assertEqual(parameters["resolution_contract"]["pixel_grid_source"], "original_pixel_grid")
+                        stages = {report["stage"] for report in parameters["stage_reports"]}
+                        self.assertLessEqual(stages, RETAINED_STAGES)
+                        for report in parameters["stage_reports"]:
+                            # A candidate the denoise guard rejects is a normal outcome; a failure or a
+                            # "fallback" (something else standing in for a model) is not.
+                            self.assertNotIn(report["status"], {"failed", "fallback"}, report)
+                            if report["status"] == "rejected":
+                                self.assertEqual(report["stage"], "adaptive_denoise", report)
+
+    def test_the_retirement_is_recorded_on_every_result_and_is_not_a_fallback(self):
+        _out, _level, parameters = enhance_bgr(PHOTOS["grayscale"](), "auto")
         recorded = parameters["render_policy"]
-        self.assertFalse(recorded["learned_stages_allowed"])
         self.assertFalse(recorded["heavy_restoration_available"])
-        self.assertEqual(recorded["configured_on_but_disabled_by_policy"], sorted(policy.LEARNED_STAGES.values()))
-        flags = parameters["feature_flags"]
-        self.assertFalse(any(flags[key] for key in (
-            "gfpgan_enabled", "hd_restoration_enabled", "nafnet_deblur_enabled", "purevision_enabled",
-            "purescale_enabled", "colorization_enabled")))
+        self.assertEqual({item["key"] for item in recorded["retired_capabilities"]}, set(policy.RETIRED_CAPABILITIES))
+        self.assertTrue(all(item["status"] == "retired" and item["retired_on"] == "2026-10-15"
+                            for item in recorded["retired_capabilities"]))
+        self.assertEqual(recorded["documentation"], "docs/enhancement/retired-capabilities.md")
+        self.assertFalse(any("unavailable" in warning for warning in parameters["warnings"]), parameters["warnings"])
+        self.assertEqual(set(parameters["feature_flags"]),
+                         {"adaptive_denoise_enabled", "identity_guard_enabled", "face_fidelity_enabled"})
 
-    def test_ai_max_says_what_it_did_and_what_it_could_not(self):
-        stack, _mocks = forbid_every_learned_adapter()
-        with stack:
-            _out, level, parameters = enhance_bgr(PHOTOS["blurred"](), "auto", style="ai_max")
+    def test_ai_max_says_what_it_did_and_what_it_cannot_do(self):
+        _out, level, parameters = enhance_bgr(PHOTOS["blurred"](), "auto", style="ai_max")
         self.assertEqual(level, EnhancementLevel.HIGH)
         self.assertFalse(parameters["ai_max"]["heavy_restoration_available"])
-        self.assertIn("learned_v1", parameters["ai_max"]["behaviour"])
+        self.assertIn("retired", parameters["ai_max"]["behaviour"])
         self.assertTrue(any("AI Max used the strongest local correction only" in w for w in parameters["warnings"]))
 
     def test_natural_mode_has_no_ai_max_block(self):
-        stack, _mocks = forbid_every_learned_adapter()
-        with stack:
-            _out, _level, parameters = enhance_bgr(PHOTOS["sharp"](), "auto")
+        _out, _level, parameters = enhance_bgr(PHOTOS["sharp"](), "auto")
         self.assertNotIn("ai_max", parameters)
 
-    def test_blur_is_reported_as_beyond_the_lightweight_pipeline_not_as_a_missing_model(self):
-        stack, _mocks = forbid_every_learned_adapter()
-        with stack:
-            _out, _level, parameters = enhance_bgr(PHOTOS["blurred"](), "auto")
+    def test_blur_is_reported_as_beyond_the_lightweight_pipeline(self):
+        _out, _level, parameters = enhance_bgr(PHOTOS["blurred"](), "auto")
         message = " ".join(parameters["warnings"])
         self.assertIn("cannot be corrected by the lightweight pipeline", message)
         self.assertNotIn("requires an AI restoration model", message)
 
-    def test_the_face_detector_and_identity_guard_still_run(self):
-        """YuNet/SFace are not enhancement models: they stay available."""
-        from django.conf import settings
+    def test_a_dark_photo_is_not_lifted_by_automatic_mode(self):
+        source = PHOTOS["dark"]()
+        out, _level, parameters = enhance_bgr(source, "auto")
+        self.assertTrue(parameters["no_correction_needed"] or abs(float(out.mean()) - float(source.mean())) < 6)
+        self.assertEqual(parameters["plan"]["routing"][0]["decision"], "lift_withheld")
 
+    @override_settings(IDENTITY_GUARD_ENABLED=True)
+    def test_the_face_detector_identity_guard_and_face_check_still_run(self):
+        """YuNet/SFace are not enhancement models: they stay available."""
         self.assertTrue(settings.IDENTITY_GUARD_ENABLED)
         _out, _level, parameters = enhance_bgr(PHOTOS["sharp"](), "auto")
         self.assertIn(parameters["identity_status"], {"verified", "inconclusive", "unavailable", "failed"})
-        self.assertFalse(parameters["identity_verification"]["face_restoration_unverified"])
+        self.assertEqual(set(parameters["identity_verification"]), {"status", "verified", "reason", "notice"})
         self.assertIn("face_fidelity", parameters)
-
-    @override_settings(NAFNET_MODEL_PATH="/nonexistent/nafnet.pth", REALESRGAN_MODEL_PATH="/nonexistent/esrgan.pth",
-                       GFPGAN_MODEL_PATH="/nonexistent/gfpgan.pth")
-    def test_system_health_does_not_demand_a_checkpoint_for_a_stage_that_cannot_run(self):
-        from operations.services import check_models
-
-        models = check_models()["models"] if "models" in check_models() else check_models()
-        for name in ("nafnet", "realesrgan", "gfpgan"):
-            self.assertEqual(models[name]["status"], "disabled", name)
-
-    @override_settings(ENHANCEMENT_RENDER_POLICY="learned_v1", NAFNET_MODEL_PATH="/nonexistent/nafnet.pth")
-    def test_under_learned_v1_a_missing_checkpoint_is_reported(self):
-        from operations.services import check_models
-
-        models = check_models()["models"] if "models" in check_models() else check_models()
-        self.assertEqual(models["nafnet"]["status"], "degraded")
+        self.assertIn("quality_guards", parameters)
 
 
-@override_settings(**ALL_LEARNED_ON, ENHANCEMENT_RENDER_POLICY="learned_v1")
-class LearnedPolicyIsStillReachableTests(SimpleTestCase):
-    """Reversibility: the adapters and their settings still work under learned_v1."""
+class RetirementReportingTests(SimpleTestCase):
+    def test_the_policy_names_every_retired_capability_and_never_a_replacement(self):
+        names = {item["name"] for item in policy.retired_capabilities()}
+        for expected in ("Zero-DCE", "EDSR", "NAFNet", "Real-ESRGAN", "GFPGAN", "PureVision", "PureScale", "colourisation"):
+            self.assertTrue(any(expected.lower() in name.lower() for name in names), expected)
+        self.assertIn("retired on 2026-10-15", policy.retirement_message("zero_dce"))
+        self.assertIn(policy.RETIREMENT_DOCUMENT, policy.retirement_message("gfpgan_face_restoration"))
 
-    def test_learned_v1_runs_a_learned_stage_when_its_setting_is_on(self):
-        source = PHOTOS["dark"]()
-        with patch("enhancement.services.enhance_with_zero_dce",
-                   return_value=(cv2.add(source, 40), {"provider": "zero_dce_test"})) as zero_dce:
-            _out, _level, parameters = enhance_bgr(source, "auto")
-        zero_dce.assert_called_once()
-        self.assertEqual(parameters["render_policy"]["name"], "learned_v1")
-        self.assertTrue(parameters["render_policy"]["heavy_restoration_available"])
-        self.assertTrue(parameters["zero_dce"]["applied"])
+    def test_leftover_environment_settings_are_reported_not_ignored_in_silence(self):
+        names = checks.retired_settings_in_environment({
+            "ZERO_DCE_ENABLED": "True", "GFPGAN_QUEUE_NAME": "gfpgan", "ENHANCEMENT_RENDER_POLICY": "learned_v1",
+            "PUREVISION_TILE_SIZE": "256", "DB_NAME": "x", "OPENAI_API_KEY": "x", "IDENTITY_MODEL_PATH": "y",
+        })
+        self.assertEqual(names, ["ENHANCEMENT_RENDER_POLICY", "GFPGAN_QUEUE_NAME", "PUREVISION_TILE_SIZE", "ZERO_DCE_ENABLED"])
+        self.assertEqual(checks.retired_settings_in_environment({"DB_NAME": "x"}), [])
 
-    @override_settings(ZERO_DCE_ENABLED=False)
-    def test_learned_v1_still_honours_each_setting(self):
-        with patch("enhancement.services.enhance_with_zero_dce", side_effect=AssertionError("off")) as zero_dce:
-            enhance_bgr(PHOTOS["dark"](), "auto")
-        zero_dce.assert_not_called()
+    def test_the_system_check_warns_when_one_is_set(self):
+        with override_settings():
+            import os
+            from unittest.mock import patch
 
-    def test_an_unknown_policy_name_is_refused(self):
-        with override_settings(ENHANCEMENT_RENDER_POLICY="fast"):
-            with self.assertRaises(ValueError):
-                policy.active_policy()
+            with patch.dict(os.environ, {"COLORIZATION_ENABLED": "True"}):
+                issues = checks.retired_enhancement_settings_check(None)
+            self.assertEqual([issue.id for issue in issues], ["enhancement.W001"])
+            self.assertIn("COLORIZATION_ENABLED", issues[0].msg)
+            self.assertIn(policy.RETIREMENT_DOCUMENT, issues[0].hint)

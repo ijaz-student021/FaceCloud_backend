@@ -239,10 +239,26 @@ required for existing screens; these are the contracts to adopt.
 
 **Rendering policy.** Enhancement runs OpenCV/Pillow only (`lightweight_v1`).
 Zero-DCE, EDSR, NAFNet, Real-ESRGAN, GFPGAN, PureVision, PureScale and
-colourisation never run. Do not show or imply "AI restoration", face
-restoration, super-resolution or colourisation as available. Each result has
-`applied_parameters.render_policy`; stage reports for those stages read
-`skipped`, with the reason, not `fallback`.
+colourisation were **retired** (2026-10-15, `docs/enhancement/retired-capabilities.md`).
+Do not show or imply "AI restoration", face restoration, super-resolution or
+colourisation as available. Each result has `applied_parameters.render_policy`
+with `retired_capabilities`; `GET /api/system/health/` lists them under
+`checks.models.retired`.
+
+**Fields and values that changed with the retirement** (existing results keep
+what they stored; none of this affects the current frontend, which reads none of it):
+* New results have no `zero_dce`, `restoration`, `hd_restoration`, `purevision`,
+  `purescale`, `face_restoration`, `colorization` or `discarded_stage_reports`
+  block, and `feature_flags` has three entries. `pipeline_version` is
+  `staged_candidate_pipeline_v5`. `stage_reports` no longer contains the stages
+  of those models.
+* `identity_check_bypassed` is always `false` and `identity_notice` always empty on
+  new results (face restoration, the only thing they described, is gone); the
+  fields remain for old results.
+* The comparison profile `opencv_baseline` is refused (`400`, with the reason);
+  the default profile set is `natural`, `dynamic`, `ai_max`. Old comparisons that
+  contain it still read.
+* System health `checks.models.models` has only `yunet` and `sface`.
 
 **Automatic level never brightens a dark photo.** The plan carries a
 `lift_withheld` routing decision. To lift a dark photo the user must choose a
@@ -251,8 +267,8 @@ level (low, medium, high) or, in the editor, the `brighten` intent. Offer a
 
 **AI Max** still means level `high` plus denoising where noise is measured. A
 result with `applied_parameters.ai_max` and the warning "AI Max used the
-strongest local correction only" tells the user heavy restoration was not
-available. Show it.
+strongest local correction only" tells the user heavy restoration is not
+available (it was retired). Show it.
 
 **Editor controls** (`GET /api/enhancements/editor/configuration/`; render the
 sliders from it, do not hard-code):

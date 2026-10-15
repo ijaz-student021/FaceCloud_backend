@@ -36,7 +36,7 @@ SFace model:
 | Photos | Similarity |
 |---|---|
 | Well-lit portraits, natural / dynamic style | 0.96 - 0.999 |
-| Same portraits, AI Enhance + PureVision (heaviest variant) | 0.94 - 0.98 |
+| Same portraits, AI Enhance (heaviest remaining variant; measured earlier with PureVision, since retired) | 0.94 - 0.98 |
 | A different person's face pasted into a photo (forced identity change) | 0.15 |
 | Very dark night frames (face luminance 6-22 / 255), faithful brightening only | 0.45 - 0.87, and 3 of 12 faces were not re-detected at all |
 

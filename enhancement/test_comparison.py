@@ -156,7 +156,7 @@ class ComparisonProcessingTests(ComparisonFixtureMixin, TestCase):
     def comparison(self, profiles=None):
         return ModelComparison.objects.create(
             owner=self.user, image=self.image, status="queued",
-            profiles=profiles or ["opencv_baseline", "natural"],
+            profiles=profiles or ["natural", "dynamic"],
         )
 
     @tag("slow")
@@ -165,7 +165,7 @@ class ComparisonProcessingTests(ComparisonFixtureMixin, TestCase):
 
         self.assertEqual(comparison.status, "completed")
         outputs = {output.profile: output for output in comparison.outputs.all()}
-        self.assertEqual(set(outputs), {ORIGINAL, "opencv_baseline", "natural"})
+        self.assertEqual(set(outputs), {ORIGINAL, "natural", "dynamic"})
         for name, output in outputs.items():
             with self.subTest(profile=name):
                 self.assertEqual(output.outcome, "completed")
@@ -179,14 +179,19 @@ class ComparisonProcessingTests(ComparisonFixtureMixin, TestCase):
         # Adjusted scores are stored next to the raw ones for transparency.
         self.assertIn("adjusted_score", outputs["natural"].scores)
 
-    @tag("slow")
-    def test_the_baseline_profile_switches_the_learned_model_off(self):
-        with patch("enhancement.services.enhance_with_zero_dce") as zero_dce:
-            comparison = process_model_comparison(self.comparison(["opencv_baseline"]))
+    def test_the_retired_baseline_profile_is_refused_with_its_reason_not_run_as_something_else(self):
+        from rest_framework.exceptions import ValidationError
 
-        zero_dce.assert_not_called()
-        baseline = comparison.outputs.get(profile="opencv_baseline")
-        self.assertNotIn("zero_dce", baseline.algorithm)
+        from .comparison import RETIRED_PROFILES, validate_profiles
+
+        with self.assertRaises(ValidationError) as caught:
+            validate_profiles(["opencv_baseline", "natural"])
+        message = str(caught.exception.detail["profiles"][0])
+        self.assertIn("opencv_baseline", message)
+        self.assertIn("retired", message)
+        self.assertIn("Zero-DCE", message)
+        self.assertEqual(set(RETIRED_PROFILES), {"opencv_baseline"})
+        self.assertEqual(validate_profiles(None), ["natural", "dynamic", "ai_max"])
 
     def test_a_failing_profile_is_recorded_without_losing_the_others(self):
         def flaky(image, level, style="natural", **kwargs):
@@ -245,7 +250,7 @@ class ComparisonProcessingTests(ComparisonFixtureMixin, TestCase):
 
         rows = list(csv.DictReader(io.StringIO(build_report_csv(comparison))))
 
-        self.assertEqual([row["profile"] for row in rows], [ORIGINAL, "opencv_baseline", "natural"])
+        self.assertEqual([row["profile"] for row in rows], [ORIGINAL, "natural", "dynamic"])
         self.assertEqual(rows[0]["label"], "Original (untouched)")
         marked = [row["profile"] for row in rows if row["recommended"] == "yes"]
         self.assertEqual(marked, [comparison.recommended_profile])
@@ -286,6 +291,31 @@ class ComparisonApiTests(ComparisonFixtureMixin, TestCase):
         response, _ = self.start(level="extreme")
         self.assertEqual(response.status_code, 400)
         self.assertEqual(ModelComparison.objects.count(), 0)
+
+    def test_a_retired_profile_is_refused_with_the_reason_and_nothing_is_queued(self):
+        response, queued = self.start(profiles=["opencv_baseline", "natural"])
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("retired", str(response.data["profiles"]))
+        self.assertIn("Zero-DCE", str(response.data["profiles"]))
+        queued.assert_not_called()
+        self.assertEqual(ModelComparison.objects.count(), 0)
+
+    def test_an_earlier_comparison_that_used_the_retired_profile_still_reads(self):
+        comparison = ModelComparison.objects.create(
+            owner=self.user, image=self.image, status="completed", profiles=["opencv_baseline", "natural"],
+        )
+        ModelComparisonOutput.objects.create(
+            comparison=comparison, profile="opencv_baseline", outcome="completed",
+            algorithm="opencv_adaptive_restoration_router_v2", overall_score=50.0,
+        )
+
+        response = self.client.get(reverse("enhancement:comparison-detail", kwargs={"pk": comparison.pk}))
+
+        self.assertEqual(response.status_code, 200)
+        row = next(item for item in response.data["outputs"] if item["profile"] == "opencv_baseline")
+        self.assertIn("retired", row["label"])
+        self.assertIn("Zero-DCE", row["description"])
 
     def test_the_image_must_be_preprocessed_and_owned(self):
         unprocessed = self.make_image(self.user, preprocessed=False)

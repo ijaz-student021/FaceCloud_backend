@@ -66,14 +66,14 @@ context, decision, and consequences. Superseded decisions remain for history.
 
 ## ADR-009 — Real-ESRGAN HD restoration is rollout-gated
 
-- **Status:** Accepted
+- **Status:** Accepted — **superseded by ADR-024**
 - **Decision:** Real-ESRGAN is implemented behind `HD_RESTORATION_ENABLED` with
   tiling, output limits, and conservative source-grid blending.
 - **Consequence:** It remains disabled by default and should run on a GPU queue.
 
 ## ADR-010 — NAFNet remains disabled after failed visual QA
 
-- **Status:** Accepted
+- **Status:** Accepted — **superseded by ADR-024**
 - **Decision:** `NAFNET_DEBLUR_ENABLED` defaults to false because the supplied
   checkpoint/runtime produced checkerboard and chroma corruption.
 - **Consequence:** Structural checkpoint loading is insufficient; a replacement or
@@ -251,7 +251,7 @@ context, decision, and consequences. Superseded decisions remain for history.
 
 ## ADR-022 — NAFNet's failed QA was an adapter bug, now fixed; it stays off pending visual approval
 
-- **Status:** Accepted (updates ADR-010)
+- **Status:** Accepted (updates ADR-010) — **superseded by ADR-024**
 - **Decision:** The corruption recorded in ADR-010 came from this project's
   re-implementation of the network, not from the checkpoint or the device: the
   simplified channel attention passed its pooled summary on in place of the
@@ -266,7 +266,7 @@ context, decision, and consequences. Superseded decisions remain for history.
 
 ## ADR-023 — The worker environment is the backend's requirements plus the model stack
 
-- **Status:** Accepted
+- **Status:** Accepted — **superseded by ADR-024**
 - **Decision:** `requirements-gfpgan.txt` includes `requirements.txt` instead of
   repeating it. BasicSR 1.4.2 imports a module torchvision removed in 0.17;
   `enhancement/gfpgan.py` supplies the one missing name at import time, because
@@ -275,3 +275,27 @@ context, decision, and consequences. Superseded decisions remain for history.
   without `cryptography` it could not start Django). The shim touches only a
   module that is absent, and is removed when BasicSR is replaced.
 
+## ADR-024 — The learned enhancement models are retired
+
+- **Status:** Accepted (supersedes ADR-009, ADR-010, ADR-022 and ADR-023; the
+  parts of other ADRs that describe Zero-DCE, EDSR, GFPGAN, PureVision, PureScale
+  or colourisation are history)
+- **Decision:** Enhancement is OpenCV and Pillow only. Zero-DCE, EDSR, NAFNet,
+  Real-ESRGAN, GFPGAN, PureVision, PureScale and colourisation were removed:
+  adapters, checkpoints, settings, the isolated model-worker environment, GPU
+  scripts and their documentation. Automatic mode no longer lifts dark photos (their
+  intent cannot be read from the pixels); a chosen level or the editor's
+  `brighten` intent does. A request that names a retired capability (the
+  `opencv_baseline` comparison profile) is refused with the reason, never run as
+  another algorithm; earlier results, edits, downloads and comparisons are
+  unchanged.
+- **Why:** none of them was enabled by default except Zero-DCE and EDSR, three had
+  non-commercial licences or private-permission constraints, generative face
+  restoration cannot be shown to keep the person, none was validated on CUDA, and
+  together they cost about 1.1 GB of checkpoints, a 1.3 GB second Python environment
+  and a second queue.
+  YuNet and SFace, which the identity features need, were kept; PyTorch is not
+  needed by anything retained.
+- **Consequence:** very dark, blurred or low-resolution photos are improved less
+  (or reported as beyond the pipeline) than the learned models improved them. The
+  recovery path is `docs/enhancement/retired-capabilities.md`.

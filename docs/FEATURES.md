@@ -23,7 +23,7 @@ Status definitions:
 | PostgreSQL 18 migration | Complete |
 | Image preprocessing and format standardization | Complete |
 | Celery preprocessing queue | Complete |
-| Image enhancement | Complete backend: adaptive OpenCV, EDSR, and private FaceCloud curve inference |
+| Image enhancement | Complete backend: lightweight OpenCV/Pillow pipeline with an optional OpenAI advisor (learned models retired 2026-10-15) |
 | Non-destructive photo gallery editor | Complete backend; frontend slider wiring remains |
 | Quality assessment, face validation, and final decisions | Complete backend baseline |
 | Duplicate image and face-region detection | Complete backend baseline |
@@ -264,62 +264,31 @@ owner-only APIs, secure downloads, and automated tests are implemented.
 - CPU-based execution
 - Processing-time and quality measurements
 
-### Feature 12: Zero-DCE AI enhancement — Complete backend
+### Feature 12: Lightweight enhancement and advisor — Complete backend
 
-Uses deep learning to improve low-light images while preserving facial detail.
+OpenCV and Pillow only. The learned models of earlier versions (Zero-DCE, EDSR,
+NAFNet, Real-ESRGAN, GFPGAN, PureVision, PureScale, colourisation) were retired on
+2026-10-15; see [retired-capabilities.md](enhancement/retired-capabilities.md).
 
-- Private FaceCloud Epoch99 checkpoint exported reproducibly to ONNX
-- Lightweight OpenCV-DNN CPU inference
-- Low-light routing with adaptive OpenCV fallback
-- Quality guard against destructive luminance or clipping growth
-- Batch inference
-- Provider, model, curve, dimensions, license, and fallback metadata
-- Enhanced-image persistence
-- Safe missing/corrupt-model failure handling
-- Private GFPGAN v1.4 face-restoration adapter for eligible blurry or
-  low-resolution faces
-- Checksum-pinned private checkpoint with no automatic model download
-- Face-only restoration with the background upsampler disabled
-- Same-pixel-grid validation, conservative restoration weight and output blend
-- Adaptive restoration guard using structural similarity, bounded pixel change,
-  chroma shift, and highlight-clipping growth
-- Checksum-pinned detector and parser artifacts with no runtime downloads
-- Dedicated Python 3.11 Celery worker preflight and `gfpgan` queue
-- Safe fallback when the optional runtime, checkpoint, face, or output is invalid
-
-The GFPGAN integration and isolated worker have passed local model and real-image
-pipeline validation. Portable configuration remains disabled because licensed
-model artifacts are not distributed; authorized deployments can enable the
-private queue after preflight, while broader rollout still requires a consented
-photographic evaluation set.
-
-- PureScale (SAFMN) 2x super-resolution and PureVision (RRDBNet) same-resolution
-  artifact-removal adapters, both checksum-pinned to third-party checkpoints
-  from limitlesslab/AI-upscaling-models
-- Independently gated behind `PURESCALE_ENABLED` and `PUREVISION_ENABLED`
-  (both disabled by default); PureScale never stacks with the Real-ESRGAN
-  super-resolution stage
-- Fidelity guards mirroring the NAFNet luminance/chroma checks
-- CC BY-NC-SA 4.0 (non-commercial) licensed checkpoints — evaluation/FYP use
-  only until a commercial license is confirmed; see
-  [purescale-purevision.md](features/purescale-purevision.md)
-- Identity-preserving enhancement: the final image's faces are compared with
-  the source's using the identity-grouping SFace embeddings, and the result is
-  blended back toward the source when a face drifts; dark or undetectable
-  faces are skipped, not penalised; see
+- Defect-driven exposure correction (LAB gamma/CLAHE); automatic mode never lifts a
+  dark photo, because whether it is meant to be dark cannot be told from the pixels
+  — a chosen level or the editor's `brighten` intent does
+- Measured, guarded denoising and conditional sharpening
+- Quality guards A and B, a per-face fidelity check, and the identity guard
+  (YuNet/SFace) that blends back toward the source when a face drifts; dark or
+  undetectable faces are skipped, not penalised; see
   [identity-preserving-enhancement.md](features/identity-preserving-enhancement.md)
-- Automatic black-and-white colorization (SIGGRAPH17, BSD-2-Clause,
-  permissive), gated behind `COLORIZATION_ENABLED` and an automatic
-  near-grayscale detector so colour photos are left untouched
-- Runs as the final pipeline stage with a dedicated luminance-fidelity guard
-  (Lab-space gamut clipping can otherwise distort the BT.601 luma this
-  codebase measures elsewhere); see
-  [colorization.md](features/colorization.md)
-
-- Google Photos-style slider controls: `natural`/`dynamic`/`ai_max` style
-  presets at enhancement time, plus a `warmth` (colour balance) tone
-  control and a continuous 0-100% `intensity` blend slider in the gallery
-  editor; see [slider-enhancement-controls.md](features/slider-enhancement-controls.md)
+- No upscaling or restoration: severe blur and low resolution are reported as beyond
+  the lightweight pipeline instead of inventing detail
+- Policy, controls, editor previews and saved versions:
+  [lightweight-pipeline.md](enhancement/lightweight-pipeline.md)
+- Optional OpenAI advisor that only suggests slider values (off by default, separate
+  consent, per-image jobs, local guards, local fallback):
+  [openai-advisor.md](enhancement/openai-advisor.md)
+- Google Photos-style slider controls: `natural`/`dynamic`/`ai_max` style presets at
+  enhancement time, plus the editor's tone controls and a continuous 0-100%
+  `intensity` blend slider; see
+  [slider-enhancement-controls.md](features/slider-enhancement-controls.md)
 
 ### Feature 13: Before-and-after comparison — Complete backend
 
@@ -465,7 +434,7 @@ concurrency and idempotency guarantees.
   analysis)
 - Stuck-job recovery, queue monitoring, admin failed-job visibility — Complete
   (Features 20 operations, 33)
-- CPU/GPU resource limits — open; GPU workloads have not been deployed yet
+- CPU resource limits — open (there are no GPU workloads any more; the learned models were retired)
 
 ### Feature 21: Live batch progress tracker — Complete backend
 
@@ -724,8 +693,7 @@ Implemented backend evidence:
 Supports FYP and company evaluation of enhancement approaches.
 
 - Original input
-- OpenCV result
-- Zero-DCE result
+- Natural, Dynamic and AI Enhance results (the OpenCV pipeline at different strengths)
 - Brightness, sharpness, blur, quality, and detection comparison
 - Processing-time comparison
 - Recommended result
@@ -750,18 +718,17 @@ Enhances controlled camera frames before capture.
 
 - Original live preview
 - OpenCV live preview
-- Zero-DCE live preview
 - Low, medium, high, and automatic levels
 - Controlled frame rate
 - Latency and FPS display
-- CPU/GPU optimization
+- CPU optimization
 - Enhanced-frame capture
 
 ### Feature 38: Live enhancement comparison page — Planned company requirement
 
 Compares live enhancement methods and measurements in one view.
 
-- Original, OpenCV, and Zero-DCE feeds
+- Original and OpenCV feeds
 - Side-by-side layout
 - Live brightness, blur, and sharpness measurements
 - Face-detection confidence
@@ -882,10 +849,9 @@ Protects completed behavior from regression as the platform grows.
   a reusable Locust harness (`loadtest/locustfile.py`) plus a deterministic
   account seeder (`seed_loadtest_users`, DEBUG-only), with one real baseline
   run's numbers recorded. Sustained/soak testing, a CI-gated performance
-  budget, and GPU-pipeline load testing remain open (see that doc's
+  budget, and pipeline load testing remain open (see that doc's
   "Deliberately not built")
-- Planned enhancement, face, queue, and moderator load tests (GPU-dependent;
-  see the load-testing doc)
+- Planned enhancement, face, queue, and moderator load tests (see the load-testing doc)
 
 ### Feature 46: Organization and tenant management — In progress (T-008 Phases A-C complete, 2026-09-23)
 

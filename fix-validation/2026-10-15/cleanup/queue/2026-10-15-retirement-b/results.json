@@ -1,0 +1,31 @@
+[
+  {
+    "scenario": "database_failure_then_retry",
+    "expects": "the worker's database connection is killed mid-task; the task retries, resumes its own claim and completes once",
+    "passed": true,
+    "connections_terminated": 1,
+    "retries_logged": 1,
+    "status": "completed",
+    "seconds_from_failure_to_completion": 51,
+    "claim_attempt": 1,
+    "output_files": [
+      "ee3f5137f091475d855774557a0a4239.jpg"
+    ]
+  },
+  {
+    "scenario": "worker_killed_then_restarted",
+    "expects": "the task is redelivered after the visibility timeout, waits out the dead worker's claim, takes over and completes once",
+    "passed": true,
+    "status_when_killed": "processing",
+    "final_status": "completed",
+    "seconds_to_recover": 302,
+    "deliveries": {
+      "enhance": 1,
+      "victim": 1
+    },
+    "output_files": [
+      "0652ee018a054710bc266804cb1606b3.jpg"
+    ],
+    "note": "visibility timeout 300 s, task limit 200 s, claim lease 60 s for this run; defaults are 105 min, 60 min and 30 min"
+  }
+]

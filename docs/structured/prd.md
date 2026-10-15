@@ -94,12 +94,13 @@ and authorized organization settings.
 ### Enhancement
 
 - Low, medium, high, and automatic levels
-- FaceCloud Curve/OpenCV exposure processing
+- OpenCV exposure processing for measured lighting defects
 - Adaptive denoising, bounded sharpening, and quality guards
-- Optional EDSR and guarded GFPGAN stages
-- Optional Real-ESRGAN HD display derivative
-- NAFNet deblurring remains disabled until visual QA passes
-- Original and derivatives stored separately with model provenance
+- An editor with bounded previews and full-resolution saved versions
+- An optional OpenAI advisor that suggests settings only (off by default)
+- Learned restoration models (EDSR, GFPGAN, Real-ESRGAN, NAFNet, PureVision, PureScale,
+  colourisation, Zero-DCE) retired 2026-10-15
+- Original and derivatives stored separately with processing provenance
 
 ### Recognition and grouping
 

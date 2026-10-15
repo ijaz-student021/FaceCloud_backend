@@ -1,5 +1,10 @@
 # FaceCloud Engineering Task Plan
 
+> **2026-10-15:** the learned enhancement models (Zero-DCE, EDSR, NAFNet, Real-ESRGAN,
+> GFPGAN, PureVision, PureScale, colourisation) were retired (ADR-024). Tasks and
+> completed items below that mention them are history; T-003 and T-004 are closed as
+> *Retired*, and the GPU queue item in section 8 no longer applies.
+
 ## Status definitions
 
 - **Done:** implementation and required verification completed
@@ -57,7 +62,7 @@
 
 ### T-003 — Replace or correctly run NAFNet
 
-- **Status:** Blocked
+- **Status:** Retired 2026-10-15 (NAFNet removed)
 - **Blocker:** Current checkpoint/runtime produces corrupted output.
 - Evaluate the official `NAFNetLocal` runtime and local-pooling conversion.
 - Reject any candidate with tiling, chroma corruption, or identity drift.
@@ -65,7 +70,7 @@
 
 ### T-004 — Productionize Real-ESRGAN
 
-- **Status:** In progress
+- **Status:** Retired 2026-10-15 (Real-ESRGAN removed)
 - Provision a dedicated GPU Celery queue.
 - Benchmark tile sizes, memory, throughput, and cancellation.
 - Add end-to-end tests for 2× output and provenance.
@@ -342,7 +347,7 @@ git diff --check
 1. Feature 18 threshold calibration and privacy controls
 2. Feature 19 Person Folders frontend integration
 3. Recognition-job reliability and moderator review
-4. GPU queue and Real-ESRGAN operational QA
+4. ~~GPU queue and Real-ESRGAN operational QA~~ (retired)
 5. Organization/tenant isolation
 6. Remaining frontend dashboards and sharing features
 7. Generative restoration research only after licensing and consent approval

@@ -1,5 +1,10 @@
 # Model, queue and visual validation, 2026-10-14
 
+> **Historical (2026-10-15):** this record describes the learned models as they were
+> validated. They were retired afterwards (`docs/enhancement/retired-capabilities.md`);
+> the checkpoints, scripts (`validate_models.py`, `gpu_preflight.py`) and `.runtime`
+> outputs it names no longer exist. It is kept as evidence.
+
 Evaluation record only. The code changes it led to are in their own commits
 (`58ee365` Zero-DCE provenance, `b23524b` broker timeout, `9d45d29` diverged
 tiles and deblur routing). Images and raw results are under `.runtime/` (not in

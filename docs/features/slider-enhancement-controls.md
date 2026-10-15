@@ -25,11 +25,9 @@ and `style` are independent axes:
   highlights or crush contrast beyond the same limits manual edits respect).
 - **`ai_max`** — forces `level=high` and force-enables adaptive denoise for
   this one request, regardless of the platform's `ADAPTIVE_DENOISE_ENABLED`
-  default. It does **not** force-enable PureScale/PureVision/GFPGAN/HD
-  restoration — those stay under the platform operator's own
-  `*_ENABLED` flags, since PureScale/PureVision are non-commercially
-  licensed (CC BY-NC-SA 4.0) and a per-request user action should not be
-  able to silently opt the platform into using them.
+  default. It is the strongest *local* correction: the restoration models it used
+  to be able to call on (face restoration, super-resolution) were retired, and
+  the result says so (`applied_parameters.ai_max`).
 
 `applied_parameters.style` and `applied_parameters.dynamic_style` record
 what actually happened, for auditability.

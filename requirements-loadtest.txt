@@ -1,7 +1,7 @@
 # Feature 45: load/performance testing. Locust pulls in gevent and its own
 # Flask-based web UI -- unrelated to the Django app's runtime -- so this gets
-# its own isolated environment, the same way requirements-gfpgan.txt and
-# requirements-training.txt do for the GPU worker. Install with:
+# its own isolated environment, the same way requirements-training.txt does for the
+# model-training environment. Install with:
 #   python -m venv .runtime/venvs/loadtest
 #   .runtime/venvs/loadtest/Scripts/pip install -r requirements-loadtest.txt
 locust>=2.46.6,<3

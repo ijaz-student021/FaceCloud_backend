@@ -203,11 +203,7 @@ class IdentityGuardAdapterTests(SimpleTestCase):
                 _load_provider()
 
 
-PIPELINE_SETTINGS = dict(
-    AI_RESTORATION_ENABLED=False, ZERO_DCE_ENABLED=False, ADAPTIVE_DENOISE_ENABLED=False,
-    PURESCALE_ENABLED=False, PUREVISION_ENABLED=False, HD_RESTORATION_ENABLED=False,
-    GFPGAN_ENABLED=False, COLORIZATION_ENABLED=False,
-)
+PIPELINE_SETTINGS = dict(ADAPTIVE_DENOISE_ENABLED=False)
 
 
 class IdentityGuardPipelineTests(SimpleTestCase):

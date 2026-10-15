@@ -21,9 +21,7 @@ from .services import (
     _build_processing_plan,
     analyze_image_quality,
     analyze_original_stage,
-    hd_restoration_stage,
     measure_blur,
-    restore_degraded_faces,
 )
 from .test_pipeline_regressions import NO_MODELS
 
@@ -123,61 +121,32 @@ class VerdictTests(SimpleTestCase):
         self.assertEqual(quality["blur"]["measure"], "edge_sharpness_v1")
 
 
-@override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True,
-                      "GFPGAN_ENABLED": True, "GFPGAN_ALLOW_MILD_BLUR": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+@override_settings(**NO_MODELS)
 class OneVerdictForEveryStageTests(SimpleTestCase):
-    """Sharpening, deblurring, face restoration, denoise protection and the plan
-    all follow the same input verdict."""
+    """Sharpening, denoise protection and the plan all follow the same input verdict."""
 
     def routed(self, image):
         context = EnhancementPipelineContext(image, EnhancementLevel.AUTO, style=EnhancementStyle.NATURAL)
         analyze_original_stage(context)
         return context
 
-    def eligible(self, context):
-        """GFPGAN's eligible defects; the model itself must not be reached."""
-        with patch("enhancement.services.restore_faces", side_effect=AssertionError("GFPGAN must not run")):
-            return restore_degraded_faces(context.current_image, context.input_quality)[1]["eligible_defects"]
-
-    def assert_no_blur_route(self, context):
-        plan = context.plan["steps"]
-        self.assertFalse(plan["sharpen"]["planned"])
-        self.assertFalse(plan["deblur"]["planned"])
-        self.assertFalse(plan["face_restoration"]["planned"])
-        self.assertEqual(self.eligible(context), [])
-
     def test_a_sharp_night_photo_gets_no_blur_correction(self):
         context = self.routed(darkened(resized(dead_leaves(), 1200), 0.25))
         self.assertEqual(context.input_quality["blur"]["verdict"], "sharp")
-        self.assert_no_blur_route(context)
+        self.assertFalse(context.plan["steps"]["sharpen"]["planned"])
 
     def test_a_sharp_high_resolution_photo_gets_no_blur_correction(self):
         context = self.routed(cv2.resize(dead_leaves(1536), None, fx=2, fy=2, interpolation=cv2.INTER_NEAREST))
         self.assertEqual(context.input_quality["blur"]["verdict"], "sharp")
-        self.assert_no_blur_route(context)
+        self.assertFalse(context.plan["steps"]["sharpen"]["planned"])
 
-    def test_a_blurred_photo_is_routed_to_every_blur_stage(self):
+    def test_a_blurred_photo_is_planned_for_sharpening_and_nothing_retired(self):
         context = self.routed(blurred(resized(dead_leaves(), 1200), 3.0))
         self.assertEqual(context.input_quality["blur"]["verdict"], "severe")
-        plan = context.plan["steps"]
-        self.assertTrue(plan["sharpen"]["planned"])
-        self.assertTrue(plan["deblur"]["planned"])
-        self.assertTrue(plan["face_restoration"]["planned"])
-        with patch("enhancement.services.restore_faces",
-                   side_effect=lambda image: (image, {"faces_restored": 0})) as restore:
-            _image, metadata = restore_degraded_faces(context.current_image, context.input_quality)
-        self.assertEqual(metadata["eligible_defects"], ["severe_blur"])
-        restore.assert_called_once()
-
-    def test_the_deblur_plan_matches_what_the_stage_does(self):
-        """P3-19: the plan used to promise deblurring whenever NAFNet was on."""
-        sharp = self.routed(resized(dead_leaves(), 1200))
-        self.assertFalse(sharp.plan["steps"]["deblur"]["planned"])
-        with patch("enhancement.services.deblur_with_nafnet") as deblur, \
-                patch("enhancement.services.upscale_with_realesrgan", side_effect=lambda image: (image, {})):
-            hd_restoration_stage(sharp)
-        deblur.assert_not_called()
-        self.assertIn("No blur was measured", sharp.hd_restoration["deblur"]["fallback_reason"])
+        steps = context.plan["steps"]
+        self.assertTrue(steps["sharpen"]["planned"])
+        # Deblurring, upscaling, face restoration and colourisation were retired: they are not planned, not even as "off".
+        self.assertEqual(set(steps), {"exposure", "denoise", "sharpen", "style"})
 
 
 def blurred_photo(height=720, width=960, sigma=3.0):

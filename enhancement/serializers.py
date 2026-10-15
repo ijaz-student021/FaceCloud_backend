@@ -25,10 +25,11 @@ class EnhancementRequestSerializer(serializers.Serializer):
     style = serializers.ChoiceField(
         choices=EnhancementStyle.choices, default=EnhancementStyle.NATURAL,
         help_text=(
-            "`natural` and `dynamic` restore faces only when the result can be checked against "
-            "the original. `ai_max` skips that requirement: it may restore faces without a "
-            "verified identity check. The result says so in `identity_check_bypassed` and "
-            "`identity_notice`."
+            "`natural` is the default pipeline. `dynamic` adds a bounded, guarded vivid contrast and colour "
+            "boost. `ai_max` applies the strongest local correction (high level, denoising where noise is "
+            "measured); no generative or learned restoration exists, so it never restores faces or adds "
+            "detail. `identity_check_bypassed` and `identity_notice` are kept for results made before "
+            "2026-10-15 and are empty or false afterwards."
         ),
     )
 
@@ -104,11 +105,12 @@ IDENTITY_STATUS_HELP = (
     "match. Null when nothing was enhanced, and for records made before this field existed."
 )
 IDENTITY_BYPASSED_HELP = (
-    "True when faces were generatively restored without a verified identity check, "
-    "which only AI Max (or an operator setting) allows. Show `identity_notice` to the user."
+    "Legacy. True only on results made before face restoration was retired (2026-10-15), when faces "
+    "were generatively restored without a verified identity check; always false afterwards."
 )
 IDENTITY_NOTICE_HELP = (
-    "A sentence for the user when identity was not verified under a bypass; otherwise empty."
+    "A sentence for the user when identity was not verified under a bypass (results made before "
+    "2026-10-15 only); otherwise empty."
 )
 
 
@@ -373,10 +375,14 @@ class EnhancementBatchJobSerializer(serializers.ModelSerializer):
 class ModelComparisonRequestSerializer(serializers.Serializer):
     level = serializers.ChoiceField(choices=EnhancementLevel.choices, default=EnhancementLevel.AUTO)
     profiles = serializers.ListField(
-        child=serializers.ChoiceField(choices=list(comparison_engine.PROFILES)),
+        child=serializers.CharField(max_length=40),
         required=False, allow_empty=True,
-        help_text="Profiles to compare; omit for all: " + ", ".join(comparison_engine.PROFILES) + ".",
+        help_text="Profiles to compare; omit for all: " + ", ".join(comparison_engine.PROFILES) + ". "
+                  "A retired profile (opencv_baseline) is refused with the reason.",
     )
+
+    def validate_profiles(self, value):
+        return comparison_engine.validate_profiles(value)
 
 
 class ModelComparisonOutputSerializer(serializers.ModelSerializer):
@@ -411,7 +417,7 @@ class ModelComparisonOutputSerializer(serializers.ModelSerializer):
         return self._identity(obj)[2]
 
     def _profile(self, obj):
-        return comparison_engine.PROFILES.get(obj.profile)
+        return comparison_engine.PROFILES.get(obj.profile) or comparison_engine.RETIRED_PROFILES.get(obj.profile)
 
     def get_label(self, obj) -> str:
         profile = self._profile(obj)

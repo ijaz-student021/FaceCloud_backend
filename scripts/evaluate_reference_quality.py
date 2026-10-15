@@ -1,16 +1,11 @@
 """Does enhancement recover the *original* face, and only that face?
 
-``evaluate_gpu_stages.py`` compares enhancement configurations against each other on
-real photos with no clean reference. This tool answers a different question: take a
-clean, undamaged face, damage it in a controlled way (darken, blur, shrink), run it
-through the real pipeline, and check whether the final result still looks like the
-*same person* as the untouched original -- and, separately, whether two different
-people's faces are clearly less similar than that. It reuses
-``evaluate_gpu_stages.py``'s ``identity_report``/``pick_sample``/``degrade`` (loaded
-directly, not duplicated) rather than reimplementing them, since a run's per-photo
-loop and JSON summary differ enough (severities instead of pipeline configurations,
-plus the cross-person baseline below) that the two scripts are not simply one script
-with a flag.
+Take a clean, undamaged face, damage it in a controlled way (darken, blur, shrink),
+run it through the real (OpenCV and Pillow) pipeline, and check whether the final
+result still looks like the *same person* as the untouched original -- and,
+separately, whether two different people's faces are clearly less similar than that.
+It shares ``identity_report``/``pick_sample``/``degrade`` with other evaluation
+scripts through ``scripts/evaluation_common.py``.
 
 Face embeddings are biometric data (Feature 41's classification). This tool computes
 them only in memory, to produce a similarity **score**, and never writes an embedding
@@ -38,9 +33,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-_spec = importlib.util.spec_from_file_location("evaluate_gpu_stages", Path(__file__).with_name("evaluate_gpu_stages.py"))
-gpu_stages = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(gpu_stages)
+_spec = importlib.util.spec_from_file_location("evaluation_common", Path(__file__).with_name("evaluation_common.py"))
+common = importlib.util.module_from_spec(_spec)  # (name kept: the shared helpers used to live in evaluate_common.py)
+_spec.loader.exec_module(common)
 
 DEFAULT_IMAGE_DIRS = (
     ROOT / "faceimage" / "Academic_Dataset_by_Generated_Photos" / "generated.photos",
@@ -81,8 +76,8 @@ def _severity_functions():
         "dim": lambda image, seed: darken(image, 0.35, 4, seed),
         "dark": lambda image, seed: darken(image, 0.15, 8, seed),
         "dark_blur": lambda image, seed: cv2.GaussianBlur(darken(image, 0.15, 8, seed), (0, 0), 1.2),
-        "low_res": lambda image, seed: gpu_stages.degrade(image, shortest_edge=140, blur_sigma=1.0, jpeg_quality=45),
-        "dark_low_res": lambda image, seed: gpu_stages.degrade(
+        "low_res": lambda image, seed: common.degrade(image, shortest_edge=140, blur_sigma=1.0, jpeg_quality=45),
+        "dark_low_res": lambda image, seed: common.degrade(
             darken(image, 0.30, 5, seed), shortest_edge=140, blur_sigma=1.0, jpeg_quality=45,
         ),
     }
@@ -194,7 +189,7 @@ def evaluate_severity(
         "identity": measure_recovery(out, clean_embedding, detector, provider),
         # Kept only as a diagnostic: whether the pipeline's own guard also fired, on
         # its own (less useful, input-not-original) comparison. Not the headline metric.
-        "pipeline_guard": gpu_stages.identity_report(parameters),
+        "pipeline_guard": common.identity_report(parameters),
     }
 
 
@@ -283,7 +278,7 @@ def main(argv=None):
     if not paths:
         print(f"No images found in {images_dir}.")
         return 2
-    sample = gpu_stages.pick_sample(paths, args.count, args.seed)
+    sample = common.pick_sample(paths, args.count, args.seed)
     severities = _severity_functions()
     unknown = [name for name in args.severities.split(",") if name.strip() and name.strip() not in severities]
     if unknown:

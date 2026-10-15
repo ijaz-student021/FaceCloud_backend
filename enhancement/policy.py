@@ -1,84 +1,74 @@
-"""The rendering policy: which enhancement stages may run.
+"""The rendering policy, and the capabilities that were retired from it.
 
-``lightweight_v1`` (the default) renders with OpenCV/Pillow only: exposure,
+FaceCloud enhances with OpenCV and Pillow only (``lightweight_v1``): exposure,
 measured denoising, conditional sharpening, the quality and face-fidelity
-guards. It never runs a learned enhancement model, whatever the per-model
-settings say. ``learned_v1`` is the earlier behaviour, where each model's own
-setting (ZERO_DCE_ENABLED, ...) decides; it is kept so the change is
-reversible, and is selected only by ENHANCEMENT_RENDER_POLICY.
-
-Learned stages are never a silent fallback: under ``lightweight_v1`` a stage
-that would have run reports ``disabled by rendering policy``, and the output's
-parameters name the policy, so a stored result always says what could have run.
-
-YuNet and SFace are not enhancement models. They keep working for face
+guards. YuNet and SFace are not enhancement models; they keep working for face
 detection, the face-fidelity check and consented identity features.
+
+The learned enhancement stages that earlier versions could run were retired on
+2026-10-15 (see docs/enhancement/retired-capabilities.md). A retired capability
+is never silently replaced by a different algorithm and is never a "fallback":
+a request that names one is refused with the reason, results made before the
+retirement keep the parameters they were stored with, and every new result lists
+what is retired in ``applied_parameters.render_policy.retired_capabilities``.
 """
-from django.conf import settings
-
 LIGHTWEIGHT = "lightweight_v1"
-LEARNED = "learned_v1"
-POLICIES = (LIGHTWEIGHT, LEARNED)
+RETIRED_ON = "2026-10-15"
+RETIREMENT_DOCUMENT = "docs/enhancement/retired-capabilities.md"
 
-# Per-model setting -> the stage it switches, as reported to users.
-LEARNED_STAGES = {
-    "ZERO_DCE_ENABLED": "zero_dce",
-    "AI_RESTORATION_ENABLED": "edsr_super_resolution",
-    "HD_RESTORATION_ENABLED": "hd_restoration",
-    "NAFNET_DEBLUR_ENABLED": "nafnet_deblur",
-    "PURESCALE_ENABLED": "purescale",
-    "PUREVISION_ENABLED": "purevision",
-    "GFPGAN_ENABLED": "gfpgan_face_restoration",
-    "COLORIZATION_ENABLED": "colorization",
+# key -> (what it was, the settings that switched it on)
+RETIRED_CAPABILITIES = {
+    "zero_dce": ("Zero-DCE learned exposure curves", ("ZERO_DCE_ENABLED",)),
+    "edsr_super_resolution": ("EDSR 2x super-resolution", ("AI_RESTORATION_ENABLED",)),
+    "nafnet_deblur": ("NAFNet deblurring", ("NAFNET_DEBLUR_ENABLED", "HD_RESTORATION_ENABLED")),
+    "realesrgan_hd": ("Real-ESRGAN HD upscaling", ("HD_RESTORATION_ENABLED",)),
+    "gfpgan_face_restoration": ("GFPGAN face restoration", ("GFPGAN_ENABLED", "GFPGAN_QUEUE_ENABLED")),
+    "purevision": ("PureVision artefact removal", ("PUREVISION_ENABLED",)),
+    "purescale": ("PureScale 2x super-resolution", ("PURESCALE_ENABLED",)),
+    "colorization": ("Automatic colourisation", ("COLORIZATION_ENABLED",)),
 }
 
-DESCRIPTIONS = {
-    LIGHTWEIGHT: (
-        "OpenCV and Pillow only. No learned enhancement model runs: no Zero-DCE, EDSR, "
-        "NAFNet, Real-ESRGAN, GFPGAN, PureVision, PureScale or colourisation."
-    ),
-    LEARNED: "Each learned model runs when its own setting is on (earlier behaviour).",
-}
+# Environment names that no longer do anything. Setting one is reported at start-up
+# (enhancement/checks.py) instead of being ignored in silence.
+RETIRED_SETTING_PREFIXES = (
+    "ZERO_DCE_", "AI_RESTORATION_", "NAFNET_", "REALESRGAN_", "HD_RESTORATION_", "GFPGAN_",
+    "PUREVISION_", "PURESCALE_", "COLORIZATION_",
+)
+RETIRED_SETTING_NAMES = (
+    "ENHANCEMENT_RENDER_POLICY", "ENHANCEMENT_MIN_TILE_SIZE", "ENHANCEMENT_DARK_COLOUR_GAIN_MAX",
+    "EXTREME_LOW_LIGHT_MODEL_STRENGTH", "ENHANCEMENT_MODEL_LUMINANCE_THRESHOLD", "ENHANCEMENT_MODEL_LUMINANCE_TARGET",
+)
+
+DESCRIPTION = (
+    "OpenCV and Pillow only. The learned enhancement stages (Zero-DCE, EDSR, NAFNet, Real-ESRGAN, GFPGAN, "
+    "PureVision, PureScale, colourisation) were retired; face detection and identity checks use YuNet and SFace."
+)
 
 
 def active_policy():
-    name = getattr(settings, "ENHANCEMENT_RENDER_POLICY", LIGHTWEIGHT)
-    if name not in POLICIES:
-        raise ValueError(f"ENHANCEMENT_RENDER_POLICY must be one of {POLICIES}, not {name!r}.")
-    return name
+    return LIGHTWEIGHT
 
 
-def learned_stage_enabled(flag):
-    """Whether a learned stage may run: the policy allows it *and* its setting is on."""
-    if flag not in LEARNED_STAGES:
-        raise KeyError(f"{flag} is not a learned-stage setting.")
-    return active_policy() == LEARNED and bool(getattr(settings, flag))
-
-
-def disabled_by_policy():
-    """Stage names whose setting is on but which the active policy keeps off."""
-    if active_policy() == LEARNED:
-        return []
-    return sorted(stage for flag, stage in LEARNED_STAGES.items() if getattr(settings, flag))
+def retired_capabilities():
+    """What was retired, as served to clients and recorded on every result."""
+    return [
+        {"key": key, "name": name, "retired_on": RETIRED_ON, "status": "retired"}
+        for key, (name, _flags) in RETIRED_CAPABILITIES.items()
+    ]
 
 
 def describe():
     """The policy as recorded in every result's parameters."""
-    name = active_policy()
     return {
-        "name": name,
-        "description": DESCRIPTIONS[name],
-        "learned_stages_allowed": name == LEARNED,
-        "learned_stages": sorted(LEARNED_STAGES.values()),
-        "configured_on_but_disabled_by_policy": disabled_by_policy(),
-        "heavy_restoration_available": name == LEARNED and any(
-            bool(getattr(settings, flag)) for flag in LEARNED_STAGES
-        ),
+        "name": LIGHTWEIGHT,
+        "description": DESCRIPTION,
+        "heavy_restoration_available": False,
+        "retired_capabilities": retired_capabilities(),
+        "documentation": RETIREMENT_DOCUMENT,
     }
 
 
-def disabled_reason(stage):
-    """The sentence for a stage that is off: the policy, or its own setting."""
-    if active_policy() == LIGHTWEIGHT:
-        return f"{stage} is disabled by the {LIGHTWEIGHT} rendering policy."
-    return f"{stage} is disabled."
+def retirement_message(key):
+    """The sentence for a request that names a retired capability."""
+    name = RETIRED_CAPABILITIES[key][0]
+    return f"{name} was retired on {RETIRED_ON} and is no longer available; see {RETIREMENT_DOCUMENT}."

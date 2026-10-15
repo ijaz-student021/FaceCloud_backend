@@ -10,7 +10,7 @@ been claimed, so the worker behaves exactly like a production worker except:
 
 Arguments are passed to ``celery`` unchanged::
 
-    python scripts/queue_harness_worker.py -A config worker --pool=solo -Q gfpgan
+    python scripts/queue_harness_worker.py -A config worker --pool=solo -Q celery
 """
 import os
 import sys

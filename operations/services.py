@@ -9,7 +9,7 @@ from pathlib import Path
 import redis
 from django.conf import settings
 
-from enhancement.policy import learned_stage_enabled
+from enhancement.policy import RETIRED_CAPABILITIES
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.core.mail import get_connection
@@ -169,21 +169,6 @@ def check_models():
             settings.IDENTITY_MODEL_SHA256,
             True,
         ),
-        "nafnet": (
-            settings.NAFNET_MODEL_PATH,
-            settings.NAFNET_MODEL_SHA256,
-            learned_stage_enabled("NAFNET_DEBLUR_ENABLED"),  # required only if it can run
-        ),
-        "realesrgan": (
-            settings.REALESRGAN_MODEL_PATH,
-            settings.REALESRGAN_MODEL_SHA256,
-            learned_stage_enabled("HD_RESTORATION_ENABLED") and bool(settings.REALESRGAN_MODEL_PATH),
-        ),
-        "gfpgan": (
-            settings.GFPGAN_MODEL_PATH,
-            settings.GFPGAN_MODEL_SHA256,
-            learned_stage_enabled("GFPGAN_ENABLED") and bool(settings.GFPGAN_MODEL_PATH),
-        ),
     }
     models = {
         name: _model_status(path, checksum, enabled)
@@ -192,7 +177,8 @@ def check_models():
     status = DEGRADED if any(
         item["status"] == DEGRADED for item in models.values()
     ) else HEALTHY
-    return _result(status, started, models=models)
+    # Retired capabilities are reported, not checked: their files are no longer required.
+    return _result(status, started, models=models, retired=sorted(RETIRED_CAPABILITIES))
 
 
 def job_counts():
