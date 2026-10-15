@@ -233,6 +233,49 @@ Progress and results are the batch owner's existing job/result endpoints.
   server never receives frames unless the user saves a snapshot. Session
   metadata is deleted 30 days after it started; saved images stay.
 
+### Lightweight enhancement and editor controls (Phase A)
+Full detail: `docs/enhancement/lightweight-pipeline.md`. No frontend change is
+required for existing screens; these are the contracts to adopt.
+
+**Rendering policy.** Enhancement runs OpenCV/Pillow only (`lightweight_v1`).
+Zero-DCE, EDSR, NAFNet, Real-ESRGAN, GFPGAN, PureVision, PureScale and
+colourisation never run. Do not show or imply "AI restoration", face
+restoration, super-resolution or colourisation as available. Each result has
+`applied_parameters.render_policy`; stage reports for those stages read
+`skipped`, with the reason, not `fallback`.
+
+**Automatic level never brightens a dark photo.** The plan carries a
+`lift_withheld` routing decision. To lift a dark photo the user must choose a
+level (low, medium, high) or, in the editor, the `brighten` intent. Offer a
+"Brighten" choice next to Auto on the upload and result screens.
+
+**AI Max** still means level `high` plus denoising where noise is measured. A
+result with `applied_parameters.ai_max` and the warning "AI Max used the
+strongest local correction only" tells the user heavy restoration was not
+available. Show it.
+
+**Editor controls** (`GET /api/enhancements/editor/configuration/`; render the
+sliders from it, do not hard-code):
+* Controls: brightness, contrast, shadows, highlights, saturation, warmth,
+  **sharpness (new)**, and intensity. Signed, 0 neutral (intensity: 100).
+* `neutral_settings` is what **Reset** sets. Reset must not trigger Auto; Auto
+  and presets are separate requests. A neutral manual edit returns the source
+  unchanged and records `outcome: "no_change"`.
+* Each control has `minimum`/`maximum` (manual) and a much smaller
+  `auto_minimum`/`auto_maximum`; `description` is the exact renderer meaning;
+  `pillow_factor_per_unit` is for reference only.
+* `POST /api/enhancements/results/{id}/edits/` accepts `{mode, adjustments,
+  intent}`. `intent` (`auto` | `brighten` | `preserve`) is for `mode: "auto"`;
+  sending it with manual mode is a `400`. Unknown control names, booleans,
+  NaN/infinity and out-of-range numbers are `400` with a message per field
+  (it was silently ignored before).
+* Saved edits report `quality_metadata.requested`, `.validated`, `.applied`,
+  `.guard_reductions`, `.fallback_reasons`, `.renderer_version`, `.outcome`
+  and, for auto, `.auto{action, rationale, caution_flags}`. When
+  `applied` is smaller than `requested`, tell the user a safety guard reduced it.
+  `auto.action: "no_change"` means nothing needed fixing: say so, do not show
+  an "enhanced" badge.
+
 ### Contact form (B07, public)
 `POST /api/contact/` (no authentication) takes
 `{name, email, company?, reason, message}`.

@@ -107,3 +107,11 @@ separately in `frontend-handoff.md`; nothing here claims a frontend change.
 | Typed response schemas for aggregates | done `ce9c212` | Dashboard and analytics render through documented serializers, drift-tested |
 | EDSR runtime checksum (audit P2-16) | fixed `02ead0c` | B08 |
 | Deployment artefacts | prepared, not run | B09: local staging (PostgreSQL, Redis, Django, Celery, Beat); see `docs/deployment/` |
+
+## Lightweight enhancement (branch `feat/lightweight-enhancement`)
+
+| Phase | Scope | Status |
+|---|---|---|
+| A | `lightweight_v1` policy; no automatic lift of dark photos; control contract (sharpness added), float-LAB renderer, local recipe, configuration endpoint | implemented `053e8b0`, `4eac545`, `5c4ff92`; tests and schema pass |
+| B | Bounded authenticated previews, revision-specific atomic outputs, full-resolution save from a stable source, preview cleanup | planned |
+| C | Optional OpenAI advisor (opt-in, separate consent, structured output), per-image jobs, budgets | planned |
