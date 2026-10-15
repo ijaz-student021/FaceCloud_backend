@@ -2,6 +2,11 @@
 #
 #   python3.12 -m venv .runtime/venvs/gfpgan
 #   .runtime/venvs/gfpgan/bin/pip install -r requirements-gfpgan.txt
+#   # Then keep only the contrib build of OpenCV. gfpgan/basicsr pull in plain opencv-python as
+#   # well, and the two packages overwrite each other's cv2 files: with plain opencv-python on
+#   # top, cv2.dnn_superres (EDSR) is empty. The fix, verified 2026-10-15:
+#   uv pip uninstall --python .runtime/venvs/gfpgan/bin/python opencv-python opencv-contrib-python-headless
+#   uv pip install --python .runtime/venvs/gfpgan/bin/python -c requirements-gfpgan-constraints.txt opencv-contrib-python-headless==5.0.0.93
 #
 # It is the backend's own requirements plus PyTorch and the GFPGAN stack, so the
 # worker can never drift from what the application imports. (It used to repeat

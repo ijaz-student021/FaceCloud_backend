@@ -55,8 +55,11 @@ checked here, so add the document (or its reference) to `docs/model-licenses/` w
    models whose own setting is on then run). Zero-DCE and EDSR need nothing else;
    NAFNet, Real-ESRGAN, GFPGAN, PureVision, PureScale and colourisation need PyTorch (the
    isolated Python 3.12 worker environment: `requirements-gfpgan.txt`, started with
-   `scripts/start_gfpgan_worker.sh`). **That environment is not installed on this machine at
-   the moment**; the OpenCV-only models can be shown immediately.
+   `scripts/start_gfpgan_worker.sh`). **That environment is installed on this machine** at `.runtime/venvs/gfpgan`
+   (git-ignored; Python 3.12.13, torch 2.14.0, torchvision 0.29.0, Apple MPS available, no CUDA). Rebuild it with the
+   commands at the top of `requirements-gfpgan.txt`, including the OpenCV step (plain `opencv-python` breaks EDSR).
+   Verified 2026-10-15: `manage.py check_gfpgan --load-model` passes, and each of the eight models ran on a real photo
+   with a matching defect (`docs/evaluation/2026-10-15-learned-models-run.md`).
 4. **Same photo, both policies:** `python scripts/compare_policies.py --image photo.jpg --darken 0.28 --out compare.jpg`
    runs the pipeline twice (one process per policy) and writes the two results side by side.
    Measured on a portrait darkened to 28 % brightness: the default leaves it dark in automatic
