@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model, password_validation
 from django.contrib.auth.tokens import default_token_generator
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q
 from django.db.models.functions import Lower
 from django.utils.encoding import force_str
@@ -10,9 +11,9 @@ from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from . import lockout
-from .services import (dashboard_for_user, has_active_two_factor,
+from .services import (dashboard_for_user, derive_username, has_active_two_factor,
                        issue_login_tokens, make_two_factor_login_challenge,
-                       record_auth_event, split_full_name)
+                       record_auth_event, resolve_moderator_organization, split_full_name)
 
 User = get_user_model()
 
@@ -283,6 +284,47 @@ class AdminUserSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         if attrs.get("is_suspended") is False:
             attrs["suspension_reason"] = ""
+        return attrs
+
+
+class AdminUserCreateSerializer(serializers.Serializer):
+    """What an administrator sends to create an account: the same checks as signup, without the verification email."""
+
+    username = serializers.CharField(max_length=150, required=False, allow_blank=True)
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True, trim_whitespace=False)
+    role = serializers.ChoiceField(choices=["user", "moderator"], default="user",
+                                   help_text="`user` or `moderator`. An administrator account cannot be created here.")
+    organization_id = serializers.IntegerField(required=False, allow_null=True,
+                                               help_text="Moderators only. Needed when there is more than one organization.")
+    full_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
+
+    def validate_username(self, value):
+        value = User.normalize_username(value).strip()
+        if value and User.objects.filter(username__iexact=value).exists():
+            raise serializers.ValidationError("A user with this username already exists.")
+        return value
+
+    def validate_email(self, value):
+        return validate_unique_email(value)
+
+    def validate_full_name(self, value):
+        return " ".join((value or "").split())
+
+    def validate(self, attrs):
+        username = attrs.get("username") or derive_username(attrs["email"])
+        first_name, last_name = split_full_name(attrs.get("full_name", ""))
+        candidate = User(username=username, email=attrs["email"], first_name=first_name, last_name=last_name)
+        try:
+            password_validation.validate_password(attrs["password"], user=candidate)
+        except DjangoValidationError as error:
+            raise serializers.ValidationError({"password": list(error.messages)}) from error
+        attrs["username"] = username
+        organization_id = attrs.get("organization_id")
+        if attrs["role"] == "moderator":
+            attrs["organization"] = resolve_moderator_organization(organization_id)
+        elif organization_id is not None:
+            raise serializers.ValidationError({"organization_id": ["Only a moderator is placed in an organization."]})
         return attrs
 
 

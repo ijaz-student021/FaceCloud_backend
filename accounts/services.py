@@ -15,7 +15,7 @@ from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.html import escape
 from django.utils.http import urlsafe_base64_encode
-from rest_framework.exceptions import Throttled, ValidationError
+from rest_framework.exceptions import APIException, Throttled, ValidationError
 from rest_framework.throttling import BaseThrottle
 
 from . import lockout, totp
@@ -434,3 +434,64 @@ def verify_two_factor_login(login_token, code, request=None):
         raise ValidationError({"code": "That code is not valid."})
     record_auth_event("login", request, user, "", {"stage": "two_factor"})
     return issue_login_tokens(user)
+
+
+class OrganizationChoiceError(APIException):
+    """A 400 whose body is a plain ``{"detail": "..."}`` message (a DRF ``ValidationError`` would wrap it in a list)."""
+
+    status_code = 400
+    default_code = "organization_choice"
+
+
+def resolve_moderator_organization(organization_id=None):
+    """The organization a new moderator joins: the one asked for, else the only active shared one.
+
+    Raises ``ValidationError`` (a plain ``detail`` message) when it does not exist, is not active, is somebody's personal workspace,
+    or when nothing or too many candidates leave the choice open.
+    """
+    from organizations.models import Organization
+
+    shared = Organization.objects.filter(status=Organization.Status.ACTIVE, is_personal=False)
+    if organization_id is not None:
+        organization = Organization.objects.filter(pk=organization_id).first()
+        if organization is None or organization.status != Organization.Status.ACTIVE:
+            raise OrganizationChoiceError("That organization does not exist or is not active.")
+        if organization.is_personal:
+            raise OrganizationChoiceError("That is a personal workspace, not an organization a moderator can join.")
+        return organization
+    candidates = list(shared.order_by("name")[:2])
+    if not candidates:
+        raise OrganizationChoiceError("Create an organization first, then try again.")
+    if len(candidates) > 1:
+        raise OrganizationChoiceError("There is more than one organization: send organization_id to choose one.")
+    return candidates[0]
+
+
+@transaction.atomic
+def create_account_as_admin(*, administrator, username, email, password, role, organization=None, full_name="", request=None):
+    """Create an already-verified account for someone, in one transaction.
+
+    ``role`` is ``user`` or ``moderator`` (never ``admin``: the serializer allows only those two). A moderator also gets an active
+    moderator membership in ``organization`` so the moderator panel can find it; if that fails nothing is created. The password is
+    hashed by ``create_user`` and appears in no event, log line or response. One ``admin_created_account`` event names the
+    administrator and the new account.
+    """
+    from organizations.models import OrganizationMembership
+
+    User = get_user_model()
+    first_name, last_name = split_full_name(full_name)
+    user = User.objects.create_user(
+        username=username, email=email, password=password, first_name=first_name, last_name=last_name,
+        role=role, is_email_verified=True, is_active=True, is_suspended=False,
+    )
+    if role == "moderator":
+        OrganizationMembership.objects.create(
+            organization=organization, user=user, role=OrganizationMembership.Role.MODERATOR,
+            status=OrganizationMembership.Status.ACTIVE, invited_by=administrator,
+        )
+    record_auth_event(
+        "admin_created_account", request, user, email,
+        {"administrator_id": administrator.pk, "administrator": administrator.get_username(), "role": role,
+         "organization_id": organization.pk if organization is not None else None},
+    )
+    return user
