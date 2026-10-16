@@ -747,6 +747,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "accounts.cleanup_login_attempts",
         "schedule": crontab(minute=50, hour=3),
     },
+    # Abandoned and finished signups; without this the pending table only ever grows.
+    "purge-pending-registrations": {
+        "task": "accounts.cleanup_pending_registrations",
+        "schedule": crontab(minute=55, hour=3),
+    },
     "expire-share-links": {
         "task": "sharing.cleanup_expired",
         "schedule": crontab(minute=0, hour=4),

@@ -67,6 +67,7 @@ Provides the complete account lifecycle and proves the identity of API users.
 
 - Registration with full name, email, and password (username optional)
 - Email-link verification before permanent user creation (single-use token, hashed, 24 h by default); full name on signup, optional username
+- An administrator can create verified accounts (`POST /api/user/admin/users/`, user or moderator); `createsuperuser` makes a verified admin that can sign in
 - Login `role` and `dashboard` are one value: `moderator` also for an active organization moderator; the person's `full_name` is on every user object
 - Hashed pending password and token storage
 - Verification expiry, attempt locking, resend cooldown, and hourly send limits

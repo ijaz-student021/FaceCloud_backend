@@ -32,6 +32,7 @@ from .models import PendingRegistration
 from .dashboard import build_user_dashboard
 from .permissions import IsAdminRole
 from .serializers import (
+    AdminUserCreateSerializer,
     AdminUserSerializer,
     ChangePasswordSerializer,
     DeleteAccountSerializer,
@@ -55,6 +56,7 @@ from .serializers import (
 from .services import (
     confirm_two_factor,
     disable_two_factor,
+    create_account_as_admin,
     derive_username,
     generate_verification_token,
     hash_verification_token,
@@ -907,10 +909,58 @@ class UserDashboardView(APIView):
         return Response(build_user_dashboard(request.user))
 
 
-class AdminUserListView(generics.ListAPIView):
+@extend_schema_view(
+    get=extend_schema(summary="List every account (administrators)"),
+    post=extend_schema(
+        summary="Create an account (administrators)",
+        description=(
+            "Creates an **already verified** account for someone, with a password the administrator hands over. No email is sent "
+            "and the password is never returned or logged. `role` is `user` or `moderator` (never `admin`). A moderator is also "
+            "added to an organization so the moderator panel can find it: the one in `organization_id`, otherwise the only active "
+            "non-personal organization; with none or several the request is refused (400 `detail`). `username` may be left blank "
+            "(derived from the email); `full_name` is optional. Errors are field errors under `email`, `username`, `password`, "
+            "`role`. Respond 201 with the same representation the list returns."
+        ),
+        request=AdminUserCreateSerializer,
+        responses={201: AdminUserSerializer, 400: OpenApiTypes.OBJECT, 403: OpenApiTypes.OBJECT},
+        examples=[
+            OpenApiExample("A plain user", value={"username": "sara", "email": "sara@example.com", "password": "Ocean!Breeze2026x",
+                                                   "role": "user"}, request_only=True),
+            OpenApiExample("A moderator", value={"username": "omar", "email": "omar@example.com", "password": "Ocean!Breeze2026x",
+                                                  "role": "moderator", "organization_id": 3}, request_only=True),
+            OpenApiExample("Created", value={"id": 12, "username": "omar", "email": "omar@example.com", "full_name": "omar",
+                                             "role": "moderator", "is_email_verified": True, "is_suspended": False,
+                                             "suspension_reason": "", "is_active": True, "date_joined": "2026-10-16T15:30:00Z"},
+                           response_only=True, status_codes=["201"]),
+            OpenApiExample("Several organizations", value={"detail": "There is more than one organization: send organization_id to choose one."},
+                           response_only=True, status_codes=["400"]),
+            OpenApiExample("Weak password", value={"password": ["This password is too common."]}, response_only=True, status_codes=["400"]),
+        ],
+    ),
+)
+class AdminUserListView(generics.ListCreateAPIView):
+    """``GET`` lists everyone (a plain array unless ``page``/``page_size`` is sent); ``POST`` creates an account."""
+
     queryset = User.objects.all().order_by("-date_joined")
     serializer_class = AdminUserSerializer
     permission_classes = [permissions.IsAuthenticated, IsAdminRole]
+
+    def get_serializer_class(self):
+        return AdminUserCreateSerializer if self.request.method == "POST" else AdminUserSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = AdminUserCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            user = create_account_as_admin(
+                administrator=request.user, username=data["username"], email=data["email"], password=data["password"],
+                role=data["role"], organization=data.get("organization"), full_name=data.get("full_name", ""), request=request,
+            )
+        except IntegrityError:
+            # A concurrent request took the username or email between the validation and the insert.
+            raise serializers.ValidationError({"email": ["A user with this email or username already exists."]}) from None
+        return Response(AdminUserSerializer(user).data, status=status.HTTP_201_CREATED)
 
 
 class AdminUserUpdateView(generics.UpdateAPIView):

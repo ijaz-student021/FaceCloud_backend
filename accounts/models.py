@@ -2,9 +2,23 @@ import uuid
 
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
-from django.contrib.auth.models import AbstractUser
+from django.contrib.auth.models import AbstractUser, UserManager
 from django.db import models
 from django.db.models.functions import Lower
+
+
+class FaceCloudUserManager(UserManager):
+    """``create_superuser`` makes an account that can actually sign in.
+
+    A superuser has no signup email to click, and login refuses ``is_email_verified=False``, so ``manage.py createsuperuser`` used to
+    produce an account that could not log in. It is now verified and has the ``admin`` role unless the caller says otherwise.
+    ``create_user`` is unchanged: a normal account still has to verify its email.
+    """
+
+    def create_superuser(self, username, email=None, password=None, **extra_fields):
+        extra_fields.setdefault("is_email_verified", True)
+        extra_fields.setdefault("role", "admin")
+        return super().create_superuser(username, email, password, **extra_fields)
 
 
 class User(AbstractUser):
@@ -15,6 +29,8 @@ class User(AbstractUser):
     suspension_reason = models.TextField(blank=True)
     is_email_verified = models.BooleanField(default=False)
     token_version = models.PositiveIntegerField(default=0)
+
+    objects = FaceCloudUserManager()
 
     @property
     def full_name(self):
@@ -40,6 +56,7 @@ class AuthEvent(models.Model):
         ("suspended", "Suspended"),
         ("reactivated", "Reactivated"),
         ("account_deleted", "Account deleted"),
+        ("admin_created_account", "Account created by an administrator"),
         ("two_factor_enabled", "Two-factor authentication enabled"),
         ("two_factor_disabled", "Two-factor authentication disabled"),
         ("two_factor_recovery_codes_regenerated", "Two-factor recovery codes regenerated"),
