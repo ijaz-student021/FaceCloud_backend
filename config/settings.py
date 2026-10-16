@@ -18,6 +18,7 @@ import environ
 from celery.schedules import crontab
 from django.core.exceptions import ImproperlyConfigured
 
+from config.api_docs import INFO_DESCRIPTION, TAGS as API_TAGS
 from config.celery_routes import task_routes
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -1045,6 +1046,8 @@ REST_FRAMEWORK = {
         "accounts.authentication.FaceCloudJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
+    # OpenAPI text from config/api_docs.py (see config/schema.py).
+    "DEFAULT_SCHEMA_CLASS": "config.schema.FaceCloudAutoSchema",
     # Paginated when the request passes page or page_size; a plain array
     # otherwise, so existing clients keep working (config/pagination.py).
     "DEFAULT_PAGINATION_CLASS": "config.pagination.OptionalPageNumberPagination",
@@ -1098,17 +1101,20 @@ REST_FRAMEWORK = {
         "org_bulk_moderation": "60/hour",
         "org_moderation_metrics": "120/hour",
     },
-    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "FaceCloud API",
-    "DESCRIPTION": "Authenticated facial-image upload, enhancement, validation, identity grouping, reports, and downloads.",
+    "DESCRIPTION": INFO_DESCRIPTION,
+    "TAGS": API_TAGS,
+    "SWAGGER_UI_SETTINGS": {"persistAuthorization": True, "displayRequestDuration": True, "docExpansion": "none", "filter": True},
+    "CONTACT": {"name": "FaceCloud backend"},
     "VERSION": FACECLOUD_VERSION,
     "SERVE_INCLUDE_SCHEMA": False,
     "POSTPROCESSING_HOOKS": [
         "drf_spectacular.hooks.postprocess_schema_enums",
         "config.schema_hooks.add_standard_error_responses",
+        "config.schema.add_examples",
     ],
     # Several models share field names ("status", "report_format", ...) with
     # different choice sets; name each set explicitly so the schema is stable.
