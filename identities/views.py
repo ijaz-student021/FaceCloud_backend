@@ -1,3 +1,4 @@
+from django.db.models import Exists, F, OuterRef, Prefetch, Subquery
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from drf_spectacular.types import OpenApiTypes
@@ -9,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from uploads.models import ImageUpload
+from uploads.views import MyImagesPagination, my_images_queryset
 from downloads.models import DownloadEvent
 from downloads.services import record_download
 
@@ -20,6 +22,7 @@ from .management import (delete_empty_group, merge_groups, move_membership,
                          remove_membership, rename_group, set_profile_membership)
 from .models import (IdentityAnalysis, IdentityChange, IdentityGroup,
                      IdentityGroupExport, IdentityMembership)
+from .image_serializers import IdentityGroupImageSerializer
 from .serializers import (IdentityAnalysisSerializer, IdentityAnalyzeRequestSerializer,
                           IdentityChangeSerializer,
                           IdentityGroupExportRequestSerializer,
@@ -97,12 +100,25 @@ class IdentityVisualSearchView(APIView):
         return Response(IdentitySearchResponseSerializer(payload, context={"request": request}).data)
 
 
+def _member_prefetch():
+    """Each group's members (with their photo) in one extra query for a whole page of groups."""
+    return Prefetch(
+        "memberships",
+        queryset=IdentityMembership.objects.exclude(
+            state__in=[IdentityMembership.State.REJECTED, IdentityMembership.State.REMOVED],
+        ).select_related("identity_face__image"),
+        to_attr="active_memberships",
+    )
+
+
 class IdentityGroupListView(generics.ListAPIView):
     serializer_class = IdentityGroupSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return IdentityGroup.objects.filter(owner=self.request.user, state=IdentityGroup.State.ACTIVE)
+        return IdentityGroup.objects.filter(
+            owner=self.request.user, state=IdentityGroup.State.ACTIVE,
+        ).prefetch_related(_member_prefetch())
 
 
 class IdentityGroupDetailView(generics.RetrieveAPIView):
@@ -110,14 +126,34 @@ class IdentityGroupDetailView(generics.RetrieveAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return IdentityGroup.objects.filter(owner=self.request.user).prefetch_related("memberships__identity_face")
+        return IdentityGroup.objects.filter(owner=self.request.user).prefetch_related(_member_prefetch())
 
     def retrieve(self, request, *args, **kwargs):
         group = self.get_object()
         data = IdentityGroupSerializer(group, context={"request": request}).data
-        memberships = group.memberships.exclude(state__in=[IdentityMembership.State.REJECTED, IdentityMembership.State.REMOVED]).select_related("identity_face__image")
-        data["memberships"] = IdentityMembershipSerializer(memberships, many=True).data
+        data["memberships"] = IdentityMembershipSerializer(group.active_memberships, many=True).data
         return Response(data)
+
+
+class IdentityGroupImagesView(generics.ListAPIView):
+    """The photos in one person folder, newest first, with the facts a folder grid shows."""
+
+    serializer_class = IdentityGroupImageSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = MyImagesPagination
+
+    def get_queryset(self):
+        group = get_object_or_404(IdentityGroup.objects.filter(owner=self.request.user), pk=self.kwargs["pk"])
+        members = IdentityMembership.objects.filter(
+            owner=self.request.user, identity_group=group, identity_face__image=OuterRef("pk"),
+        ).exclude(state__in=[IdentityMembership.State.REJECTED, IdentityMembership.State.REMOVED])
+        best = members.order_by(F("similarity_score").desc(nulls_last=True)).values("similarity_score")[:1]
+        return (
+            my_images_queryset(self.request.user)
+            .filter(Exists(members))
+            .annotate(group_similarity=Subquery(best))
+            .order_by("-created_at", "-pk")
+        )
 
 
 class IdentityReviewListView(generics.ListAPIView):
