@@ -149,8 +149,7 @@ The form sends `full_name`, `email` and `password` (`username` is optional and d
 (`secrets.token_urlsafe(32)`) is stored only as a SHA-256 hash, compared in constant time, works once, and expires after
 `SIGNUP_VERIFICATION_LINK_LIFETIME_SECONDS` (default 24 h); resend, cooldown, hourly-send limit and failed-attempt locking are
 unchanged (`SIGNUP_VERIFICATION_*` in `.env.example`). See
-[`docs/features/01-authentication-and-authorization.md`](docs/features/01-authentication-and-authorization.md)
-and [`docs/PRD_6_DIGIT_SIGNUP_EMAIL_VERIFICATION.md`](docs/PRD_6_DIGIT_SIGNUP_EMAIL_VERIFICATION.md).
+[`docs/features/01-authentication-and-authorization.md`](docs/features/01-authentication-and-authorization.md).
 
 | Method | Endpoint | Purpose |
 |---|---|---|
@@ -341,4 +340,3 @@ Then run `python manage.py check --deploy` for Django's own checks.
 - [`docs/features`](docs/features): per-feature design, verification and limits
 - [`docs/structured`](docs/structured): architecture, decisions, tasks
 - [`docs/12_DAY_COMPLETION_PLAN.md`](docs/12_DAY_COMPLETION_PLAN.md): delivery plan
-- [`docs/PRD_6_DIGIT_SIGNUP_EMAIL_VERIFICATION.md`](docs/PRD_6_DIGIT_SIGNUP_EMAIL_VERIFICATION.md): signup verification PRD

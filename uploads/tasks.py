@@ -65,7 +65,7 @@ def preprocess_batch_task(self, batch_id):
             continue
         try:
             preprocess_image(image, requested_format="auto")
-        except Exception as error:
+        except Exception:
             result, created = ImagePreprocessingResult.objects.get_or_create(
                 image=image,
                 defaults={"owner": image.owner, "requested_format": "auto"},

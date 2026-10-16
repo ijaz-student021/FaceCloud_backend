@@ -104,17 +104,7 @@ class SFaceOnnxProvider(IdentityEmbeddingProvider):
             raise ValidationError("SFace feature extraction failed safely.") from error
 
 
-_provider_override = None
-
-
-def set_provider_for_tests(provider):
-    global _provider_override
-    _provider_override = provider
-
-
 def get_identity_provider():
-    if _provider_override is not None:
-        return _provider_override
     if settings.IDENTITY_PROVIDER == SFaceOnnxProvider.name:
         return SFaceOnnxProvider()
     return DisabledIdentityProvider()

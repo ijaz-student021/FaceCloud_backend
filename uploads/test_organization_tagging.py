@@ -7,7 +7,6 @@ actually populated, not that any existing endpoint behaves differently.
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from organizations.models import OrganizationMembership
 from organizations.services import create_organization, create_personal_organization
 
 from .services import create_image_batch

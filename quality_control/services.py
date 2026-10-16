@@ -9,7 +9,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from enhancement.services import analyze_image_quality
-from uploads.models import ImagePreprocessingResult, ImageUpload
+from uploads.models import ImagePreprocessingResult
 from validation.models import FaceValidationResult
 
 from .models import ImageQualityDecision

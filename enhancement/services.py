@@ -4,7 +4,6 @@ Lighting correction is applied to the LAB luminance channel. Colour channels are
 left unchanged so the baseline does not intentionally normalize skin tones.
 """
 
-import hashlib
 import logging
 import time
 import threading

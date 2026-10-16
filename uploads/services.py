@@ -163,7 +163,7 @@ def create_zip_batch(owner, uploaded_zip):
                             temporary.write(chunk)
                     temporary.seek(0)
                     wrapped = File(temporary, name=filename)
-                    saved_image = _save_valid_image(batch, owner, wrapped, filename)
+                    _save_valid_image(batch, owner, wrapped, filename)
                 except ValidationError as error:
                     _create_rejected(batch, owner, filename, _error_text(error), member.file_size)
                     continue
@@ -397,7 +397,7 @@ def enqueue_batch_preprocessing(batch):
     )
     try:
         preprocess_batch_task.apply_async(args=[batch.pk], task_id=task_id)
-    except Exception as error:
+    except Exception:
         UploadBatch.objects.filter(pk=batch.pk).update(
             processing_status="failed",
             processing_error="The background processing queue is unavailable.",

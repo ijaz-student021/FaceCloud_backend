@@ -7,7 +7,6 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from enhancement.models import EnhancementStatus, ImageEnhancementResult
-from uploads.models import UploadBatch
 
 from .models import DownloadEvent, DownloadPackage
 

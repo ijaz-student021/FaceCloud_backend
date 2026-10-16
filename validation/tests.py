@@ -13,7 +13,6 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from uploads.models import ImagePreprocessingResult, ImageUpload, UploadBatch
 
-from .models import FaceValidationResult
 from .services import (
     HEURISTIC_CONFIDENCE_TYPE,
     FaceDetection,
