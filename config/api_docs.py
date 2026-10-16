@@ -31,7 +31,7 @@ FaceCloud AI: authenticated facial-image upload, enhancement, validation, identi
 """
 
 TAGS = [
-    {"name": "auth", "description": "Registration with email verification, login (with optional two-factor), token refresh, password reset, invitations."},
+    {"name": "auth", "description": "Registration with email verification, login, token refresh, password reset, invitations."},
     {"name": "user", "description": "The signed-in user's profile, avatar, sessions, dashboard and account deletion; administrator user management and invitations."},
     {"name": "images", "description": "Uploading photographs (single, multiple, zip), upload batches and their progress, thumbnails, preprocessing, downloads of originals."},
     {"name": "enhancements", "description": "Image enhancement jobs and results, the editor (sliders, previews, saved edit versions), model comparison and the optional AI advisor."},
@@ -60,14 +60,8 @@ CATALOGUE = {
     "auth_verify_email_resend_create": ("Resend the verification code", "Invalidates the current code and sends a new one to the same address, subject to a cooldown and a resend limit (429 when exceeded)."),
     "auth_registrations_status_retrieve": ("Check a registration in progress", "Masked status of a pending registration (no secrets): whether it is waiting for a code, expired or complete."),
     "auth_verify_email_change_retrieve": ("Confirm an email-address change", "Opened from the link emailed to the new address; confirms the change."),
-    "auth_login_create": ("Log in", "Send exactly one of `identifier`, `username` or `email`, plus `password`. Returns `{refresh, access, user, role, dashboard}`. If two-factor is enabled the response is `{two_factor_required: true, login_token}` instead; finish with `POST /api/auth/2fa/verify/`. Repeated failures lock the account for a growing delay."),
+    "auth_login_create": ("Log in", "Send exactly one of `identifier`, `username` or `email`, plus `password`. Returns `{refresh, access, user, role, dashboard}`. Repeated failures lock the account for a growing delay."),
     "auth_refresh_create": ("Refresh the access token", "Takes the `refresh` token and returns a new `access` token (and a rotated `refresh` when rotation is on). Revoked or signed-out sessions are refused."),
-    "auth_2fa_setup_create": ("Start two-factor setup", "Generates a new secret for an authenticator app. It is not enforced at login until confirmed with a real code."),
-    "auth_2fa_confirm_create": ("Confirm two-factor setup", "Proves one real code from the device, turns two-factor on and returns single-use recovery codes (shown once)."),
-    "auth_2fa_status_retrieve": ("Two-factor status", "Whether two-factor is enabled and how many recovery codes remain."),
-    "auth_2fa_disable_create": ("Turn two-factor off", "Requires a current device code or an unused recovery code."),
-    "auth_2fa_recovery_codes_create": ("Regenerate recovery codes", "Invalidates every existing recovery code and issues a fresh set (shown once)."),
-    "auth_2fa_verify_create": ("Finish a two-factor login", "Exchange the `login_token` from a password-verified login and the `code` (a device code or a recovery code) to receive the normal token response."),
     "auth_password_reset_create": ("Request a password reset", "Sends a reset link to the address when it belongs to an account."),
     "auth_password_reset_confirm_create": ("Set a new password from a reset link", "Send `uidb64` and `token` from the emailed link and `new_password`. Existing tokens are revoked, so sign in again."),
     "auth_invitations_inspect_create": ("Inspect an invitation", "Public: what an invitation token is for (role, email), so the sign-up form can show it."),

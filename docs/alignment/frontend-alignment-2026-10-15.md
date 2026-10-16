@@ -34,7 +34,7 @@ The endpoint for each screen is in `backend-alignment-tracker.md`; all exist.
 
 | Portal | Already on the live API | Still on mock data |
 |---|---|---|
-| Authentication | Login, register, verify email, password reset, 2FA verify | Reset and 2FA screens (routes missing) |
+| Authentication | Login, register, verify email, password reset | Reset screens (routes missing). 2FA was removed from the backend on 2026-10-16 |
 | User | Dashboard, single upload, processing, image list and detail | Multiple and ZIP upload, groups and group detail, downloads, activity, notifications, jobs, settings (profile and security), live enhancement |
 | Moderator | Dashboard, review queue (claim, bulk decisions, thumbnails, performance) | Image review, members, batches, notifications, reports, audit, settings |
 | Admin | none | All 13 screens (users, audit, security, API docs/test, system, statistics, image monitoring, rejections) |

@@ -23,276 +23,6 @@ info:
   contact:
     name: FaceCloud backend
 paths:
-  /api/auth/2fa/confirm/:
-    post:
-      operationId: auth_2fa_confirm_create
-      description: 'Proves one real code from the device, turns two-factor on and returns single-use recovery codes (shown
-        once).
-
-
-        **Access:** any signed-in user, on their own data (another user''s data is a 404). **Rate limit:** `two_factor` scope,
-        20/hour (429 when exceeded).'
-      summary: Confirm two-factor setup
-      tags:
-      - auth
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/TwoFactorCode'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/TwoFactorCode'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/TwoFactorCode'
-        required: true
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TwoFactorCodesResponse'
-          description: ''
-        '400':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
-        '401':
-          description: Missing, expired, revoked or invalid access token.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorDetail'
-        '429':
-          description: Rate limit or per-user job limit reached; retry later.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorDetail'
-  /api/auth/2fa/disable/:
-    post:
-      operationId: auth_2fa_disable_create
-      description: 'Requires a current device code or an unused recovery code.
-
-
-        **Access:** any signed-in user, on their own data (another user''s data is a 404). **Rate limit:** `two_factor` scope,
-        20/hour (429 when exceeded).'
-      summary: Turn two-factor off
-      tags:
-      - auth
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/TwoFactorCode'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/TwoFactorCode'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/TwoFactorCode'
-        required: true
-      security:
-      - jwtAuth: []
-      responses:
-        '204':
-          description: No response body
-        '400':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
-        '429':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
-        '401':
-          description: Missing, expired, revoked or invalid access token.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorDetail'
-  /api/auth/2fa/recovery-codes/:
-    post:
-      operationId: auth_2fa_recovery_codes_create
-      description: 'Invalidates every existing recovery code and issues a fresh set (shown once).
-
-
-        **Access:** any signed-in user, on their own data (another user''s data is a 404). **Rate limit:** `two_factor` scope,
-        20/hour (429 when exceeded).'
-      summary: Regenerate recovery codes
-      tags:
-      - auth
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/TwoFactorCode'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/TwoFactorCode'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/TwoFactorCode'
-        required: true
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TwoFactorCodesResponse'
-          description: ''
-        '400':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
-        '429':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
-        '401':
-          description: Missing, expired, revoked or invalid access token.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorDetail'
-  /api/auth/2fa/setup/:
-    post:
-      operationId: auth_2fa_setup_create
-      description: 'Generates a new secret for an authenticator app. It is not enforced at login until confirmed with a real
-        code.
-
-
-        **Access:** any signed-in user, on their own data (another user''s data is a 404). **Rate limit:** `two_factor` scope,
-        20/hour (429 when exceeded).'
-      summary: Start two-factor setup
-      tags:
-      - auth
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TwoFactorSetupResponse'
-          description: ''
-        '400':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
-        '401':
-          description: Missing, expired, revoked or invalid access token.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorDetail'
-        '429':
-          description: Rate limit or per-user job limit reached; retry later.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorDetail'
-  /api/auth/2fa/status/:
-    get:
-      operationId: auth_2fa_status_retrieve
-      summary: Two-factor status
-      tags:
-      - auth
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TwoFactorStatus'
-          description: ''
-        '401':
-          description: Missing, expired, revoked or invalid access token.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorDetail'
-        '429':
-          description: Rate limit or per-user job limit reached; retry later.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorDetail'
-      description: 'Whether two-factor is enabled and how many recovery codes remain.
-
-
-        **Access:** any signed-in user, on their own data (another user''s data is a 404).'
-  /api/auth/2fa/verify/:
-    post:
-      operationId: auth_2fa_verify_create
-      description: 'Exchange the `login_token` from a password-verified login and the `code` (a device code or a recovery
-        code) to receive the normal token response.
-
-
-        **Access:** public, no token needed. **Rate limit:** `login` scope, 20/hour (429 when exceeded).'
-      summary: Finish a two-factor login
-      tags:
-      - auth
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/TwoFactorLoginVerify'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/TwoFactorLoginVerify'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/TwoFactorLoginVerify'
-        required: true
-      security:
-      - jwtAuth: []
-      - {}
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LoginResponse'
-          description: ''
-        '400':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
-        '429':
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: {}
-          description: ''
   /api/auth/invitations/accept/:
     post:
       operationId: auth_invitations_accept_create
@@ -389,8 +119,7 @@ paths:
     post:
       operationId: auth_login_create
       description: 'Send exactly one of `identifier`, `username` or `email`, plus `password`. Returns `{refresh, access, user,
-        role, dashboard}`. If two-factor is enabled the response is `{two_factor_required: true, login_token}` instead; finish
-        with `POST /api/auth/2fa/verify/`. Repeated failures lock the account for a growing delay.
+        role, dashboard}`. Repeated failures lock the account for a growing delay.
 
 
         **Access:** any signed-in user, on their own data (another user''s data is a 404). **Rate limit:** `login` scope,
@@ -421,7 +150,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LoginResult'
+                $ref: '#/components/schemas/LoginResponse'
               examples:
                 typical:
                   summary: Typical response
@@ -11770,9 +11499,6 @@ components:
         country:
           type: string
           readOnly: true
-        two_factor_enabled:
-          type: boolean
-          readOnly: true
         active_sessions:
           type: integer
           readOnly: true
@@ -11802,7 +11528,6 @@ components:
       - organizations
       - role
       - suspension_reason
-      - two_factor_enabled
       - usage
       - username
     AdvisorConsentRequest:
@@ -14859,10 +14584,6 @@ components:
       - refresh
       - role
       - user
-    LoginResult:
-      oneOf:
-      - $ref: '#/components/schemas/LoginResponse'
-      - $ref: '#/components/schemas/TwoFactorRequiredResponse'
     Logout:
       type: object
       properties:
@@ -18482,63 +18203,6 @@ components:
       description: '* `event` - Event
 
         * `person` - Person'
-    TwoFactorCode:
-      type: object
-      properties:
-        code:
-          type: string
-          description: A 6-digit code from the authenticator app, or an unused recovery code.
-      required:
-      - code
-    TwoFactorCodesResponse:
-      type: object
-      properties:
-        recovery_codes:
-          type: array
-          items:
-            type: string
-          description: Shown once. Store these somewhere safe; they are not retrievable again.
-      required:
-      - recovery_codes
-    TwoFactorLoginVerify:
-      type: object
-      properties:
-        login_token:
-          type: string
-        code:
-          type: string
-      required:
-      - code
-      - login_token
-    TwoFactorRequiredResponse:
-      type: object
-      properties:
-        two_factor_required:
-          type: boolean
-        login_token:
-          type: string
-      required:
-      - login_token
-      - two_factor_required
-    TwoFactorSetupResponse:
-      type: object
-      properties:
-        secret:
-          type: string
-          description: For manual entry if the app cannot scan a QR code.
-        otpauth_uri:
-          type: string
-          description: Render this as a QR code for an authenticator app to scan.
-      required:
-      - otpauth_uri
-      - secret
-    TwoFactorStatus:
-      type: object
-      properties:
-        enabled:
-          type: boolean
-      required:
-      - enabled
     UploadBatch:
       type: object
       properties:
@@ -18974,7 +18638,7 @@ components:
       bearerFormat: JWT
 tags:
 - name: auth
-  description: Registration with email verification, login (with optional two-factor), token refresh, password reset, invitations.
+  description: Registration with email verification, login, token refresh, password reset, invitations.
 - name: user
   description: The signed-in user's profile, avatar, sessions, dashboard and account deletion; administrator user management
     and invitations.

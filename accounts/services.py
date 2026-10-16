@@ -2,22 +2,15 @@ import secrets
 from urllib.parse import urljoin
 
 from django.conf import settings
-from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
-from django.core import signing
 from django.core.mail import EmailMultiAlternatives, send_mail
-from django.db import transaction
 from django.urls import reverse
-from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.html import escape
 from django.utils.http import urlsafe_base64_encode
-from rest_framework.exceptions import Throttled, ValidationError
 from rest_framework.throttling import BaseThrottle
 
-from . import lockout, totp
-from .models import AuthEvent, TwoFactorCredential, TwoFactorRecoveryCode
-from .two_factor_crypto import TwoFactorSecretError, decrypt_secret, encrypt_secret
+from .models import AuthEvent
 
 
 def get_client_ip(request):
@@ -115,11 +108,6 @@ def send_password_reset_email(user):
     )
 
 
-# -- Two-factor authentication (TOTP) ----------------------------------------
-
-TWO_FACTOR_CHALLENGE_SALT = "accounts.two_factor.login_challenge"
-
-
 def dashboard_for_user(user):
     if user.is_superuser or user.role == "admin":
         return "admin"
@@ -149,191 +137,3 @@ def issue_login_tokens(user, request=None):
         "role": user.role,
         "dashboard": dashboard_for_user(user),
     }
-
-
-def has_active_two_factor(user):
-    return TwoFactorCredential.objects.filter(user=user, confirmed_at__isnull=False).exists()
-
-
-def make_two_factor_login_challenge(user):
-    """A short-lived signed marker that this user's password has just been verified.
-
-    Not the TOTP secret and not a real access token -- only ever exchanged, within
-    ``TWO_FACTOR_LOGIN_CHALLENGE_MINUTES``, for real tokens once the second factor
-    is also verified.
-    """
-    return signing.TimestampSigner(salt=TWO_FACTOR_CHALLENGE_SALT).sign(str(user.pk))
-
-
-def _consume_two_factor_login_challenge(token):
-    try:
-        value = signing.TimestampSigner(salt=TWO_FACTOR_CHALLENGE_SALT).unsign(
-            token, max_age=settings.TWO_FACTOR_LOGIN_CHALLENGE_MINUTES * 60,
-        )
-    except signing.BadSignature:
-        return None
-    try:
-        return int(value)
-    except ValueError:
-        return None
-
-
-def generate_recovery_codes(credential):
-    """Replace ``credential``'s recovery codes with a fresh set; returns the plaintext codes (shown once, never stored)."""
-    credential.recovery_codes.all().delete()
-    codes = [secrets.token_hex(5) for _ in range(settings.TWO_FACTOR_RECOVERY_CODE_COUNT)]
-    TwoFactorRecoveryCode.objects.bulk_create([
-        TwoFactorRecoveryCode(credential=credential, code_hash=TwoFactorRecoveryCode.hash_code(code))
-        for code in codes
-    ])
-    return codes
-
-
-def setup_two_factor(user):
-    """Start (or restart) enrollment: a fresh secret, not yet enforced at login.
-
-    Refuses while a confirmed credential already exists -- disable it first (which
-    itself requires proof of the current device or a recovery code), so a bare
-    authenticated session alone can never silently replace an active enrollment.
-    """
-    if has_active_two_factor(user):
-        raise ValidationError({"detail": "Two-factor authentication is already enabled. Disable it first to reset it."})
-    secret = totp.generate_secret()
-    TwoFactorCredential.objects.update_or_create(
-        user=user,
-        defaults={"encrypted_secret": encrypt_secret(secret), "confirmed_at": None, "last_used_counter": None},
-    )
-    return {
-        "secret": secret,
-        "otpauth_uri": totp.provisioning_uri(secret, user.email or user.username, settings.TWO_FACTOR_ISSUER),
-    }
-
-
-@transaction.atomic
-def confirm_two_factor(user, code, request=None):
-    """Turn on enrollment by proving one real code from the device; returns the recovery codes."""
-    credential = TwoFactorCredential.objects.select_for_update().filter(user=user, confirmed_at__isnull=True).first()
-    if credential is None:
-        raise ValidationError({"detail": "Start two-factor setup before confirming it."})
-    try:
-        secret = decrypt_secret(credential.encrypted_secret)
-    except TwoFactorSecretError as error:
-        raise ValidationError({"detail": str(error)}) from error
-    valid, counter = totp.verify_code(secret, code)
-    if not valid:
-        raise ValidationError({"code": "That code is not valid. Check the time on your device and try again."})
-    credential.confirmed_at = timezone.now()
-    credential.last_used_counter = counter
-    credential.save(update_fields=["confirmed_at", "last_used_counter", "updated_at"])
-    codes = generate_recovery_codes(credential)
-    record_auth_event("two_factor_enabled", request, user)
-    return codes
-
-
-def two_factor_status(user):
-    return {"enabled": has_active_two_factor(user)}
-
-
-def _verify_second_factor(credential, code):
-    """Try ``code`` as a TOTP code, then as a recovery code. ``(ok, updated_counter_or_None)``.
-
-    A recovery-code success returns ``counter=None``: it does not move the replay
-    watermark, since it is not a TOTP step.
-    """
-    try:
-        secret = decrypt_secret(credential.encrypted_secret)
-    except TwoFactorSecretError:
-        secret = None
-    if secret is not None:
-        valid, counter = totp.verify_code(secret, code, last_used_counter=credential.last_used_counter)
-        if valid:
-            return True, counter
-    for recovery_code in credential.recovery_codes.filter(used_at__isnull=True):
-        if recovery_code.matches(code):
-            recovery_code.used_at = timezone.now()
-            recovery_code.save(update_fields=["used_at"])
-            return True, None
-    return False, None
-
-
-def _require_active_credential_with_lockout(user):
-    credential = TwoFactorCredential.objects.select_for_update().filter(user=user, confirmed_at__isnull=False).first()
-    if credential is None:
-        raise ValidationError({"detail": "Two-factor authentication is not enabled."})
-    key = lockout.attempt_key(user, "")
-    remaining = lockout.seconds_locked(key)
-    if remaining:
-        raise Throttled(wait=remaining, detail=f"Too many failed attempts. Try again in {remaining} seconds.")
-    return credential, key
-
-
-def disable_two_factor(user, code, request=None):
-    """Turn off 2FA. Requires a current TOTP code or an unused recovery code --
-    never just an authenticated session -- so a stolen access token alone cannot
-    remove this protection."""
-    with transaction.atomic():
-        credential, key = _require_active_credential_with_lockout(user)
-        ok, _counter = _verify_second_factor(credential, code)
-        if ok:
-            lockout.clear(key)
-            credential.delete()
-    if not ok:
-        # Recorded after the transaction above, not inside it: raising from within
-        # an atomic block rolls back everything in it, including a failure count
-        # that must actually persist for the lockout to work.
-        lockout.record_failure(key)
-        raise ValidationError({"code": "That code is not valid."})
-    record_auth_event("two_factor_disabled", request, user)
-
-
-def regenerate_recovery_codes(user, code, request=None):
-    """Invalidate all existing recovery codes and issue a fresh set, proven by a live code."""
-    with transaction.atomic():
-        credential, key = _require_active_credential_with_lockout(user)
-        ok, counter = _verify_second_factor(credential, code)
-        if ok:
-            lockout.clear(key)
-            if counter is not None:
-                credential.last_used_counter = counter
-                credential.save(update_fields=["last_used_counter", "updated_at"])
-            codes = generate_recovery_codes(credential)
-    if not ok:
-        lockout.record_failure(key)
-        raise ValidationError({"code": "That code is not valid."})
-    record_auth_event("two_factor_recovery_codes_regenerated", request, user)
-    return codes
-
-
-def verify_two_factor_login(login_token, code, request=None):
-    """The second step of login: exchange a password-verified challenge plus a
-    device code (or recovery code) for real tokens.
-
-    Re-checks every account-state rule the password step already checked (active,
-    verified, not suspended, 2FA still enabled) rather than trusting that earlier
-    result -- the account can change state in the few minutes between the two steps.
-    """
-    user_id = _consume_two_factor_login_challenge(login_token)
-    user = get_user_model().objects.filter(pk=user_id).first() if user_id is not None else None
-    if user is None:
-        raise ValidationError({"detail": "This login has expired. Sign in again."})
-    if not user.is_active or not user.is_email_verified or user.is_suspended:
-        record_auth_event("login_failed", request, user, "", {"reason": "account_state_changed", "stage": "two_factor"})
-        raise ValidationError({"detail": "This account cannot sign in right now."})
-    with transaction.atomic():
-        credential, key = _require_active_credential_with_lockout(user)
-        ok, counter = _verify_second_factor(credential, code)
-        if ok:
-            lockout.clear(key)
-            if counter is not None:
-                credential.last_used_counter = counter
-                credential.save(update_fields=["last_used_counter", "updated_at"])
-    if not ok:
-        # Outside the transaction above, so this failure is never rolled back by
-        # the ValidationError it is about to raise (see disable_two_factor).
-        record_auth_event("login_failed", request, user, "", {"reason": "invalid_code", "stage": "two_factor"})
-        delay = lockout.record_failure(key)
-        if delay:
-            record_auth_event("login_locked", request, user, "", {"seconds": delay})
-        raise ValidationError({"code": "That code is not valid."})
-    record_auth_event("login", request, user, "", {"stage": "two_factor"})
-    return issue_login_tokens(user, request)

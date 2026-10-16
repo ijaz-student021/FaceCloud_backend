@@ -12,8 +12,8 @@ from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from . import lockout
-from .services import (dashboard_for_user, has_active_two_factor,
-                       issue_login_tokens, make_two_factor_login_challenge,
+from .services import (dashboard_for_user,
+                       issue_login_tokens,
                        record_auth_event)
 from .sessions import record_rotation, token_session_is_active
 
@@ -127,12 +127,6 @@ class FaceCloudTokenObtainPairSerializer(serializers.Serializer):
         if user and user.is_suspended:
             record_auth_event("login_failed", request, user, identifier, {"reason": "account_suspended"})
             raise serializers.ValidationError({"detail": "This account is suspended."})
-        if has_active_two_factor(user):
-            record_auth_event("login", request, user, identifier, {"stage": "password_verified_awaiting_two_factor"})
-            return {
-                "two_factor_required": True,
-                "login_token": make_two_factor_login_challenge(user),
-            }
         record_auth_event("login", request, user, identifier)
         return issue_login_tokens(user, request)
 
@@ -307,7 +301,6 @@ class AdminUserSerializer(serializers.ModelSerializer):
 class AdminUserDetailSerializer(AdminUserSerializer):
     """Read-only detail for administrators; PATCH still uses AdminUserSerializer."""
 
-    two_factor_enabled = serializers.SerializerMethodField()
     active_sessions = serializers.SerializerMethodField()
     organizations = serializers.SerializerMethodField()
     usage = serializers.SerializerMethodField()
@@ -315,12 +308,9 @@ class AdminUserDetailSerializer(AdminUserSerializer):
     class Meta(AdminUserSerializer.Meta):
         fields = AdminUserSerializer.Meta.fields + [
             "last_login", "display_name", "organization_name", "job_title", "country",
-            "two_factor_enabled", "active_sessions", "organizations", "usage",
+            "active_sessions", "organizations", "usage",
         ]
         read_only_fields = fields
-
-    def get_two_factor_enabled(self, user) -> bool:
-        return has_active_two_factor(user)
 
     def get_active_sessions(self, user) -> int:
         from .sessions import active_sessions
@@ -340,38 +330,6 @@ class AdminUserDetailSerializer(AdminUserSerializer):
             "images": user.image_uploads.count(),
             "enhancements": user.image_enhancement_results.count(),
         }
-
-
-# -- Two-factor authentication -----------------------------------------------
-
-class TwoFactorSetupResponseSerializer(serializers.Serializer):
-    secret = serializers.CharField(help_text="For manual entry if the app cannot scan a QR code.")
-    otpauth_uri = serializers.CharField(help_text="Render this as a QR code for an authenticator app to scan.")
-
-
-class TwoFactorCodeSerializer(serializers.Serializer):
-    code = serializers.CharField(help_text="A 6-digit code from the authenticator app, or an unused recovery code.")
-
-
-class TwoFactorCodesResponseSerializer(serializers.Serializer):
-    recovery_codes = serializers.ListField(
-        child=serializers.CharField(),
-        help_text="Shown once. Store these somewhere safe; they are not retrievable again.",
-    )
-
-
-class TwoFactorStatusSerializer(serializers.Serializer):
-    enabled = serializers.BooleanField()
-
-
-class TwoFactorLoginVerifySerializer(serializers.Serializer):
-    login_token = serializers.CharField()
-    code = serializers.CharField()
-
-
-class TwoFactorRequiredResponseSerializer(serializers.Serializer):
-    two_factor_required = serializers.BooleanField()
-    login_token = serializers.CharField()
 
 
 # -- User dashboard (GET /api/user/dashboard/) --------------------------------

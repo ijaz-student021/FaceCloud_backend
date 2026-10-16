@@ -1,7 +1,6 @@
 import uuid
 
 from django.conf import settings
-from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.db.models.functions import Lower
@@ -53,6 +52,7 @@ class AuthEvent(models.Model):
         ("suspended", "Suspended"),
         ("reactivated", "Reactivated"),
         ("account_deleted", "Account deleted"),
+        # Two-factor authentication was removed; these three stay so audit rows written earlier remain readable.
         ("two_factor_enabled", "Two-factor authentication enabled"),
         ("two_factor_disabled", "Two-factor authentication disabled"),
         ("two_factor_recovery_codes_regenerated", "Two-factor recovery codes regenerated"),
@@ -150,56 +150,6 @@ class PendingRegistration(models.Model):
             ),
             models.Index(fields=["email"], name="accounts_pending_email_idx"),
         ]
-
-
-class TwoFactorCredential(models.Model):
-    """A user's TOTP enrollment. ``encrypted_secret`` is never returned by any API
-    once setup is confirmed; see accounts/two_factor_crypto.py for how it is protected.
-    """
-
-    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="two_factor")
-    encrypted_secret = models.BinaryField(editable=False)
-    # None until the first code is verified -- an unconfirmed row is a pending
-    # enrollment, never enforced at login.
-    confirmed_at = models.DateTimeField(null=True, blank=True)
-    # The counter of the last code accepted (setup or login), so the same code
-    # cannot be replayed within its own 30-second window or an earlier one.
-    last_used_counter = models.BigIntegerField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    @property
-    def is_active(self):
-        return self.confirmed_at is not None
-
-    def __str__(self):
-        return f"two-factor for user {self.user_id} ({'active' if self.is_active else 'pending'})"
-
-
-class TwoFactorRecoveryCode(models.Model):
-    """A one-time backup code for when the authenticator device is unavailable.
-
-    Stored hashed with Django's own password hasher, exactly like a password --
-    never in plain text, and never returned again once shown at generation time.
-    """
-
-    credential = models.ForeignKey(TwoFactorCredential, on_delete=models.CASCADE, related_name="recovery_codes")
-    code_hash = models.CharField(max_length=128)
-    used_at = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        indexes = [models.Index(fields=["credential", "used_at"])]
-
-    @staticmethod
-    def hash_code(code):
-        return make_password(code)
-
-    def matches(self, code):
-        return check_password(code, self.code_hash)
-
-    def __str__(self):
-        return f"recovery code for credential {self.credential_id} ({'used' if self.used_at else 'unused'})"
 
 
 class UserSession(models.Model):

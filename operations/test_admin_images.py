@@ -136,7 +136,8 @@ class AdminUserDetailTests(TestCase):
         client = APIClient()
         client.force_authenticate(self.admin)
         body = client.get(f"/api/user/admin/users/{self.user.pk}/").json()
-        self.assertEqual((body["email"], body["job_title"], body["two_factor_enabled"]), ("member@example.com", "Editor", False))
+        self.assertEqual((body["email"], body["job_title"]), ("member@example.com", "Editor"))
+        self.assertNotIn("two_factor_enabled", body)
         self.assertEqual(body["usage"], {"upload_batches": 1, "images": 0, "enhancements": 0})
         self.assertIn("organizations", body)
 

@@ -128,7 +128,7 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Generate throwaway secrets
         run: |
-          for name in DJANGO_SECRET_KEY IDENTITY_EMBEDDING_KEY IMAGE_ENCRYPTION_KEY TWO_FACTOR_SECRET_KEY DB_PASSWORD; do
+          for name in DJANGO_SECRET_KEY IDENTITY_EMBEDDING_KEY IMAGE_ENCRYPTION_KEY DB_PASSWORD; do
             value=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
             echo "::add-mask::$value"
             echo "$name=$value" >> "$GITHUB_ENV"

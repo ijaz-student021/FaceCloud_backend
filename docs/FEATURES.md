@@ -15,7 +15,7 @@ Status definitions:
 
 | Area | Status |
 |---|---|
-| Authentication and account management | Complete, including six-digit pending signup verification and optional two-factor authentication (TOTP) |
+| Authentication and account management | Complete, including six-digit pending signup verification and password reset by email |
 | Role-based authorization | Complete |
 | Authentication audit events | Complete |
 | Single, multiple, and ZIP image upload | Complete |
@@ -40,7 +40,6 @@ Status definitions:
 
 - [Remaining user-dashboard features and implementation order](USER_DASHBOARD_REMAINING_FEATURES.md)
 - [Features 01–03: Authentication, accounts, authorization, and audit](features/01-authentication-and-authorization.md)
-- [Two-factor authentication (TOTP)](features/two-factor-authentication.md)
 - [Features 04–08: Image uploads, batches, secure storage, and cleanup](features/02-image-upload-and-secure-storage.md)
 - [Feature 09: Image preprocessing and standardization](features/09-image-preprocessing-and-standardization.md)
 - [Features 10–12: Image-enhancement foundation and remaining processing work](features/10-12-image-enhancement.md)
@@ -80,11 +79,9 @@ Provides the complete account lifecycle and proves the identity of API users.
 - Logout from one or all devices
 - Account deletion with password confirmation
 - Blocking of unverified, inactive, and suspended users
-- Optional two-factor authentication (TOTP): setup, confirmation, recovery codes,
-  and a two-step login (`POST /api/auth/login/` returns `two_factor_required` and
-  a short-lived `login_token` for a 2FA account instead of tokens; `POST
-  /api/auth/2fa/verify/` exchanges it plus a code for the real tokens). See
-  [two-factor-authentication.md](features/two-factor-authentication.md).
+- Password reset by email (`POST /api/auth/password-reset/`, then `/confirm/`).
+- Two-factor authentication was **removed** (2026-10-16): login is always one step. Migration `accounts/0010_remove_two_factor`
+  drops its tables; earlier audit events keep their names.
 
 ### Feature 02: Role-based authorization — Complete
 
