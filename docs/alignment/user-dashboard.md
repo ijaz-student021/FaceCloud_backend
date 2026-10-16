@@ -39,4 +39,17 @@ and consent behaviour is unchanged.
 
 ## Closing the gaps
 
-Updated as each commit lands; see the pull request for before/after bodies.
+| Item | Rows | What was added |
+|---|---|---|
+| 1 | 20 | New `search` package: `GET /api/search/?q=&limit=` (throttle scope `search`, 600/hour) |
+| 2a | 10, 11 | `cover_images` and `matching_confidence` on `GET /api/identities/groups/` and `/{id}/` |
+| 2b | 11 | `GET /api/identities/groups/{id}/images/` (paginated) |
+| 2c | 11 | `image_ids` on `POST /api/identities/groups/{id}/exports/`; reported on the export; identities migration 0007 |
+| 2d | 11 | `POST /api/identities/exports/{id}/share/`; `ShareLink.identity_export`, sharing migration 0002; public view serves the ZIP |
+| 3 | 12 | `kind`, `expires_at`, `image_count`, `has_active_link` on `GET /api/downloads/` |
+| 4 | 14 | `id`, `type`, `message`, `timestamp`, `status` on `GET /api/user/activity/` entries, plus a response schema |
+| 5 | 13 | Documentation only: severity already is success/warning/error/info |
+| 7 | 4, 5 | Verified, no code change; the response is pinned by `uploads/test_batch_results_contract.py` |
+| 8 | 19 | `code: "consent_required"` on the three consent refusals (identity analysis, face search, person collage) |
+
+Rows 15 (Profile) and 17 (Active Sessions) stay **waiting for #68**; see the pull request for what the follow-up should check.
