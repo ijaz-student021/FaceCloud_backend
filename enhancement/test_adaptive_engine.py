@@ -474,6 +474,15 @@ class ServiceTests(SimpleTestCase):
         self.assertEqual(len(calls), 1)   # no further engine or variant was tried once the budget was gone
         self.assertTrue(any("time budget" in warning for warning in parameters["warnings"]))
 
+    @override_settings(NAFNET_DEBLUR_ENABLED=False)
+    def test_a_defect_the_server_has_no_model_for_is_not_called_a_clean_photograph(self):
+        source = motion_blur(resized(dead_leaves(), 900), 25, 0)
+        _out, _level, parameters = self.run_service(source)
+        adaptive = parameters["adaptive"]
+        self.assertEqual(adaptive["outcome"], ORIGINAL_PRESERVED)
+        self.assertNotIn("did not need", adaptive["summary"])
+        self.assertIn("motion blur", adaptive["summary"])
+
     def test_an_unsafe_candidate_is_rejected_and_the_original_is_kept(self):
         def over_exposed(image, engine, variant):
             return np.clip(image.astype(np.float32) * 25 + 90, 0, 255).astype(np.uint8), [{"model": engine}]

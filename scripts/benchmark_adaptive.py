@@ -71,6 +71,9 @@ def main():
     parser.add_argument("--max-edge", type=int, default=800)
     parser.add_argument("--categories", default=",".join(CATEGORIES))
     parser.add_argument("--skip", type=int, default=0, help="Skip this many photographs first.")
+    parser.add_argument("--profile", choices=("full", "cpu_small"), default="full",
+                        help="full: every model switched on. cpu_small: what a small CPU-only instance can run: no PyTorch model "
+                             "(Zero-DCE through OpenCV for low light, non-local means for noise, no deblurring or super-resolution).")
     parser.add_argument("--identity", choices=("sface", "arcface"), default="sface",
                         help="The identity model the engine's identity gate uses (the report measures both either way).")
     arguments = parser.parse_args()
@@ -85,9 +88,10 @@ def main():
     from enhancement.adaptive.validator import reference_metrics
     from enhancement.services import enhance_bgr
 
-    flags = dict(ENHANCEMENT_RENDER_POLICY="adaptive_v1", RETINEXFORMER_ENABLED=True, ZERO_DCE_ENABLED=False, NAFNET_DENOISE_ENABLED=True,
-                 NAFNET_DEBLUR_ENABLED=True, HD_RESTORATION_ENABLED=True, CODEFORMER_ENABLED=True, GFPGAN_ENABLED=False,
-                 ADAPTIVE_DEBUG_ARTIFACTS=False,
+    small = arguments.profile == "cpu_small"
+    flags = dict(ENHANCEMENT_RENDER_POLICY="adaptive_v1", RETINEXFORMER_ENABLED=not small, ZERO_DCE_ENABLED=small,
+                 NAFNET_DENOISE_ENABLED=not small, NAFNET_DEBLUR_ENABLED=not small, HD_RESTORATION_ENABLED=not small,
+                 CODEFORMER_ENABLED=not small, GFPGAN_ENABLED=False, ADAPTIVE_DEBUG_ARTIFACTS=False,
                  IDENTITY_PROVIDER="arcface_w600k_r50_v1" if arguments.identity == "arcface" else "sface_2021dec_v1")
     paths = sorted(p for p in arguments.images.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"})
     paths = paths[arguments.skip: arguments.skip + arguments.limit]

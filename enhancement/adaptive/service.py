@@ -436,6 +436,16 @@ class AdaptiveImageEnhancementService:
                 return "The enhancement models were not available, so the original photograph was kept."
             if rejected:
                 return "No enhancement passed the safety checks, so the original photograph was kept."
+            found = []
+            for item in skipped:
+                if "switched on" in item["reason"]:
+                    found.append({ops.DEBLUR: "motion blur", ops.UPSCALE: "low resolution", ops.FACE: "a degraded face",
+                                  ops.LOW_LIGHT: "low light", ops.DENOISE: "noise"}.get(item["operation"], item["operation"])
+                                 + " that this server's enabled models cannot correct")
+                elif "defocus" in item["reason"]:
+                    found.append("defocus blur, which cannot be recovered reliably")
+            if found:
+                return "The original photograph was kept: it has " + "; ".join(found) + "."
             return "The photograph did not need enhancement, so it was left as it is."
         text = "Enhanced: " + ", ".join(done) + "."
         if remaining:
