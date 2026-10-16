@@ -493,9 +493,26 @@ the batch (they get their own `batch_completed`).
 
 `/api/system/health/`, `/queue/`, `/analytics/`, `/audit/`, `/moderation/`,
 `/batches/failed/`, `POST /api/system/batches/{id}/retry/`, `/jobs/failed/`,
-`GET /api/user/admin/users/` and `PATCH /api/user/admin/users/{id}/`,
+`GET /api/user/admin/users/` (a plain array), `POST /api/user/admin/users/` (create an account) and
+`PATCH /api/user/admin/users/{id}/`,
 `GET /api/privacy/audit/`. A non-admin gets 403; use the `role` from login to
 hide these routes, but never rely on that for security.
+
+**Creating an account (Add User / Create moderator forms)**
+
+```text
+POST /api/user/admin/users/  {username, email, password, role: "user" | "moderator", organization_id?, full_name?}
+   -> 201 {id, username, email, full_name, role, is_email_verified, is_suspended, suspension_reason, is_active, date_joined}
+   -> 400 {"email": [...]} / {"username": [...]} / {"password": [...]} / {"role": [...]}      (field errors)
+   -> 400 {"detail": "Create an organization first, then try again."}                         (moderator, no organization)
+   -> 400 {"detail": "There is more than one organization: send organization_id to choose one."}
+   -> 403 for anyone who is not an administrator
+```
+
+The account is created already verified; no email is sent and the password is never returned, so show the sign-in details to the
+administrator once and hand them over. `confirm password` is checked in the browser only. `role: "admin"` is refused. A moderator is
+added to an active non-personal organization, so the moderator panel (which takes the first non-personal organization of
+`GET /api/organizations/`) finds it; they log in with `role` and `dashboard` = `moderator`.
 
 ## 11. Things the UI must handle
 

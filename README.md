@@ -116,10 +116,23 @@ python -m venv venv
 pip install -r requirements.txt
 Copy-Item .env.example .env      # then edit database credentials and secrets
 python manage.py migrate
+python manage.py createsuperuser   # the first administrator
 python manage.py runserver
 ```
 
 API documentation is served by drf-spectacular once the server is running.
+
+### The first administrator, and accounts created by an administrator
+
+`createsuperuser` makes an account that can sign in straight away: it is created verified (`is_email_verified=True`) with the `admin`
+role, because a superuser has no signup email to click. Then sign in at the frontend's `/admin/login` page with that email or username;
+the login response carries `role` and `dashboard` = `admin`. Accounts that were created *before* this change keep their old values
+(a superuser with `is_email_verified=False` cannot sign in until it is set to true).
+
+Everyone else is created either by signup (email link) or by an administrator: `POST /api/user/admin/users/`
+(`{username, email, password, role: "user" | "moderator", organization_id?, full_name?}`) creates an already-verified account and hands
+no email or password back. A moderator is placed in an organization (the one in `organization_id`, otherwise the only active
+non-personal one). See [`docs/features/33-administrative-management.md`](docs/features/33-administrative-management.md).
 
 ### Signup with an emailed verification link
 
