@@ -181,9 +181,22 @@ def derive_username(email):
 
 
 def dashboard_for_user(user):
+    """The portal this person should land in, which is also the ``role`` the login response reports.
+
+    ``admin``: a superuser or ``User.role == "admin"``. ``moderator``: ``User.role == "moderator"`` or an *active* membership with
+    role moderator in an *active* organization. Everyone else, including an organization's owner, is ``user``. This only chooses the
+    portal; ``User.role`` and the permission classes that read it are unchanged.
+    """
     if user.is_superuser or user.role == "admin":
         return "admin"
     if user.role == "moderator":
+        return "moderator"
+    from organizations.models import Organization, OrganizationMembership
+
+    if OrganizationMembership.objects.filter(
+        user=user, role=OrganizationMembership.Role.MODERATOR, status=OrganizationMembership.Status.ACTIVE,
+        organization__status=Organization.Status.ACTIVE,
+    ).exists():
         return "moderator"
     return "user"
 
@@ -197,12 +210,14 @@ def issue_login_tokens(user):
     token = RefreshToken.for_user(user)
     token["role"] = user.role
     token["token_version"] = user.token_version
+    portal = dashboard_for_user(user)
     return {
         "refresh": str(token),
         "access": str(token.access_token),
         "user": UserSerializer(user).data,
-        "role": user.role,
-        "dashboard": dashboard_for_user(user),
+        # The frontend keeps ``role`` as its session role and routes on ``dashboard``: they are the same value.
+        "role": portal,
+        "dashboard": portal,
     }
 
 
