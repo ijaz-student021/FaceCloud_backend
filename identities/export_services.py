@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import uuid
 from datetime import timedelta
@@ -5,6 +6,7 @@ from datetime import timedelta
 from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
+from rest_framework.exceptions import ValidationError
 
 from .models import IdentityGroupExport, IdentityMembership
 
@@ -33,12 +35,47 @@ def ensure_group_exportable(group):
         )
 
 
+def group_member_image_ids(group):
+    """Ids of the photos currently in the folder (rejected and removed faces do not count)."""
+    return set(
+        IdentityMembership.objects.filter(
+            owner_id=group.owner_id,
+            identity_group=group,
+            identity_face__owner_id=group.owner_id,
+            identity_face__image__owner_id=group.owner_id,
+        )
+        .exclude(state__in=[IdentityMembership.State.REJECTED, IdentityMembership.State.REMOVED])
+        .values_list("identity_face__image_id", flat=True)
+    )
+
+
+def normalise_image_selection(group, image_ids):
+    """``(sorted unique ids, selection key)`` for a requested subset; ``([], "")`` means every photo.
+
+    Raises a 400 naming the ids that are not in this folder, so someone else's
+    photo id cannot be smuggled into an archive.
+    """
+    if not image_ids:
+        return [], ""
+    wanted = sorted(set(image_ids))
+    outside = sorted(set(wanted) - group_member_image_ids(group))
+    if outside:
+        raise ValidationError({
+            "image_ids": [f"These photos are not in this folder: {', '.join(str(i) for i in outside)}."],
+        })
+    key = hashlib.sha256(",".join(str(i) for i in wanted).encode("ascii")).hexdigest()
+    return wanted, key
+
+
 def enqueue_identity_group_export(*, owner, group, options):
     from .tasks import generate_identity_group_export_task
 
     if group.owner_id != owner.pk:
         raise IdentityExportNotReadyError("The identity group is unavailable.")
     ensure_group_exportable(group)
+    options = dict(options)
+    image_ids, selection_key = normalise_image_selection(group, options.pop("image_ids", None))
+    options["selection_key"] = selection_key
     active_filters = {
         "owner": owner,
         "identity_group": group,
@@ -63,6 +100,7 @@ def enqueue_identity_group_export(*, owner, group, options):
                 identity_group=group,
                 task_id=task_id,
                 status=IdentityGroupExport.Status.QUEUED,
+                image_ids=image_ids,
                 **options,
             )
 

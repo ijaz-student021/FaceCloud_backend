@@ -1,6 +1,7 @@
 from itertools import islice
 
 from .models import ActivityEvent
+from .presentation import describe
 
 
 def record_activity_event(
@@ -21,8 +22,15 @@ def record_activity_event(
     )
 
 
+def _presentation(category, event_name, created_at):
+    kind, event_status, message = describe(category, event_name)
+    return {"type": kind, "status": event_status, "message": message, "timestamp": created_at}
+
+
 def _normalize_activity_event(event):
     return {
+        "id": f"activity-{event.pk}",
+        **_presentation(event.category, event.event, event.created_at),
         "source": "activity",
         "category": event.category,
         "event": event.event,
@@ -37,6 +45,8 @@ def _normalize_activity_event(event):
 
 def _normalize_auth_event(event):
     return {
+        "id": f"auth-{event.pk}",
+        **_presentation("auth", event.event, event.created_at),
         "source": "auth",
         "category": "auth",
         "event": event.event,

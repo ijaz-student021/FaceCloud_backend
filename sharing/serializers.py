@@ -63,12 +63,14 @@ class ShareLinkSerializer(serializers.ModelSerializer):
     state = serializers.SerializerMethodField()
     result = serializers.IntegerField(source="enhancement_result_id", read_only=True)
     edit = serializers.IntegerField(source="edit_version_id", read_only=True)
+    identity_export = serializers.IntegerField(source="identity_export_id", read_only=True)
 
     class Meta:
         model = ShareLink
         fields = [
             "id", "label", "state", "result", "edit", "watermark", "expires_at",
             "revoked_at", "access_count", "last_accessed_at", "created_at",
+            "identity_export",
         ]
         read_only_fields = fields
 

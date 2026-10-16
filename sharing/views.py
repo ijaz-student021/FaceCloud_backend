@@ -25,6 +25,10 @@ from .services import (
     shared_file,
 )
 
+def _content_type(output_format):
+    return {"png": "image/png", "zip": "application/zip"}.get(output_format, "image/jpeg")
+
+
 PREVIEW_HEADERS = {
     "Cache-Control": "private, no-store",
     "X-Content-Type-Options": "nosniff",
@@ -117,7 +121,7 @@ class PublicShareInfoView(APIView):
             raise LinkGone("The shared image is unavailable.")
         response = Response({
             "filename": filename,
-            "content_type": "image/png" if output_format == "png" else "image/jpeg",
+            "content_type": _content_type(output_format),
             "width": width,
             "height": height,
             "watermarked": bool(link.watermark),
@@ -139,10 +143,11 @@ class PublicShareView(APIView):
         responses={
             200: OpenApiTypes.BINARY, 404: OpenApiTypes.OBJECT, 410: OpenApiTypes.OBJECT,
         },
-        summary="View a shared image",
+        summary="View a shared image (or download a shared person-folder ZIP)",
         description=(
             "404 if the token is unknown, 410 if the link expired, was revoked, or its "
-            "owner is no longer active."
+            "owner is no longer active. A link made from a person-folder export serves the ZIP "
+            "as an attachment."
         ),
     )
     def get(self, request, token):
@@ -150,7 +155,18 @@ class PublicShareView(APIView):
         file_field, output_format, filename, _, _ = shared_file(link)
         if not file_field:
             raise LinkGone("The shared image is unavailable.")
-        content_type = "image/png" if output_format == "png" else "image/jpeg"
+        content_type = _content_type(output_format)
+        if link.identity_export_id:
+            # A person folder's ZIP: downloaded, never watermarked or shown inline.
+            try:
+                response = FileResponse(file_field.open("rb"), content_type=content_type)
+            except OSError as error:
+                raise LinkGone("The shared download is unavailable.") from error
+            response["Content-Disposition"] = content_disposition_header(True, filename)
+            for name, value in PREVIEW_HEADERS.items():
+                response[name] = value
+            record_access(link, request.META.get("HTTP_USER_AGENT", ""))
+            return response
         try:
             spec = validate_spec(**link.watermark) if link.watermark else None
             if spec and spec.active:
