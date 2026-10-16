@@ -1,5 +1,8 @@
+import hashlib
+import hmac
+import re
 import secrets
-from urllib.parse import urljoin
+from urllib.parse import urlencode, urljoin
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -57,8 +60,20 @@ def send_verification_email(user):
     )
 
 
-def generate_verification_code():
-    return f"{secrets.randbelow(1_000_000):06d}"
+def generate_verification_token():
+    """A single-use link token: 256 bits, URL-safe. Only its SHA-256 is stored (see ``hash_verification_token``)."""
+    return secrets.token_urlsafe(32)
+
+
+def hash_verification_token(token):
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def verification_token_matches(token, stored_hash):
+    """Constant-time comparison; an empty stored hash (a consumed or invalidated registration) never matches."""
+    if not stored_hash or not token:
+        return False
+    return hmac.compare_digest(hash_verification_token(token), stored_hash)
 
 
 def mask_email(email):
@@ -69,31 +84,40 @@ def mask_email(email):
     return f"{visible}{'*' * max(2, len(local_part) - 1)}@{domain}"
 
 
-def send_signup_verification_code(email, code):
-    lifetime_minutes = settings.SIGNUP_VERIFICATION_CODE_LIFETIME_SECONDS // 60
+def build_verification_link(registration_id, token):
+    query = urlencode({"registration_id": str(registration_id), "token": token})
+    return f"{settings.FRONTEND_URL.rstrip('/')}/verify-email?{query}"
+
+
+def send_signup_verification_link(email, registration_id, token, full_name=""):
+    """Email the signup link. The token appears only in this message: it is never logged or stored."""
+    link = build_verification_link(registration_id, token)
+    lifetime_hours = max(1, settings.SIGNUP_VERIFICATION_LINK_LIFETIME_SECONDS // 3600)
     support_email = settings.SIGNUP_VERIFICATION_SUPPORT_EMAIL
+    greeting = f"Hi {full_name.split()[0]}," if full_name.strip() else "Welcome to FaceCloud."
     message = (
-        "Welcome to FaceCloud.\n\n"
-        f"Your verification code is:\n\n{code}\n\n"
-        f"This code expires in {lifetime_minutes} minutes. "
-        "Do not share it with anyone.\n\n"
+        f"{greeting}\n\n"
+        "Confirm your email address to finish creating your FaceCloud account:\n\n"
+        f"{link}\n\n"
+        f"This link works once and expires in {lifetime_hours} hours. Do not share it with anyone.\n\n"
         "If you did not request a FaceCloud account, you can ignore this email.\n"
         f"Support: {support_email}"
     )
     html_message = (
         '<div style="font-family:Arial,sans-serif;line-height:1.5;color:#111827">'
         "<h1>Welcome to FaceCloud</h1>"
-        "<p>Your verification code is:</p>"
-        '<p style="font-size:32px;font-weight:700;letter-spacing:8px">'
-        f"{escape(code)}</p>"
-        f"<p>This code expires in {lifetime_minutes} minutes. "
-        "Do not share it with anyone.</p>"
+        f"<p>{escape(greeting)}</p>"
+        "<p>Confirm your email address to finish creating your account:</p>"
+        f'<p><a href="{escape(link)}" style="display:inline-block;padding:12px 20px;background:#2563eb;color:#ffffff;'
+        'text-decoration:none;border-radius:6px;font-weight:700">Verify email</a></p>'
+        f'<p>Or paste this link into your browser:<br><a href="{escape(link)}">{escape(link)}</a></p>'
+        f"<p>This link works once and expires in {lifetime_hours} hours. Do not share it with anyone.</p>"
         "<p>If you did not request a FaceCloud account, you can ignore this email.</p>"
         f"<p>Support: {escape(support_email)}</p>"
         "</div>"
     )
     email_message = EmailMultiAlternatives(
-        subject="Your FaceCloud verification code",
+        subject="Verify your FaceCloud email address",
         body=message,
         from_email=settings.DEFAULT_FROM_EMAIL,
         to=[email],
@@ -118,6 +142,42 @@ def send_password_reset_email(user):
 # -- Two-factor authentication (TOTP) ----------------------------------------
 
 TWO_FACTOR_CHALLENGE_SALT = "accounts.two_factor.login_challenge"
+
+
+_USERNAME_DISALLOWED = re.compile(r"[^A-Za-z0-9@.+\-_]")
+USERNAME_MAX_LENGTH = 150
+
+
+def split_full_name(full_name):
+    """``"  Ada   King Lovelace "`` -> ``("Ada", "King Lovelace")``: first word, then the rest (both within Django's 150)."""
+    first, _separator, rest = " ".join((full_name or "").split()).partition(" ")
+    return first[:150], rest[:150]
+
+
+def derive_username(email):
+    """A unique username from the email's local part: only characters Django allows, at most 150, numeric suffix until free.
+
+    Unique, case-insensitively, against existing users and against *other people's* active pending registrations; a pending
+    registration for this same email does not count, so registering twice with one address keeps one pending row.
+    """
+    from .models import PendingRegistration
+
+    base = _USERNAME_DISALLOWED.sub("", email.partition("@")[0])[:USERNAME_MAX_LENGTH] or "user"
+
+    def taken(name):
+        return (
+            get_user_model().objects.filter(username__iexact=name).exists()
+            or PendingRegistration.objects.filter(
+                username__iexact=name, status__in=PendingRegistration.ACTIVE_STATUSES,
+            ).exclude(email__iexact=email).exists()
+        )
+
+    candidate, number = base, 1
+    while taken(candidate):
+        number += 1
+        suffix = str(number)
+        candidate = base[: USERNAME_MAX_LENGTH - len(suffix)] + suffix
+    return candidate
 
 
 def dashboard_for_user(user):

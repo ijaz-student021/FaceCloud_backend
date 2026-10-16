@@ -22,7 +22,7 @@ class Command(BaseCommand):
                 PendingRegistration.STATUS_EXPIRED,
                 PendingRegistration.STATUS_CANCELLED,
             ],
-            code_expires_at__lt=cutoff,
+            token_expires_at__lt=cutoff,
         )
         stale_consumed = Q(
             status=PendingRegistration.STATUS_CONSUMED,
