@@ -20,7 +20,7 @@ from .models import Collage
 from .rendering import render_collage
 from .services import expire_due_collages
 from .tasks import process_collage
-from privacy.testing import grant_face_consent, withdraw_face_consent, withdraw_face_consent
+from privacy.testing import grant_face_consent, withdraw_face_consent
 
 User = get_user_model()
 
