@@ -51,3 +51,19 @@ class ApiDocumentationTests(SimpleTestCase):
             self.assertTrue(any("examples" in body for body in bodies), operation_id)
         self.assertIn("Quick start", self.schema["info"]["description"])
         self.assertIn("jwtAuth", self.schema["components"]["securitySchemes"])
+
+
+class LoggingConfigurationTests(SimpleTestCase):
+    def test_application_info_logs_reach_a_handler(self):
+        """The structured adaptive_enhancement line is INFO; without a LOGGING setting it was silently dropped."""
+        import logging
+
+        logger = logging.getLogger("enhancement.adaptive.service")
+        self.assertTrue(logger.isEnabledFor(logging.INFO))
+        handlers = []
+        node = logger
+        while node:
+            handlers += node.handlers
+            node = node.parent if node.propagate else None
+        self.assertTrue(handlers)
+        self.assertFalse(logging.getLogger("botocore").isEnabledFor(logging.INFO))

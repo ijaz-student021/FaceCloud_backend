@@ -1207,6 +1207,30 @@ SECURE_HSTS_INCLUDE_SUBDOMAINS = os.environ.get("SECURE_HSTS_INCLUDE_SUBDOMAINS"
 SECURE_HSTS_PRELOAD = os.environ.get("SECURE_HSTS_PRELOAD", "False").lower() == "true"
 
 # Share-link tokens are credentials that appear in URL paths; keep them out of logs.
+# Logging. Application loggers write INFO and above to the console (the terminal running runserver / gunicorn / celery, or the host's
+# journal), and also to a rotating file when LOG_FILE is set. Third-party libraries stay at WARNING. Credential-bearing URL paths are
+# redacted by config/log_redaction.py whichever handler writes the record, and no log line carries pixels, file paths or photo content.
+LOG_LEVEL = env("LOG_LEVEL", default="INFO").upper()
+LOG_FILE = env("LOG_FILE", default="")
+_APP_LOGGERS = (
+    "accounts", "activity", "collages", "config", "contact", "downloads", "duplicates", "enhancement", "events", "identities", "moderation",
+    "notifications", "operations", "organizations", "privacy", "quality_control", "reports", "security", "sharing", "thumbnails", "uploads",
+    "validation",
+)
+_LOG_HANDLERS = ["console"] + (["file"] if LOG_FILE else [])
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {"standard": {"format": "%(asctime)s %(levelname)s %(name)s %(message)s"}},
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "standard"},
+        **({"file": {"class": "logging.handlers.RotatingFileHandler", "filename": LOG_FILE, "maxBytes": 5_000_000, "backupCount": 5,
+                     "formatter": "standard", "encoding": "utf-8"}} if LOG_FILE else {}),
+    },
+    "root": {"handlers": _LOG_HANDLERS, "level": "WARNING"},
+    "loggers": {name: {"handlers": _LOG_HANDLERS, "level": LOG_LEVEL, "propagate": False} for name in _APP_LOGGERS},
+}
+
 from config.log_redaction import install as install_log_redaction  # noqa: E402
 
 install_log_redaction()
