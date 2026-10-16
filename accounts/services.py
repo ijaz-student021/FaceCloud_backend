@@ -60,6 +60,33 @@ def send_verification_email(user):
     )
 
 
+def purge_stale_registrations(now=None):
+    """Delete abandoned signups and finished ones past ``SIGNUP_VERIFICATION_RETENTION_HOURS``; returns how many rows went.
+
+    Abandoned: pending, locked, expired or cancelled, and the link expired more than the retention window ago. Finished: consumed
+    (the account exists) and not touched for longer than the window. A recent or still-valid registration is never removed.
+    """
+    from datetime import timedelta
+
+    from django.db.models import Q
+
+    from .models import PendingRegistration
+
+    cutoff = (now or timezone.now()) - timedelta(hours=settings.SIGNUP_VERIFICATION_RETENTION_HOURS)
+    abandoned = Q(
+        status__in=[
+            PendingRegistration.STATUS_PENDING,
+            PendingRegistration.STATUS_LOCKED,
+            PendingRegistration.STATUS_EXPIRED,
+            PendingRegistration.STATUS_CANCELLED,
+        ],
+        token_expires_at__lt=cutoff,
+    )
+    finished = Q(status=PendingRegistration.STATUS_CONSUMED, updated_at__lt=cutoff)
+    deleted, _ = PendingRegistration.objects.filter(abandoned | finished).delete()
+    return deleted
+
+
 def generate_verification_token():
     """A single-use link token: 256 bits, URL-safe. Only its SHA-256 is stored (see ``hash_verification_token``)."""
     return secrets.token_urlsafe(32)
