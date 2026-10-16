@@ -1,3 +1,4 @@
+from django.conf import settings
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
@@ -146,6 +147,19 @@ class IdentityGroupExportRequestSerializer(serializers.Serializer):
                 "Select at least one export component."
             )
         return attrs
+
+
+class IdentityExportShareRequestSerializer(serializers.Serializer):
+    ttl_hours = serializers.IntegerField(
+        required=False, min_value=1,
+        help_text="How long the link works. Defaults to SHARE_LINK_DEFAULT_TTL_HOURS and never outlasts the ZIP.",
+    )
+    label = serializers.CharField(required=False, allow_blank=True, max_length=120)
+
+    def validate_ttl_hours(self, value):
+        if value > settings.SHARE_LINK_MAX_TTL_HOURS:
+            raise serializers.ValidationError(f"A link can last at most {settings.SHARE_LINK_MAX_TTL_HOURS} hours.")
+        return value
 
 
 class IdentityGroupExportSerializer(serializers.ModelSerializer):

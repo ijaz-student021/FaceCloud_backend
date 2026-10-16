@@ -4,15 +4,21 @@ import json
 import shutil
 import tempfile
 import zipfile
+from datetime import timedelta
 from unittest.mock import patch
 
+from django.conf import settings
 from django.test import override_settings
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework import status
-from rest_framework.test import APITestCase
+from rest_framework.test import APIClient, APITestCase
 
 from accounts.models import User
+from activity.models import ActivityEvent
+from sharing.models import ShareLink
 
+from .export_services import expire_identity_export_if_needed
 from .models import IdentityFace, IdentityGroup, IdentityGroupExport, IdentityMembership
 from .tasks import process_identity_group_export
 from . import test_exports
@@ -158,3 +164,154 @@ class ExportSubsetTests(FolderExportFixtures):
         self.client.force_authenticate(self.other)
         response = self.post_export(image_ids=[self.image_a.pk])
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class ExportShareTests(FolderExportFixtures):
+    def ready_export(self, **overrides):
+        values = {
+            "owner": self.owner, "identity_group": self.group, "status": "queued", "task_id": "share-task",
+        }
+        values.update(overrides)
+        export = IdentityGroupExport.objects.create(**values)
+        return process_identity_group_export(export.pk, "share-task")
+
+    def share_url(self, export):
+        return reverse("identities:group-export-share", args=[export.pk])
+
+    def share(self, export, **body):
+        return self.client.post(self.share_url(export), body, format="json")
+
+    def public(self, token):
+        return APIClient().get(reverse("sharing:public-view", kwargs={"token": token}))
+
+    def test_sharing_a_ready_export_returns_the_link_and_the_token_once(self):
+        export = self.ready_export()
+        response = self.share(export, ttl_hours=2, label="For Sara")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        body = response.json()
+        self.assertEqual(body["identity_export"], export.pk)
+        self.assertIsNone(body["result"])
+        self.assertEqual(body["label"], "For Sara")
+        self.assertEqual(body["state"], "active")
+        self.assertIn(body["token"], body["public_url"])
+        self.assertIn("/info/", body["info_url"])
+        for key in ("id", "edit", "watermark", "expires_at", "revoked_at", "access_count", "last_accessed_at", "created_at"):
+            self.assertIn(key, body)
+        link = ShareLink.objects.get(pk=body["id"])
+        self.assertNotEqual(link.token_hash, body["token"])
+        self.assertEqual(link.identity_export_id, export.pk)
+
+    def test_the_public_link_downloads_the_zip_without_a_login(self):
+        export = self.ready_export()
+        token = self.share(export).json()["token"]
+        response = self.public(token)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response["Content-Type"], "application/zip")
+        self.assertIn("attachment", response["Content-Disposition"])
+        self.assertEqual(response["Cache-Control"], "private, no-store")
+        self.assertTrue(b"".join(response.streaming_content).startswith(b"PK"))
+        link = ShareLink.objects.get()
+        self.assertEqual(link.access_count, 1)
+        info = APIClient().get(reverse("sharing:public-info", kwargs={"token": token})).json()
+        self.assertEqual(info["content_type"], "application/zip")
+        self.assertFalse(info["watermarked"])
+
+    def test_a_subset_export_shares_just_that_zip(self):
+        export = self.ready_export(image_ids=[self.image_a.pk], selection_key="x")
+        token = self.share(export).json()["token"]
+        archive = zipfile.ZipFile(io.BytesIO(b"".join(self.public(token).streaming_content)))
+        manifest = json.loads(archive.read("manifest.json"))
+        self.assertEqual(manifest["summary"]["unique_images"], 1)
+
+    def test_list_and_detail_never_return_the_token(self):
+        export = self.ready_export()
+        created = self.share(export).json()
+        listing = self.client.get(reverse("sharing:link-list-create")).json()
+        detail = self.client.get(reverse("sharing:link-detail", args=[created["id"]])).json()
+        for payload in (listing, detail):
+            text = json.dumps(payload)
+            self.assertNotIn(created["token"], text)
+            self.assertNotIn("public_url", text)
+        rows = listing["results"] if isinstance(listing, dict) else listing
+        self.assertEqual(rows[0]["identity_export"], export.pk)
+        self.assertIsNone(rows[0]["result"])
+
+    def test_revoking_stops_the_link_at_once(self):
+        export = self.ready_export()
+        created = self.share(export).json()
+        self.assertEqual(self.public(created["token"]).status_code, status.HTTP_200_OK)
+        revoked = self.client.post(reverse("sharing:link-revoke", args=[created["id"]]))
+        self.assertEqual(revoked.status_code, status.HTTP_200_OK)
+        self.assertEqual(revoked.json()["state"], "revoked")
+        self.assertEqual(self.public(created["token"]).status_code, status.HTTP_410_GONE)
+
+    def test_another_user_cannot_revoke_or_see_the_link(self):
+        created = self.share(self.ready_export()).json()
+        self.client.force_authenticate(self.other)
+        self.assertEqual(self.client.post(reverse("sharing:link-revoke", args=[created["id"]])).status_code, 404)
+        self.assertEqual(self.client.get(reverse("sharing:link-detail", args=[created["id"]])).status_code, 404)
+        self.assertEqual(self.public(created["token"]).status_code, status.HTTP_200_OK)
+
+    def test_an_expired_link_is_gone_and_an_unknown_token_is_404(self):
+        created = self.share(self.ready_export()).json()
+        ShareLink.objects.filter(pk=created["id"]).update(expires_at=timezone.now() - timedelta(seconds=1))
+        self.assertEqual(self.public(created["token"]).status_code, status.HTTP_410_GONE)
+        self.assertEqual(self.public("not-a-real-token").status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_the_link_never_outlives_the_zip(self):
+        export = self.ready_export()
+        IdentityGroupExport.objects.filter(pk=export.pk).update(expires_at=timezone.now() + timedelta(hours=2))
+        created = self.share(export, ttl_hours=72).json()
+        link = ShareLink.objects.get(pk=created["id"])
+        self.assertLessEqual(link.expires_at, IdentityGroupExport.objects.get(pk=export.pk).expires_at)
+
+    def test_when_the_zip_expires_the_link_stops_working(self):
+        export = self.ready_export()
+        token = self.share(export).json()["token"]
+        IdentityGroupExport.objects.filter(pk=export.pk).update(expires_at=timezone.now() - timedelta(seconds=1))
+        self.assertEqual(self.public(token).status_code, status.HTTP_410_GONE)
+        expire_identity_export_if_needed(IdentityGroupExport.objects.get(pk=export.pk))
+        self.assertEqual(self.public(token).status_code, status.HTTP_410_GONE)
+
+    def test_only_a_finished_unexpired_export_can_be_shared(self):
+        queued = IdentityGroupExport.objects.create(
+            owner=self.owner, identity_group=self.group, status="queued", task_id="t", report_format="csv",
+        )
+        self.assertEqual(self.share(queued).status_code, status.HTTP_409_CONFLICT)
+        expired = self.ready_export()
+        IdentityGroupExport.objects.filter(pk=expired.pk).update(expires_at=timezone.now() - timedelta(seconds=1))
+        self.assertEqual(self.share(expired).status_code, status.HTTP_410_GONE)
+        self.assertFalse(ShareLink.objects.exists())
+
+    def test_another_users_export_is_404(self):
+        export = self.ready_export()
+        self.client.force_authenticate(self.other)
+        self.assertEqual(self.share(export).status_code, status.HTTP_404_NOT_FOUND)
+        self.assertFalse(ShareLink.objects.exists())
+
+    def test_the_lifetime_is_bounded(self):
+        export = self.ready_export()
+        too_long = settings.SHARE_LINK_MAX_TTL_HOURS + 1
+        self.assertEqual(self.share(export, ttl_hours=too_long).status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(self.share(export, ttl_hours=0).status_code, status.HTTP_400_BAD_REQUEST)
+
+    @override_settings(SHARE_LINK_MAX_ACTIVE_PER_USER=1)
+    def test_the_per_user_limit_on_active_links_applies(self):
+        export = self.ready_export()
+        self.assertEqual(self.share(export).status_code, status.HTTP_201_CREATED)
+        self.assertEqual(self.share(export).status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+    def test_creating_and_revoking_are_audited(self):
+        created = self.share(self.ready_export()).json()
+        self.client.post(reverse("sharing:link-revoke", args=[created["id"]]))
+        events = set(ActivityEvent.objects.filter(user=self.owner, category="share").values_list("event", flat=True))
+        self.assertEqual(events, {"share_link_created", "share_link_revoked"})
+
+    def test_image_share_links_keep_their_shape(self):
+        # An image link still has a result and a null identity_export.
+        enhancement = self.image_a.enhancement_results.first()
+        response = self.client.post(reverse("sharing:link-list-create"), {"result": enhancement.pk}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        body = response.json()
+        self.assertEqual(body["result"], enhancement.pk)
+        self.assertIsNone(body["identity_export"])

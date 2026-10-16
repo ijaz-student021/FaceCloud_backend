@@ -14,6 +14,9 @@ from uploads.views import MyImagesPagination, my_images_queryset
 from downloads.models import DownloadEvent
 from downloads.services import record_download
 
+from sharing.serializers import ShareLinkCreatedSerializer
+from sharing.services import create_export_share_link
+
 from .export_services import (IdentityExportNotReadyError,
                               enqueue_identity_group_export,
                               expire_due_identity_exports,
@@ -23,7 +26,7 @@ from .management import (delete_empty_group, merge_groups, move_membership,
 from .models import (IdentityAnalysis, IdentityChange, IdentityGroup,
                      IdentityGroupExport, IdentityMembership)
 from .image_serializers import IdentityGroupImageSerializer
-from .serializers import (IdentityAnalysisSerializer, IdentityAnalyzeRequestSerializer,
+from .serializers import (IdentityAnalysisSerializer, IdentityExportShareRequestSerializer, IdentityAnalyzeRequestSerializer,
                           IdentityChangeSerializer,
                           IdentityGroupExportRequestSerializer,
                           IdentityGroupExportSerializer, IdentityGroupSerializer,
@@ -381,6 +384,46 @@ class IdentityGroupExportDownloadView(APIView):
             as_attachment=True,
             filename=export.display_name,
             content_type="application/zip",
+        )
+
+
+class IdentityGroupExportShareView(APIView):
+    """A time-limited public link to a finished folder ZIP, made and revoked like an image share link."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "share_create"
+
+    @extend_schema(
+        summary="Share a finished person-folder ZIP",
+        description=(
+            "Returns the raw token **once**; only its hash is stored. Revoke with "
+            "`POST /api/shares/{id}/revoke/`; the link also stops working when the ZIP expires. "
+            "The recipient opens `public_url` (no login) and receives the ZIP as a download."
+        ),
+        request=IdentityExportShareRequestSerializer,
+        responses={
+            201: ShareLinkCreatedSerializer, 400: OpenApiTypes.OBJECT, 409: OpenApiTypes.OBJECT,
+            410: OpenApiTypes.OBJECT, 429: OpenApiTypes.OBJECT,
+        },
+    )
+    def post(self, request, pk):
+        export = get_object_or_404(IdentityGroupExport.objects.filter(owner=request.user), pk=pk)
+        payload = IdentityExportShareRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        if expire_identity_export_if_needed(export):
+            raise IdentityExportExpired("This identity export has expired. Request regeneration to continue.")
+        if export.status != IdentityGroupExport.Status.READY:
+            raise IdentityExportNotReady("Only a finished identity export can be shared.")
+        if not export.export_file or not export.export_file.storage.exists(export.export_file.name):
+            raise IdentityExportExpired("The generated identity export is unavailable.")
+        link, token = create_export_share_link(
+            owner=request.user, export=export,
+            ttl_hours=payload.validated_data.get("ttl_hours"), label=payload.validated_data.get("label", ""),
+        )
+        link.token = token
+        return Response(
+            ShareLinkCreatedSerializer(link, context={"request": request}).data,
+            status=status.HTTP_201_CREATED,
         )
 
 
