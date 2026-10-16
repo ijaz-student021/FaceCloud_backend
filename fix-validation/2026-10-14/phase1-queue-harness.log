@@ -1,0 +1,34 @@
+[15:55:45] isolated database facecloud_queue_itest, Redis on :6391, media in /var/folders/vr/699tcg812llfc_4wgyns740m0000gn/T/facecloud-queue-avd9wn26/media
+[10:55:47] worker web ready on queue 'celery' (venv environment)
+[10:55:50] worker gfpgan ready on queue 'gfpgan' (gfpgan environment)
+[ WARN:0@0.380] global net_impl_backend.cpp:345 setPreferableTarget Targets are not supported by the new graph engine for now
+[10:56:18] PASS  routing_and_full_flow: {"status": "completed", "enhancement_task_delivered_to": {"gfpgan": 1}, "preprocessing_task_delivered_to": "n/a", "gfpgan_applied": true, "gfpgan_device": "mps", "identity_status": "verified", "similarity": 0.9696, "download_status": 200, "download_matches_stored_file": true, "output": [560, 840], "processing_ms": 27621, "progress": {"status": "completed", "progress_percentage": 100.0}}
+[10:56:21] worker gfpgan-2 ready on queue 'gfpgan' (gfpgan environment)
+[ WARN:0@30.838] global net_impl_backend.cpp:345 setPreferableTarget Targets are not supported by the new graph engine for now
+[10:56:35] PASS  duplicate_delivery: {"status": "completed", "deliveries": {"gfpgan-2": 2, "gfpgan": 1}, "task_outcome_lines": 2, "output_files": ["fc950f0cb0e64d9d92343e591e15a7e8.jpg"], "claim_attempt": 0}
+[ WARN:0@45.976] global net_impl_backend.cpp:345 setPreferableTarget Targets are not supported by the new graph engine for now
+[10:56:58] PASS  database_failure_then_retry: {"connections_terminated": 1, "retries_logged": 1, "status": "completed", "seconds_from_failure_to_completion": 21, "claim_attempt": 1, "output_files": ["c9eb45cbd1a94146afebe6e2ce865508.jpg"]}
+Bad Request: /api/enhancements/batches/4/
+[10:57:01] FAIL  cancellation: {"error": "AssertionError: b'[\"One or more images already have an active enhancement operation.\"]'"}
+[ WARN:0@71.477] global net_impl_backend.cpp:345 setPreferableTarget Targets are not supported by the new graph engine for now
+[10:57:03] GFPGAN worker killed mid-task (SIGKILL); restarting it
+[10:57:03] worker gfpgan ready on queue 'gfpgan' (gfpgan environment)
+[11:02:20] PASS  worker_killed_then_restarted: {"status_when_killed": "processing", "final_status": "completed", "seconds_to_recover": 317, "deliveries": {"gfpgan": 2}, "output_files": ["e1f2b9dc78564f99b69b4e2e79c3cc05.jpg"], "note": "visibility timeout 300 s, task limit 200 s, claim lease 60 s for this run; defaults are 105 min, 60 min and 30 min"}
+[11:02:24] worker slow-original ready on queue 'gfpgan' (gfpgan environment)
+[ WARN:0@393.825] global net_impl_backend.cpp:345 setPreferableTarget Targets are not supported by the new graph engine for now
+[11:02:25] worker duplicate ready on queue 'gfpgan' (gfpgan environment)
+[11:05:25] FAIL  duplicate_while_original_renews: {"status": "completed", "claim_tokens_seen": 1, "claim_renewed_over_seconds": 0, "lease_seconds": 60, "original_outcomes": ["succeeded in 175.6951516669942s: {'result_id': 7, 'status': 'completed'}"], "duplicate_outcomes": ["retry: Retry in 59s: ResultInProgress('Another worker is already enhancing this image.')", "retry: Retry in 60s: ResultInProgress('Another worker is already enhancing this ima
+[11:05:30] worker gfpgan ready on queue 'gfpgan' (gfpgan environment)
+[11:05:34] worker old ready on queue 'gfpgan' (gfpgan environment)
+[ WARN:0@585.040] global net_impl_backend.cpp:345 setPreferableTarget Targets are not supported by the new graph engine for now
+[11:05:39] old worker frozen (SIGSTOP) holding the claim
+[11:05:40] worker new ready on queue 'gfpgan' (gfpgan environment)
+[11:06:36] old worker resumed (SIGCONT) after the takeover; it will now fail
+[11:07:46] PASS  old_worker_fails_after_takeover: {"taken_over": true, "old_worker_failed": true, "statuses_seen": ["processing", "completed"], "final_status": "completed", "old_outcomes": ["succeeded in 60.635347917006584s: {'result_id': 8, 'status': 'processing'}"], "new_outcomes": ["retry: Retry in 56s: ResultInProgress('Another worker is already enhancing this image.')", "succeeded in 65.02333187501063s: {'result_id': 8, 'status': 'completed'
+[11:07:50] worker gfpgan ready on queue 'gfpgan' (gfpgan environment)
+[11:07:52] worker batch-a ready on queue 'gfpgan' (gfpgan environment)
+[11:07:55] worker batch-b ready on queue 'gfpgan' (gfpgan environment)
+[11:12:40] batch worker killed (SIGKILL) 286 s after dispatch, mid-image [12]
+[11:14:55] PASS  worker_killed_mid_batch: {"killed_seconds_after_dispatch": 286, "interrupted": [12], "interrupted_claim_renewed_for_seconds": 15, "job_status": "completed", "result_statuses": ["completed", "completed", "completed", "completed", "completed", "completed"], "counts": [6, 6, 0], "seconds_to_finish_after_kill": 136, "batch_outcomes_after_redelivery": ["retry: Retry in 31s", "succeeded in 41.337260250002146s: {'job_id': 2, 'st
+[11:15:00] worker gfpgan ready on queue 'gfpgan' (gfpgan environment)
+[11:15:02] wrote /private/tmp/claude-501/-Users-Ali-FaceCloud-backend/25680eb7-bdb6-4c1e-bfbe-926a9cef1992/scratchpad/wt-phase1/.runtime/queue_integration/2026-10-14-fix-phase1

@@ -71,14 +71,54 @@ class ModeratorReportSerializer(serializers.ModelSerializer):
         model = ModeratorReport
         fields = [
             "id", "organization", "requested_by", "report_type", "format", "status",
+            "date_from", "date_to",
             "file_size", "failure_reason", "generated_at", "expires_at", "created_at",
         ]
         read_only_fields = fields
 
 
+MAX_REPORT_PERIOD_DAYS = 366
+
+
 class ModeratorReportCreateSerializer(serializers.Serializer):
+    """``date_from``/``date_to`` are optional (UTC). A plain date for date_to
+    includes that whole day; the window is half-open [date_from, date_to)."""
+
     report_type = serializers.ChoiceField(choices=ModeratorReport.ReportType.choices)
     format = serializers.ChoiceField(choices=ModeratorReport.Format.choices, default=ModeratorReport.Format.JSON)
+    date_from = serializers.CharField(required=False, help_text="ISO date or datetime, UTC; inclusive.")
+    date_to = serializers.CharField(required=False, help_text="ISO date (whole day included) or datetime (exclusive), UTC.")
+
+    def _parse(self, value, field, end):
+        from datetime import datetime, time, timedelta, timezone as dt_timezone
+
+        from django.utils.dateparse import parse_date, parse_datetime
+
+        value = value.strip()
+        # A plain date first: parse_datetime also accepts "2026-09-30" (as
+        # midnight), which would drop the last day of the range.
+        day = parse_date(value) if len(value) == 10 else None
+        if day is not None:
+            return datetime.combine(day + timedelta(days=1) if end else day, time.min, tzinfo=dt_timezone.utc)
+        moment = parse_datetime(value)
+        if moment is None:
+            raise serializers.ValidationError({field: "Use an ISO date (2026-10-01) or datetime."})
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=dt_timezone.utc)
+        return moment.astimezone(dt_timezone.utc)
+
+    def validate(self, attrs):
+        from datetime import timedelta
+
+        start = self._parse(attrs["date_from"], "date_from", end=False) if attrs.get("date_from") else None
+        end = self._parse(attrs["date_to"], "date_to", end=True) if attrs.get("date_to") else None
+        if start and end:
+            if start >= end:
+                raise serializers.ValidationError({"date_to": "date_to must be after date_from."})
+            if end - start > timedelta(days=MAX_REPORT_PERIOD_DAYS):
+                raise serializers.ValidationError({"date_to": f"A report covers at most {MAX_REPORT_PERIOD_DAYS} days."})
+        attrs["date_from"], attrs["date_to"] = start, end
+        return attrs
 
 
 class ModeratorDuplicateGroupMergeSerializer(serializers.Serializer):

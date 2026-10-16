@@ -82,6 +82,7 @@ INSTALLED_APPS = [
     "thumbnails",
     "organizations",
     "moderation",
+    "contact",
 ]
 
 MIDDLEWARE = [
@@ -210,6 +211,13 @@ AI_RESTORATION_ENABLED = env.bool("AI_RESTORATION_ENABLED", default=True)
 AI_RESTORATION_EDSR_MODEL_PATH = env(
     "AI_RESTORATION_EDSR_MODEL_PATH",
     default=str(BASE_DIR / ".runtime" / "models" / "EDSR_x2.pb"),
+)
+# The EDSR file must match this SHA-256 (docs/gpu/model_manifest.json): any
+# other file at the path is refused at load time, not only by the offline
+# manifest check.
+AI_RESTORATION_EDSR_MODEL_SHA256 = env(
+    "AI_RESTORATION_EDSR_MODEL_SHA256",
+    default="585623221baa070279a0d1e7e113a4c3faba0f318ca7fdd9a65d9afc0763d9b4",
 )
 AI_RESTORATION_SCALE = env.int("AI_RESTORATION_SCALE", default=2)
 AI_RESTORATION_MAX_INPUT_EDGE = env.int(
@@ -897,11 +905,24 @@ SIGNUP_VERIFICATION_SUPPORT_EMAIL = env(
     default="support@facecloud.local",
 )
 
+# Rate limits (DRF throttles) and other cache users. Without CACHE_URL each
+# process keeps its own counters, so every limit multiplies by the number of
+# processes and resets on restart: fine for development, refused in production
+# (config/production_guard.py). Example: CACHE_URL=redis://127.0.0.1:6379/2
+CACHE_URL = env("CACHE_URL", default="")
+if CACHE_URL:
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": CACHE_URL}}
+else:
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "accounts.authentication.FaceCloudJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
+    # Paginated when the request passes page or page_size; a plain array
+    # otherwise, so existing clients keep working (config/pagination.py).
+    "DEFAULT_PAGINATION_CLASS": "config.pagination.OptionalPageNumberPagination",
     # Number of reverse proxies in front of Django. With 0 the socket address is
     # the client, so a spoofed X-Forwarded-For cannot evade throttling.
     "NUM_PROXIES": int(os.environ.get("TRUSTED_PROXY_COUNT", "0")),
@@ -919,6 +940,7 @@ REST_FRAMEWORK = {
         "token_refresh": "60/hour",
         "verification": "10/hour",
         "verification_status": "60/hour",
+        "contact": "5/hour",
         "password_reset": "10/hour",
         "password_change": "10/hour",
         "image_upload": "100/hour",
@@ -984,6 +1006,16 @@ SPECTACULAR_SETTINGS = {
 
 # Runs tests against a throwaway media folder instead of the real one.
 TEST_RUNNER = "config.test_runner.FaceCloudTestRunner"
+
+# Public contact form (contact app): where messages are delivered, and how
+# long they are kept. With no recipient the form answers 503 instead of
+# pretending to work.
+CONTACT_RECIPIENT_EMAILS = env.list("CONTACT_RECIPIENT_EMAILS", default=[])
+CONTACT_MESSAGE_RETENTION_DAYS = env.int("CONTACT_MESSAGE_RETENTION_DAYS", default=180)
+
+# How long records of ended sign-in sessions (device, IP address, times) are
+# kept for the user's own session list before they are deleted.
+SESSION_RECORD_RETENTION_DAYS = env.int("SESSION_RECORD_RETENTION_DAYS", default=30)
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),

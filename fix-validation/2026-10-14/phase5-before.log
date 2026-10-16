@@ -1,0 +1,9 @@
+## Wed Oct 14 19:35:00 PKT 2026 at d3c4d88 (before the Phase 5 fix), clean worktree, final test file
+FAIL: test_a_cancellation_with_nothing_left_to_cancel_keeps_the_real_outcome (enhancement.test_lifecycle_events.LateCancellationTests.test_a_cancellation_with_nothing_left_to_cancel_keeps_the_real_outcome)
+AssertionError: Tuples differ: (EnhancementStatus.CANCELLED, 'cancelled', 0) != ('completed', 'completed', 2)
+FAIL: test_an_unfinished_result_is_not_published (enhancement.test_lifecycle_events.PublishedOnceTests.test_an_unfinished_result_is_not_published)
+AssertionError: True is not false
+FAIL: test_publishing_a_finished_result_again_adds_no_second_activity_entry (enhancement.test_lifecycle_events.PublishedOnceTests.test_publishing_a_finished_result_again_adds_no_second_activity_entry)
+AssertionError: 2 != 1
+Ran 6 tests in 0.300s
+FAILED (failures=3)

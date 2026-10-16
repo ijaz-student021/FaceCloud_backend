@@ -1,0 +1,8 @@
+243 JPEGs in Downloads; 108 carry an ICC profile
+[('Display P3', 69), ('sRGB', 26), ('sRGB IEC61966-2.1', 12), ('Adobe RGB (1998)', 1)]
+02460e28602bab77cb55af16dd26 736x1041 'sRGB': 29 ms, |Δ| mean 0.00 max 0
+1000655927.jpg.jpeg          5712x4284 'Display P3': 857 ms, |Δ| mean 1.20 max 73
+1000655960.jpg.jpeg          5712x4284 'Display P3': 826 ms, |Δ| mean 1.81 max 70
+1000656009.jpg.jpeg          4284x5712 'Display P3': 771 ms, |Δ| mean 3.11 max 63
+1f7f0e00-1aa8-4ae9-914f-fc49 1071x1355 'Display P3': 78 ms, |Δ| mean 3.77 max 100
+48706AF7-407C-4715-A0B6-E6AB 1251x1349 'Display P3': 66 ms, |Δ| mean 0.60 max 17

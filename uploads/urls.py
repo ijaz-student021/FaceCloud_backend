@@ -10,6 +10,7 @@ from .views import (
     MyImageListView,
     MultipleImageUploadView,
     SingleImageUploadView,
+    UploadLimitsView,
     UploadBatchDetailView,
     UploadBatchCancelView,
     UploadBatchProgressView,
@@ -19,6 +20,7 @@ from .views import (
 )
 
 urlpatterns = [
+    path("upload/limits/", UploadLimitsView.as_view(), name="upload-limits"),
     path("upload/single/", SingleImageUploadView.as_view(), name="image-upload-single"),
     path("upload/multiple/", MultipleImageUploadView.as_view(), name="image-upload-multiple"),
     path("upload/zip/", ZipImageUploadView.as_view(), name="image-upload-zip"),

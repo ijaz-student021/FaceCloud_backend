@@ -251,6 +251,10 @@ class OrphanMediaTests(TestCase):
 
 def sample_instance(model):
     """An unsaved instance whose owner is 1, for computing its upload path."""
+    from django.contrib.auth import get_user_model
+
+    if model is get_user_model():
+        return model(pk=1)  # the user's own files (avatar) are keyed by the user
     try:
         return model(owner_id=1)
     except TypeError:

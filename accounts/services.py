@@ -128,15 +128,20 @@ def dashboard_for_user(user):
     return "user"
 
 
-def issue_login_tokens(user):
-    """The same ``{refresh, access, user, role, dashboard}`` shape every login path returns."""
+def issue_login_tokens(user, request=None):
+    """The same ``{refresh, access, user, role, dashboard}`` shape every login path returns.
+
+    Each login starts a session (accounts/sessions.py) named in both tokens.
+    """
     from rest_framework_simplejwt.tokens import RefreshToken
 
     from .serializers import UserSerializer  # deferred: serializers.py imports this module
+    from .sessions import attach, start_session
 
     token = RefreshToken.for_user(user)
     token["role"] = user.role
     token["token_version"] = user.token_version
+    attach(start_session(user, request), token)
     return {
         "refresh": str(token),
         "access": str(token.access_token),
@@ -331,4 +336,4 @@ def verify_two_factor_login(login_token, code, request=None):
             record_auth_event("login_locked", request, user, "", {"seconds": delay})
         raise ValidationError({"code": "That code is not valid."})
     record_auth_event("login", request, user, "", {"stage": "two_factor"})
-    return issue_login_tokens(user)
+    return issue_login_tokens(user, request)

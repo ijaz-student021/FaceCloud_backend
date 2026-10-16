@@ -1,0 +1,126 @@
+## Wed Oct 14 15:43:51 PKT 2026 HEAD 464e5ae, web venv, sqlite test DB
+  Applying contenttypes.0001_initial... OK
+  Applying contenttypes.0002_remove_content_type_name... OK
+  Applying auth.0001_initial... OK
+  Applying auth.0002_alter_permission_name_max_length... OK
+  Applying auth.0003_alter_user_email_max_length... OK
+  Applying auth.0004_alter_user_username_opts... OK
+  Applying auth.0005_alter_user_last_login_null... OK
+  Applying auth.0006_require_contenttypes_0002... OK
+  Applying auth.0007_alter_validators_add_error_messages... OK
+  Applying auth.0008_alter_user_username_max_length... OK
+  Applying auth.0009_alter_user_last_name_max_length... OK
+  Applying auth.0010_alter_group_name_max_length... OK
+  Applying auth.0011_update_proxy_permissions... OK
+  Applying auth.0012_alter_user_first_name_max_length... OK
+  Applying accounts.0001_initial... OK
+  Applying accounts.0002_user_is_email_verified... OK
+  Applying accounts.0003_user_suspension_reason_user_token_version_and_more... OK
+  Applying accounts.0004_alter_authevent_event_pendingregistration... OK
+  Applying accounts.0005_loginattempt_alter_authevent_event... OK
+  Applying accounts.0006_alter_authevent_event_twofactorcredential_and_more... OK
+  Applying activity.0001_initial... OK
+  Applying activity.0002_alter_activityevent_category... OK
+  Applying admin.0001_initial... OK
+  Applying admin.0002_logentry_remove_auto_add... OK
+  Applying admin.0003_logentry_add_action_flag_choices... OK
+  Applying collages.0001_initial... OK
+  Applying uploads.0001_initial... OK
+  Applying uploads.0002_uploadbatch_display_name_imagepreprocessingresult... OK
+  Applying uploads.0003_uploadbatch_processed_files_and_more... OK
+  Applying uploads.0004_uploadbatch_cancellation_requested_and_more... OK
+  Applying downloads.0001_initial... OK
+  Applying downloads.0002_alter_downloadevent_resource_type... OK
+  Applying downloads.0003_alter_downloadevent_resource_type... OK
+  Applying duplicates.0001_initial... OK
+  Applying uploads.0005_alter_batchimageprogress_stage_and_more... OK
+  Applying enhancement.0001_initial... OK
+  Applying enhancement.0002_imageenhancementresult_task_id... OK
+  Applying enhancement.0003_imageeditversion... OK
+  Applying enhancement.0004_imageenhancementresult_requested_style... OK
+  Applying enhancement.0005_enhancementbatchjob_requested_style... OK
+  Applying enhancement.0006_model_comparison... OK
+  Applying enhancement.0007_result_processing_claim... OK
+  Applying enhancement.0008_claim_task_and_attempt... OK
+  Applying organizations.0001_initial... OK
+  Applying organizations.0002_backfill_personal_organizations... OK
+  Applying validation.0001_initial... OK
+  Applying validation.0002_facevalidationresult_per_face_metrics... OK
+  Applying identities.0001_initial... OK
+  Applying identities.0002_identitychange... OK
+  Applying identities.0003_identitygroupexport... OK
+  Applying identities.0004_identitygroup_organization... OK
+  Applying identities.0005_backfill_group_organization... OK
+  Applying identities.0006_fix_identity_group_required_constraint... OK
+  Applying uploads.0006_uploadbatch_organization... OK
+  Applying uploads.0007_backfill_batch_organization... OK
+  Applying quality_control.0001_initial... OK
+  Applying organizations.0003_alter_organizationauditevent_action... OK
+  Applying organizations.0004_alter_organizationauditevent_action... OK
+  Applying organizations.0005_alter_organizationauditevent_action... OK
+  Applying organizations.0006_alter_organizationauditevent_action... OK
+  Applying organizations.0007_alter_organizationauditevent_action... OK
+  Applying organizations.0008_alter_organizationauditevent_action... OK
+  Applying moderation.0001_initial... OK
+  Applying moderation.0002_moderatorreport... OK
+  Applying moderation.0003_alter_moderatorreport_report_type... OK
+  Applying moderation.0004_moderatorreview_claimed_at_and_more... OK
+  Applying moderation.0005_identity_confidence_as_percentage... OK
+  Applying notifications.0001_initial... OK
+  Applying notifications.0002_notificationpreference_moderator_review_updates_and_more... OK
+  Applying notifications.0003_alter_usernotification_event_type... OK
+  Applying notifications.0004_alter_usernotification_event_type... OK
+  Applying privacy.0001_initial... OK
+  Applying privacy.0002_alter_privacyrequest_kind_and_more... OK
+  Applying privacy.0003_alter_privacyrequest_kind... OK
+  Applying privacy.0004_organizationexport... OK
+  Applying reports.0001_initial... OK
+  Applying sessions.0001_initial... OK
+  Applying sharing.0001_initial... OK
+  Applying thumbnails.0001_initial... OK
+  Applying token_blacklist.0001_initial... OK
+  Applying token_blacklist.0002_outstandingtoken_jti_hex... OK
+  Applying token_blacklist.0003_auto_20171017_2007... OK
+  Applying token_blacklist.0004_auto_20171017_2013... OK
+  Applying token_blacklist.0005_remove_outstandingtoken_jti... OK
+  Applying token_blacklist.0006_auto_20171017_2113... OK
+  Applying token_blacklist.0007_auto_20171017_2214... OK
+  Applying token_blacklist.0008_migrate_to_bigautofield... OK
+  Applying token_blacklist.0010_fix_migrate_to_bigautofield... OK
+  Applying token_blacklist.0011_linearizes_history... OK
+  Applying token_blacklist.0012_alter_outstandingtoken_user... OK
+  Applying token_blacklist.0013_alter_blacklistedtoken_options_and_more...test_claim_wait_retry_of_the_same_delivery_takes_over_a_live_claim (enhancement.test_tmp_before_fix.P12OnTheCurrentInterface.test_claim_wait_retry_of_the_same_delivery_takes_over_a_live_claim) ... [ WARN:0@3.833] global net_impl_backend.cpp:345 setPreferableTarget Targets are not supported by the new graph engine for now
+test_a_batch_retry_does_not_redo_or_republish_finished_images (enhancement.test_execution_ownership.BatchRedeliveryTests.test_a_batch_retry_does_not_redo_or_republish_finished_images) ... [ WARN:0@3.887] global net_impl_backend.cpp:345 setPreferableTarget Targets are not supported by the new graph engine for now
+P2-9. The batch is redelivered (same id, same attempt) while the dead ... [ WARN:0@3.991] global net_impl_backend.cpp:345 setPreferableTarget Targets are not supported by the new graph engine for now
+test_waiting_for_another_workers_image_is_bounded (enhancement.test_execution_ownership.BatchRedeliveryTests.test_waiting_for_another_workers_image_is_bounded) ... ERROR
+test_renewal_refreshes_only_a_claim_still_held (enhancement.test_execution_ownership.ClaimRenewalTests.test_renewal_refreshes_only_a_claim_still_held) ... ERROR
+test_renewal_stops_once_the_supported_execution_window_has_passed (enhancement.test_execution_ownership.ClaimRenewalTests.test_renewal_stops_once_the_supported_execution_window_has_passed) ... ERROR
+test_claim_waits_are_bounded_whatever_the_database_retries (enhancement.test_execution_ownership.DatabaseFailureAfterClaimTests.test_claim_waits_are_bounded_whatever_the_database_retries) ... ERROR
+P2-8. Two claim waits and one database retry have happened ... ERROR
+test_database_retries_are_still_bounded (enhancement.test_execution_ownership.DatabaseFailureAfterClaimTests.test_database_retries_are_still_bounded) ... ok
+test_the_retry_carries_the_claim_it_held (enhancement.test_execution_ownership.DatabaseFailureAfterClaimTests.test_the_retry_carries_the_claim_it_held) ... ERROR
+P1-2. The second delivery of attempt 0 waited once (retries=1). Its ... ERROR
+test_a_higher_attempt_number_alone_never_resumes (enhancement.test_execution_ownership.DuplicateCannotTakeOverTests.test_a_higher_attempt_number_alone_never_resumes) ... [ WARN:0@4.143] global net_impl_backend.cpp:345 setPreferableTarget Targets are not supported by the new graph engine for now
+test_a_wrong_resume_token_does_not_resume (enhancement.test_execution_ownership.DuplicateCannotTakeOverTests.test_a_wrong_resume_token_does_not_resume) ... ERROR
+A retry carries the token its ended execution held. ... ERROR
+test_the_wait_lasts_until_the_claim_lapses_and_never_longer_than_the_lease (enhancement.test_execution_ownership.DuplicateCannotTakeOverTests.test_the_wait_lasts_until_the_claim_lapses_and_never_longer_than_the_lease) ... ok
+P1-3. ... FAIL
+test_a_crash_while_still_the_owner_records_the_failure (enhancement.test_execution_ownership.OldWorkerFailureTests.test_a_crash_while_still_the_owner_records_the_failure) ... ok
+test_a_failed_batch_does_not_fail_images_another_worker_holds (enhancement.test_execution_ownership.OldWorkerFailureTests.test_a_failed_batch_does_not_fail_images_another_worker_holds) ... FAIL
+A row left by a dead worker is not "someone else's live work". ... ok
+test_a_stage_longer_than_the_renewal_interval_keeps_the_claim_fresh (enhancement.test_execution_ownership.ClaimRenewedDuringALongStageTests.test_a_stage_longer_than_the_renewal_interval_keeps_the_claim_fresh) ... ERROR
+TypeError: process_enhancement_batch() got an unexpected keyword argument 'claim_waits'
+TypeError: process_enhancement_image() got an unexpected keyword argument 'claim_waits'
+TypeError: process_enhancement_image() got an unexpected keyword argument 'claim_waits'
+KeyError: 'kwargs'
+TypeError: process_enhancement_image() got an unexpected keyword argument 'claim_waits'
+TypeError: process_enhancement_result() got an unexpected keyword argument 'resume_token'
+TypeError: process_enhancement_result() got an unexpected keyword argument 'resume_token'
+AssertionError: {'result_id': 1, 'status': EnhancementStatus.COMPLETED} != 'rescheduled' : took over the live claim: outcome={'result_id': 1, 'status': EnhancementStatus.COMPLETED}, row=completed, token=''
+AssertionError: Lists differ: [1, 2] != [2]
+AssertionError: {'job_id': 1, 'status': EnhancementStatus.PARTIAL, 'successful': 2, 'failed': 0} != 'rescheduled'
+AssertionError: ResultInProgress not raised
+AssertionError: Tuples differ: ('failed', '') != ('processing', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+AssertionError: Tuples differ: ('failed', '') != ('processing', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+Ran 20 tests in 0.800s
+FAILED (failures=6, errors=10)

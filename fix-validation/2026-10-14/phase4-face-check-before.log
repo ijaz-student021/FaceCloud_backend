@@ -1,0 +1,13 @@
+## Wed Oct 14 16:11:44 PKT 2026 face_fidelity.py at HEAD (before the fix)
+ERROR: test_a_partial_blend_is_reported_as_reduced (enhancement.test_face_guard_outcomes.WholeBoxRevertTests.test_a_partial_blend_is_reported_as_reduced)
+KeyError: 'outcome'
+ERROR: test_a_reverted_face_on_an_upscaled_grid (enhancement.test_face_guard_outcomes.WholeBoxRevertTests.test_a_reverted_face_on_an_upscaled_grid)
+KeyError: 'outcome'
+FAIL: test_damage_the_ellipse_blends_cannot_reach_is_removed (enhancement.test_face_guard_outcomes.WholeBoxRevertTests.test_damage_the_ellipse_blends_cannot_reach_is_removed)
+AssertionError: 
+FAIL: test_the_restored_box_has_no_seam (enhancement.test_face_guard_outcomes.WholeBoxRevertTests.test_the_restored_box_has_no_seam)
+AssertionError: np.int64(30) not less than np.float64(30.0)
+FAIL: test_violations_that_survive_the_revert_are_reported_not_hidden (enhancement.test_face_guard_outcomes.WholeBoxRevertTests.test_violations_that_survive_the_revert_are_reported_not_hidden)
+AssertionError: 'reverted' != 'unresolved'
+Ran 6 tests in 0.458s
+FAILED (failures=3, errors=2)

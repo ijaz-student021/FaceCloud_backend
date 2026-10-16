@@ -36,6 +36,8 @@ def good_config():
         "EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
         "EMAIL_HOST": "smtp.mailer-service.net",
         "CELERY_TASK_ALWAYS_EAGER": False,
+        "CACHES": {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache",
+                               "LOCATION": "redis://cache.internal:6379/2"}},
         "BIOMETRIC_CONSENT_REQUIRED": True,
         "LOGIN_LOCK_THRESHOLD": 5,
     }
@@ -122,6 +124,11 @@ class GuardRuleTests(SimpleTestCase):
     def test_jobs_must_not_run_inside_web_requests(self):
         self.assertFlags("CELERY_TASK_ALWAYS_EAGER", CELERY_TASK_ALWAYS_EAGER=True)
 
+    def test_rate_limits_need_a_shared_cache(self):
+        local = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+        self.assertTrue(any("CACHE_URL" in problem for problem in self.problems(CACHES=local)))
+        self.assertTrue(any("CACHE_URL" in problem for problem in self.problems(CACHES={})))
+
     def test_policy_rules(self):
         self.assertFlags("BIOMETRIC_CONSENT_REQUIRED must be True", BIOMETRIC_CONSENT_REQUIRED=False)
         for threshold in (0, 2, 21):
@@ -184,6 +191,7 @@ class StartupRefusalTests(SimpleTestCase):
             "EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
             "EMAIL_HOST": "smtp.mailer-service.net",
             "CELERY_TASK_ALWAYS_EAGER": "False",
+            "CACHE_URL": "redis://127.0.0.1:6379/2",
             "IDENTITY_EMBEDDING_KEY": random_secret(48),
             "IMAGE_ENCRYPTION_ENABLED": "True",
             "IMAGE_ENCRYPTION_KEY": random_secret(48),

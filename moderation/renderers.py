@@ -45,6 +45,13 @@ def render_csv(payload):
     return ("﻿" + output.getvalue()).encode("utf-8")
 
 
+def _period_text(period):
+    if not period or (not period.get("from") and not period.get("to")):
+        return "All time"
+    return (f"{period.get('from') or 'start'} to {period.get('to') or 'now'} "
+            f"(UTC, end exclusive; by {period.get('filtered_on', '')})")
+
+
 def render_pdf(payload):
     output = io.BytesIO()
     document = SimpleDocTemplate(
@@ -58,6 +65,7 @@ def render_pdf(payload):
         Paragraph(
             f"Type: {escape(payload['report_type'].replace('_', ' ').title())}<br/>"
             f"Organization: {escape(str(payload['organization'].get('name', '')))}<br/>"
+            f"Period: {escape(_period_text(payload.get('period')))}<br/>"
             f"Generated: {escape(str(payload['generated_at']))}",
             styles["BodyText"],
         ),
