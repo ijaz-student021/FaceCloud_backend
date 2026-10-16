@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 PLACEHOLDERS = ("replace-with", "example.com", "changeme", "change-me", "your-")
 DEV_MAIL_BACKENDS = ("console", "locmem", "dummy", "filebased")
 DEV_HOSTS = {"testserver", "*"}
-LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}  # noqa: S104 - a deny-list entry, never bound
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}  # nosec B104 - a deny-list entry for FRONTEND_URL, never bound
 MIN_SECRET_LENGTH = 50
 MIN_KEY_LENGTH = 32
 MIN_HSTS_SECONDS = 31_536_000  # one year
