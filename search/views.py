@@ -30,6 +30,9 @@ class SearchGroupSerializer(serializers.ModelSerializer):
 
 
 class SearchJobSerializer(serializers.ModelSerializer):
+    # Plain text on purpose: a model choice field would add one more "status" enum to the schema.
+    status = serializers.CharField(read_only=True)
+
     class Meta:
         model = UploadBatch
         fields = ("id", "display_name", "status", "total_files", "created_at")
