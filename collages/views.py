@@ -69,7 +69,10 @@ class CollageListCreateView(generics.ListCreateAPIView):
         except SourceNotFound as error:
             raise NotFound(f"That {error} was not found.")
         except CollageNotPossible as error:
-            raise ValidationError({"detail": str(error)})
+            body = {"detail": str(error)}
+            if error.code:
+                body["code"] = error.code
+            raise ValidationError(body)
         collage, created = enqueue_collage(
             owner=request.user, source_type=data["source_type"], source_ref=data["source_ref"],
             image_ids=image_ids, title=data.get("title", ""), subject=subject,
