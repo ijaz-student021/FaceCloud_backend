@@ -21,9 +21,9 @@ from uploads.models import ImageUpload, UploadBatch
 
 from .models import IdentityFace, IdentityGroup, IdentityMembership
 from .services import search_by_face
-from .storage import protect_embedding, reveal_embedding
+from .storage import protect_embedding
 from .test_idempotency import make_provider
-from privacy.testing import grant_face_consent, withdraw_face_consent, withdraw_face_consent
+from privacy.testing import grant_face_consent, withdraw_face_consent
 
 User = get_user_model()
 

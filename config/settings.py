@@ -773,8 +773,9 @@ NOTIFICATION_RETENTION_DAYS = env.int("NOTIFICATION_RETENTION_DAYS", default=90)
 NOTIFICATION_EMAIL_MAX_RETRIES = env.int(
     "NOTIFICATION_EMAIL_MAX_RETRIES", default=3,
 )
-SIGNUP_VERIFICATION_CODE_LIFETIME_SECONDS = env.int(
-    "SIGNUP_VERIFICATION_CODE_LIFETIME_SECONDS", default=600,
+# The signup email carries a link ({FRONTEND_URL}/verify-email?registration_id=...&token=...), valid this long.
+SIGNUP_VERIFICATION_LINK_LIFETIME_SECONDS = env.int(
+    "SIGNUP_VERIFICATION_LINK_LIFETIME_SECONDS", default=86400,
 )
 SIGNUP_VERIFICATION_RESEND_COOLDOWN_SECONDS = env.int(
     "SIGNUP_VERIFICATION_RESEND_COOLDOWN_SECONDS", default=60,
@@ -910,7 +911,7 @@ TWO_FACTOR_RECOVERY_CODE_COUNT = env.int("TWO_FACTOR_RECOVERY_CODE_COUNT", defau
 TWO_FACTOR_LOGIN_CHALLENGE_MINUTES = env.int("TWO_FACTOR_LOGIN_CHALLENGE_MINUTES", default=5)
 
 PUBLIC_BACKEND_URL = os.environ.get("PUBLIC_BACKEND_URL", "http://127.0.0.1:8000")
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://127.0.0.1:3000")
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")  # the frontend dev server; emailed links point here
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "noreply@facecloud.local")
 EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
 EMAIL_HOST = os.environ.get("EMAIL_HOST", "")

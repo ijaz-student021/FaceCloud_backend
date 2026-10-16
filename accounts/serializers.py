@@ -12,7 +12,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from . import lockout
 from .services import (dashboard_for_user, has_active_two_factor,
                        issue_login_tokens, make_two_factor_login_challenge,
-                       record_auth_event)
+                       record_auth_event, split_full_name)
 
 User = get_user_model()
 
@@ -31,8 +31,18 @@ def validate_unique_email(value, instance=None):
     return email
 
 
+def clean_full_name(value):
+    """Trim and collapse inner whitespace; a name must have a visible character."""
+    cleaned = " ".join((value or "").split())
+    if not cleaned:
+        raise serializers.ValidationError("Enter your full name.")
+    return cleaned
+
+
 class RegisterSerializer(serializers.Serializer):
-    username = serializers.CharField(max_length=150)
+    full_name = serializers.CharField(max_length=150)
+    # Optional: when absent (or blank) the view derives it from the email's local part.
+    username = serializers.CharField(max_length=150, required=False, allow_blank=True)
     email = serializers.EmailField(required=True, allow_blank=False)
     password = serializers.CharField(write_only=True, trim_whitespace=False)
     password_confirm = serializers.CharField(
@@ -41,9 +51,12 @@ class RegisterSerializer(serializers.Serializer):
         trim_whitespace=False,
     )
 
+    def validate_full_name(self, value):
+        return clean_full_name(value)
+
     def validate_username(self, value):
         value = User.normalize_username(value).strip()
-        if User.objects.filter(username__iexact=value).exists():
+        if value and User.objects.filter(username__iexact=value).exists():
             raise serializers.ValidationError("A user with this username already exists.")
         return value
 
@@ -56,16 +69,22 @@ class RegisterSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"password_confirm": "Passwords do not match."}
             )
-        candidate = User(username=attrs.get("username"), email=attrs.get("email"))
+        if not attrs.get("username"):
+            attrs.pop("username", None)
+        first_name, last_name = split_full_name(attrs["full_name"])
+        candidate = User(
+            username=attrs.get("username") or attrs["email"].partition("@")[0],
+            email=attrs.get("email"), first_name=first_name, last_name=last_name,
+        )
         password_validation.validate_password(attrs["password"], user=candidate)
         return attrs
 
 
 class VerifyRegistrationSerializer(serializers.Serializer):
     registration_id = serializers.UUIDField()
-    code = serializers.RegexField(
-        regex=r"^\d{6}$",
-        error_messages={"invalid": "Enter the six-digit verification code."},
+    token = serializers.CharField(
+        max_length=256,
+        error_messages={"blank": "The verification link is incomplete.", "required": "The verification link is incomplete."},
     )
 
 
@@ -150,10 +169,12 @@ class FaceCloudTokenRefreshSerializer(TokenRefreshSerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
+    full_name = serializers.CharField(read_only=True, help_text="First and last name, or the username when no name is set.")
+
     class Meta:
         model = User
-        fields = ["id", "username", "email", "role", "is_email_verified", "date_joined"]
-        read_only_fields = ["id", "role", "is_email_verified", "date_joined"]
+        fields = ["id", "username", "email", "full_name", "role", "is_email_verified", "date_joined"]
+        read_only_fields = ["id", "full_name", "role", "is_email_verified", "date_joined"]
 
     def validate_username(self, value):
         value = User.normalize_username(value).strip()
@@ -173,9 +194,20 @@ class ProfileUpdateSerializer(UserSerializer):
     current_password = serializers.CharField(
         write_only=True, required=False, trim_whitespace=False
     )
+    full_name = serializers.CharField(required=False, max_length=150, help_text="Stored as first name (first word) and last name (the rest).")
 
     class Meta(UserSerializer.Meta):
         fields = UserSerializer.Meta.fields + ["current_password"]
+        read_only_fields = [name for name in UserSerializer.Meta.read_only_fields if name != "full_name"]
+
+    def validate_full_name(self, value):
+        return clean_full_name(value)
+
+    def update(self, instance, validated_data):
+        full_name = validated_data.pop("full_name", None)
+        if full_name is not None:
+            instance.first_name, instance.last_name = split_full_name(full_name)
+        return super().update(instance, validated_data)
 
     def validate(self, attrs):
         password = attrs.pop("current_password", None)
@@ -238,13 +270,15 @@ class DeleteAccountSerializer(serializers.Serializer):
 
 
 class AdminUserSerializer(serializers.ModelSerializer):
+    full_name = serializers.CharField(read_only=True)
+
     class Meta:
         model = User
         fields = [
-            "id", "username", "email", "role", "is_email_verified", "is_suspended",
+            "id", "username", "email", "full_name", "role", "is_email_verified", "is_suspended",
             "suspension_reason", "is_active", "date_joined",
         ]
-        read_only_fields = ["id", "username", "email", "is_email_verified", "date_joined"]
+        read_only_fields = ["id", "username", "email", "full_name", "is_email_verified", "date_joined"]
 
     def validate(self, attrs):
         if attrs.get("is_suspended") is False:

@@ -232,7 +232,7 @@ class RecognitionJobIdempotencyTests(TestCase):
         of rows, not two.
         """
         provider = make_provider()
-        first = self.process(provider)
+        self.process(provider)
         self.assertEqual(IdentityFace.objects.filter(analysis=self.analysis).count(), 1)
         first_group = IdentityGroup.objects.get()
 

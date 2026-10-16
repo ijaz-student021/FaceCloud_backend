@@ -24,7 +24,7 @@ feature catalogue and status table; this README does not duplicate it.
 
 | Area | Summary |
 |---|---|
-| Accounts | Pending registration with six-digit email verification, JWT login with refresh rotation, optional two-factor authentication (TOTP, recovery codes), per-account login backoff, password reset, logout from all devices, admin / moderator / user roles, suspension, audit trail |
+| Accounts | Pending registration with email-link verification, JWT login with refresh rotation, optional two-factor authentication (TOTP, recovery codes), per-account login backoff, password reset, logout from all devices, admin / moderator / user roles, suspension, audit trail |
 | Uploads | Single, multiple and ZIP upload; content-based validation of JPG, PNG, WebP, BMP, TIFF and static GIF; ZIP-slip and ZIP-bomb protection; UUID storage paths; owner-only access |
 | Gallery | Automatic event/timeline grouping of a user's photos, face-aware collages from an event or a person (asynchronous, consent-gated for person collages), and cached, encrypted JPEG thumbnails so a gallery never loads full originals |
 | Quality control | Sharpness, exposure, contrast, noise and resolution scoring with explainable accept / review / reject decisions |
@@ -86,7 +86,7 @@ owner-scoped access.
 
 ```
 config/            settings, URL routing, Celery app, storage encryption
-accounts/          users, JWT authentication, six-digit signup, roles, audit events
+accounts/          users, JWT authentication, link-verified signup, roles, audit events
 uploads/           ingestion, storage, preprocessing
 validation/        face detection and validation
 quality_control/   quality scoring and decisions
@@ -121,19 +121,19 @@ python manage.py runserver
 
 API documentation is served by drf-spectacular once the server is running.
 
-### Six-digit signup verification
+### Signup with an emailed verification link
 
 Registration is deliberately a pending workflow: no permanent account exists
-until the code is verified.
+until the emailed link is opened.
 
 ```text
 POST /api/auth/register/
         |
         v
-PendingRegistration with hashed password and hashed six-digit code
+PendingRegistration with hashed password, full name and a SHA-256 hash of a single-use token
         |
         v
-Plain-text and HTML verification email
+Plain-text and HTML email with {FRONTEND_URL}/verify-email?registration_id=...&token=...
         |
         v
 POST /api/auth/verify-email/
@@ -145,18 +145,17 @@ Locked row + transaction.atomic()
 Verified User + audit events + cleared pending secrets
 ```
 
-Codes are generated with Python's cryptographic `secrets` module and stored
-only as Django hashes, with a configurable code lifetime, resend cooldown,
-hourly-send limit, and maximum failed attempts (`SIGNUP_VERIFICATION_*` in
-`.env.example`). See
-[`docs/features/01-authentication-and-authorization.md`](docs/features/01-authentication-and-authorization.md)
-and [`docs/PRD_6_DIGIT_SIGNUP_EMAIL_VERIFICATION.md`](docs/PRD_6_DIGIT_SIGNUP_EMAIL_VERIFICATION.md).
+The form sends `full_name`, `email` and `password` (`username` is optional and derived from the email when omitted). The token
+(`secrets.token_urlsafe(32)`) is stored only as a SHA-256 hash, compared in constant time, works once, and expires after
+`SIGNUP_VERIFICATION_LINK_LIFETIME_SECONDS` (default 24 h); resend, cooldown, hourly-send limit and failed-attempt locking are
+unchanged (`SIGNUP_VERIFICATION_*` in `.env.example`). See
+[`docs/features/01-authentication-and-authorization.md`](docs/features/01-authentication-and-authorization.md).
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| POST | `/api/auth/register/` | Start a pending registration and send a code |
-| POST | `/api/auth/verify-email/` | Verify the code and create the account |
-| POST | `/api/auth/verify-email/resend/` | Invalidate and replace the current code |
+| POST | `/api/auth/register/` | Start a pending registration and email a verification link |
+| POST | `/api/auth/verify-email/` | Verify `registration_id` + `token` and create the account |
+| POST | `/api/auth/verify-email/resend/` | Invalidate the current link and email a new one |
 | GET | `/api/auth/registrations/{registration_id}/status/` | Read masked registration status |
 | GET | `/api/auth/verify-email/change/{uidb64}/{token}/` | Verify an existing account's changed email |
 | POST | `/api/auth/login/` | Obtain JWT access and refresh tokens |
@@ -341,4 +340,3 @@ Then run `python manage.py check --deploy` for Django's own checks.
 - [`docs/features`](docs/features): per-feature design, verification and limits
 - [`docs/structured`](docs/structured): architecture, decisions, tasks
 - [`docs/12_DAY_COMPLETION_PLAN.md`](docs/12_DAY_COMPLETION_PLAN.md): delivery plan
-- [`docs/PRD_6_DIGIT_SIGNUP_EMAIL_VERIFICATION.md`](docs/PRD_6_DIGIT_SIGNUP_EMAIL_VERIFICATION.md): signup verification PRD

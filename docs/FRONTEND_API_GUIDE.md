@@ -41,15 +41,16 @@ one helper that accepts both shapes.
 
 ## 2. Sign up, log in, stay logged in
 
-Registration is a two-step flow. No account exists until the emailed
-six-digit code is verified.
+Registration is a two-step flow. No account exists until the link in the
+verification email is opened.
 
 ```text
-POST /api/auth/register/            {username, email, password}
-   -> 202 {registration_id, ...}    (a code is emailed)
-POST /api/auth/verify-email/        {registration_id, code}
-   -> 201                           (account now exists)
-POST /api/auth/verify-email/resend/ {registration_id}     (new code, has a cooldown)
+POST /api/auth/register/            {full_name, email, password, password_confirm?, username?}
+   -> 202 {registration_id, ...}    (an email with a link is sent)
+        link: {FRONTEND_URL}/verify-email?registration_id=<uuid>&token=<token>
+POST /api/auth/verify-email/        {registration_id, token}      (both come from the link)
+   -> 201                           (account now exists; the link works once)
+POST /api/auth/verify-email/resend/ {registration_id}     (new link, the old one stops working; has a cooldown)
 GET  /api/auth/registrations/{registration_id}/status/    (masked status, for a "check your email" screen)
 ```
 
@@ -61,9 +62,15 @@ POST /api/auth/login/  {identifier, password}     (identifier = username or emai
    -> 200 {two_factor_required: true, login_token}     (this account has 2FA on; see below)
 ```
 
-- `role` is `user`, `moderator` or `admin`. `dashboard` is the same value
-  (`"user"`, `"moderator"`, `"admin"`), meant for choosing which dashboard to
-  open after login.
+- `role` is `user`, `moderator` or `admin`. `dashboard` is **always the same
+  value** (`"user"`, `"moderator"`, `"admin"`), meant for choosing which
+  dashboard to open after login. A person who is an *active moderator of an
+  active organization* gets `moderator` even though their stored account role is
+  `user` (`user.role` is the stored value; organization owners stay `user`).
+  This chooses the portal only: what each endpoint allows is unchanged.
+- Every user object (`user` here, `GET/PATCH /api/user/profile/`, the admin user
+  list) carries `full_name` (the username when no name is set). `PATCH
+  /api/user/profile/ {full_name}` changes it.
 - Wrong credentials, an unverified account and a suspended account all return
   **400** with the same kind of message (not 401), so accounts cannot be
   enumerated. Show the message as is.

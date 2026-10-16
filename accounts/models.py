@@ -16,6 +16,11 @@ class User(AbstractUser):
     is_email_verified = models.BooleanField(default=False)
     token_version = models.PositiveIntegerField(default=0)
 
+    @property
+    def full_name(self):
+        """First and last name as one string; the username when the person has no name on record."""
+        return self.get_full_name().strip() or self.get_username()
+
 
 class AuthEvent(models.Model):
     EVENT_CHOICES = [
@@ -88,8 +93,11 @@ class PendingRegistration(models.Model):
     public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     username = models.CharField(max_length=150)
     email = models.EmailField(max_length=254)
+    # What the person typed on the signup form; copied to first_name / last_name when the account is created.
+    full_name = models.CharField(max_length=150, blank=True, default="")
     password_hash = models.CharField(max_length=128)
-    code_hash = models.CharField(max_length=128)
+    # SHA-256 (hex) of the single-use link token; the token itself is never stored.
+    token_hash = models.CharField(max_length=128)
     status = models.CharField(
         max_length=16,
         choices=STATUS_CHOICES,
@@ -98,7 +106,7 @@ class PendingRegistration(models.Model):
     failed_attempts = models.PositiveSmallIntegerField(default=0)
     resend_count = models.PositiveSmallIntegerField(default=1)
     resend_window_started_at = models.DateTimeField()
-    code_expires_at = models.DateTimeField()
+    token_expires_at = models.DateTimeField()
     resend_available_at = models.DateTimeField()
     consumed_at = models.DateTimeField(null=True, blank=True)
     created_user = models.OneToOneField(
@@ -127,7 +135,7 @@ class PendingRegistration(models.Model):
         ]
         indexes = [
             models.Index(
-                fields=["status", "code_expires_at"],
+                fields=["status", "token_expires_at"],
                 name="acct_pending_status_exp_idx",
             ),
             models.Index(fields=["email"], name="accounts_pending_email_idx"),
