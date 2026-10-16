@@ -414,6 +414,7 @@ class IdentityGroupExportRegenerateView(APIView):
             "include_enhanced": export.include_enhanced,
             "include_report": export.include_report,
             "report_format": export.report_format,
+            "image_ids": list(export.image_ids),
         }
         try:
             regenerated, created = enqueue_identity_group_export(

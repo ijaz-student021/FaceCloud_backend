@@ -130,6 +130,12 @@ class IdentityGroupExportRequestSerializer(serializers.Serializer):
         choices=IdentityGroupExport.ReportFormat.choices,
         default=IdentityGroupExport.ReportFormat.JSON,
     )
+    image_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), required=False, allow_null=True,
+        allow_empty=False, max_length=1000,
+        help_text="Optional subset of this folder's photos to export. Omit it to export everything. "
+                  "An id that is not in the folder is a 400.",
+    )
 
     def validate(self, attrs):
         if not any(attrs[key] for key in (
@@ -150,7 +156,7 @@ class IdentityGroupExportSerializer(serializers.ModelSerializer):
         model = IdentityGroupExport
         fields = (
             "id", "group", "include_originals", "include_preprocessed",
-            "include_enhanced", "include_report", "report_format", "status",
+            "include_enhanced", "include_report", "report_format", "image_ids", "status",
             "progress_percentage", "display_name", "manifest", "file_size",
             "failure_reason", "download_url", "generated_at", "expires_at",
             "created_at", "updated_at",
