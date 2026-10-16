@@ -24,7 +24,7 @@ and consent behaviour is unchanged.
 | 13 | Notifications and bell | `GET /api/notifications/`, `unread-count/`, `mark-all-read/`, `{id}/read/` | `severity` (info/success/warning/error), `title`, `message`, `is_read`, `created_at` | matches; severity values already read as success/warning/error/info (item 5: documented, no alias) |
 | 14 | Activity and history button | `GET /api/user/activity/` | `id`, `type`, `message`, `timestamp`, `status` | gap: entries have no `id`, `type`, `message`, `timestamp` or `status`, and no response schema (item 4) |
 | 15 | Settings: Profile | `GET/PATCH /api/user/profile/` | Full Name, Organization, Job Title, Phone, Country, avatar | waiting for #68 |
-| 16 | Settings: Security (password, sign out everywhere) | `POST /api/auth/password-change/`, `POST /api/user/logout-all/` | status only | matches |
+| 16 | Settings: Security (password, sign out everywhere) | `POST /api/user/change-password/`, `POST /api/user/logout-all/` | status only | matches |
 | 17 | Settings: Active Sessions | session list and revoke | device name, ip, `last_seen_at`, `current`, revoke | waiting for #68 |
 | 18 | Settings: Notifications | `GET/PATCH /api/notifications/preferences/` | per-event toggles | matches |
 | 19 | Settings: Camera & Privacy | `GET/POST /api/privacy/consents/`, `GET /api/privacy/export/`, `GET/DELETE /api/privacy/facial-data/` | consent state, export, erase | matches (consent errors gain a stable `code`, item 8) |
