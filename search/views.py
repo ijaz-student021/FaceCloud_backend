@@ -1,4 +1,5 @@
 """The top-bar search: the caller's own photos, person folders and upload batches in one request."""
+from django.db.models import Q
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import permissions, serializers
 from rest_framework.exceptions import ValidationError
@@ -13,6 +14,11 @@ from uploads.views import my_images_queryset
 MIN_QUERY_LENGTH = 2
 DEFAULT_LIMIT = 5
 MAX_LIMIT = 10
+
+
+def job_label(batch):
+    """The same label the frontend's "Your uploads" screen draws, so a result is never blank."""
+    return batch.display_name or batch.original_archive_name or f"Upload {batch.pk}"
 
 
 class SearchImageSerializer(serializers.Serializer):
@@ -32,10 +38,16 @@ class SearchGroupSerializer(serializers.ModelSerializer):
 class SearchJobSerializer(serializers.ModelSerializer):
     # Plain text on purpose: a model choice field would add one more "status" enum to the schema.
     status = serializers.CharField(read_only=True)
+    display_name = serializers.SerializerMethodField(
+        help_text='The label "Your uploads" shows: the name, else the ZIP\'s file name, else "Upload <id>".',
+    )
 
     class Meta:
         model = UploadBatch
         fields = ("id", "display_name", "status", "total_files", "created_at")
+
+    def get_display_name(self, batch) -> str:
+        return job_label(batch)
 
 
 class SearchResponseSerializer(serializers.Serializer):
@@ -90,7 +102,10 @@ class SearchView(APIView):
         groups = IdentityGroup.objects.filter(
             owner=user, state=IdentityGroup.State.ACTIVE, display_name__icontains=query,
         ).order_by("display_name", "pk")[:limit]
-        jobs = UploadBatch.objects.filter(owner=user, display_name__icontains=query).order_by("-created_at", "-pk")[:limit]
+        # A batch is named only if the person renamed it; a ZIP always has its archive's file name.
+        jobs = UploadBatch.objects.filter(
+            Q(display_name__icontains=query) | Q(original_archive_name__icontains=query), owner=user,
+        ).order_by("-created_at", "-pk")[:limit]
         return Response({
             "query": query,
             "images": images,
