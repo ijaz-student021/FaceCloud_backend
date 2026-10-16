@@ -612,7 +612,12 @@ records are searched.
 `images` match the original file name (`status` is the same `display_status` as
 `/api/images/my/`; `thumbnail_url` is `null` for a rejected image), `groups` match
 the folder name (active folders only) and `jobs` are upload batches, matched on
-their display name. Rate limit: 600 requests per hour per user.
+the name the person gave the batch **or** the ZIP's file name (`wedding-photos.zip`
+is found by "wedding"). A job's `display_name` is always the label "Your uploads"
+shows: the chosen name, else the ZIP's file name, else `Upload <id>`, so a row is
+never blank. Single and multiple uploads that were never renamed have no name to
+search; they appear as `Upload <id>` wherever they are listed but are not found
+by that label. Rate limit: 600 requests per hour per user.
 
 ## 9. Privacy screens
 

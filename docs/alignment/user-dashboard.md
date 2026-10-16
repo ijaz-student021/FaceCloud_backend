@@ -28,7 +28,7 @@ and consent behaviour is unchanged.
 | 17 | Settings: Active Sessions | session list and revoke | device name, ip, `last_seen_at`, `current`, revoke | waiting for #68 |
 | 18 | Settings: Notifications | `GET/PATCH /api/notifications/preferences/` | per-event toggles | matches |
 | 19 | Settings: Camera & Privacy | `GET/POST /api/privacy/consents/`, `GET /api/privacy/export/`, `GET/DELETE /api/privacy/facial-data/` | consent state, export, erase | matches (consent errors gain a stable `code`, item 8) |
-| 20 | Top-bar search | **`GET /api/search/?q=&limit=`** | images, groups, jobs | matches: `GET /api/search/` added (ownership-scoped, min 2 chars, limit 5/max 10, throttle scope `search`) |
+| 20 | Top-bar search | **`GET /api/search/?q=&limit=`** | images, groups, jobs | matches: `GET /api/search/` added (ownership-scoped, min 2 chars, limit 5/max 10, throttle scope `search`); jobs match the batch name or the ZIP's file name and are labelled like "Your uploads" (`display_name`, else `original_archive_name`, else `Upload <id>`) |
 
 ## Notes on the brief
 

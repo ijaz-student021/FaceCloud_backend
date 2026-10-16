@@ -45,6 +45,52 @@ class SearchTests(TestCase):
     def search(self, **params):
         return self.client.get(self.url, params)
 
+    def zip_batch(self, owner, archive, **values):
+        return UploadBatch.objects.create(owner=owner, upload_type="zip", original_archive_name=archive, total_files=5, **values)
+
+    def test_a_zip_is_found_by_its_archive_name_and_labelled_with_it(self):
+        batch = self.zip_batch(self.user, "wedding-photos.zip")
+        jobs = self.search(q="wedding").json()["jobs"]
+        self.assertEqual([job["id"] for job in jobs], [batch.pk])
+        self.assertEqual(jobs[0]["display_name"], "wedding-photos.zip")
+        self.assertEqual(set(jobs[0]), {"id", "display_name", "status", "total_files", "created_at"})
+        self.assertEqual(self.search(q="WEDDING-PHOTOS.ZIP").json()["jobs"][0]["id"], batch.pk)
+
+    def test_a_renamed_batch_is_found_by_its_name_and_the_name_wins_over_the_archive(self):
+        batch = self.zip_batch(self.user, "IMG_2024.zip", display_name="Summer trip")
+        found = self.search(q="summer").json()["jobs"]
+        self.assertEqual((found[0]["id"], found[0]["display_name"]), (batch.pk, "Summer trip"))
+        # The archive's own file name still finds it, and the label is still the chosen name.
+        by_archive = self.search(q="img_2024").json()["jobs"]
+        self.assertEqual((by_archive[0]["id"], by_archive[0]["display_name"]), (batch.pk, "Summer trip"))
+
+    def test_a_batch_matching_both_fields_is_listed_once(self):
+        self.zip_batch(self.user, "party.zip", display_name="Party night")
+        self.assertEqual(len(self.search(q="part").json()["jobs"]), 1)
+
+    def test_an_unnamed_batch_is_never_blank(self):
+        from search.views import job_label
+
+        single = UploadBatch.objects.create(owner=self.user, upload_type="single")
+        self.assertEqual(job_label(single), f"Upload {single.pk}")
+        self.assertEqual(job_label(self.zip_batch(self.user, "a.zip")), "a.zip")
+        self.assertEqual(job_label(self.batch(self.user, "Named")), "Named")
+
+    def test_single_uploads_without_a_name_are_not_matched_by_their_label(self):
+        UploadBatch.objects.create(owner=self.user, upload_type="single")
+        self.assertEqual(self.search(q="upload").json()["jobs"], [])
+
+    def test_archive_names_of_other_users_are_never_searched(self):
+        self.zip_batch(self.other, "wedding-theirs.zip")
+        self.assertEqual(self.search(q="wedding").json()["jobs"], [])
+
+    def test_wildcards_are_literal_in_archive_names_too(self):
+        self.zip_batch(self.user, "plain.zip")
+        literal = self.zip_batch(self.user, "100%_done.zip")
+        for wildcard in ("%%", "__", "p%n", "_l"):
+            self.assertEqual(self.search(q=wildcard).json()["jobs"], [], wildcard)
+        self.assertEqual([job["id"] for job in self.search(q="0%_d").json()["jobs"]], [literal.pk])
+
     def test_requires_authentication(self):
         self.assertEqual(APIClient().get(self.url, {"q": "beach"}).status_code, 401)
 
