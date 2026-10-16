@@ -71,7 +71,6 @@ def build_user_dashboard(user):
     images = ImageUpload.objects.filter(owner=user)
     enhancements = ImageEnhancementResult.objects.filter(owner=user)
     completed = enhancements.filter(status=EnhancementStatus.COMPLETED)
-    validations = FaceValidationResult.objects.filter(owner=user)
     quality_results = ImageQualityDecision.objects.filter(owner=user, status="completed")
     identity_groups = IdentityGroup.objects.filter(owner=user, state=IdentityGroup.State.ACTIVE)
     active = enhancements.filter(status__in=[
