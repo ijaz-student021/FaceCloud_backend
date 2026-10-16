@@ -10,6 +10,7 @@ from rest_framework.views import APIView
 
 from uploads.models import UploadBatch
 
+from .enrichment import build_extras
 from .models import DownloadEvent, DownloadPackage
 from .serializers import (
     DownloadEventSerializer,
@@ -105,6 +106,16 @@ class DownloadHistoryListView(generics.ListAPIView):
                 raise ValidationError({"batch": "Batch must be a positive integer."})
             queryset = queryset.filter(batch_id=int(batch_id))
         return queryset
+
+    def paginate_queryset(self, queryset):
+        page = super().paginate_queryset(queryset)
+        self.extras = build_extras(self.request.user, page if page is not None else list(queryset))
+        return page
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["download_extras"] = getattr(self, "extras", {})
+        return context
 
 
 class DownloadPackageListView(generics.ListAPIView):
