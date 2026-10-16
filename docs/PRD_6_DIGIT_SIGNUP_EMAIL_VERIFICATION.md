@@ -1,5 +1,9 @@
 # Product Requirements Document: Six-Digit Signup Email Verification
 
+> **Superseded (2026-10-16).** Signup verification now uses an emailed **link** carrying a single-use token (`{FRONTEND_URL}/verify-email?registration_id=...&token=...`),
+> and the form sends `full_name` (with `username` optional) instead of a username. The six-digit code described below no longer exists; the lockout,
+> resend cooldown and hourly limits do. See `docs/features/01-authentication-and-authorization.md`. This document is kept as the history of the original design.
+
 ## 1. Document control
 
 | Field | Value |
