@@ -82,6 +82,7 @@ INSTALLED_APPS = [
     "thumbnails",
     "organizations",
     "moderation",
+    "search",
 ]
 
 MIDDLEWARE = [
@@ -840,6 +841,7 @@ REST_FRAMEWORK = {
         "share_create": "60/hour",
         "model_comparison": "30/hour",
         "identity_search": "30/hour",
+        "search": "600/hour",
         "share_public": "120/hour",
         "org_invite": "30/hour",
         "org_export": "10/hour",
