@@ -602,7 +602,7 @@ records are searched.
 {
   "query": "beach",
   "images": [{"id": 12, "name": "beach-01.jpg", "thumbnail_url": "http://.../api/images/12/thumbnail/",
-              "status": "completed", "created_at": "2026-10-16T09:12:00Z"}],
+              "status": "ready", "created_at": "2026-10-16T09:12:00Z"}],
   "groups": [{"id": 3, "display_name": "Beach friends", "member_count": 4}],
   "jobs":   [{"id": 7, "display_name": "Beach weekend", "status": "uploaded", "total_files": 3,
               "created_at": "2026-10-16T09:10:00Z"}]
