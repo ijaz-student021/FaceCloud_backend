@@ -19,8 +19,9 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--photo", required=True, type=Path)
-    parser.add_argument("--dark", action="store_true")
+    parser.add_argument("--photo", required=True, type=Path, nargs="+", help="One or more photographs.")
+    parser.add_argument("--dark", action="store_true", help="Darken every photograph.")
+    parser.add_argument("--mix", action="store_true", help="Cycle dark / noisy / untouched so the results show different outcomes.")
     parser.add_argument("--username", default="demo")
     parser.add_argument("--password", default="DemoPassw0rd!7391")
     arguments = parser.parse_args()
@@ -42,24 +43,31 @@ def main():
     user.set_password(arguments.password)
     user.is_email_verified = True
     user.save()
-    image = cv2.imread(str(arguments.photo), cv2.IMREAD_COLOR)
-    scale = 1280 / max(image.shape[:2])
-    image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale < 1 else image
-    if arguments.dark:
-        image = np.clip(image.astype(np.float32) * 0.25, 0, 255).astype(np.uint8)
-    encoded = cv2.imencode(".png", image)[1].tobytes()
-
     client = APIClient()
+    login = client.post("/api/auth/login/", {"identifier": arguments.username, "password": arguments.password}, format="json")
+    print(f"login    : HTTP {login.status_code} (writes an auth event)")
     client.force_authenticate(user)
-    upload = client.post("/api/images/upload/single/", {"file": SimpleUploadedFile("demo.png", encoded, "image/png")}, format="multipart")
-    image_id = upload.json()["images"][0]["id"]
-    queued = client.post(f"/api/enhancements/images/{image_id}/", {"level": "auto", "style": "natural"}, format="json")
-    result = client.get(f"/api/enhancements/results/{queued.json()['id']}/").json()
+    rng = np.random.default_rng(7)
+    variants = ("dark", "noisy", "untouched") if arguments.mix else (("dark",) if arguments.dark else ("untouched",))
+    for index, photo in enumerate(arguments.photo):
+        image = cv2.imread(str(photo), cv2.IMREAD_COLOR)
+        scale = 1280 / max(image.shape[:2])
+        image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale < 1 else image
+        variant = variants[index % len(variants)]
+        if variant == "dark":
+            image = np.clip(image.astype(np.float32) * 0.25, 0, 255).astype(np.uint8)
+        elif variant == "noisy":
+            image = np.clip(image.astype(np.float32) + rng.normal(0, 18.0, image.shape), 0, 255).astype(np.uint8)
+        encoded = cv2.imencode(".png", image)[1].tobytes()
+        upload = client.post("/api/images/upload/single/", {"file": SimpleUploadedFile(f"demo_{variant}_{index + 1}.png", encoded, "image/png")},
+                             format="multipart")
+        image_id = upload.json()["images"][0]["id"]
+        queued = client.post(f"/api/enhancements/images/{image_id}/", {"level": "auto", "style": "natural"}, format="json")
+        result = client.get(f"/api/enhancements/results/{queued.json()['id']}/").json()
+        print(f"photo {index + 1}  : {variant:9s} image id {image_id}  result id {result['id']}  {result['status']} / {result.get('enhancement_outcome')}")
     print(f"database : {settings.DATABASES['default']['NAME']}")
     print(f"files    : {settings.MEDIA_ROOT}")
-    print(f"user     : {arguments.username} (id {user.pk})   image id {image_id}   result id {result['id']}")
-    print(f"result   : status={result['status']} outcome={result.get('enhancement_outcome')} | {result.get('enhancement_summary')}")
-    print(f"identity : {result.get('identity_status')}")
+    print(f"user     : {arguments.username} (id {user.pk}), password: {arguments.password}")
 
 
 if __name__ == "__main__":
