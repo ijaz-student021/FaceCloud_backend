@@ -95,6 +95,16 @@ class GuardRuleTests(SimpleTestCase):
         self.assertFlags("PUBLIC_BACKEND_URL", PUBLIC_BACKEND_URL="http://127.0.0.1:8000")
         self.assertFlags("FRONTEND_URL", FRONTEND_URL="https://example.com")
 
+    def test_the_backend_url_must_be_set_and_may_not_point_at_this_machine(self):
+        """Every share link's public_url is built from PUBLIC_BACKEND_URL; its development default is 127.0.0.1."""
+        for value in (None, "", "http://127.0.0.1:8000"):
+            with self.subTest(value=value):
+                self.assertFlags("PUBLIC_BACKEND_URL must be the real https", PUBLIC_BACKEND_URL=value)
+        for value in ("https://localhost", "https://127.0.0.1:8443", "https://[::1]", "https://LOCALHOST:8000/api"):
+            with self.subTest(value=value):
+                self.assertFlags("PUBLIC_BACKEND_URL must be the public address", PUBLIC_BACKEND_URL=value)
+        self.assertEqual(self.problems(PUBLIC_BACKEND_URL="https://api.facecloud-app.net/"), [])
+
     def test_the_frontend_url_may_not_be_http_or_point_at_this_machine(self):
         """Every verification and reset email links to FRONTEND_URL."""
         self.assertFlags("FRONTEND_URL must be the real https", FRONTEND_URL="http://app.facecloud-app.net")
