@@ -79,12 +79,18 @@ class QualityDecisionTests(APITestCase):
         self.assertEqual(reasons, [])
         self.assertGreaterEqual(scores["overall_score"], 60)
 
-    def test_severe_blur_and_low_resolution_are_rejected(self):
+    def test_severe_blur_and_low_resolution_are_rejected_when_there_is_no_face_to_work_with(self):
         metrics = {**GOOD_METRICS, "width": 180, "height": 180, "laplacian_sharpness": 5.0}
-        decision, reasons, _message = make_decision(metrics, calculate_scores(metrics), self.face)
+        decision, reasons, _message = make_decision(metrics, calculate_scores(metrics), None)
         self.assertEqual(decision, "rejected")
         self.assertIn("severe_blur", reasons)
         self.assertIn("resolution_too_low", reasons)
+
+    def test_with_a_face_blur_never_rejects_but_a_too_small_image_still_does(self):
+        metrics = {**GOOD_METRICS, "width": 180, "height": 180, "laplacian_sharpness": 5.0}
+        decision, reasons, _message = make_decision(metrics, calculate_scores(metrics), self.face)
+        self.assertEqual(decision, "rejected")
+        self.assertEqual(reasons, ["resolution_too_low"])
 
     def test_uncertain_face_or_borderline_quality_needs_review(self):
         self.face.decision = "needs_review"
@@ -93,7 +99,7 @@ class QualityDecisionTests(APITestCase):
         decision, reasons, _message = make_decision(metrics, calculate_scores(metrics), self.face)
         self.assertEqual(decision, "needs_review")
         self.assertIn("face_validation_required", reasons)
-        self.assertIn("borderline_blur", reasons)
+        self.assertNotIn("borderline_blur", reasons)   # a face was found: blur alone never asks for review
 
     @patch("quality_control.services.analyze_image_quality", return_value=GOOD_METRICS)
     def test_processing_persists_scores_and_is_idempotent(self, _analysis):

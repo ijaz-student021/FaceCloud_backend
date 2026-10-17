@@ -647,6 +647,15 @@ QUALITY_REJECT_CONTRAST = env.float("QUALITY_REJECT_CONTRAST", default=12.0)
 QUALITY_REVIEW_CONTRAST = env.float("QUALITY_REVIEW_CONTRAST", default=20.0)
 QUALITY_REVIEW_NOISE = env.float("QUALITY_REVIEW_NOISE", default=10.0)
 QUALITY_ACCEPT_SCORE = env.float("QUALITY_ACCEPT_SCORE", default=60.0)
+# Sharpness of a photograph that has a face is measured on the face (enhancement/face_sharpness.py), not on the whole frame, so a portrait
+# with a blurred background is not penalised and blur alone never rejects or sends such a photo to review (quality_control/policy.py).
+# QUALITY_FACE_SHARPNESS_TARGET: the face detail (Laplacian variance of the face resized to 128 px) that scores 100; a sharp face measures
+# about 119 (10th percentile 81), a Gaussian blur of 1.5 px about 21. QUALITY_FACE_REGION_INSET shrinks the detector's box on every side.
+# QUALITY_FACE_BLUR_WARNING: below this face detail the quality decision records a blur warning (the restoration chain deblurs it).
+QUALITY_FACE_SHARPNESS_TARGET = env.float("QUALITY_FACE_SHARPNESS_TARGET", default=100.0)
+QUALITY_FACE_REGION_INSET = env.float("QUALITY_FACE_REGION_INSET", default=0.15)
+QUALITY_FACE_MIN_CONFIDENCE = env.float("QUALITY_FACE_MIN_CONFIDENCE", default=0.5)
+QUALITY_FACE_BLUR_WARNING = env.float("QUALITY_FACE_BLUR_WARNING", default=50.0)
 
 # Duplicate detection. Perceptual and face-region matches are review evidence,
 # not identity recognition and never create cross-user matches.

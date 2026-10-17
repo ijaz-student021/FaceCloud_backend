@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
+from enhancement.face_sharpness import face_detail
+
 
 @dataclass(frozen=True)
 class Thresholds:
@@ -226,9 +228,7 @@ class ImageQualityAnalyzer:
                 "p5": round(p5, 1), "p50": round(p50, 1), "p95": round(p95, 1), "dynamic_range": round(p95 - p5, 1),
                 "crushed_fraction": round(float((values < self.t.crushed_level).mean()), 3),
             }
-            if min(region.shape[:2]) >= 16:
-                standard = cv2.resize(values, (128, 128), interpolation=cv2.INTER_AREA)
-                detail = round(float(cv2.Laplacian(standard, cv2.CV_32F).var()), 1)
+            detail = face_detail(values)   # one definition, shared with the quality decision (enhancement/face_sharpness.py)
         short_edge = int(min(w, h))
         # (Blur also narrows a face's range, and a face's detail cannot tell blur from darkness: a contrast-normalised detail
         # measure was tried and overlaps too much, sharp p10 0.025 against blurred 0.02. The frame decides instead, below.)
