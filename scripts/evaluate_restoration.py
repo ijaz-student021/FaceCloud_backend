@@ -40,10 +40,8 @@ def main():
 
     import cv2
     import django
-    import numpy as np
 
     django.setup()
-    from enhancement.adaptive.analyzer import ImageQualityAnalyzer
     from enhancement.adaptive.service import AdaptiveImageEnhancementService
     from enhancement.restoration import describe_stages, stage_status
     from enhancement.services import enhance_bgr

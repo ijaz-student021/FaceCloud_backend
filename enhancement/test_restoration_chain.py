@@ -4,7 +4,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import cv2
-import numpy as np
 from django.test import SimpleTestCase, TestCase, override_settings
 
 from . import restoration
