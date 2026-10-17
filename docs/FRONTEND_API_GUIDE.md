@@ -160,8 +160,8 @@ extension must match its real content, and the size and pixel limits in
 GET /api/images/batches/{batch_id}/progress/
    -> {batch_id, status, stage, progress_percentage, counts,
        estimated_completion_at, cancellation_requested, retry_count,
-       images: [{image_id, filename, stage, status, progress_percentage,
-                 failure_stage, failure_reason, ...}]}
+       images: [{image_id, filename, stage, status, display_status,
+                 progress_percentage, failure_stage, failure_reason, ...}]}
 ```
 
 - Poll every 2 to 3 seconds while the batch is active and stop when
@@ -169,13 +169,20 @@ GET /api/images/batches/{batch_id}/progress/
 - `stage` moves through: `uploaded, queued, preprocessing, face_validation,
   quality_analysis, identity_grouping, enhancement, finalizing, completed`.
 - A batch can be `partial`: some images succeeded and some did not. Show both.
+- `display_status` is the photo's final verdict word, identical to the
+  `display_status` of `GET /api/images/my/` (`rejected`, `needs_review`,
+  `accepted`, `completed`, `ready`, `quality_processing`, ...). It is also on every
+  photo in the batch responses (`POST /api/images/upload/*`,
+  `GET /api/images/batches/` and `/{id}/`), so no second request is needed.
 - `POST /api/images/batches/{id}/cancel/` stops a batch;
   `POST /api/images/batches/{id}/retry/` requeues its failed images (there is a
   retry cap, and a 400 explains when it is reached or nothing failed).
 - The notifications endpoints (section 8) can replace polling for "it's done"
   toasts, but progress bars still need the progress endpoint.
 
-**Listing.** `GET /api/images/my/` (paginated) is the gallery view,
+**Listing.** `GET /api/images/my/` (paginated) is the gallery view; both it and
+`GET /api/images/` accept `?batch=<id>` to show one upload's photos (another
+user's id gives an empty list, a non-number a 400),
 `GET /api/images/batches/` lists batches, `GET /api/images/{id}/` and
 `GET /api/images/{id}/download/` fetch one image. The single-image response is
 the **same shape** as a row in `my/` — including `display_status`, the quality
@@ -546,7 +553,9 @@ nothing measurable was decided.
 `POST /api/notifications/{id}/read/`, `POST /api/notifications/mark-all-read/`,
 `DELETE /api/notifications/{id}`, and `GET/PATCH /api/notifications/preferences/`
 for the settings screen. Each notification has a `title`, `message`, `severity`,
-`resource_type`/`resource_id` and an `action_path` you can route to. Poll the
+`resource_type`/`resource_id` and an `action_path` you can route to (always a real
+frontend route: `/dashboard/jobs`, `/dashboard/images`, `/dashboard/downloads`,
+`/dashboard/groups`, or `/moderator/...`; older rows were repaired by a migration). Poll the
 unread count (every 30 to 60 seconds is plenty); there is no websocket.
 
 **Severity -> toast/colour.** `severity` is already one of `info`, `success`,
