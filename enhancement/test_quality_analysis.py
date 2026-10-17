@@ -15,6 +15,7 @@ from .services import (
     _histogram_median,
     _histogram_percentile,
     analyze_image_quality,
+    measure_blur,
 )
 
 
@@ -37,9 +38,10 @@ def reference_analyze(image):
         defects.append("severe_low_light")
     elif luminance < 115:
         defects.append("low_light")
-    if sharpness < 35:
+    blur = measure_blur(gray)  # its own tests: test_blur_measure.py
+    if blur["verdict"] == "severe":
         defects.append("severe_blur")
-    elif sharpness < 90:
+    elif blur["verdict"] == "mild":
         defects.append("mild_blur")
     if noise > 5:
         defects.append("visible_noise")
@@ -56,6 +58,7 @@ def reference_analyze(image):
         "mean_luminance": round(luminance, 2),
         "contrast_stddev": round(contrast, 2),
         "laplacian_sharpness": round(sharpness, 2),
+        "blur": blur,
         "estimated_noise": round(noise, 2),
         "shadow_clipping_percent": round(shadow_clipping, 3),
         "highlight_clipping_percent": round(highlight_clipping, 3),

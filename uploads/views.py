@@ -1,9 +1,10 @@
+from django.conf import settings
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.db.models import OuterRef, Prefetch, Q, Subquery
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
-from rest_framework import generics, permissions, status
+from rest_framework import generics, permissions, serializers, status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -440,3 +441,46 @@ class ImagePreprocessingDownloadView(APIView):
             filename=result.output_name,
             content_type=content_type,
         )
+
+
+class UploadLimitsSerializer(serializers.Serializer):
+    accepted_extensions = serializers.ListField(child=serializers.CharField())
+    accepted_mime_types = serializers.ListField(child=serializers.CharField())
+    max_image_bytes = serializers.IntegerField()
+    max_image_pixels = serializers.IntegerField()
+    max_files_per_batch = serializers.IntegerField(help_text="Multiple upload and ZIP entries alike.")
+    max_zip_bytes = serializers.IntegerField()
+    max_zip_uncompressed_bytes = serializers.IntegerField()
+    max_zip_compression_ratio = serializers.IntegerField()
+    enhancement_max_input_pixels = serializers.IntegerField(
+        help_text="Larger originals are enhanced at a reduced size; the original is kept unchanged.",
+    )
+    rate_limits = serializers.DictField(child=serializers.CharField(), help_text="Per user, e.g. '100/hour'.")
+
+
+class UploadLimitsView(APIView):
+    """The limits upload validation enforces, for clients to state and pre-check.
+
+    Read from the same settings and format table the validators use. A client
+    pre-check is a convenience: the server validates every upload regardless.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(responses={200: UploadLimitsSerializer})
+    def get(self, request):
+        from .validators import ALLOWED_EXTENSIONS, FORMAT_DETAILS
+
+        rates = settings.REST_FRAMEWORK.get("DEFAULT_THROTTLE_RATES", {})
+        return Response(UploadLimitsSerializer({
+            "accepted_extensions": sorted(ALLOWED_EXTENSIONS),
+            "accepted_mime_types": sorted({mime for _extension, mime in FORMAT_DETAILS.values()}),
+            "max_image_bytes": settings.MAX_IMAGE_UPLOAD_SIZE,
+            "max_image_pixels": settings.MAX_IMAGE_PIXELS,
+            "max_files_per_batch": settings.MAX_UPLOAD_BATCH_FILES,
+            "max_zip_bytes": settings.MAX_ZIP_UPLOAD_SIZE,
+            "max_zip_uncompressed_bytes": settings.MAX_ZIP_UNCOMPRESSED_SIZE,
+            "max_zip_compression_ratio": settings.MAX_ZIP_COMPRESSION_RATIO,
+            "enhancement_max_input_pixels": settings.ENHANCEMENT_MAX_INPUT_PIXELS,
+            "rate_limits": {scope: rates[scope] for scope in ("image_upload", "zip_upload") if scope in rates},
+        }).data)

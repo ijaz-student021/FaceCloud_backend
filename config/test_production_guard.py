@@ -36,6 +36,8 @@ def good_config():
         "EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
         "EMAIL_HOST": "smtp.mailer-service.net",
         "CELERY_TASK_ALWAYS_EAGER": False,
+        "CACHES": {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache",
+                               "LOCATION": "redis://cache.internal:6379/2"}},
         "BIOMETRIC_CONSENT_REQUIRED": True,
         "LOGIN_LOCK_THRESHOLD": 5,
     }
@@ -141,6 +143,11 @@ class GuardRuleTests(SimpleTestCase):
     def test_jobs_must_not_run_inside_web_requests(self):
         self.assertFlags("CELERY_TASK_ALWAYS_EAGER", CELERY_TASK_ALWAYS_EAGER=True)
 
+    def test_rate_limits_need_a_shared_cache(self):
+        local = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+        self.assertTrue(any("CACHE_URL" in problem for problem in self.problems(CACHES=local)))
+        self.assertTrue(any("CACHE_URL" in problem for problem in self.problems(CACHES={})))
+
     def test_policy_rules(self):
         self.assertFlags("BIOMETRIC_CONSENT_REQUIRED must be True", BIOMETRIC_CONSENT_REQUIRED=False)
         for threshold in (0, 2, 21):
@@ -203,6 +210,7 @@ class StartupRefusalTests(SimpleTestCase):
             "EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
             "EMAIL_HOST": "smtp.mailer-service.net",
             "CELERY_TASK_ALWAYS_EAGER": "False",
+            "CACHE_URL": "redis://127.0.0.1:6379/2",
             "IDENTITY_EMBEDDING_KEY": random_secret(48),
             "IMAGE_ENCRYPTION_ENABLED": "True",
             "IMAGE_ENCRYPTION_KEY": random_secret(48),
@@ -226,3 +234,63 @@ class StartupRefusalTests(SimpleTestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Refusing to start", result.stderr)
+
+
+class VisibilityTimeoutTests(SimpleTestCase):
+    """A broker timeout shorter than a task's own delays makes Redis redeliver it."""
+
+    def start(self, **environment):
+        import os
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        env = {**os.environ, "DJANGO_DEBUG": "True", "DB_ENGINE": "django.db.backends.sqlite3", **environment}
+        return subprocess.run(
+            [sys.executable, "-c", "import django, os; os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings'); django.setup()"],
+            cwd=root, env=env, capture_output=True, text=True,
+        )
+
+    def test_a_timeout_shorter_than_the_claim_lease_refuses_to_start(self):
+        started = self.start(CELERY_VISIBILITY_TIMEOUT="30", ENHANCEMENT_CLAIM_LEASE_SECONDS="60",
+                             CELERY_TASK_TIME_LIMIT="20", CELERY_TASK_SOFT_TIME_LIMIT="15", TEMP_FILE_MAX_AGE_HOURS="1")
+        self.assertNotEqual(started.returncode, 0)
+        self.assertIn("CELERY_VISIBILITY_TIMEOUT must be longer", started.stderr)
+
+    def test_a_timeout_shorter_than_the_task_time_limit_refuses_to_start(self):
+        started = self.start(CELERY_VISIBILITY_TIMEOUT="600", CELERY_TASK_TIME_LIMIT="3600")
+        self.assertNotEqual(started.returncode, 0)
+        self.assertIn("CELERY_VISIBILITY_TIMEOUT must be longer", started.stderr)
+
+    def test_a_timeout_that_covers_the_run_but_not_a_claim_wait_before_it_refuses_to_start(self):
+        """P2-7: the old defaults. A claim wait (up to the 1800 s lease) followed
+        by a run of up to the 3600 s limit outlasts a 4500 s timeout."""
+        started = self.start(CELERY_VISIBILITY_TIMEOUT="4500", CELERY_TASK_TIME_LIMIT="3600",
+                             ENHANCEMENT_CLAIM_LEASE_SECONDS="1800")
+        self.assertNotEqual(started.returncode, 0)
+        self.assertIn("CELERY_VISIBILITY_TIMEOUT must be longer", started.stderr)
+
+    def test_the_boundary_is_the_time_limit_plus_the_longest_delay(self):
+        common = dict(CELERY_TASK_TIME_LIMIT="80", CELERY_TASK_SOFT_TIME_LIMIT="70",
+                      ENHANCEMENT_CLAIM_LEASE_SECONDS="60", TEMP_FILE_MAX_AGE_HOURS="1")
+        self.assertNotEqual(self.start(CELERY_VISIBILITY_TIMEOUT="140", **common).returncode, 0)
+        self.assertEqual(self.start(CELERY_VISIBILITY_TIMEOUT="141", **common).returncode, 0)
+
+    def test_the_example_environment_values_start(self):
+        from pathlib import Path
+
+        values = dict(
+            line.split("=", 1) for line in (Path(__file__).resolve().parents[1] / ".env.example").read_text().splitlines()
+            if line.split("=", 1)[0] in {"CELERY_VISIBILITY_TIMEOUT", "CELERY_TASK_TIME_LIMIT",
+                                         "CELERY_TASK_SOFT_TIME_LIMIT", "ENHANCEMENT_CLAIM_LEASE_SECONDS"}
+        )
+        self.assertEqual(len(values), 4)
+        started = self.start(**values)
+        self.assertEqual(started.returncode, 0, started.stderr[-800:])
+
+    def test_the_defaults_and_a_valid_short_test_setup_start(self):
+        self.assertEqual(self.start().returncode, 0)
+        self.assertEqual(self.start(CELERY_VISIBILITY_TIMEOUT="150", ENHANCEMENT_CLAIM_LEASE_SECONDS="60",
+                                    CELERY_TASK_TIME_LIMIT="80", CELERY_TASK_SOFT_TIME_LIMIT="70",
+                                    TEMP_FILE_MAX_AGE_HOURS="1").returncode, 0)

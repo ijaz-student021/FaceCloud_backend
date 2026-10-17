@@ -86,6 +86,14 @@ DEFAULT_PROFILES = tuple(PROFILES)
 CONSERVATIVE_ORDER = ("natural", "opencv_baseline", "dynamic", "ai_max")
 
 
+# What each compared profile records about identity, taken from the pipeline's
+# identity_verification summary (enhancement/services.py).
+VERIFICATION_KEYS = (
+    "status", "verified", "reason", "requirement_bypass",
+    "face_restoration_applied", "face_restoration_unverified", "notice",
+)
+
+
 def ensure_comparison_capacity(owner):
     """Comparisons run several pipelines each, so a user may only have a few at once."""
     from .services import ACTIVE_STATUSES, TooManyActiveJobs
@@ -133,6 +141,11 @@ def recommend(source, candidates):
         elif guard == "strength_reduced":
             penalty += REDUCED_IDENTITY_PENALTY
             notes.append("the identity guard had to reduce the strength")
+        verification = (candidate.get("identity_guard") or {}).get("verification") or {}
+        if verification.get("face_restoration_unverified"):
+            # Stated, not scored: whether an unverified restored face should cost
+            # a profile the recommendation is a product decision not made here.
+            notes.append("faces were generatively restored without a verified identity check")
         if source.get("faces_detected") and candidate.get("faces_detected") == 0:
             penalty += LOST_FACES_PENALTY
             notes.append("faces detectable in the original are no longer detected")
@@ -278,6 +291,7 @@ def process_model_comparison(comparison):
                 metrics = parameters["quality_comparison"]["after"]
                 scores = _scores(metrics)
                 guard = parameters.get("identity_guard") or {}
+                verification = parameters.get("identity_verification") or {}
                 output = _store_output(
                     comparison, key, outcome=ModelComparisonOutput.Outcome.COMPLETED,
                     preview=_jpeg(enhanced), algorithm=parameters["algorithm"],
@@ -286,8 +300,14 @@ def process_model_comparison(comparison):
                     overall_score=scores["overall_score"],
                     faces_detected=_count_faces(_shrink(enhanced, settings.COMPARISON_MAX_EDGE)),
                     identity_guard={
-                        name: guard.get(name)
-                        for name in ("status", "similarity", "strength", "faces_compared")
+                        **{
+                            name: guard.get(name)
+                            for name in ("status", "similarity", "strength", "faces_compared")
+                        },
+                        # The same statement the enhancement result makes, so a
+                        # profile compared here is described the way it would be
+                        # if the user then chose it.
+                        "verification": {name: verification.get(name) for name in VERIFICATION_KEYS},
                     },
                     warnings=parameters.get("warnings", []),
                     processing_duration_ms=max(1, round((time.perf_counter() - run_started) * 1000)),
@@ -339,6 +359,8 @@ REPORT_COLUMNS = (
     "laplacian_sharpness", "estimated_noise", "shadow_clipping_percent",
     "highlight_clipping_percent", "faces_detected", "identity_guard",
     "processing_ms", "algorithm",
+    # Appended, so existing readers of the earlier columns are unaffected.
+    "identity_status", "identity_check_bypassed", "identity_notice",
 )
 
 
@@ -353,6 +375,7 @@ def build_report_csv(comparison):
         else:
             label = PROFILES[output.profile].label if output.profile in PROFILES else output.profile
         scores, metrics = output.scores or {}, output.metrics or {}
+        verification = (output.identity_guard or {}).get("verification") or {}
         writer.writerow([
             output.profile, label, output.outcome,
             "yes" if output.profile == comparison.recommended_profile else "",
@@ -367,5 +390,8 @@ def build_report_csv(comparison):
             "" if output.faces_detected is None else output.faces_detected,
             (output.identity_guard or {}).get("status") or "",
             output.processing_duration_ms, output.algorithm,
+            verification.get("status") or "",
+            "yes" if verification.get("face_restoration_unverified") else "",
+            verification.get("notice") or "",
         ])
     return buffer.getvalue()

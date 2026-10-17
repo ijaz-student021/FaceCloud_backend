@@ -1,0 +1,8 @@
+== venv (      54 packages)
+No known vulnerabilities found
+== .runtime/venvs/gfpgan (      98 packages)
+Found 2 known vulnerabilities in 1 package
+Name    Version ID              Fix Versions
+------- ------- --------------- ------------
+basicsr 1.4.2   PYSEC-2026-1215
+basicsr 1.4.2   PYSEC-2026-1215

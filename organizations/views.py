@@ -11,6 +11,7 @@ from accounts.permissions import IsAdminRole
 from .models import Organization, OrganizationInvitation, OrganizationMembership
 from .permissions import OrganizationScopedMixin
 from .serializers import (
+    OrganizationWithMembershipSerializer,
     MemberRemovalSerializer,
     OrganizationAuditEventSerializer,
     OrganizationCreateSerializer,
@@ -38,15 +39,27 @@ ERROR_RESPONSES = {
 
 
 class OrganizationListView(generics.ListAPIView):
-    """Organizations the caller has an active membership in."""
+    """Organizations the caller has an active membership in, each with the
+    caller's role, status and capabilities there."""
 
-    serializer_class = OrganizationSerializer
+    serializer_class = OrganizationWithMembershipSerializer
 
     def get_queryset(self):
         return Organization.objects.filter(
             memberships__user=self.request.user,
             memberships__status=OrganizationMembership.Status.ACTIVE,
         ).distinct()
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        if getattr(self.request, "user", None) and self.request.user.is_authenticated:
+            context["memberships"] = {
+                membership.organization_id: membership
+                for membership in OrganizationMembership.objects.filter(
+                    user=self.request.user, status=OrganizationMembership.Status.ACTIVE,
+                )
+            }
+        return context
 
 
 class AdminOrganizationListCreateView(generics.ListCreateAPIView):
@@ -72,9 +85,10 @@ class AdminOrganizationListCreateView(generics.ListCreateAPIView):
 
 
 class OrganizationDetailView(OrganizationScopedMixin, APIView):
-    @extend_schema(responses={200: OrganizationSerializer, **ERROR_RESPONSES})
+    @extend_schema(responses={200: OrganizationWithMembershipSerializer, **ERROR_RESPONSES})
     def get(self, request, organization_id):
-        return Response(OrganizationSerializer(self.organization).data)
+        context = {"request": request, "memberships": {self.organization.pk: self.active_membership}}
+        return Response(OrganizationWithMembershipSerializer(self.organization, context=context).data)
 
 
 class OrganizationMemberListView(OrganizationScopedMixin, generics.ListAPIView):

@@ -217,6 +217,22 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}     -> 201
 
 - `level`: `auto` (default), `low`, `medium`, `high`.
 - `style`: `natural` (default), `dynamic`, `ai_max`.
+- `applied_parameters.no_correction_needed` is `true` when the photo had nothing to
+  correct and was left as it is; say that rather than showing an identical
+  before/after as an enhancement.
+- **`ai_max` and identity.** `natural` and `dynamic` restore faces only when the
+  result can be checked against the original. `ai_max` skips that requirement.
+  Say so where the user picks it, and on every result read these three fields:
+  - `identity_status`: `verified` (faces were compared with the original and
+    matched), `inconclusive`, `unavailable` (no check ran) or `failed`. Only
+    `verified` means a check passed; never present the others as "verified".
+  - `identity_check_bypassed`: `true` when faces were generatively restored
+    without a verified check. Show a visible notice on that result.
+  - `identity_notice`: the sentence to show; empty when there is nothing to say.
+  The same three fields are on every entry of a model comparison's `outputs`
+  (`GET /api/enhancements/comparisons/{id}/`) and at the end of its CSV report,
+  with the same meaning, so a profile reads there as it would on the result it
+  produces. They are null / false / empty for the untouched `original` entry.
 - The job is asynchronous. Poll `GET /api/enhancements/results/{id}/` until
   `status` is `completed` (or `failed`, with `failure_reason`). Other statuses:
   `pending, queued, processing, partial, cancelled`.
@@ -599,7 +615,7 @@ How stored events map to `type` / `status`:
 | `registration_pending`, `verification_code_sent` | email | info |
 | `registered`, `email_verified`, `password_reset` | email | success |
 | `login` / `login_failed` / `login_locked` | login | success / error / warning |
-| `logout`, `logout_all` | login | info |
+| `logout`, `logout_all`, `session_revoked` | login | info |
 | `password_changed`, `profile_updated` | login | success |
 | `role_changed`, `suspended`, `reactivated`, `account_deleted`, `admin_created_account` | admin | info / warning / success / info / info |
 | anything else | by category; `*failed` -> error, `*rejected`/`*cancelled`/`*expired` -> warning, `*completed`/`*ready` -> success, otherwise info | |

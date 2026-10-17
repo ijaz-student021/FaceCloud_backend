@@ -31,6 +31,9 @@
 | Verify NAFNet and Real-ESRGAN files | Done | Restricted loads, tensor validation and hashes |
 | Implement optional HD restoration adapter | Done | Checksums, tiling, fallbacks and enhancement tests |
 | Add HD-restoration documentation | Done | `features/hd-deblur-super-resolution-pipeline.md` |
+| Feature 10-12 pipeline defects (deblur lost, stacked upscalers, stale `quality_after`, self-referencing guard) | Done (2026-10-13) | `enhancement/test_pipeline_regressions.py`, 28 tests; ADR-013, ADR-014 |
+| Feature 10-12 staged candidate pipeline, face-region check, identity status | Done (2026-10-13), models mocked | `enhancement/test_staged_pipeline.py`, `enhancement/test_runtime.py`; ADR-015 to ADR-019. Real-checkpoint visual QA still open (T-003, T-004) |
+| Feature 20 enhancement task ownership, cancellation and failure recording | Done (2026-10-13) | Claim token on `ImageEnhancementResult` (migration 0007); `ClaimTests`, `CancellationTests`, `DuplicateDeliveryTaskTests` |
 
 ## 2. Immediate tasks
 

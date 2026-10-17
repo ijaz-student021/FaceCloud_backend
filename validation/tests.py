@@ -80,6 +80,8 @@ class FaceValidationTests(APITestCase):
 
         if not Path(settings.YUNET_MODEL_PATH).is_file():
             self.skipTest("The YuNet model is not installed here.")
+        if not settings.YUNET_MODEL_SHA256:
+            self.skipTest("The YuNet model is installed but no checksum is configured, so it cannot be verified.")
         detector = OpenCVYuNetFaceDetector()
         for width, height in ((320, 320), (640, 480)):
             result = detector.detect(

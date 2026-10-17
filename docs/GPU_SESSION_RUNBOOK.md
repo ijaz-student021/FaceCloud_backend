@@ -186,3 +186,100 @@ afterwards to confirm the whole journey still works.
   Do not install one environment's requirements into the other.
 - **Face photos on rented hardware.** Use only consented photos and delete the disk afterwards.
 - **The Generated Photos dataset** may be copied only to a machine you alone control, and must be deleted there when the session ends. Never commit it, never share it, and do not show individual images to others without asking the provider (`DATASET_TERMS.md`).
+
+## Appendix: validating the staged pipeline with real checkpoints (not yet run)
+
+Added 2026-10-13. Everything about the staged pipeline (`staged_candidate_pipeline_v4`)
+has so far been verified in two ways only: tests with mocked models, and real
+CPU processing with no learned model. **No checkpoint has been run through it,
+on any device.** This appendix is the missing third tier.
+
+Use real portraits and real group photographs you have consent to process
+(section 1, item 5). Run each line and keep the output folder.
+
+```bash
+# 1. Baseline: no learned model, for comparison.
+python scripts/evaluate_pipeline_cases.py --images gpu_sample/faces --cases original \
+    --limit 20 --name gpu-0-classical
+
+# 2. One model family at a time, so a problem can be attributed.
+python scripts/evaluate_pipeline_cases.py --images gpu_sample/faces --cases original \
+    --enable HD_RESTORATION_ENABLED --limit 20 --name gpu-1-realesrgan
+python scripts/evaluate_pipeline_cases.py --images gpu_sample/faces --cases original \
+    --enable GFPGAN_ENABLED --limit 20 --name gpu-2-gfpgan
+python scripts/evaluate_pipeline_cases.py --images gpu_sample/faces --cases original \
+    --enable GFPGAN_ENABLED --style ai_max --limit 20 --name gpu-3-gfpgan-aimax
+
+# 3. Group photographs, and the degraded cases with models on.
+python scripts/evaluate_pipeline_cases.py --images gpu_sample/groups --cases original \
+    --enable HD_RESTORATION_ENABLED,GFPGAN_ENABLED --name gpu-4-groups
+python scripts/evaluate_pipeline_cases.py --images gpu_sample/faces \
+    --enable PUREVISION_ENABLED,HD_RESTORATION_ENABLED --limit 8 --name gpu-5-degraded
+```
+
+Each `summary.md` opens with the evidence tier; it must read `real_gpu_models`.
+If it reads `cpu_classical_only`, no checkpoint loaded: read "Stages that fell
+back" for the reason before going further.
+
+What to record from each run, and what would count as a failure:
+
+| Check | Where | Failure |
+|---|---|---|
+| Before/after pictures | `<photo>__original.jpg`, `sheet.jpg` | Waxy skin, halos, a face that reads as a different person, colour shift |
+| Identity outcome | "Identity, devices and memory" table | `failed`; `inconclusive` on a clear portrait; similarity near the 0.80 minimum |
+| GFPGAN without identity | run 2 with `IDENTITY_PROVIDER=disabled` | Any face restored (the gate must refuse) |
+| AI Max bypass | run 3 | A restored, unverified face with no `identity_notice` |
+| Face-fidelity thresholds | `results.json` → `face_fidelity` | Faces adjusted on results that look right (thresholds too tight), or none adjusted on results that look wrong |
+| Latency and memory | same table | GPU peak near the card's limit; any `memory_retries` above 0 |
+| Fallbacks | "Stages that fell back" | Any model stage falling back when its checkpoint is installed |
+| Out-of-memory path | set `HD_RESTORATION_TILE_SIZE=2048` and repeat run 1 | A crash, instead of a retry with smaller tiles or a recorded fallback |
+
+Also run the real-tensor tests on the GPU box, where they exercise CUDA instead
+of MPS: `python manage.py test enhancement.test_runtime`.
+
+## Appendix: setting up and validating the models on one machine
+
+Added 2026-10-13, after doing exactly this on an Apple M1 Mac (no CUDA; PyTorch
+uses MPS, OpenCV models use the CPU). The same commands apply on Linux.
+
+```bash
+# 1. The web application's environment.
+python3 -m venv venv && venv/bin/pip install -r requirements.txt torch
+
+# 2. The worker's environment: everything above plus the GFPGAN stack.
+python3.12 -m venv .runtime/venvs/gfpgan
+.runtime/venvs/gfpgan/bin/pip install -r requirements-gfpgan.txt
+
+# 3. Checkpoints go in .runtime/models/ (GFPGAN's two helpers in gfpgan/weights/).
+#    Every file must match docs/gpu/model_manifest.json:
+venv/bin/python scripts/model_manifest.py verify
+
+# 4. Run every model for real, alone and then together:
+.runtime/venvs/gfpgan/bin/python scripts/validate_models.py \
+    --portrait /path/to/a/portrait.jpg --name my-run --combinations
+```
+
+Step 4 writes `.runtime/model_validation/my-run/report.md` and before/after
+images, and exits non-zero unless every component passed. A component whose
+file does not match its pinned checksum is reported as a mismatch even if it
+runs; the checksum is never changed to accept a file.
+
+Where the public checkpoints came from (each verified against its pinned SHA-256):
+
+| File | Official source |
+|---|---|
+| `RealESRGAN_x4plus.pth` | github.com/xinntao/Real-ESRGAN, release v0.1.0 |
+| `GFPGANv1.4.pth` | github.com/TencentARC/GFPGAN, release v1.3.0 |
+| `detection_Resnet50_Final.pth`, `parsing_parsenet.pth` | github.com/xinntao/facexlib, releases v0.1.0 and v0.2.2 |
+| `EDSR_x2.pb` | github.com/Saafke/EDSR_Tensorflow, `models/` |
+| `colorization_siggraph17.pth` | the S3 bucket named in github.com/richzhang/colorization (`siggraph17-df00044c.pth`) |
+| `PureScale_2x.pth`, `PureVision_1x.pth` | github.com/limitlesslab/AI-upscaling-models, releases `PureScale2` (`2x_SAFMN_PureScale.pth`) and `PureVision` (`1x_PureVision.pth`) |
+| `NAFNet-GoPro-width64.pth` | the Google Drive link in github.com/megvii-research/NAFNet `docs/GoPro.md` |
+| `yunet_s_dynamic.onnx`, `face_recognition_sface_2021dec.onnx` | see `docs/model-licenses/feature-18-yunet-sface-attestation.md` |
+
+`zero_dce_epoch99.onnx` is exported locally from the official Zero-DCE
+`Epoch99.pth` with `scripts/export_zero_dce_onnx.py`. An export made on another
+machine or PyTorch version is not byte-identical, so it will not match the
+manifest even though it computes the same thing. `facecloud_curve_best_opencv.onnx`
+is private and has no public source.
+

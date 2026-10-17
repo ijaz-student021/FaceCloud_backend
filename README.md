@@ -335,7 +335,9 @@ configuration is production-safe, and lists every problem at once
    `SECURE_HSTS_SECONDS` of at least one year. Set `TRUSTED_PROXY_COUNT` to the
    number of proxies in front of Django.
 5. **Infrastructure:** PostgreSQL with a real password, an SMTP `EMAIL_BACKEND`
-   and `EMAIL_HOST`, and `CELERY_TASK_ALWAYS_EAGER=False`.
+   and `EMAIL_HOST`, `CELERY_TASK_ALWAYS_EAGER=False`, and `CACHE_URL` pointing at a
+   shared Redis (rate limits live in the cache; a per-process cache would multiply
+   every limit by the number of workers and reset it on restart).
 6. **Privacy policy:** `BIOMETRIC_CONSENT_REQUIRED=True`. Also choose
    `FACIAL_DATA_RETENTION_DAYS`; `check --deploy` warns while it is 0.
 7. Run the worker and exactly one beat process, and serve with

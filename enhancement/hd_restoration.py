@@ -1,19 +1,21 @@
 """Checksum-pinned local NAFNet and Real-ESRGAN inference adapters."""
 
 import hashlib
-import threading
 from pathlib import Path
 
 import cv2
 import numpy as np
 from django.conf import settings
 
+from . import runtime
+
 
 class HDRestorationUnavailable(RuntimeError):
     """Raised when an optional HD model cannot run safely."""
 
 
-_MODEL_LOCK = threading.Lock()
+# Shared with every other adapter: one heavy inference at a time per process.
+_MODEL_LOCK = runtime.INFERENCE_LOCK
 _MODEL_CACHE = {}
 
 
@@ -44,26 +46,10 @@ def _verified_path(path_value, expected_hash, label):
     return path
 
 
-def _auto_device(torch):
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
-
-
 def _device(torch):
-    configured = str(settings.HD_RESTORATION_DEVICE).strip().lower()
-    if configured == "auto":
-        configured = _auto_device(torch)
-    if configured.startswith("cuda") and not torch.cuda.is_available():
-        raise HDRestorationUnavailable("The configured HD-restoration CUDA device is unavailable.")
-    if configured == "mps" and not torch.backends.mps.is_available():
-        raise HDRestorationUnavailable("The configured HD-restoration MPS device is unavailable.")
-    try:
-        return torch.device(configured)
-    except (RuntimeError, ValueError) as error:
-        raise HDRestorationUnavailable("The configured HD-restoration device is invalid.") from error
+    return runtime.resolve_device(
+        torch, settings.HD_RESTORATION_DEVICE, "HD-restoration", HDRestorationUnavailable,
+    )
 
 
 def _build_nafnet(nn, functional):
@@ -105,7 +91,12 @@ def _build_nafnet(nn, functional):
             self.gamma = nn.Parameter(torch.zeros((1, channels, 1, 1)))
 
         def forward(self, source):
-            value = self.conv3(self.sca(self.sg(self.conv2(self.conv1(self.norm1(source))))))
+            value = self.sg(self.conv2(self.conv1(self.norm1(source))))
+            # Simplified channel attention *re-weights* the features by their
+            # pooled summary. Feeding the pooled summary on in their place (as
+            # this did) leaves one value per channel for the whole tile, which is
+            # what produced the washed-out, colour-shifted output that failed QA.
+            value = self.conv3(value * self.sca(value))
             intermediate = source + value * self.beta
             value = self.conv5(self.sg(self.conv4(self.norm2(intermediate))))
             return intermediate + value * self.gamma
@@ -228,46 +219,27 @@ def _load_model(kind):
     return model, device
 
 
-def _tensor_from_bgr(image, torch, device):
-    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-    return torch.from_numpy(np.ascontiguousarray(rgb.transpose(2, 0, 1))).unsqueeze(0).to(device)
-
-
-def _bgr_from_tensor(tensor):
-    rgb = tensor.detach().float().clamp_(0, 1).squeeze(0).cpu().numpy().transpose(1, 2, 0)
-    return cv2.cvtColor(np.rint(rgb * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
-
-
-def _tiled_inference(image, model, device, scale, tile, overlap):
+def _tiled_inference(image, model, device, scale, tile, overlap, output_scale=None):
     torch, _nn, _functional = _runtime()
-    height, width = image.shape[:2]
-    output = np.zeros((height * scale, width * scale, 3), dtype=np.float32)
-    weights = np.zeros((height * scale, width * scale, 1), dtype=np.float32)
-    step = max(1, tile - overlap)
-    y_positions = list(range(0, max(height - tile, 0) + 1, step))
-    x_positions = list(range(0, max(width - tile, 0) + 1, step))
-    if not y_positions or y_positions[-1] != max(height - tile, 0):
-        y_positions.append(max(height - tile, 0))
-    if not x_positions or x_positions[-1] != max(width - tile, 0):
-        x_positions.append(max(width - tile, 0))
-    with torch.inference_mode():
-        for y in y_positions:
-            for x in x_positions:
-                patch = image[y:min(y + tile, height), x:min(x + tile, width)]
-                prediction = _bgr_from_tensor(model(_tensor_from_bgr(patch, torch, device)))
-                ph, pw = prediction.shape[:2]
-                oy, ox = y * scale, x * scale
-                output[oy:oy + ph, ox:ox + pw] += prediction.astype(np.float32)
-                weights[oy:oy + ph, ox:ox + pw] += 1.0
-    return np.rint(output / np.maximum(weights, 1.0)).astype(np.uint8)
+    return runtime.tiled_inference(torch, image, model, device, scale, tile, overlap, output_scale)
+
+
+def _infer(kind, label, image, scale, output_scale=None):
+    """Load the model and run it tile by tile, shrinking tiles if memory runs out."""
+    with _MODEL_LOCK:
+        model, device = _load_model(kind)
+        return runtime.run_with_memory_fallback(
+            lambda tile, overlap: _tiled_inference(image, model, device, scale, tile, overlap, output_scale),
+            device=device,
+            tile=settings.HD_RESTORATION_TILE_SIZE, overlap=settings.HD_RESTORATION_TILE_OVERLAP,
+            label=label, error_class=HDRestorationUnavailable,
+        )
 
 
 def deblur_with_nafnet(image):
     if image is None or image.size == 0:
         raise HDRestorationUnavailable("The NAFNet input image is invalid.")
-    with _MODEL_LOCK:
-        model, device = _load_model("nafnet")
-        output = _tiled_inference(image, model, device, 1, settings.HD_RESTORATION_TILE_SIZE, settings.HD_RESTORATION_TILE_OVERLAP)
+    output, inference = _infer("nafnet", "NAFNet", image, 1)
     source_lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB).astype(np.float32)
     output_lab = cv2.cvtColor(output, cv2.COLOR_BGR2LAB).astype(np.float32)
     chroma_shift = float(np.mean(np.abs(output_lab[:, :, 1:] - source_lab[:, :, 1:])))
@@ -279,19 +251,35 @@ def deblur_with_nafnet(image):
         raise HDRestorationUnavailable(
             "The NAFNet candidate failed the image-fidelity guard."
         )
-    return output, {"provider": "nafnet_gopro_width64", "checkpoint_sha256_prefix": settings.NAFNET_MODEL_SHA256[:12]}
+    return output, {
+        "provider": "nafnet_gopro_width64",
+        "checkpoint_sha256_prefix": settings.NAFNET_MODEL_SHA256[:12],
+        "chroma_shift": round(chroma_shift, 3),
+        "luminance_shift": round(luminance_shift, 3),
+        **inference,
+    }
 
 
 def upscale_with_realesrgan(image):
     if image is None or image.size == 0:
         raise HDRestorationUnavailable("The Real-ESRGAN input image is invalid.")
     height, width = image.shape[:2]
-    native_pixels = height * width * 16
-    if native_pixels > settings.HD_RESTORATION_MAX_NATIVE_OUTPUT_PIXELS:
-        raise HDRestorationUnavailable("The native 4x output exceeds the configured safety limit.")
-    with _MODEL_LOCK:
-        model, device = _load_model("realesrgan")
-        native = _tiled_inference(image, model, device, 4, settings.HD_RESTORATION_TILE_SIZE, settings.HD_RESTORATION_TILE_OVERLAP)
     scale = int(settings.HD_RESTORATION_OUTPUT_SCALE)
-    output = native if scale == 4 else cv2.resize(native, (width * scale, height * scale), interpolation=cv2.INTER_AREA)
-    return output, {"provider": "realesrgan_x4plus", "native_scale": 4, "output_scale": scale, "checkpoint_sha256_prefix": settings.REALESRGAN_MODEL_SHA256[:12]}
+    if scale not in (2, 4):
+        raise HDRestorationUnavailable("HD_RESTORATION_OUTPUT_SCALE must be 2 or 4.")
+    # The model is 4x, but tiles are reduced to the output scale before they are
+    # accumulated, so memory follows the pixels that are kept. The native limit
+    # still applies when the native 4x result is itself the output.
+    output_pixels = height * width * scale * scale
+    if output_pixels > settings.HD_RESTORATION_MAX_OUTPUT_PIXELS:
+        raise HDRestorationUnavailable("The HD output exceeds the configured safety limit.")
+    if scale == 4 and output_pixels > settings.HD_RESTORATION_MAX_NATIVE_OUTPUT_PIXELS:
+        raise HDRestorationUnavailable("The native 4x output exceeds the configured safety limit.")
+    output, inference = _infer("realesrgan", "Real-ESRGAN", image, 4, output_scale=scale)
+    return output, {
+        "provider": "realesrgan_x4plus",
+        "native_scale": 4,
+        "output_scale": scale,
+        "checkpoint_sha256_prefix": settings.REALESRGAN_MODEL_SHA256[:12],
+        **inference,
+    }

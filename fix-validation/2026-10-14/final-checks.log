@@ -1,0 +1,22 @@
+## Wed Oct 14 19:35:53 PKT 2026 HEAD 51d746f; working tree: 0 modified tracked files
+## django check
+System check identified no issues (0 silenced).
+## migrations
+No changes detected
+## openapi
+exit=0
+## pip check
+All installed packages are compatible
+All installed packages are compatible
+## manifest
+  extra: models/provenance/Epoch99_official.pth
+  extra: models/provenance/zero_dce_epoch99.torch-2.14.1.onnx
+## tests web venv (exclude slow, as in the audit)
+Ran 1475 tests in 117.709s
+OK (skipped=4)
+## tests worker venv incl slow
+Ran 1479 tests in 150.478s
+OK (skipped=3)
+## tests on PostgreSQL (throwaway test db)
+Ran 1475 tests in 150.664s
+OK (skipped=4)

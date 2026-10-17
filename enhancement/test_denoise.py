@@ -3,6 +3,7 @@ import numpy as np
 from django.test import SimpleTestCase, override_settings
 
 from .models import EnhancementLevel
+from .test_blur_measure import blurred_photo
 from .services import (
     EnhancementPipelineContext,
     _edge_aware_denoise,
@@ -73,20 +74,19 @@ class EdgeAwareDenoiseTests(SimpleTestCase):
 )
 class BlurProtectionTests(SimpleTestCase):
     def test_a_dark_frame_is_not_mistaken_for_a_blurry_one(self):
-        # Near-black grain: almost no Laplacian variance, so the input reads as
-        # "severe blur", but the brightened result is sharp and noisy.
+        # Near-black grain: almost no Laplacian variance, which the old measure
+        # read as "severe blur". Its edges are too weak to judge either way.
         dark = np.random.default_rng(5).integers(0, 4, size=(180, 180, 3), dtype=np.uint8)
         context = context_before_denoise(dark)
-        self.assertIn("severe_blur", context.input_quality["defects"])
-        self.assertNotIn("severe_blur", context.post_exposure_noise["quality"]["defects"])
+        self.assertEqual(context.input_quality["blur"]["verdict"], "uncertain")
+        self.assertNotIn("severe_blur", context.input_quality["defects"])
         adaptive_denoise_stage(context)
         self.assertNotEqual(context.adaptive_denoise["reason"], "severe_blur_protection")
 
     def test_a_genuinely_blurry_bright_photo_is_still_protected(self):
-        texture = np.random.default_rng(9).integers(90, 170, size=(180, 180, 3), dtype=np.uint8)
-        blurry = cv2.GaussianBlur(texture, (0, 0), 12)
+        blurry = blurred_photo(180, 180, sigma=4.0)
         context = context_before_denoise(blurry, level=EnhancementLevel.MEDIUM)
-        self.assertIn("severe_blur", context.post_exposure_noise["quality"]["defects"])
+        self.assertIn("severe_blur", context.input_quality["defects"])
         adaptive_denoise_stage(context)
         self.assertEqual(context.adaptive_denoise["reason"], "severe_blur_protection")
         self.assertFalse(context.adaptive_denoise["applied"])

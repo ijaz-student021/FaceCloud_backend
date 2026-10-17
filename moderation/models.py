@@ -204,6 +204,12 @@ class ModeratorReport(models.Model):
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.QUEUED)
     report_file = models.FileField(upload_to=moderator_report_upload_path, blank=True)
     payload = models.JSONField(default=dict, blank=True)
+    # Optional reporting window, UTC, half-open [date_from, date_to). period_key
+    # names it ("all" when unbounded) so different windows never share an
+    # in-flight report.
+    date_from = models.DateTimeField(null=True, blank=True)
+    date_to = models.DateTimeField(null=True, blank=True)
+    period_key = models.CharField(max_length=64, default="all")
     content_type = models.CharField(max_length=64, blank=True)
     file_size = models.PositiveBigIntegerField(default=0)
     file_checksum_sha256 = models.CharField(max_length=64, blank=True)
@@ -219,9 +225,9 @@ class ModeratorReport(models.Model):
         indexes = [models.Index(fields=["organization", "status", "-created_at"])]
         constraints = [
             models.UniqueConstraint(
-                fields=["organization", "report_type", "format"],
+                fields=["organization", "report_type", "format", "period_key"],
                 condition=models.Q(status__in=["queued", "generating"]),
-                name="moderation_one_active_report",
+                name="moderation_one_active_report_per_period",
             ),
         ]
 

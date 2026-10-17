@@ -145,6 +145,14 @@ class ImageEnhancementResult(models.Model):
     output_file_size = models.PositiveBigIntegerField(default=0)
     processing_duration_ms = models.PositiveIntegerField(default=0)
     task_id = models.CharField(max_length=255, blank=True, db_index=True)
+    # Which task execution is enhancing this result right now, and when it last
+    # reported in. Guards against one result being processed twice at once.
+    claim_token = models.CharField(max_length=32, blank=True, default="")
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    # The Celery task and attempt that made the claim. A later attempt of the
+    # same task may resume it: the earlier attempt has necessarily ended.
+    claim_task_id = models.CharField(max_length=255, blank=True, default="")
+    claim_attempt = models.PositiveSmallIntegerField(default=0)
     applied_parameters = models.JSONField(default=dict, blank=True)
     failure_reason = models.TextField(blank=True)
     started_at = models.DateTimeField(null=True, blank=True)

@@ -327,6 +327,17 @@ flagged for a future face-restoration model and quality review.
 - Only one pending, queued, or processing enhancement is allowed per source image.
 - The uploaded original and standardized processing copy are never overwritten.
 
+### Task failure behaviour (2026-10)
+
+- Every unexpected failure is logged with its traceback; the user still sees one
+  safe sentence. Model-runtime errors (`RuntimeError`, `MemoryError`) mark the
+  result failed and remove any output file already written.
+- Dropped database connections are retried (three times, with backoff); only the
+  last attempt records a failure.
+- When the Celery soft time limit fires, a batch stops instead of starting more
+  images: unfinished results are failed with a reason that says to start again,
+  and the job is recorded as partial with that reason.
+
 ## 13. Curve-model implementation
 
 - The private FaceCloud curve model is trained independently and exported to ONNX.
@@ -406,6 +417,10 @@ Auto request example:
   requested EDSR restoration stage produces a larger 2x result.
 - Enhancement cannot invent unlimited detail. Severe blur or compression damage
   still requires a validated restoration model and may need moderator review.
+
+Sources above `ENHANCEMENT_MAX_INPUT_PIXELS` (default 24 MP) are reduced to that
+budget before enhancement and the result says so (`input_pixel_budget`,
+`source_resolution_strategy = original_reduced_to_pixel_budget`). See ADR-014.
 
 ## 17. Main implementation files
 
@@ -521,6 +536,109 @@ photographic evaluation set.
 | Bright portrait | Low | 225.50 -> 225.50 | 3.36 -> 3.36 | 0% |
 | Low-resolution portrait | Low | 144.68 -> 151.11 | 5.92 -> 6.87 | 0% |
 | Multi-face group | Medium | 101.69 -> 107.88 | 25.27 -> 25.74 | 0% |
+
+## 18a. Staged candidate pipeline (2026-10)
+
+`pipeline_version` is `staged_candidate_pipeline_v4`. Stage order:
+
+```text
+analyze_original          required   measure defects, choose level, write the plan
+exposure_enhancement      optional   Zero-DCE curves, else OpenCV gamma/CLAHE
+output_guard_a            required   judge exposure against the source
+measure_post_exposure_noise required
+adaptive_denoise          optional   strength from the measured noise
+purevision_restoration    optional   1x artifact removal
+low_resolution_restoration optional  EDSR (only with the HD pipeline off)
+hd_restoration            optional   NAFNet deblur, then Real-ESRGAN
+purescale_super_resolution optional  only if nothing above changed the grid
+face_restoration          optional   GFPGAN, gated on a verifiable identity
+sharpen                   optional
+output_guard_b            required   judge the result against the pre-restoration image
+face_fidelity             optional   each face against the pre-restoration image
+colorization              optional
+dynamic_style             optional
+identity_guard            optional   embedding similarity against the source
+validate_output           required   pixel grid and datatype contract
+```
+
+An optional stage proposes a candidate. If it raises, the image it was given is
+kept and `stage_reports` shows `failed`; the pipeline continues. A required
+stage that cannot run fails the enhancement (ADR-015).
+
+Three references are kept apart: the original source (guard A, identity guard),
+the last accepted image before any restoration model (guard B, face fidelity),
+and that image resized bicubically to the output grid, used only to compare.
+
+New keys in `applied_parameters`:
+
+| Key | Meaning |
+|---|---|
+| `plan` | Defects found, whether the image gets minimal processing, and which stages have work, including the single planned upscaler |
+| `stage_reports` | Per stage: `status` (`completed`, `accepted`, `partially_accepted`, `rejected`, `fallback`, `skipped`, `failed`), `changed_pixels`, `duration_ms`, and where relevant `provider`, `device`, `tile_size`, `memory_retries`, `fallback_reason` |
+| `identity_status` | `verified`, `inconclusive`, `unavailable` or `failed` |
+| `face_fidelity` | Faces checked and adjusted, with each face's measurements (no coordinates) |
+| `encoded_output` | The stored file decoded again: size, channels, mean absolute error, PSNR |
+| `transparency` | Whether the source had an alpha channel and whether it was kept (PNG output only) |
+| `quality_after_measurement_point` | Always `final_output` |
+
+### Evaluation (2026-10-13)
+
+`scripts/evaluate_pipeline_cases.py` degrades clean photographs in known ways
+and measures whether the output moves toward the clean original. Run on the four
+scikit-image sample photographs (0.14-0.27 MP, one portrait), CPU only, **no model
+checkpoints installed** (Zero-DCE, EDSR, NAFNet, Real-ESRGAN, GFPGAN and SFace all
+fell back). Mean SSIM to the clean photo, before and after enhancement:
+
+| Case | Before | After | Reading |
+|---|---|---|---|
+| Already good | 1.000 | 0.976 | Small, bounded change; the portrait stays at 0.994 |
+| Dark | 0.520 | 0.712 | Better, but well short of the original without Zero-DCE |
+| Noisy | 0.720 | 0.790 | Before the ladder was recalibrated the night photo went 0.747 to 0.515 (grainier than its input); it now ends at 0.751, and the portrait at 0.776 from 0.638 |
+| Blurred | 0.791 | 0.792 | No deblurring model ran; effectively unchanged |
+| Compressed | 0.857 | 0.832 | Slightly worse: nothing removes JPEG artifacts on this path |
+| Overexposed | 0.744 | 0.739 | Clipped highlights cannot be recovered |
+| Transparent cut-out | 0.671 | 0.856 | Alpha channel preserved exactly in all four |
+
+Three of the sample photographs are themselves dim, so their "clean" reference
+is not a correctly exposed image and their scores understate the result.
+
+What this does not cover: any learned model, real sensor noise, real motion
+blur, real group photographs, or skin tones beyond one subject.
+
+### Conservative routing (2026-10-13, ADR-020)
+
+The table above showed two regressions: compressed photos came out worse than
+they went in, and already-good photos were changed for no reason. Ablating the
+stages on 22 photographs (the four above plus 18 not used to design the fix)
+showed both came from sharpening and the local-contrast step being applied
+without a defect to justify them. After routing on measured defects, the same
+evaluation reads (mean SSIM to the clean photo):
+
+| Case | Input | Before routing | After routing |
+|---|---|---|---|
+| Already good | 1.000 | 0.976 | 0.981 (the two well-lit photos are untouched, 1.000) |
+| Compressed | 0.857 | 0.832 | 0.854 |
+| Noisy | 0.720 | 0.790 | 0.805 |
+| Dark | 0.520 | 0.712 | 0.715 |
+| Blurred | 0.791 | 0.792 | 0.791 |
+
+Still true: nothing here removes JPEG artifacts or blur. Those need a model.
+
+### Denoise decision (2026-10-13, ADR-021)
+
+`applied_parameters.adaptive_denoise` now reads:
+
+| Key | Meaning |
+|---|---|
+| `eligibility` | `eligible`, the reason, the noise score, the noise measured in flat regions and the minimum; `depends_on_exposure_level` is always false |
+| `benefit` | Noise before and after (grey levels, flat regions), amount and share removed, and how noise-like the removed part was |
+| `detail` | Share of structured detail and of edges kept, for the frame and for each face; `null` where there was no structure to measure |
+| `acceptance` | `accepted`, `strength_reduced`, `rejected` or `not_attempted`, with the reason and the blend applied |
+| `candidate_guard` | Every strength tried, with its measurements and violations |
+| `stage_duration_ms` | Time spent in the stage, including the check |
+
+The stage report carries the same `benefit`, `detail` and `acceptance`, and its
+status is `rejected` when a candidate was computed and dropped.
 
 ## 19. Private GFPGAN v1.4 rollout checkpoint
 

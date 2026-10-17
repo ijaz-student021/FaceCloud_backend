@@ -1,0 +1,43 @@
+
+calibration (thresholds chosen on calibration only): variant -> verdict share
+  native                 sharp       n=  94  sharp 97.9%  mild  1.1%  severe  0.0%  uncertain  1.1%
+  original               sharp       n= 270  sharp 97.0%  mild  2.6%  severe  0.0%  uncertain  0.4%
+  resized_1600           sharp       n= 113  sharp 97.3%  mild  1.8%  severe  0.0%  uncertain  0.9%
+  resized_800            sharp       n= 262  sharp 99.6%  mild  0.0%  severe  0.0%  uncertain  0.4%
+  dark_x0.5              sharp       n= 270  sharp 97.4%  mild  1.9%  severe  0.0%  uncertain  0.7%
+  dark_x0.25             sharp       n= 270  sharp 97.8%  mild  1.1%  severe  0.0%  uncertain  1.1%
+  noise8                 sharp       n= 270  sharp 99.6%  mild  0.0%  severe  0.0%  uncertain  0.4%
+  jpeg30                 sharp       n= 270  sharp 98.9%  mild  0.7%  severe  0.0%  uncertain  0.4%
+  gauss0.7               borderline  n= 270  sharp 58.5%  mild 40.7%  severe  0.0%  uncertain  0.7%
+  gauss1.2               mild        n= 270  sharp 12.6%  mild 84.4%  severe  2.2%  uncertain  0.7%
+  gauss2.0               severe      n= 270  sharp  0.0%  mild  7.0%  severe 91.5%  uncertain  1.5%
+  gauss3.5               severe      n= 270  sharp  0.0%  mild  0.0%  severe 98.1%  uncertain  1.9%
+  motion5                mild        n= 270  sharp 42.2%  mild 56.7%  severe  0.4%  uncertain  0.7%
+  motion11               severe      n= 270  sharp 27.0%  mild 60.7%  severe 11.5%  uncertain  0.7%
+  gauss2.0_dark_x0.25    severe      n= 270  sharp  0.0%  mild 26.3%  severe 70.4%  uncertain  3.3%
+  gauss2.0_noise8        severe      n= 270  sharp  3.0%  mild 69.3%  severe 27.4%  uncertain  0.4%
+  gauss1.2_jpeg30        mild        n= 270  sharp 16.3%  mild 83.3%  severe  0.0%  uncertain  0.4%
+
+evaluation (thresholds chosen on calibration only): variant -> verdict share
+  native                 sharp       n=  63  sharp 93.7%  mild  4.8%  severe  1.6%  uncertain  0.0%
+  original               sharp       n= 228  sharp 96.1%  mild  3.1%  severe  0.4%  uncertain  0.4%
+  resized_1600           sharp       n=  89  sharp 94.4%  mild  4.5%  severe  1.1%  uncertain  0.0%
+  resized_800            sharp       n= 219  sharp 96.8%  mild  2.7%  severe  0.0%  uncertain  0.5%
+  dark_x0.5              sharp       n= 228  sharp 95.6%  mild  3.1%  severe  0.4%  uncertain  0.9%
+  dark_x0.25             sharp       n= 228  sharp 92.5%  mild  3.1%  severe  0.0%  uncertain  4.4%
+  noise8                 sharp       n= 228  sharp 97.8%  mild  2.2%  severe  0.0%  uncertain  0.0%
+  jpeg30                 sharp       n= 228  sharp 96.9%  mild  3.1%  severe  0.0%  uncertain  0.0%
+  gauss0.7               borderline  n= 228  sharp 64.0%  mild 34.6%  severe  0.9%  uncertain  0.4%
+  gauss1.2               mild        n= 228  sharp 14.0%  mild 81.6%  severe  3.9%  uncertain  0.4%
+  gauss2.0               severe      n= 228  sharp  0.0%  mild 11.8%  severe 87.7%  uncertain  0.4%
+  gauss3.5               severe      n= 228  sharp  0.0%  mild  0.0%  severe 98.7%  uncertain  1.3%
+  motion5                mild        n= 228  sharp 44.3%  mild 53.5%  severe  2.2%  uncertain  0.0%
+  motion11               severe      n= 228  sharp 28.9%  mild 55.3%  severe 15.4%  uncertain  0.4%
+  gauss2.0_dark_x0.25    severe      n= 228  sharp  0.0%  mild 28.9%  severe 65.4%  uncertain  5.7%
+  gauss2.0_noise8        severe      n= 228  sharp  6.6%  mild 72.4%  severe 21.1%  uncertain  0.0%
+  gauss1.2_jpeg30        mild        n= 228  sharp 22.4%  mild 76.3%  severe  1.3%  uncertain  0.0%
+
+the 3000x5333 close-up portrait and old Laplacian variance:
+  native       edge 0.866 strength 9.9 -> sharp   (Laplacian variance 9.4)
+  x0.25 dark   edge 0.870 strength 2.5 -> sharp   (Laplacian variance 1.7)
+  1600 wide    edge 0.828 strength 9.8 -> sharp   (Laplacian variance 33.5)

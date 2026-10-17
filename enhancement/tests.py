@@ -40,6 +40,7 @@ from .tasks import (
     process_gallery_edit,
 )
 from .zero_dce import _apply_curves_tiled
+from .test_blur_measure import blurred_photo
 
 User = get_user_model()
 
@@ -168,6 +169,8 @@ class OpenCVPolicyTests(SimpleTestCase):
                 "purescale_enabled": False,
                 "colorization_enabled": False,
                 "identity_guard_enabled": False,
+                "face_fidelity_enabled": True,
+                "gfpgan_require_identity_check": True,
             },
         )
         self.assertFalse(parameters["adaptive_denoise"]["enabled"])
@@ -200,6 +203,7 @@ class OpenCVPolicyTests(SimpleTestCase):
             "face_restoration",
             "sharpen",
             "output_guard_b",
+            "face_fidelity",
             "colorization",
             "dynamic_style",
             "identity_guard",
@@ -254,13 +258,12 @@ class OpenCVPolicyTests(SimpleTestCase):
     )
     @patch("enhancement.services.cv2.fastNlMeansDenoisingColored")
     def test_adaptive_denoise_uses_post_exposure_noise_mapping(self, denoise):
-        source = np.random.default_rng(18).integers(
-            15,
-            120,
-            size=(160, 160, 3),
-            dtype=np.uint8,
-        )
-        denoise.side_effect = lambda image, *_args: image.copy()
+        # A smooth scene with grain on it: something a denoiser can actually help.
+        rng = np.random.default_rng(18)
+        ramp = np.tile(np.linspace(40, 110, 320, dtype=np.float32), (320, 1))
+        source = np.clip(ramp[:, :, None] + rng.normal(0, 10, (320, 320, 3)), 0, 255).astype(np.uint8)
+        # A stand-in that really removes the grain, so the candidate is kept.
+        denoise.side_effect = lambda image, *_args: cv2.GaussianBlur(image, (0, 0), 1.2)
 
         _enhanced, _level, parameters = enhance_bgr(
             source,
@@ -271,7 +274,8 @@ class OpenCVPolicyTests(SimpleTestCase):
         metadata = parameters["adaptive_denoise"]
         self.assertTrue(metadata["enabled"])
         self.assertTrue(metadata["applied"])
-        self.assertEqual(metadata["strength"], 4)
+        self.assertEqual(metadata["strength"], metadata["requested_strength"])
+        self.assertEqual(metadata["requested_strength"], denoise.call_args.args[2])
         self.assertEqual(metadata["measurement_point"], "after_guard_a")
 
     @override_settings(
@@ -566,12 +570,19 @@ class OpenCVPolicyTests(SimpleTestCase):
         self.assertEqual(level, EnhancementLevel.LOW)
 
     def test_quality_router_identifies_blur_and_low_resolution(self):
-        source = np.full((200, 200, 3), 90, dtype=np.uint8)
-        quality = analyze_image_quality(source)
+        quality = analyze_image_quality(blurred_photo(200, 200))
 
         self.assertIn("severe_blur", quality["defects"])
         self.assertIn("low_resolution", quality["defects"])
         self.assertTrue(quality["needs_ai_restoration"])
+
+    def test_a_flat_frame_is_not_called_blurred(self):
+        """It used to be "severe blur": a flat frame has nothing to judge focus by."""
+        quality = analyze_image_quality(np.full((200, 200, 3), 90, dtype=np.uint8))
+
+        self.assertEqual(quality["blur"]["verdict"], "uncertain")
+        self.assertNotIn("severe_blur", quality["defects"])
+        self.assertTrue(quality["needs_ai_restoration"])  # still low resolution
 
     def test_high_policy_uses_quality_guard_metadata(self):
         source = np.full((80, 80, 3), 210, dtype=np.uint8)

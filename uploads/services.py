@@ -1,3 +1,4 @@
+import logging
 import tempfile
 import time
 import re
@@ -9,11 +10,14 @@ from django.conf import settings
 from django.core.files import File
 from django.db import transaction
 from django.utils import timezone
-from PIL import Image, ImageColor, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageColor, UnidentifiedImageError
 from rest_framework.exceptions import ValidationError
 
+from .decoding import to_working_colour
 from .models import BatchImageProgress, ImagePreprocessingResult, ImageUpload, UploadBatch
 from .validators import safe_original_name, validate_image_file, validate_zip_archive
+
+logger = logging.getLogger(__name__)
 
 
 class BatchHasNoFailedImages(ValidationError):
@@ -284,7 +288,9 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
             original_format = source.format or image_upload.file_extension.lstrip(".").upper()
             original_size = source.size
             had_transparency = _has_transparency(source)
-            working = ImageOps.exif_transpose(source)
+            working, decoding = to_working_colour(source)
+            if decoding["colour_profile"].get("error"):
+                logger.warning("Image %s: %s", image_upload.pk, decoding["colour_profile"]["error"])
             output_format = _select_output_format(requested_format, had_transparency, original_format)
             working = _prepare_color_mode(working, output_format)
             working.thumbnail(

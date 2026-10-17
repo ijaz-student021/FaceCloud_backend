@@ -1,0 +1,17 @@
+sharp tonal range p0.5/p1/p5/p50 (cal): [  1.    1.   21.8 137. ]
+severe tonal range p0.5/p1/p5/p50 (cal): [  7.  10.  25. 137.]
+floor  8 calibration sharp: sharp 96.2% blurred 1.1% unc 2.7%  mild: sharp 23.8% blurred 75.8% unc 0.4%  severe: sharp 6.4% blurred 93.0% unc 0.6%
+floor  8 evaluation  sharp: sharp 93.6% blurred 3.3% unc 3.1%  mild: sharp 27.0% blurred 73.0% unc 0.0%  severe: sharp 7.5% blurred 92.1% unc 0.4%
+floor 10 calibration sharp: sharp 96.0% blurred 1.1% unc 2.9%  mild: sharp 23.7% blurred 75.8% unc 0.5%  severe: sharp 6.4% blurred 92.7% unc 1.0%
+floor 10 evaluation  sharp: sharp 93.1% blurred 3.3% unc 3.6%  mild: sharp 27.0% blurred 73.0% unc 0.0%  severe: sharp 7.5% blurred 91.8% unc 0.7%
+floor 12 calibration sharp: sharp 95.8% blurred 1.1% unc 3.1%  mild: sharp 23.7% blurred 75.8% unc 0.5%  severe: sharp 6.4% blurred 91.8% unc 1.9%
+floor 12 evaluation  sharp: sharp 92.6% blurred 3.3% unc 4.1%  mild: sharp 27.0% blurred 73.0% unc 0.0%  severe: sharp 7.5% blurred 90.7% unc 1.8%
+floor 16 calibration sharp: sharp 94.9% blurred 1.1% unc 4.0%  mild: sharp 23.6% blurred 75.8% unc 0.6%  severe: sharp 6.3% blurred 91.3% unc 2.4%
+floor 16 evaluation  sharp: sharp 91.0% blurred 3.3% unc 5.7%  mild: sharp 26.9% blurred 73.0% unc 0.1%  severe: sharp 7.5% blurred 89.8% unc 2.7%
+calibration edge-strength floor 0.5: newly uncertain sharp 0.00%  borderline 0.00%  mild 0.00%  severe 0.00%
+calibration edge-strength floor 0.75: newly uncertain sharp 0.05%  borderline 0.00%  mild 0.00%  severe 0.37%
+calibration edge-strength floor 1.0: newly uncertain sharp 0.05%  borderline 0.00%  mild 0.00%  severe 0.37%
+evaluation  edge-strength floor 0.5: newly uncertain sharp 0.00%  borderline 0.00%  mild 0.00%  severe 0.00%
+evaluation  edge-strength floor 0.75: newly uncertain sharp 0.07%  borderline 0.00%  mild 0.00%  severe 0.26%
+evaluation  edge-strength floor 1.0: newly uncertain sharp 0.20%  borderline 0.00%  mild 0.00%  severe 0.35%
+severe-variant edge_strength p1/p5: [1.46 3.09]

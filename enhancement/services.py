@@ -5,8 +5,11 @@ left unchanged so the baseline does not intentionally normalize skin tones.
 """
 
 import logging
+import math
 import time
 import threading
+import uuid
+from datetime import timedelta
 from bisect import bisect_right
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -14,15 +17,18 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
 from django.core.files.base import ContentFile
 from django.db import transaction
+from django.db.utils import InterfaceError, OperationalError
 from django.utils import timezone
 from rest_framework import status as http_status
 from rest_framework.exceptions import APIException, ValidationError
-from PIL import Image, ImageColor, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageColor, UnidentifiedImageError
 
-from uploads.models import ImagePreprocessingResult
+from uploads.decoding import to_working_colour
+from uploads.models import ImagePreprocessingResult, UploadBatch
 from quality_control.models import ImageQualityDecision
 
 from .models import (
@@ -35,8 +41,16 @@ from .models import (
     ImageEnhancementResult,
 )
 from .colorization import ColorizationUnavailable, colorize_with_siggraph17
+from .denoise_guard import DenoiseReference, judge_candidate
+from .face_fidelity import check_face_regions
 from .gfpgan import GFPGANUnavailable, restore_faces
-from .identity_guard import IdentityGuardUnavailable, apply_identity_guard
+from .identity_guard import (
+    IDENTITY_VERIFIED,
+    IdentityGuardUnavailable,
+    apply_identity_guard,
+    build_identity_reference,
+    identity_status,
+)
 from .hd_restoration import (
     HDRestorationUnavailable,
     deblur_with_nafnet,
@@ -48,6 +62,9 @@ from .zero_dce import ZeroDCEUnavailable, enhance_with_zero_dce
 
 
 logger = logging.getLogger(__name__)
+
+# Dropped database connections: worth retrying, unlike a bad image.
+TRANSIENT_INFRASTRUCTURE_ERRORS = (OperationalError, InterfaceError)
 
 
 LEVEL_POLICIES = {
@@ -95,6 +112,11 @@ OUTPUT_GUARD_POLICIES = {
     },
 }
 
+# Smallest smoothed Sobel magnitude treated as a full-strength edge.
+_EDGE_REFERENCE_FLOOR = 20.0
+# Percentage points of highlight clipping a colour-space round trip can add.
+_CLIPPING_ROUNDING_TOLERANCE = 0.1
+
 _SUPERRES_LOCK = threading.Lock()
 _SUPERRES_CACHE = {}
 
@@ -112,7 +134,11 @@ class EnhancementPipelineContext:
     applied_level: str = ""
     policy: dict = field(default_factory=dict)
     current_image: np.ndarray | None = None
-    final_guard_reference: np.ndarray | None = None
+    # The last accepted image before any restoration model (PureVision, EDSR,
+    # NAFNet, Real-ESRGAN, PureScale) ran. Guard B judges the final pixels
+    # against this, resized only for the comparison, so a model's own changes
+    # cannot hide by becoming the reference they are measured against.
+    restoration_reference: np.ndarray | None = None
     output_quality: dict = field(default_factory=dict)
     restoration: dict = field(default_factory=dict)
     hd_restoration: dict = field(default_factory=dict)
@@ -127,6 +153,24 @@ class EnhancementPipelineContext:
     post_exposure_noise: dict = field(default_factory=dict)
     adaptive_denoise: dict = field(default_factory=dict)
     resolution_contract: dict = field(default_factory=dict)
+    face_fidelity: dict = field(default_factory=dict)
+    # What the analysis decided to do and why, before any pixel is changed.
+    plan: dict = field(default_factory=dict)
+    # One entry per stage: what it produced and whether that was accepted.
+    stage_reports: list = field(default_factory=list)
+    # The source's embedded faces, prepared at most once and shared by the
+    # face-restoration gate and the final identity guard.
+    identity_reference: object = None
+    identity_reference_reason: str = ""
+    identity_reference_state: str = ""
+    # Called with a stage name before each expensive stage; raises to stop
+    # (cancellation, or another worker having taken the result over).
+    checkpoint: object = None
+    # Set when face restoration was applied but identity then could not be
+    # verified: the tail of the pipeline is run again without it.
+    face_restoration_withdrawn: bool = False
+    # Reports of a tail pass that was withdrawn and run again (see enhance_bgr).
+    discarded_stage_reports: list = field(default_factory=list)
     stage_timings_ms: dict = field(default_factory=dict)
     stage_order: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
@@ -142,17 +186,27 @@ def _timed_pipeline_stage(context, stage_name):
     try:
         yield
     finally:
+        # A stage can run twice (see face_restoration_withdrawn); its time adds up.
         context.stage_timings_ms[stage_name] = round(
-            (time.perf_counter() - started_at) * 1000,
+            context.stage_timings_ms.get(stage_name, 0.0)
+            + (time.perf_counter() - started_at) * 1000,
             3,
         )
         context.stage_order.append(stage_name)
 
 
-def _auto_level(mean_luminance):
+def _auto_level(mean_luminance, highlight_clipping_percent=0.0):
     if mean_luminance < 65:
         return EnhancementLevel.HIGH
     if mean_luminance < 115:
+        return EnhancementLevel.MEDIUM
+    # Overexposure needs correcting as much as darkness does; the level only
+    # ever followed darkness, so a blown-out photo got the gentlest setting.
+    # Judged on clipped highlights, not on brightness: a high-key portrait or a
+    # snow scene is bright by intent and must not be darkened.
+    if highlight_clipping_percent > 20:
+        return EnhancementLevel.HIGH
+    if highlight_clipping_percent > 8:
         return EnhancementLevel.MEDIUM
     return EnhancementLevel.LOW
 
@@ -194,6 +248,82 @@ def _histogram_median(cumulative, total):
     return (low + high) / 2
 
 
+# Blur is judged where an image is sharpest, on a copy of fixed size.
+#
+# The measure is the median, over the strongest 2 % of edges, of the
+# Laplacian (curvature) beside the edge divided by the gradient across it:
+# roughly the inverse of the edge's width in pixels. A gain cancels out of the
+# ratio, so darkening does not read as blur; measuring at a fixed long edge
+# makes it a property of the picture rather than of its pixel count; and the
+# strongest edges are the in-focus ones, so a soft background (bokeh) or noise
+# in flat areas does not decide it. The old measure, the Laplacian variance of
+# the full-size image, fell 5-14x with resolution and ~16x with a 4x
+# darkening, and read sharp photos as blurred.
+#
+# Thresholds and the evidence for them: docs/evaluation/2026-10-14-blur-measure.md.
+BLUR_PROXY_LONG_EDGE = 1024
+BLUR_EDGE_PERCENTILE = 98
+# Units: edge_sharpness is a ratio (per pixel at the measuring scale); edge
+# strength is grey levels per pixel. Chosen on the calibration half of 498
+# photographs and checked on the other half:
+# * mild: below the 1st percentile of sharp photographs at every size,
+#   exposure, noise and JPEG level tried (about 1 % of sharp photos flagged);
+# * severe: the value that best separates a Gaussian blur of sigma 1.2 from one
+#   of sigma 2.0 at the measuring scale;
+# * uncertain: a tonal range (5th to 95th percentile, grey levels) too small
+#   to judge -- a flat or near-black frame. Range, not edge strength: blur
+#   weakens edges but keeps the range, so heavy blur is still judged. Below 8
+#   levels on the calibration half: 0.6 % of severely blurred variants, 2.7 %
+#   of sharp ones (graphics and near-uniform frames). Also uncertain: no edge
+#   anywhere -- the strongest gradients under one grey level per pixel, i.e.
+#   only quantisation steps (a smooth gradient), which carries no evidence of
+#   focus either way (0.4 % of severely blurred variants).
+BLUR_SEVERE_BELOW = 0.232
+BLUR_MILD_BELOW = 0.422
+BLUR_MIN_TONAL_RANGE = 8.0
+BLUR_MIN_EDGE_STRENGTH = 1.0
+
+
+def measure_blur(gray):
+    """``{"edge_sharpness", "edge_strength", "verdict", ...}`` for a grayscale image.
+
+    ``verdict`` is ``sharp``, ``mild``, ``severe`` or ``uncertain``: with too
+    little tonal range to judge (a flat or almost black frame), nothing is
+    claimed, and no blur correction is routed.
+    """
+    height, width = gray.shape[:2]
+    scale = min(1.0, BLUR_PROXY_LONG_EDGE / float(max(height, width)))
+    if scale < 1.0:
+        gray = cv2.resize(gray, (max(1, round(width * scale)), max(1, round(height * scale))),
+                          interpolation=cv2.INTER_AREA)
+    working = cv2.GaussianBlur(gray.astype(np.float32), (0, 0), 0.5)
+    gradient = np.hypot(cv2.Sobel(working, cv2.CV_32F, 1, 0, ksize=3), cv2.Sobel(working, cv2.CV_32F, 0, 1, ksize=3))
+    curvature = cv2.dilate(np.abs(cv2.Laplacian(working, cv2.CV_32F, ksize=3)), np.ones((3, 3), np.uint8))
+    threshold = float(np.percentile(gradient, BLUR_EDGE_PERCENTILE))
+    edges = gradient >= max(threshold, 1e-6)
+    edge_sharpness = float(np.median(curvature[edges] / gradient[edges])) if edges.any() else 0.0
+    # Sobel's 3x3 kernel sums to 8x a one-pixel step: divide to get grey levels per pixel.
+    edge_strength = threshold / 8.0
+    low, high = np.percentile(gray, (5, 95))
+    tonal_range = float(high - low)
+    if tonal_range < BLUR_MIN_TONAL_RANGE or edge_strength < BLUR_MIN_EDGE_STRENGTH:
+        verdict = "uncertain"
+    elif edge_sharpness < BLUR_SEVERE_BELOW:
+        verdict = "severe"
+    elif edge_sharpness < BLUR_MILD_BELOW:
+        verdict = "mild"
+    else:
+        verdict = "sharp"
+    return {
+        "measure": "edge_sharpness_v1",
+        "edge_sharpness": round(edge_sharpness, 4),
+        "edge_strength": round(edge_strength, 3),
+        "tonal_range": round(tonal_range, 1),
+        "measured_at_long_edge": int(round(max(height, width) * scale)),
+        "verdict": verdict,
+    }
+
+
 def analyze_image_quality(image):
     """Measure defects without classifying identity, ethnicity, or skin colour.
 
@@ -214,6 +344,7 @@ def analyze_image_quality(image):
     contrast = float(np.sqrt(np.dot(histogram, (levels - luminance) ** 2) / total))
     laplacian = cv2.Laplacian(gray, cv2.CV_64F)
     sharpness = float(cv2.meanStdDev(laplacian)[1][0][0] ** 2)
+    blur = measure_blur(gray)
     smooth = cv2.GaussianBlur(gray, (3, 3), 0)
     residual = np.cumsum(
         cv2.calcHist([cv2.absdiff(gray, smooth)], [0], None, [256], [0, 256]).ravel().astype(np.int64)
@@ -234,9 +365,9 @@ def analyze_image_quality(image):
         defects.append("severe_low_light")
     elif luminance < 115:
         defects.append("low_light")
-    if sharpness < 35:
+    if blur["verdict"] == "severe":
         defects.append("severe_blur")
-    elif sharpness < 90:
+    elif blur["verdict"] == "mild":
         defects.append("mild_blur")
     if noise > 5:
         defects.append("visible_noise")
@@ -255,7 +386,10 @@ def analyze_image_quality(image):
         "height": height,
         "mean_luminance": round(luminance, 2),
         "contrast_stddev": round(contrast, 2),
+        # Reported for comparison only: it changes with resolution, exposure and
+        # noise, so it no longer decides blur (see ``measure_blur``).
         "laplacian_sharpness": round(sharpness, 2),
+        "blur": blur,
         "estimated_noise": round(noise, 2),
         "shadow_clipping_percent": round(shadow_clipping, 3),
         "highlight_clipping_percent": round(highlight_clipping, 3),
@@ -306,15 +440,32 @@ def compare_image_quality(source, output):
     }
 
 
+def _verify_edsr_checksum(model_path):
+    """The file's SHA-256, which must equal AI_RESTORATION_EDSR_MODEL_SHA256.
+
+    The hash is cached by file identity (path, size, modification time), so a
+    loaded model costs no rehash per image, and a replaced file is hashed again.
+    """
+    from identities.providers import verify_model_checksum
+
+    expected = str(settings.AI_RESTORATION_EDSR_MODEL_SHA256).strip().lower()
+    if len(expected) != 64:
+        raise RuntimeError("The EDSR checksum is not configured.")
+    try:
+        return verify_model_checksum(model_path, expected)
+    except ValidationError as error:
+        raise RuntimeError("The EDSR model failed integrity verification.") from error
+
+
 def _load_edsr_model(model_path, scale):
-    key = (str(model_path), scale)
-    if key in _SUPERRES_CACHE:
-        return _SUPERRES_CACHE[key]
     if not hasattr(cv2, "dnn_superres"):
         raise RuntimeError("The OpenCV super-resolution module is not installed.")
     model_path = Path(model_path)
     if not model_path.is_file():
         raise RuntimeError("The configured EDSR model file is unavailable.")
+    key = (str(model_path), scale, _verify_edsr_checksum(model_path))
+    if key in _SUPERRES_CACHE:
+        return _SUPERRES_CACHE[key]
     superres = cv2.dnn_superres.DnnSuperResImpl_create()
     superres.readModel(str(model_path))
     superres.setModel("edsr", scale)
@@ -328,6 +479,7 @@ def restore_low_resolution(image, quality):
         "requested": "low_resolution" in quality["defects"],
         "applied": False,
         "provider": "opencv_dnn_edsr",
+        "device": "cpu",
         "scale": settings.AI_RESTORATION_SCALE,
         "fallback_reason": "",
     }
@@ -695,8 +847,13 @@ def _quality_guard(original, candidate, level, input_quality, learned_model=Fals
             - input_quality["highlight_clipping_percent"]
         )
         clipping_ok = clipping_growth <= limits["max_highlight_clipping_growth"]
+        # The absolute limit stops enhancement from *creating* blown highlights.
+        # A source that is already over it must not veto the correction that
+        # darkens it: only a candidate that adds clipping is held to the limit
+        # (a tenth of a point allows for colour-space rounding).
         absolute_clipping_ok = (
             output_quality["highlight_clipping_percent"] <= clipping_limit
+            or clipping_growth <= _CLIPPING_ROUNDING_TOLERANCE
         )
         chroma_ok = chroma_shift <= limits["max_chroma_shift"]
         if contrast_ok and clipping_ok and absolute_clipping_ok and chroma_ok:
@@ -721,7 +878,10 @@ def _quality_guard(original, candidate, level, input_quality, learned_model=Fals
         output_quality["highlight_clipping_percent"]
         - input_quality["highlight_clipping_percent"]
     )
-    if output_quality["highlight_clipping_percent"] > clipping_limit:
+    if (
+        output_quality["highlight_clipping_percent"] > clipping_limit
+        and clipping_growth > _CLIPPING_ROUNDING_TOLERANCE
+    ):
         logger.warning(
             "Enhancement output retained %.3f%% clipped highlights after guarding.",
             output_quality["highlight_clipping_percent"],
@@ -759,6 +919,180 @@ def _is_near_grayscale(image):
     return float(np.mean(chroma)) <= settings.COLORIZATION_GRAYSCALE_CHROMA_THRESHOLD
 
 
+# JPEG codes 8x8 blocks, so heavy compression leaves a step every eighth pixel.
+# The ratio below is the strongest of the eight possible grid phases against the
+# typical one: about 1.0-1.2 on an uncompressed photo, 1.4 and up from roughly
+# quality 50 downward. Both axes must show it, so a striped or brick-like
+# subject is not mistaken for compression. Thresholds were set on four
+# photographs and then checked, unchanged, on eighteen others.
+_BLOCKINESS_STRONG_AXIS = 1.35
+_BLOCKINESS_WEAK_AXIS = 1.15
+_LIGHTING_DEFECTS = frozenset({"severe_low_light", "low_light", "overexposed_highlights", "low_contrast"})
+_BLUR_DEFECTS = frozenset({"severe_blur", "mild_blur"})
+
+
+def measure_compression_artifacts(image):
+    """Detect JPEG blocking: ``{"blockiness": [strong, weak], "detected": bool}``.
+
+    Sharpening and local-contrast enhancement both amplify block edges, so the
+    pipeline needs to know before it applies either. Every grid phase is tried,
+    so a crop or a rotation of a compressed photo is still recognised. A photo
+    resized after compression no longer has an 8-pixel grid and reads as clean,
+    which is the safe direction: it is simply processed as before.
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    ratios = []
+    for axis in (0, 1):
+        steps = np.abs(np.diff(gray, axis=axis)).mean(axis=1 - axis)
+        usable = (len(steps) // 8) * 8
+        if usable < 64:
+            return {"blockiness": [1.0, 1.0], "detected": False}
+        per_phase = steps[:usable].reshape(-1, 8).mean(axis=0)
+        ratios.append(float(per_phase.max() / max(float(np.median(per_phase)), 1e-3)))
+    strong, weak = max(ratios), min(ratios)
+    return {
+        "blockiness": [round(strong, 3), round(weak, 3)],
+        "detected": strong >= _BLOCKINESS_STRONG_AXIS and weak >= _BLOCKINESS_WEAK_AXIS,
+    }
+
+
+def _apply_conservative_routing(context):
+    """Switch off corrections that have no measured defect to correct.
+
+    Returns the list of decisions made, for the plan. Two rules:
+
+    * Compression artifacts: no sharpening and no local-contrast step, at any
+      level or style. Both make block edges more visible, and nothing on this
+      path removes them.
+    * On the automatic level with the Natural style, a correction needs a
+      defect: no lighting defect means no exposure change, no blur defect means
+      no sharpening. An explicit level or style is the user asking for the
+      correction and is honoured as before.
+    """
+    defects = set(context.input_quality["defects"])
+    policy = context.policy
+    decisions = []
+    compression = measure_compression_artifacts(context.source_image)
+    context.input_quality["compression_artifacts"] = compression
+    if compression["detected"]:
+        if policy.get("sharpen"):
+            policy["sharpen"] = 0
+            decisions.append({"stage": "sharpen", "decision": "skipped",
+                              "reason": "Compression artifacts: sharpening would emphasise block edges."})
+        if policy.get("use_clahe"):
+            policy["use_clahe"] = False
+            decisions.append({"stage": "exposure_enhancement", "decision": "local_contrast_off",
+                              "reason": "Compression artifacts: local contrast would emphasise block edges."})
+    automatic = (
+        context.requested_level == EnhancementLevel.AUTO and context.style == EnhancementStyle.NATURAL
+    )
+    if automatic and not (defects & _LIGHTING_DEFECTS):
+        policy["skip_exposure"] = True
+        decisions.append({"stage": "exposure_enhancement", "decision": "skipped",
+                          "reason": "No lighting defect was measured."})
+    if automatic and not (defects & _BLUR_DEFECTS) and policy.get("sharpen"):
+        policy["sharpen"] = 0
+        decisions.append({"stage": "sharpen", "decision": "skipped",
+                          "reason": "No blur was measured."})
+    return decisions
+
+
+def _planned_upscaler(defects, width, height):
+    """The single upscaler this image is routed to, or ``None``.
+
+    Order of preference matches the stages: Real-ESRGAN when the HD pipeline is
+    on, otherwise EDSR for a genuinely low-resolution source, otherwise PureScale.
+    Only one ever changes the pixel grid; a later one runs only if the earlier
+    one was unavailable.
+    """
+    if settings.HD_RESTORATION_ENABLED:
+        return "realesrgan_x4plus", "The HD pipeline is enabled."
+    if (
+        "low_resolution" in defects
+        and settings.AI_RESTORATION_ENABLED
+        and min(width, height) <= settings.AI_RESTORATION_MAX_INPUT_EDGE
+    ):
+        return "opencv_dnn_edsr", "The source is low resolution."
+    if settings.PURESCALE_ENABLED:
+        return "purescale_safmn_2x", "PureScale is enabled."
+    return None, "No upscaler is enabled for this image."
+
+
+def _build_processing_plan(context):
+    """Decide, from the measured defects, which stages have work to do.
+
+    The plan is a record of intent written before any pixel changes. Stages still
+    make their own final decision (a model may be unavailable, a candidate may be
+    rejected), and ``stage_reports`` records what actually happened.
+    """
+    quality = context.input_quality
+    defects = list(quality["defects"])
+    lighting_defects = [
+        name for name in defects
+        if name in {"severe_low_light", "low_light", "overexposed_highlights", "low_contrast"}
+    ]
+    blur_defects = [name for name in defects if name in {"severe_blur", "mild_blur"}]
+    explicit_style = context.style != EnhancementStyle.NATURAL
+    # An image with nothing wrong with its light, noise or contrast gets the
+    # gentlest correction the level allows and nothing else by default.
+    minimal = (
+        not lighting_defects
+        and "visible_noise" not in defects
+        and context.requested_level == EnhancementLevel.AUTO
+        and not explicit_style
+    )
+    upscaler, upscaler_reason = _planned_upscaler(defects, quality["width"], quality["height"])
+    face_restoration_wanted = bool(
+        set(defects) & ({"severe_blur", "low_resolution"} | ({"mild_blur"} if settings.GFPGAN_ALLOW_MILD_BLUR else set()))
+    )
+
+    def step(planned, reason):
+        return {"planned": bool(planned), "reason": reason}
+
+    return {
+        "version": "defect_driven_plan_v1",
+        "defects": defects,
+        "minimal_processing": minimal,
+        "applied_level": context.applied_level,
+        "exposure_mode": context.policy.get("exposure_mode"),
+        "steps": {
+            "exposure": step(
+                not context.policy.get("skip_exposure"),
+                "Low light: learned curves when available, otherwise the OpenCV correction."
+                if context.zero_dce["requested"]
+                else f"Lighting defects: {', '.join(lighting_defects)}." if lighting_defects
+                else "No lighting defect was measured." if context.policy.get("skip_exposure")
+                else "No lighting defect; the requested level's balanced correction.",
+            ),
+            "denoise": step(
+                context.applied_level in {EnhancementLevel.MEDIUM, EnhancementLevel.HIGH}
+                or context.style == EnhancementStyle.AI_MAX,
+                "Decided after exposure, from the noise that correction reveals.",
+            ),
+            "deblur": step(
+                settings.HD_RESTORATION_ENABLED and settings.NAFNET_DEBLUR_ENABLED and blur_defects,
+                "Deblurring is disabled." if not (settings.HD_RESTORATION_ENABLED and settings.NAFNET_DEBLUR_ENABLED)
+                else f"Blur defects: {', '.join(blur_defects)}." if blur_defects
+                else "No blur was measured.",
+            ),
+            "upscale": {**step(upscaler is not None, upscaler_reason), "upscaler": upscaler},
+            "face_restoration": step(
+                face_restoration_wanted and settings.GFPGAN_ENABLED,
+                "Blur or low resolution on a face-restoration-enabled deployment."
+                if face_restoration_wanted and settings.GFPGAN_ENABLED
+                else "Face restoration is disabled." if face_restoration_wanted
+                else "No blur or low-resolution defect.",
+            ),
+            "sharpen": step(context.policy.get("sharpen", 0) > 0, f"Blur defects: {', '.join(blur_defects) or 'none'}."),
+            "colorization": step(
+                context.colorization["requested"] and settings.COLORIZATION_ENABLED,
+                "The source is near-grayscale." if context.colorization["requested"] else "The source has colour.",
+            ),
+            "style": step(explicit_style, f"Requested style: {context.style}."),
+        },
+    }
+
+
 def analyze_original_stage(context):
     """Validate the source, measure it once, and select the policy."""
     image = context.source_image
@@ -770,7 +1104,7 @@ def analyze_original_stage(context):
     context.input_quality = analyze_image_quality(image)
     mean_luminance = context.input_quality["mean_luminance"]
     context.applied_level = (
-        _auto_level(mean_luminance)
+        _auto_level(mean_luminance, context.input_quality["highlight_clipping_percent"])
         if context.requested_level == EnhancementLevel.AUTO
         else context.requested_level
     )
@@ -792,6 +1126,10 @@ def analyze_original_stage(context):
         "applied": False,
         "fallback_reason": "",
     }
+    routing = _apply_conservative_routing(context)
+    context.plan = _build_processing_plan(context)
+    context.plan["routing"] = routing
+    context.plan["compression_artifacts"] = context.input_quality["compression_artifacts"]["detected"]
     return context
 
 
@@ -822,6 +1160,9 @@ def exposure_enhancement_stage(context):
         return context
 
     policy = context.policy
+    if policy.get("skip_exposure"):
+        # Nothing about this photo's light was found wanting; leave it alone.
+        return context
     lab = cv2.cvtColor(source, cv2.COLOR_BGR2LAB)
     luminance, channel_a, channel_b = cv2.split(lab)
     corrected = cv2.LUT(luminance, _gamma_lut(policy["gamma"]))
@@ -892,7 +1233,12 @@ def _gradient_edge_strength(image):
     gradient_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
     gradient_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
     gradient = cv2.GaussianBlur(cv2.magnitude(gradient_x, gradient_y), (0, 0), 3.0)
-    edge_reference = float(np.percentile(gradient, 75)) + 1e-6
+    # "Edge" is relative to the photo's own 75th-percentile gradient, but never
+    # below an absolute floor: in a photo with no real edges (sky, a studio
+    # backdrop) the strongest quarter of leftover grain would otherwise count as
+    # edges and be protected from denoising, leaving blotches. Measured p75 on
+    # real photographs was 34-87, so the floor does not affect them.
+    edge_reference = max(float(np.percentile(gradient, 75)), _EDGE_REFERENCE_FLOOR) + 1e-6
     return np.clip(gradient / edge_reference, 0.0, 1.0)
 
 
@@ -920,48 +1266,123 @@ def _edge_aware_denoise(image, strength):
     return np.clip(blended, 0, 255).astype(np.uint8)
 
 
+def _denoise_face_boxes(image):
+    """Face boxes for the denoise check, or none when the detector is unavailable."""
+    from .face_fidelity import _detect_boxes
+
+    try:
+        return _detect_boxes(image)
+    except (ValidationError, cv2.error):
+        return []
+
+
 def adaptive_denoise_stage(context):
-    """Denoise measured output noise without inventing facial detail."""
+    """Denoise only where noise was measured, and keep the result only if it paid off.
+
+    Eligibility comes from the image, not from the exposure level: a photo that
+    was brightened is not thereby noisy, and a well-exposed one is not thereby
+    clean. The denoised candidate is then compared with the image as it was
+    immediately before (``DenoiseReference``) and kept, weakened or dropped on
+    what it removed and what it cost. Nothing later (sharpening in particular)
+    is consulted or adjusted to offset a loss here.
+    """
     enabled = bool(settings.ADAPTIVE_DENOISE_ENABLED) or context.style == EnhancementStyle.AI_MAX
     noise_score = context.post_exposure_noise["estimated_noise"]
-    strength = 0
-    reason = "not_required"
-
-    if enabled and context.applied_level in {
-        EnhancementLevel.MEDIUM,
-        EnhancementLevel.HIGH,
-    }:
-        strength = _adaptive_denoise_strength(noise_score)
-        reason = "post_exposure_noise_mapping"
-    elif enabled:
-        reason = "low_level_preserves_source_texture"
+    before = context.current_image
+    minimum_noise = float(settings.DENOISE_MIN_NOISE_REMOVED)
+    if enabled:
+        requested = _adaptive_denoise_strength(noise_score)
+        basis = "measured_noise"
     else:
-        # Preserve the legacy, input-defect-driven behaviour while the new
-        # rollout flag remains disabled.
-        strength = int(context.policy.get("denoise", 0))
-        reason = "feature_flag_disabled_legacy_policy"
+        # The rollout flag is off: the legacy input-defect policy proposes the
+        # strength, and its candidate is judged like any other.
+        requested = int(context.policy.get("denoise", 0))
+        basis = "feature_flag_disabled_legacy_policy"
 
-    # Judge blur on the brightened image. A near-black frame always measures as
-    # "severe blur" (almost no Laplacian variance), which used to switch denoising
-    # off for exactly the night photos that come out grainiest.
-    if "severe_blur" in context.post_exposure_noise["quality"]["defects"]:
-        strength = 0
+    eligibility = {
+        "eligible": False,
+        "reason": "",
+        "basis": basis,
+        "noise_score": noise_score,
+        "ladder_strength": requested,
+        "flat_region_noise": None,
+        "minimum_flat_region_noise": minimum_noise,
+        # Recorded to show it was not consulted.
+        "exposure_level": context.applied_level,
+        "depends_on_exposure_level": False,
+    }
+    reference = None
+    if "severe_blur" in context.input_quality.get("defects", ()):
+        # The one blur verdict every stage uses (sharpening, deblurring, face
+        # restoration, the plan). It does not depend on exposure, so a night
+        # photo is not read as blurred; it used to be, which switched denoising
+        # off for it until this was judged on the brightened image instead.
+        eligibility["reason"] = "The image is severely blurred; denoising would remove what detail is left."
         reason = "severe_blur_protection"
+    elif requested <= 0:
+        eligibility["reason"] = "The measured noise score is below the lowest denoise step."
+        reason = "noise_score_below_ladder"
+    else:
+        reference = DenoiseReference(before)
+        eligibility["flat_region_noise"] = reference.noise_level
+        if reference.noise_level < minimum_noise:
+            # It cannot remove more noise than is there, so it could not pass.
+            eligibility["reason"] = "Too little noise was measured in the flat regions to be worth removing."
+            reason = "no_measurable_noise"
+            reference = None
+        else:
+            eligibility["eligible"] = True
+            eligibility["reason"] = "Noise was measured in the flat regions."
+            reason = "measured_noise"
 
-    applied = strength > 0
-    if applied:
-        context.current_image = _edge_aware_denoise(context.current_image, strength)
-    context.adaptive_denoise = {
+    metadata = {
         "enabled": enabled,
-        "applied": applied,
-        "strength": strength,
+        "applied": False,
+        "strength": 0,
+        "requested_strength": requested,
         "reason": reason,
         "method": "edge_aware_nlm_blend",
         "input_noise_score": noise_score,
         "measurement_point": "after_guard_a",
+        "reference": "image_immediately_before_denoise",
         "breakpoints": list(settings.ADAPTIVE_DENOISE_BREAKPOINTS),
         "strengths": list(settings.ADAPTIVE_DENOISE_STRENGTHS),
+        "eligibility": eligibility,
+        "requested": eligibility["eligible"],
     }
+    if reference is not None:
+        metadata["faces_checked"] = reference.set_faces(_denoise_face_boxes(before))
+        candidate = _edge_aware_denoise(before, requested)
+        accepted_image, verdict = judge_candidate(reference, candidate)
+        decisive = verdict["attempts"][-1 if verdict["accepted"] else 0]
+        frame = decisive["frame"]
+        metadata["benefit"] = {
+            key: frame[key] for key in (
+                "noise_before", "noise_after", "noise_removed", "noise_reduction", "removed_residual_whiteness",
+            )
+        }
+        metadata["detail"] = {
+            **{key: frame[key] for key in ("detail_retention", "edge_retention")},
+            "faces": decisive["faces"],
+        }
+        metadata["candidate_guard"] = verdict
+        metadata["acceptance"] = {key: verdict[key] for key in ("status", "reason", "applied_blend")}
+        if verdict["accepted"]:
+            context.current_image = accepted_image
+            metadata["applied"] = True
+            metadata["strength"] = requested
+            metadata["reason"] = (
+                "measured_noise_accepted" if verdict["status"] == "accepted"
+                else "measured_noise_accepted_at_reduced_strength"
+            )
+        else:
+            context.current_image = before
+            metadata["reason"] = "candidate_rejected"
+            metadata["fallback_reason"] = verdict["reason"]
+    else:
+        metadata["acceptance"] = {"status": "not_attempted", "reason": eligibility["reason"], "applied_blend": 0.0}
+    context.adaptive_denoise = metadata
+    context.restoration_reference = context.current_image
     return context
 
 
@@ -1025,9 +1446,6 @@ def low_resolution_restoration_stage(context):
     metadata["quality_at_stage"] = quality_at_stage
     context.current_image = restored
     context.restoration = metadata
-    # Guard B protects subsequent sharpening (and future restoration stages)
-    # against this safe, resolution-normalized reference.
-    context.final_guard_reference = restored.copy()
     return context
 
 
@@ -1052,7 +1470,14 @@ def hd_restoration_stage(context):
         return context
     source_dimensions = [int(context.current_image.shape[1]), int(context.current_image.shape[0])]
     working = context.current_image
-    if settings.NAFNET_DEBLUR_ENABLED:
+    # Without an analysis (a stage called on its own) there is nothing to gate on.
+    defects = context.input_quality.get("defects")
+    blur_measured = defects is None or bool({"mild_blur", "severe_blur"} & set(defects))
+    if settings.NAFNET_DEBLUR_ENABLED and not blur_measured:
+        # A deblurring network run on a sharp photo can only invent or remove
+        # detail; it is not run without measured blur.
+        metadata["deblur"]["fallback_reason"] = "No blur was measured; deblurring was not needed."
+    elif settings.NAFNET_DEBLUR_ENABLED:
         try:
             deblurred, deblur_metadata = deblur_with_nafnet(context.current_image)
             metadata["deblur"].update(deblur_metadata)
@@ -1084,10 +1509,14 @@ def hd_restoration_stage(context):
         metadata["input_dimensions"] = source_dimensions
         metadata["output_dimensions"] = [int(upscaled.shape[1]), int(upscaled.shape[0])]
         context.current_image = upscaled
-        context.final_guard_reference = upscaled.copy()
     except HDRestorationUnavailable as error:
         metadata["fallback_reason"] = str(error)
         context.warnings.append(str(error))
+        # The deblurred image already passed its own fidelity guard and sits on
+        # the source pixel grid, so it stays the result when only the upscale
+        # failed. ``applied`` remains False: no HD output grid was produced.
+        if metadata["deblur"]["applied"]:
+            context.current_image = working
     context.hd_restoration = metadata
     return context
 
@@ -1105,7 +1534,11 @@ def purescale_super_resolution_stage(context):
     """
     metadata = {
         "enabled": bool(settings.PURESCALE_ENABLED),
-        "requested": bool(settings.PURESCALE_ENABLED and not context.hd_restoration.get("applied")),
+        "requested": bool(
+            settings.PURESCALE_ENABLED
+            and not context.hd_restoration.get("applied")
+            and not context.restoration.get("applied")
+        ),
         "applied": False,
         "fallback_reason": "",
     }
@@ -1115,6 +1548,10 @@ def purescale_super_resolution_stage(context):
         return context
     if context.hd_restoration.get("applied"):
         metadata["fallback_reason"] = "HD restoration already produced a super-resolution candidate."
+        context.purescale = metadata
+        return context
+    if context.restoration.get("applied"):
+        metadata["fallback_reason"] = "EDSR already upscaled this image; a second upscaler would stack scale factors."
         context.purescale = metadata
         return context
     if context.input_quality["mean_luminance"] < settings.EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD:
@@ -1133,7 +1570,6 @@ def purescale_super_resolution_stage(context):
         metadata["input_dimensions"] = source_dimensions
         metadata["output_dimensions"] = [int(upscaled.shape[1]), int(upscaled.shape[0])]
         context.current_image = upscaled
-        context.final_guard_reference = upscaled.copy()
     except PureScaleUnavailable as error:
         metadata["fallback_reason"] = str(error)
         context.warnings.append(str(error))
@@ -1203,12 +1639,149 @@ def restore_degraded_faces(image, input_quality):
         return image, metadata
 
 
+def _identity_model_configured():
+    """Whether an identity model is configured at all (no model is loaded)."""
+    from identities.providers import DisabledIdentityProvider, get_identity_provider
+
+    return not isinstance(get_identity_provider(), DisabledIdentityProvider)
+
+
+NO_IDENTITY_MODEL_REASON = "No identity model is configured, so identity was not checked."
+
+
+def _prepare_identity_reference(context):
+    """Embed the source's faces once: ``(state, reason)``.
+
+    ``state`` is ``ready`` (a comparison is possible), ``inconclusive`` (the
+    source has no face reliable enough to compare) or ``unavailable`` (no
+    consent, the guard is off, or the detector/identity model is missing).
+    """
+    if context.identity_reference_state:
+        return context.identity_reference_state, context.identity_reference_reason
+    state, reason = "unavailable", ""
+    if not settings.IDENTITY_GUARD_ENABLED:
+        reason = "The identity guard is disabled."
+    elif not context.allow_biometric_processing:
+        reason = "Biometric consent has not been granted."
+    else:
+        try:
+            reference, reason = build_identity_reference(context.source_image)
+            context.identity_reference = reference
+            state = "ready" if reference is not None else "inconclusive"
+            if reference is None and not _identity_model_configured():
+                # Nothing could have been compared even if a face had been found.
+                state, reason = "unavailable", NO_IDENTITY_MODEL_REASON
+        except IdentityGuardUnavailable as error:
+            reason = str(error)
+        except (cv2.error, ValueError, TypeError):
+            logger.exception("The identity reference could not be prepared.")
+            reason = "The identity guard failed safely."
+    context.identity_reference_state = state
+    context.identity_reference_reason = reason
+    return state, reason
+
+
+BYPASS_AI_MAX = "ai_max_style"
+BYPASS_OPERATOR = "operator_setting"
+
+
+def _identity_requirement_bypass(context):
+    """Why face restoration may run without a verified identity, or ``""``.
+
+    Named so it can be reported: a result produced under a bypass must say so
+    rather than leave a reader to assume the usual check applied.
+    """
+    if not settings.GFPGAN_REQUIRE_IDENTITY_CHECK:
+        return BYPASS_OPERATOR
+    if context.style == EnhancementStyle.AI_MAX:
+        return BYPASS_AI_MAX
+    return ""
+
+
+def identity_verification_summary(context):
+    """One explicit statement of what was and was not verified about identity.
+
+    ``verified`` is true only when the saved image's faces were compared with
+    the source's and held. A check that was skipped, unavailable or bypassed is
+    never reported as verified.
+    """
+    status = identity_status(context.identity_guard)
+    verified = status == IDENTITY_VERIFIED
+    restored = bool(context.face_restoration.get("applied"))
+    bypass = _identity_requirement_bypass(context)
+    unverified_restoration = restored and not verified
+    notice = ""
+    if unverified_restoration:
+        cause = {
+            BYPASS_AI_MAX: "AI Max does not require an identity check",
+            BYPASS_OPERATOR: "this deployment does not require an identity check",
+        }.get(bypass, "the identity check did not confirm it")
+        notice = (
+            "Faces in this image were generatively restored without a verified "
+            f"identity check ({cause}; identity: {status}). A restored face may "
+            "not match the person in the original."
+        )
+    elif bypass == BYPASS_AI_MAX and not verified:
+        notice = (
+            f"AI Max does not require an identity check, and identity was not verified ({status})."
+        )
+    return {
+        "status": status,
+        "verified": verified,
+        "reason": context.identity_guard.get("fallback_reason", ""),
+        "required_for_face_restoration": not bypass,
+        "requirement_bypass": bypass or None,
+        "face_restoration_applied": restored,
+        "face_restoration_unverified": unverified_restoration,
+        "notice": notice,
+    }
+
+
+def _face_restoration_gate(context):
+    """Refuse generative face restoration when identity cannot be checked.
+
+    GFPGAN synthesises facial detail. Without a source face to compare the
+    result with, nothing can tell a restored face from a changed one, so the
+    default modes do not run it. The explicit AI Max style is the user asking
+    for the strongest result and is not gated.
+    """
+    if _identity_requirement_bypass(context):
+        return ""
+    state, reason = _prepare_identity_reference(context)
+    if state == "ready":
+        return ""
+    return (
+        "Face restoration was not applied because identity cannot be verified "
+        f"for this image ({reason or state})."
+    )
+
+
 def face_restoration_stage(context):
     """Restore only eligible degraded faces; keep the background unchanged."""
-    restored, metadata = restore_degraded_faces(
-        context.current_image,
-        context.input_quality,
-    )
+    if context.face_restoration_withdrawn:
+        return context  # the withdrawn record written by enhance_bgr stands
+    refusal = ""
+    if settings.GFPGAN_ENABLED and context.plan.get("steps", {}).get("face_restoration", {}).get("planned", True):
+        refusal = _face_restoration_gate(context)
+    if refusal:
+        restored, metadata = context.current_image, {
+            "requested": True,
+            "enabled": True,
+            "applied": False,
+            "provider": "private_gfpgan_v1_4",
+            "fallback_reason": refusal,
+            "identity_gate": "refused",
+            "identity_embedding_verified": False,
+        }
+    else:
+        restored, metadata = restore_degraded_faces(
+            context.current_image,
+            context.input_quality,
+        )
+    if not refusal and metadata.get("enabled"):
+        metadata["identity_gate"] = {
+            BYPASS_AI_MAX: "bypassed_ai_max", BYPASS_OPERATOR: "not_enforced",
+        }.get(_identity_requirement_bypass(context), "passed")
     metadata["stage"] = "after_low_resolution_restoration"
     context.current_image = restored
     context.face_restoration = metadata
@@ -1235,9 +1808,35 @@ def sharpen_stage(context):
     return context
 
 
+def _guard_b_reference(context):
+    """The pre-restoration image on the output grid, for comparison only.
+
+    When an upscaler changed the pixel grid the reference is a plain bicubic
+    resize of the last image accepted before restoration. It adds no detail of
+    its own, so anything a model changed in brightness, contrast, clipping or
+    colour shows up as a difference instead of being part of the baseline.
+    """
+    reference = context.restoration_reference
+    basis = "pre_restoration_output"
+    if reference is None:
+        reference = context.source_image
+        basis = "original_source"
+    output_height, output_width = context.current_image.shape[:2]
+    resized = reference.shape[:2] != (output_height, output_width)
+    if resized:
+        reference = cv2.resize(
+            reference, (output_width, output_height), interpolation=cv2.INTER_CUBIC,
+        )
+    return reference, {
+        "basis": basis,
+        "resized_for_comparison": resized,
+        "dimensions": [int(output_width), int(output_height)],
+    }
+
+
 def output_guard_b_stage(context):
     """Apply the final safety guard after denoise, EDSR, and sharpening."""
-    reference = context.final_guard_reference
+    reference, reference_metadata = _guard_b_reference(context)
     reference_quality = analyze_image_quality(reference)
     guarded, output_quality, metadata = _quality_guard(
         reference,
@@ -1247,10 +1846,71 @@ def output_guard_b_stage(context):
         learned_model=False,
     )
     metadata["stage"] = "final_output"
+    metadata["reference"] = reference_metadata
     context.current_image = guarded
     context.output_quality = output_quality
     context.quality_guards["guard_b"] = metadata
     return context
+
+
+def face_fidelity_stage(context):
+    """Check each detected face on its own against the pre-restoration image."""
+    if not settings.FACE_FIDELITY_ENABLED:
+        context.face_fidelity = {"enabled": False, "status": "disabled", "faces_checked": 0, "faces_adjusted": 0}
+        return context
+    reference = context.restoration_reference
+    if reference is None:
+        reference = context.source_image
+    if reference is context.current_image:
+        # Nothing ran after the reference was taken, so there is nothing to judge.
+        context.face_fidelity = {
+            "enabled": True, "status": "not_required", "faces_checked": 0, "faces_adjusted": 0,
+            "fallback_reason": "No restoration or sharpening changed the image.",
+        }
+        return context
+    checked, metadata = check_face_regions(reference, context.current_image)
+    context.current_image = checked
+    context.face_fidelity = metadata
+    if metadata["faces_adjusted"]:
+        context.warnings.append(
+            "Enhancement was reduced on a face that moved too far from the source "
+            "in texture, structure, colour or highlights."
+        )
+    if metadata.get("status") == "unresolved":
+        context.warnings.append(
+            "A face still measured outside the fidelity limits after it was restored to the source."
+        )
+    _reconcile_face_restoration(context, metadata)
+    return context
+
+
+def _reconcile_face_restoration(context, face_check):
+    """Stop reporting a GFPGAN restoration that the face check took back out.
+
+    The face check judges against the image before any restoration. When it
+    put every face it checked back to that image (strength 0) and checked at
+    least as many faces as GFPGAN restored, no restored face is left in the
+    output, so the result must not claim one (in the algorithm label, the
+    identity notice or the stage report). A partial reduction leaves restored
+    detail in place and is reported as applied.
+    """
+    restoration = context.face_restoration
+    faces = face_check.get("faces") or []
+    if not restoration.get("applied") or not faces:
+        return
+    if any(face.get("applied_strength", 1.0) > 0.0 for face in faces):
+        return
+    if len(faces) < int(restoration.get("faces_restored") or 1):
+        return
+    reason = "Face restoration was undone by the face check: every restored face was put back to the source."
+    context.face_restoration = {
+        **restoration, "applied": False, "reverted_by_face_check": True, "fallback_reason": reason,
+    }
+    context.warnings.append(reason)
+    for report in context.stage_reports:
+        if report["stage"] == "face_restoration" and report.get("status") == "accepted":
+            report["status"] = "reverted"
+            report["fallback_reason"] = reason
 
 
 def validate_output_stage(context):
@@ -1276,10 +1936,9 @@ def validate_output_stage(context):
     ]
     expected_dimensions = source_dimensions
     source = "original_pixel_grid"
-    # At most one of these ever changes the pixel grid: hd_restoration_stage
-    # and purescale_super_resolution_stage are mutually exclusive (see their
-    # own docstrings), and low_resolution_restoration_stage (EDSR) only runs
-    # when HD restoration is disabled. PureVision never resizes.
+    # At most one of these ever changes the pixel grid: EDSR only runs when HD
+    # restoration is disabled, and PureScale refuses to run after either of
+    # them. PureVision and NAFNet never resize.
     if context.hd_restoration.get("applied"):
         expected_dimensions = list(context.hd_restoration["output_dimensions"])
         source = "bounded_hd_restoration_output_grid"
@@ -1387,12 +2046,29 @@ def identity_guard_stage(context):
         metadata["fallback_reason"] = "Biometric consent has not been granted."
         context.identity_guard = metadata
         return context
+    # The face-restoration gate may already have embedded the source's faces
+    # (or found there is nothing to compare); reuse that rather than repeat it.
+    state = context.identity_reference_state
+    if state in {"inconclusive", "unavailable"}:
+        metadata["status"] = "skipped"
+        metadata["fallback_reason"] = context.identity_reference_reason
+        metadata["reference_checked"] = state == "inconclusive"
+        context.identity_guard = metadata
+        return context
+    prepared = {"reference": context.identity_reference} if state == "ready" else {}
     try:
         guarded, guard_metadata = apply_identity_guard(
-            context.source_image, context.current_image
+            context.source_image, context.current_image, **prepared,
         )
         metadata.update(guard_metadata)
         context.current_image = guarded
+        if (
+            metadata.get("status") == "skipped"
+            and metadata.get("reference_checked")
+            and not _identity_model_configured()
+        ):
+            metadata["reference_checked"] = False
+            metadata["fallback_reason"] = NO_IDENTITY_MODEL_REASON
         if guard_metadata["status"] == "unresolved":
             context.warnings.append(
                 "Enhancement changed a face more than the identity guard allows "
@@ -1409,9 +2085,191 @@ def identity_guard_stage(context):
     return context
 
 
+class PipelineInterrupted(Exception):
+    """The pipeline was told to stop; no output must be published."""
+
+
+class EnhancementCancelled(PipelineInterrupted):
+    """The user cancelled the batch while this image was being enhanced."""
+
+
+class EnhancementSuperseded(PipelineInterrupted):
+    """Another worker now owns this result."""
+
+
+# (name, function, optional, metadata attribute on the context).
+# A *required* stage measures or guards: if it cannot run, nothing downstream can
+# be trusted, so its error fails the enhancement. An *optional* stage proposes a
+# candidate: if it fails, the image it was given is kept and the pipeline goes on.
+_HEAD_STAGES = (
+    ("analyze_original", analyze_original_stage, False, None),
+    ("exposure_enhancement", exposure_enhancement_stage, True, "zero_dce"),
+    ("output_guard_a", output_guard_a_stage, False, None),
+    ("measure_post_exposure_noise", measure_post_exposure_noise_stage, False, None),
+    ("adaptive_denoise", adaptive_denoise_stage, True, "adaptive_denoise"),
+    ("purevision_restoration", purevision_restoration_stage, True, "purevision"),
+    ("low_resolution_restoration", low_resolution_restoration_stage, True, "restoration"),
+    ("hd_restoration", hd_restoration_stage, True, "hd_restoration"),
+    ("purescale_super_resolution", purescale_super_resolution_stage, True, "purescale"),
+)
+_TAIL_STAGES = (
+    ("face_restoration", face_restoration_stage, True, "face_restoration"),
+    ("sharpen", sharpen_stage, True, None),
+    ("output_guard_b", output_guard_b_stage, False, None),
+    ("face_fidelity", face_fidelity_stage, True, "face_fidelity"),
+    ("colorization", colorization_stage, True, "colorization"),
+    ("dynamic_style", dynamic_style_stage, True, "dynamic_style"),
+    ("identity_guard", identity_guard_stage, True, "identity_guard"),
+)
+# Stages that may run a model or a slow filter: cancellation is checked first.
+_CHECKPOINT_STAGES = frozenset({
+    "exposure_enhancement", "adaptive_denoise", "purevision_restoration",
+    "low_resolution_restoration", "hd_restoration", "purescale_super_resolution",
+    "face_restoration", "colorization", "identity_guard",
+})
+_REPORTED_KEYS = (
+    "provider", "model", "device", "tile_size", "memory_retries",
+    "checkpoint_sha256_prefix", "strength", "output_blend",
+    "requested_strength", "acceptance", "benefit", "detail", "tiles", "tiles_rejected",
+)
+
+
+def _failed_stage_metadata(context, attribute, reason):
+    """A complete "did not run" record for a stage that raised."""
+    previous = getattr(context, attribute) or {}
+    metadata = {
+        **previous,
+        "requested": bool(previous.get("requested", True)),
+        "applied": False,
+        "failed": True,
+        "fallback_reason": reason,
+    }
+    if attribute == "hd_restoration":
+        metadata.update({
+            "enabled": bool(settings.HD_RESTORATION_ENABLED),
+            "deblur": {"applied": False, "fallback_reason": reason},
+            "super_resolution": {"applied": False},
+        })
+    elif attribute == "adaptive_denoise":
+        metadata.update({"strength": 0, "reason": "stage_failed"})
+    elif attribute == "identity_guard":
+        metadata.update({"enabled": bool(settings.IDENTITY_GUARD_ENABLED), "status": "skipped"})
+    elif attribute == "face_fidelity":
+        metadata.update({"enabled": True, "status": "unavailable", "faces_checked": 0, "faces_adjusted": 0})
+    return metadata
+
+
+def _stage_report(context, name, optional, attribute, failed, changed, duration_ms):
+    """What one stage produced, in the same shape for every stage."""
+    metadata = (getattr(context, attribute) or {}) if attribute else {}
+    report = {"stage": name, "changed_pixels": bool(changed), "duration_ms": duration_ms}
+    if failed:
+        status = "failed"
+    elif not optional:
+        status = "completed"
+    elif attribute in {"identity_guard", "face_fidelity"}:
+        status = "completed"
+        report["outcome"] = metadata.get("status", "")
+    elif name == "exposure_enhancement":
+        status = "accepted" if changed else "skipped"
+        if not metadata.get("applied"):
+            metadata = {"provider": "opencv_lab_gamma_clahe", "device": "cpu",
+                        "fallback_reason": metadata.get("fallback_reason", "")}
+    elif attribute is None:
+        status = "accepted" if changed else "skipped"
+    elif metadata.get("applied"):
+        status = "accepted"
+    elif attribute == "hd_restoration" and metadata.get("deblur", {}).get("applied"):
+        status = "partially_accepted"
+    elif metadata.get("identity_gate") == "refused" or metadata.get("candidate_guard", {}).get("accepted") is False:
+        status = "rejected"
+    elif metadata.get("fallback_reason") and metadata.get("requested") and metadata.get("enabled", True):
+        status = "fallback"
+    else:
+        status = "skipped"
+    report["status"] = status
+    for key in _REPORTED_KEYS:
+        if metadata.get(key) not in (None, ""):
+            report[key] = metadata[key]
+    if attribute == "hd_restoration":
+        report["models"] = [
+            {key: part[key] for key in ("provider", "device", "tile_size", "memory_retries") if key in part}
+            | {"applied": bool(part.get("applied"))}
+            for part in (metadata.get("deblur", {}), metadata.get("super_resolution", {}))
+        ]
+    if metadata.get("fallback_reason"):
+        report["fallback_reason"] = metadata["fallback_reason"]
+    return report
+
+
+def _run_stage(context, name, function, optional, attribute):
+    """Run one stage, keeping the last safe image if an optional stage fails."""
+    if context.checkpoint is not None and name in _CHECKPOINT_STAGES:
+        context.checkpoint(name)
+    before = context.current_image
+    failed = False
+    started = time.perf_counter()
+    with _timed_pipeline_stage(context, name):
+        try:
+            function(context)
+        except (PipelineInterrupted, SoftTimeLimitExceeded, *TRANSIENT_INFRASTRUCTURE_ERRORS):
+            raise
+        except Exception:
+            if not optional:
+                raise
+            failed = True
+            logger.exception("Enhancement stage %s failed; the previous image was kept.", name)
+            context.current_image = before
+            reason = f"The {name.replace('_', ' ')} stage failed safely; the previous image was kept."
+            if attribute:
+                setattr(context, attribute, _failed_stage_metadata(context, attribute, reason))
+            context.warnings.append(reason)
+    if attribute and isinstance(getattr(context, attribute), dict):
+        stage_metadata = getattr(context, attribute)
+        rejected = sum(
+            int(part.get("tiles_rejected") or 0)
+            for part in (stage_metadata, stage_metadata.get("deblur") or {}, stage_metadata.get("super_resolution") or {})
+            if isinstance(part, dict)
+        )
+        if rejected:
+            context.warnings.append(
+                f"The {name.replace('_', ' ')} model diverged on {rejected} tile(s); "
+                "those areas were left unrestored."
+            )
+    if name == "adaptive_denoise":
+        # Whatever happened, this is the last image before any restoration model.
+        context.restoration_reference = context.current_image
+    if attribute and isinstance(getattr(context, attribute), dict):
+        getattr(context, attribute)["stage_duration_ms"] = round((time.perf_counter() - started) * 1000, 3)
+    context.stage_reports.append(_stage_report(
+        context, name, optional, attribute, failed,
+        # A guard returns a new array even when it kept every pixel, so identity
+        # alone would report a change that did not happen.
+        changed=(
+            context.current_image is not before
+            and (
+                context.current_image.shape != before.shape
+                or not np.array_equal(context.current_image, before)
+            )
+        ),
+        duration_ms=round((time.perf_counter() - started) * 1000, 3),
+    ))
+
+
+def _face_restoration_needs_withdrawing(context):
+    """True when faces were generatively restored but identity was not confirmed."""
+    return (
+        context.face_restoration.get("applied")
+        and settings.GFPGAN_REQUIRE_IDENTITY_CHECK
+        and context.style != EnhancementStyle.AI_MAX
+        and not context.face_restoration_withdrawn
+        and identity_status(context.identity_guard) != IDENTITY_VERIFIED
+    )
+
+
 def enhance_bgr(
     image, requested_level=EnhancementLevel.AUTO, style=EnhancementStyle.NATURAL,
-    allow_biometric_processing=True, use_zero_dce=True,
+    allow_biometric_processing=True, use_zero_dce=True, checkpoint=None,
 ):
     """Return an enhanced BGR image, applied level, and auditable parameters.
 
@@ -1423,40 +2281,73 @@ def enhance_bgr(
     does not bypass the separate PURESCALE_ENABLED/PUREVISION_ENABLED/
     GFPGAN_ENABLED license-gated flags -- those stay under the platform
     operator's control either way).
+
+    ``checkpoint`` is called with a stage name before each expensive stage and
+    may raise ``PipelineInterrupted`` to stop (cancellation, lost ownership).
+
+    The source array is never modified. Every stage that changes pixels proposes
+    a candidate; ``stage_reports`` records whether it was accepted and why not.
     """
     if style == EnhancementStyle.AI_MAX:
         requested_level = EnhancementLevel.HIGH
     context = EnhancementPipelineContext(
         image, requested_level, style=style,
         allow_biometric_processing=allow_biometric_processing,
-        use_zero_dce=use_zero_dce,
+        use_zero_dce=use_zero_dce, checkpoint=checkpoint,
     )
-    stages = (
-        ("analyze_original", analyze_original_stage),
-        ("exposure_enhancement", exposure_enhancement_stage),
-        ("output_guard_a", output_guard_a_stage),
-        ("measure_post_exposure_noise", measure_post_exposure_noise_stage),
-        ("adaptive_denoise", adaptive_denoise_stage),
-        ("purevision_restoration", purevision_restoration_stage),
-        ("low_resolution_restoration", low_resolution_restoration_stage),
-        ("hd_restoration", hd_restoration_stage),
-        ("purescale_super_resolution", purescale_super_resolution_stage),
-        ("face_restoration", face_restoration_stage),
-        ("sharpen", sharpen_stage),
-        ("output_guard_b", output_guard_b_stage),
-        ("colorization", colorization_stage),
-        ("dynamic_style", dynamic_style_stage),
-        ("identity_guard", identity_guard_stage),
-        ("validate_output", validate_output_stage),
-    )
-    for stage_name, stage_function in stages:
-        with _timed_pipeline_stage(context, stage_name):
-            stage_function(context)
+    for stage in _HEAD_STAGES:
+        _run_stage(context, *stage)
+    before_tail = context.current_image
+    reports_before_tail = len(context.stage_reports)
+    warnings_before_tail = len(context.warnings)
+    for stage in _TAIL_STAGES:
+        _run_stage(context, *stage)
+    if _face_restoration_needs_withdrawing(context):
+        # The restored face could not be shown to be the same person, so the
+        # last image without generative restoration is finished instead.
+        status = identity_status(context.identity_guard)
+        reason = (
+            "Face restoration was withdrawn because identity could not be verified "
+            f"on the restored result ({status})."
+        )
+        withdrawn = {**context.face_restoration, "applied": False, "withdrawn": True, "fallback_reason": reason}
+        context.face_restoration_withdrawn = True
+        context.face_restoration = withdrawn
+        # The first tail's image is discarded, so are its reports and warnings:
+        # what is kept describes the image that is saved. The discarded reports
+        # stay available for audit.
+        context.discarded_stage_reports = context.stage_reports[reports_before_tail:]
+        del context.stage_reports[reports_before_tail:]
+        del context.warnings[warnings_before_tail:]
+        context.warnings.append(reason)
+        context.current_image = before_tail
+        for stage in _TAIL_STAGES:
+            _run_stage(context, *stage)
+    _run_stage(context, "validate_output", validate_output_stage, False, None)
 
+    identity_verification = identity_verification_summary(context)
+    # True when every kept stage left the pixels alone: the photo had no defect
+    # this pipeline corrects. The output is then the source, re-encoded.
+    # Discarded passes (above) are not counted.
+    no_correction_needed = not any(entry["changed_pixels"] for entry in context.stage_reports)
+    context.plan["no_correction_needed"] = no_correction_needed
+    # The restoration stage could not know the final verdict; record it now.
+    context.face_restoration["identity_embedding_verified"] = bool(
+        context.face_restoration.get("applied") and identity_verification["verified"]
+    )
+    if identity_verification["face_restoration_unverified"]:
+        context.warnings.append(identity_verification["notice"])
     normalized_comparison = compare_image_quality(
         context.source_image,
         context.current_image,
     )
+    # Colorization, the style preset and the identity guard all run after guard
+    # B, so its measurement is not the saved image's. Measure the final pixels
+    # (already done above when the grid is unchanged).
+    if context.current_image.shape[:2] == context.source_image.shape[:2]:
+        context.output_quality = normalized_comparison["after"]
+    else:
+        context.output_quality = analyze_image_quality(context.current_image)
     if context.zero_dce["requested"] and not context.zero_dce["applied"]:
         context.warnings.append(
             "Zero-DCE was requested for low light but was unavailable; "
@@ -1481,9 +2372,9 @@ def enhance_bgr(
         algorithm = f"{algorithm}+private_gfpgan_v1_4"
     if context.purevision["applied"]:
         algorithm = f"{algorithm}+purevision_rrdb_1x"
+    if context.hd_restoration["deblur"]["applied"]:
+        algorithm = f"{algorithm}+nafnet_gopro"
     if context.hd_restoration["applied"]:
-        if context.hd_restoration["deblur"]["applied"]:
-            algorithm = f"{algorithm}+nafnet_gopro"
         algorithm = f"{algorithm}+realesrgan_x4plus"
     if context.purescale["applied"]:
         algorithm = f"{algorithm}+purescale_safmn_2x"
@@ -1501,7 +2392,7 @@ def enhance_bgr(
         "identity_guard": context.identity_guard,
         "mean_input_luminance": context.input_quality["mean_luminance"],
         "algorithm": algorithm,
-        "pipeline_version": "staged_natural_enhancement_v3",
+        "pipeline_version": "staged_candidate_pipeline_v4",
         "colour_policy": (
             "learned_rgb_curves"
             if context.zero_dce["applied"]
@@ -1509,6 +2400,14 @@ def enhance_bgr(
         ),
         "quality_before": context.input_quality,
         "quality_after": context.output_quality,
+        "quality_after_measurement_point": "final_output",
+        "plan": context.plan,
+        "no_correction_needed": no_correction_needed,
+        "stage_reports": context.stage_reports,
+        "discarded_stage_reports": context.discarded_stage_reports,
+        "identity_status": identity_verification["status"],
+        "identity_verification": identity_verification,
+        "face_fidelity": context.face_fidelity,
         "quality_comparison": normalized_comparison,
         # Backward-compatible alias retained for clients that previously
         # consumed the single exposure guard. The complete two-guard contract
@@ -1537,6 +2436,8 @@ def enhance_bgr(
             "purescale_enabled": settings.PURESCALE_ENABLED,
             "colorization_enabled": settings.COLORIZATION_ENABLED,
             "identity_guard_enabled": settings.IDENTITY_GUARD_ENABLED,
+            "face_fidelity_enabled": settings.FACE_FIDELITY_ENABLED,
+            "gfpgan_require_identity_check": settings.GFPGAN_REQUIRE_IDENTITY_CHECK,
         },
         "warnings": context.warnings,
     }
@@ -1557,45 +2458,169 @@ def _read_standardized_image(preprocessing):
     return decoded
 
 
-def _read_full_resolution_original(result):
-    """Decode the EXIF-oriented original without a resize or destructive overwrite."""
+def _visible_mean_colour(pixels, alpha, fallback):
+    """Average colour of the pixels that can be seen, or ``fallback`` if none can."""
+    visible = alpha > 0
+    if not visible.any():
+        return fallback
+    return np.rint(pixels[visible].mean(axis=0)).astype(np.uint8)
+
+
+def _read_full_resolution_original(result, keep_alpha=False, decoding=None):
+    """Decode the EXIF-oriented original without a resize or destructive overwrite.
+
+    The original is brought into the working format (8-bit sRGB) by
+    ``uploads.decoding.to_working_colour``; what that converted (bit depth,
+    colour profile) is added to the ``decoding`` dict when one is passed.
+
+    With ``keep_alpha`` the return value is ``(bgr, alpha)``: ``alpha`` is the
+    source's transparency (``None`` when it has none), and the colour channels
+    are the source's own, not a blend with the background, so re-attaching the
+    alpha later leaves no pale fringe on soft edges. Fully transparent pixels,
+    whose stored colour is arbitrary, take the average colour of the visible
+    ones, so an invisible area cannot pass for blown highlights or deep shadow
+    in the exposure analysis.
+    """
     original = result.image.original_file
     if not original:
         raise ValidationError("The original image is unavailable.")
     original.open("rb")
+    alpha = None
     try:
         with Image.open(original) as source:
             source.load()
-            working = ImageOps.exif_transpose(source)
-            if working.mode in {"RGBA", "LA"} or (
-                working.mode == "P" and "transparency" in working.info
-            ):
-                rgba = working.convert("RGBA")
-                background = Image.new(
-                    "RGB",
-                    rgba.size,
-                    ImageColor.getrgb(settings.PREPROCESS_TRANSPARENT_BACKGROUND),
-                )
-                background.paste(rgba, mask=rgba.getchannel("A"))
-                working = background
+            working, notes = to_working_colour(source)
+            if decoding is not None:
+                decoding.update(notes)
+            if working.mode == "RGBA":
+                rgba = working
+                background_colour = ImageColor.getrgb(settings.PREPROCESS_TRANSPARENT_BACKGROUND)
+                straight = np.asarray(rgba, dtype=np.uint8)
+                if keep_alpha and int(straight[:, :, 3].min()) < 255:
+                    alpha = straight[:, :, 3].copy()
+                    rgb = straight[:, :, :3].copy()
+                    rgb[alpha == 0] = _visible_mean_colour(rgb, alpha, background_colour[:3])
+                else:
+                    background = Image.new("RGB", rgba.size, background_colour)
+                    background.paste(rgba, mask=rgba.getchannel("A"))
+                    rgb = np.asarray(background, dtype=np.uint8)
             else:
-                working = working.convert("RGB")
-            rgb = np.asarray(working, dtype=np.uint8)
+                rgb = np.asarray(working.convert("RGB"), dtype=np.uint8)
     except (UnidentifiedImageError, OSError, SyntaxError) as error:
         raise ValidationError("The original image cannot be decoded safely.") from error
     finally:
         original.close()
-    return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    return (bgr, alpha) if keep_alpha else bgr
 
 
-def _read_enhancement_source(result):
+def _read_standardized_with_alpha(preprocessing):
+    """The standardized copy as ``(bgr, alpha)``; ``alpha`` is ``None`` when opaque."""
+    if preprocessing.status != "completed" or not preprocessing.processed_file:
+        raise ValidationError("The image must finish preprocessing before enhancement.")
+    preprocessing.processed_file.open("rb")
+    try:
+        payload = preprocessing.processed_file.read()
+    finally:
+        preprocessing.processed_file.close()
+    decoded = cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    if decoded is None or decoded.dtype != np.uint8 or decoded.ndim != 3 or decoded.shape[2] != 4:
+        return _read_standardized_image(preprocessing), None
+    alpha = decoded[:, :, 3].copy()
+    if int(alpha.min()) == 255:
+        return np.ascontiguousarray(decoded[:, :, :3]), None
+    bgr = np.ascontiguousarray(decoded[:, :, :3])
+    background = ImageColor.getrgb(settings.PREPROCESS_TRANSPARENT_BACKGROUND)[:3]
+    bgr[alpha == 0] = _visible_mean_colour(bgr, alpha, background[::-1])
+    return bgr, alpha
+
+
+def _read_enhancement_source(result, decoding=None):
     if settings.ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION:
         try:
-            return _read_full_resolution_original(result), "full_resolution_original"
+            return _read_full_resolution_original(result, decoding=decoding), "full_resolution_original"
         except ValidationError:
             # Legacy rows can legitimately have only their standardized file.
             pass
     return _read_standardized_image(result.preprocessing_result), "standardized_fallback"
+
+
+def _read_enhancement_source_with_alpha(result, decoding=None):
+    """``(bgr, alpha, strategy)`` for a result whose output format keeps transparency."""
+    if settings.ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION:
+        try:
+            bgr, alpha = _read_full_resolution_original(result, keep_alpha=True, decoding=decoding)
+            return bgr, alpha, "full_resolution_original"
+        except ValidationError:
+            pass
+    bgr, alpha = _read_standardized_with_alpha(result.preprocessing_result)
+    return bgr, alpha, "standardized_fallback"
+
+
+def _attach_alpha(image, alpha):
+    """Put the source's transparency back on the enhanced image, at its size."""
+    height, width = image.shape[:2]
+    if alpha.shape[:2] != (height, width):
+        shrinking = alpha.shape[0] > height
+        alpha = cv2.resize(
+            alpha, (width, height),
+            interpolation=cv2.INTER_AREA if shrinking else cv2.INTER_LINEAR,
+        )
+    return np.dstack((image, alpha))
+
+
+def _verify_encoded_output(payload, image, output_format):
+    """Decode what will be stored and confirm it is the image that was produced.
+
+    A file that cannot be decoded, has the wrong size or channels, or (for a
+    lossy format) differs from the enhanced pixels by more than the configured
+    error is never saved.
+    """
+    decoded = cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    if decoded is None or decoded.dtype != np.uint8:
+        raise ValidationError("The encoded output could not be read back.")
+    if decoded.ndim == 2:
+        decoded = decoded[:, :, None]
+    if decoded.shape != image.shape:
+        raise ValidationError("The encoded output does not match the enhanced image.")
+    difference = cv2.absdiff(decoded, image)
+    mean_error = float(difference.mean())
+    limit = 0.0 if output_format == "png" else float(settings.ENHANCEMENT_MAX_ENCODING_ERROR)
+    if mean_error > limit:
+        raise ValidationError("The encoded output lost more detail than the configured limit allows.")
+    mean_squared = float(np.mean(difference.astype(np.float32) ** 2))
+    return {
+        "verified": True,
+        "format": output_format,
+        "bytes": len(payload),
+        "dimensions": [int(decoded.shape[1]), int(decoded.shape[0])],
+        "channels": int(decoded.shape[2]),
+        "mean_absolute_error": round(mean_error, 4),
+        "maximum_mean_absolute_error": limit,
+        "psnr_db": None if mean_squared == 0 else round(float(10 * np.log10(255.0 ** 2 / mean_squared)), 2),
+    }
+
+
+def _fit_pixel_budget(image):
+    """Reduce an oversized source to ENHANCEMENT_MAX_INPUT_PIXELS before enhancing.
+
+    Uploads may be far larger than the pipeline can process in bounded time and
+    memory (denoising alone is linear in pixels and holds several float copies).
+    Within the budget the original pixel grid is untouched.
+    """
+    height, width = image.shape[:2]
+    budget = int(settings.ENHANCEMENT_MAX_INPUT_PIXELS)
+    metadata = {
+        "maximum_input_pixels": budget,
+        "original_dimensions": [int(width), int(height)],
+        "reduced": False,
+    }
+    if budget <= 0 or width * height <= budget:
+        return image, metadata
+    scale = (budget / float(width * height)) ** 0.5
+    reduced_size = (max(1, int(width * scale)), max(1, int(height * scale)))
+    metadata.update({"reduced": True, "working_dimensions": list(reduced_size)})
+    return cv2.resize(image, reduced_size, interpolation=cv2.INTER_AREA), metadata
 
 
 def _encode_output(image, preprocessing):
@@ -1682,8 +2707,144 @@ def create_enhancement_result(
     )
 
 
-def process_enhancement_result(result):
-    """Process one result and persist a separate enhanced output."""
+UNSAFE_FAILURE_REASON = "The image could not be enhanced safely."
+TIME_LIMIT_FAILURE_REASON = (
+    "Enhancement ran out of time before this image finished. You can start it again."
+)
+
+
+def _discard_stored_output(result, stored_name):
+    """Remove an output file written for a result that did not complete."""
+    if not stored_name:
+        return
+    try:
+        result.enhanced_file.storage.delete(stored_name)
+    except OSError:
+        logger.exception("Could not remove the abandoned output %s.", stored_name)
+
+
+class ResultInProgress(Exception):
+    """Another task holds a live claim on this result."""
+
+    def __init__(self, retry_after):
+        super().__init__("Another worker is already enhancing this image.")
+        self.retry_after = retry_after
+
+
+CANCELLED_REASON = "Processing was cancelled by the user."
+
+
+def _owns(result, token):
+    return ImageEnhancementResult.objects.filter(pk=result.pk, claim_token=token).exists()
+
+
+def _mark_result_failed(result, started, reason, token=None):
+    if token is not None and not _owns(result, token):
+        return  # another worker took this result over; its outcome is not ours to write
+    result.status = EnhancementStatus.FAILED
+    result.failure_reason = reason
+    result.claim_token = ""
+    result.processing_duration_ms = max(1, round((time.perf_counter() - started) * 1000))
+    result.finished_at = timezone.now()
+    result.save(update_fields=[
+        "status", "failure_reason", "claim_token", "processing_duration_ms", "finished_at", "updated_at",
+    ])
+
+
+def _mark_result_cancelled(result, token):
+    if not _owns(result, token):
+        return
+    result.status = EnhancementStatus.CANCELLED
+    result.failure_reason = CANCELLED_REASON
+    result.claim_token = ""
+    result.finished_at = timezone.now()
+    result.save(update_fields=["status", "failure_reason", "claim_token", "finished_at", "updated_at"])
+
+
+# How often a running enhancement renews its claim between checkpoints. None
+# means a quarter of the lease, so a renewal or two lost to a database blip
+# still leaves the claim alive. Tests lower it.
+CLAIM_RENEWAL_INTERVAL_SECONDS = None
+
+
+class ClaimRenewal:
+    """Keep a claim alive while one long stage runs between checkpoints.
+
+    Checkpoints refresh the claim between stages, but a single stage (a large
+    image through a model on the CPU) can outlast the lease, and a duplicate
+    would then take over live work. A background thread renews the claim while
+    this execution runs. It stops when the execution ends, when the claim is no
+    longer this execution's, and once the task time limit has passed: no
+    supported execution runs longer, so a claim still held then belongs to a
+    stuck worker and must be allowed to lapse. A worker that dies takes the
+    thread with it, so its claim lapses as before.
+    """
+
+    def __init__(self, result_pk, token):
+        self.result_pk = result_pk
+        self.token = token
+        self.started = time.monotonic()
+        self.interval = CLAIM_RENEWAL_INTERVAL_SECONDS or settings.ENHANCEMENT_CLAIM_LEASE_SECONDS / 4
+        self._stop = threading.Event()
+        self._thread = None
+
+    def renew(self):
+        """Refresh the claim; False once there is nothing (or no longer a reason) to renew."""
+        if time.monotonic() - self.started > settings.CELERY_TASK_TIME_LIMIT:
+            return False
+        now = timezone.now()
+        return bool(ImageEnhancementResult.objects.filter(
+            pk=self.result_pk, claim_token=self.token, status=EnhancementStatus.PROCESSING,
+        ).update(claimed_at=now, updated_at=now))
+
+    def _run(self):
+        from django.db import connections
+
+        try:
+            while not self._stop.wait(self.interval):
+                try:
+                    if not self.renew():
+                        return
+                except TRANSIENT_INFRASTRUCTURE_ERRORS:
+                    logger.warning("Could not renew the claim on result %s; trying again.", self.result_pk)
+        finally:
+            connections.close_all()  # this thread's own connections only
+
+    def __enter__(self):
+        self._thread = threading.Thread(target=self._run, name=f"claim-renewal-{self.result_pk}", daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc_info):
+        self._stop.set()
+        self._thread.join()
+        return False
+
+
+def _resumes_own_claim(result, resume_token):
+    """Whether the live claim is the one this task's previous execution held.
+
+    Celery runs a retry only after the execution that asked for it has ended,
+    and that execution hands its claim token to the retry. Nothing else proves
+    the claim has no worker behind it: a retry *number* also rises when a task
+    retries to wait for a claim it never held, so a duplicate delivery could
+    otherwise take over work that is still running.
+    """
+    return bool(resume_token) and result.claim_token == resume_token
+
+
+def _claim_result(result, token, owner=None, resume_token=""):
+    """Take ownership of a result, or refuse while another worker holds it.
+
+    A queue can deliver one task twice, and two tasks can target one result.
+    The claim is a token plus a timestamp renewed while the work runs; a claim
+    not renewed within ENHANCEMENT_CLAIM_LEASE_SECONDS belongs to a worker that
+    died, and may be taken over. ``owner`` is ``(task id, attempt number)`` and
+    is recorded for diagnosis only. ``resume_token`` is the claim this task's
+    previous execution held: a retry resumes it at once instead of waiting.
+    """
+    lease_seconds = settings.ENHANCEMENT_CLAIM_LEASE_SECONDS
+    lease = timedelta(seconds=lease_seconds)
     with transaction.atomic():
         result = (
             ImageEnhancementResult.objects.select_for_update()
@@ -1691,25 +2852,95 @@ def process_enhancement_result(result):
             .get(pk=result.pk)
         )
         if result.status == EnhancementStatus.COMPLETED and result.enhanced_file:
-            return result
+            return result, False
         if result.status == EnhancementStatus.CANCELLED:
-            return result
+            return result, False
+        now = timezone.now()
+        if (
+            result.status == EnhancementStatus.PROCESSING
+            and result.claim_token
+            and result.claimed_at
+            and now - result.claimed_at < lease
+            and not _resumes_own_claim(result, resume_token)
+        ):
+            remaining = lease - (now - result.claimed_at)
+            # Look again when the claim would lapse: never later than one lease.
+            raise ResultInProgress(min(lease_seconds, max(1, math.ceil(remaining.total_seconds()))))
         result.status = EnhancementStatus.PROCESSING
-        result.started_at = result.started_at or timezone.now()
+        result.claim_token = token
+        result.claimed_at = now
+        result.claim_task_id, result.claim_attempt = owner or ("", 0)
+        result.started_at = result.started_at or now
         result.finished_at = None
         result.failure_reason = ""
-        result.save(update_fields=["status", "started_at", "finished_at", "failure_reason", "updated_at"])
+        result.save(update_fields=[
+            "status", "claim_token", "claimed_at", "claim_task_id", "claim_attempt",
+            "started_at", "finished_at", "failure_reason", "updated_at",
+        ])
+    return result, True
+
+
+def process_enhancement_result(result, claim_owner=None, token=None, resume_token=""):
+    """Process one result and persist a separate enhanced output.
+
+    Safe to call twice for the same result, at the same time or one after the
+    other: only the holder of the claim enhances, and only the holder publishes.
+    ``token`` is the claim token to use (the caller keeps it, to tell its own
+    claim from another worker's); ``resume_token`` is the claim the caller's
+    previous, ended execution held, which it may resume. ``claim_owner`` is the
+    calling task's ``(id, attempt number)``, recorded for diagnosis.
+    """
+    token = token or uuid.uuid4().hex
+    result, claimed = _claim_result(result, token, claim_owner, resume_token)
+    if not claimed:
+        return result
+    with ClaimRenewal(result.pk, token):
+        return _process_claimed_result(result, token)
+
+
+def _process_claimed_result(result, token):
+    batch_id = result.image.batch_id
+
+    def checkpoint(stage_name):
+        """Refresh the claim; stop if it was lost or the batch was cancelled."""
+        still_ours = ImageEnhancementResult.objects.filter(
+            pk=result.pk, claim_token=token, status=EnhancementStatus.PROCESSING,
+        ).update(claimed_at=timezone.now())
+        if not still_ours:
+            raise EnhancementSuperseded()
+        if UploadBatch.objects.filter(pk=batch_id, cancellation_requested=True).exists():
+            raise EnhancementCancelled()
 
     started = time.perf_counter()
     stored_name = None
     try:
-        source, source_strategy = _read_enhancement_source(result)
+        keep_alpha = result.preprocessing_result.output_format == "png"
+        decoding = {}
+        if keep_alpha:
+            source, alpha, source_strategy = _read_enhancement_source_with_alpha(result, decoding)
+        else:
+            source, source_strategy = _read_enhancement_source(result, decoding)
+            alpha = None
+        source, pixel_budget = _fit_pixel_budget(source)
+        if pixel_budget["reduced"]:
+            source_strategy = "original_reduced_to_pixel_budget"
         from privacy.services import biometric_processing_allowed
         enhanced, applied_level, parameters = enhance_bgr(
             source, result.requested_level, style=result.requested_style,
             allow_biometric_processing=biometric_processing_allowed(result.owner),
+            checkpoint=checkpoint,
         )
         parameters["source_resolution_strategy"] = source_strategy
+        if decoding:
+            parameters["source_decoding"] = decoding
+            if decoding["colour_profile"].get("error"):
+                parameters["warnings"].append(decoding["colour_profile"]["error"])
+        parameters["input_pixel_budget"] = pixel_budget
+        if pixel_budget["reduced"]:
+            parameters["warnings"].append(
+                "The original is larger than the enhancement pixel budget, so it "
+                "was enhanced at a reduced size. The original file is unchanged."
+            )
         parameters["source_dimensions"] = [
             int(source.shape[1]), int(source.shape[0])
         ]
@@ -1728,13 +2959,20 @@ def process_enhancement_result(result):
                 "enhancement was still attempted and may not fully correct the source defects."
             )
         parameters["quality_gate"] = quality_gate
-        payload, extension, output_format = _encode_output(enhanced, result.preprocessing_result)
+        parameters["transparency"] = {"source_had_alpha": alpha is not None, "preserved": alpha is not None}
+        output_image = _attach_alpha(enhanced, alpha) if alpha is not None else enhanced
+        payload, extension, output_format = _encode_output(output_image, result.preprocessing_result)
+        parameters["encoded_output"] = _verify_encoded_output(payload, output_image, output_format)
         source_stem = Path(result.preprocessing_result.output_name or result.image.original_name).stem
         output_name = f"{source_stem}_enhanced_{applied_level}{extension}"
+        # Last look before anything is written: a cancelled or taken-over
+        # result must not gain an output file.
+        checkpoint("publish")
         result.enhanced_file.save(output_name, ContentFile(payload), save=False)
         stored_name = result.enhanced_file.name
         result.applied_level = applied_level
         result.status = EnhancementStatus.COMPLETED
+        result.claim_token = ""
         result.output_name = output_name
         result.output_format = output_format
         result.output_width = int(enhanced.shape[1])
@@ -1744,26 +2982,45 @@ def process_enhancement_result(result):
         result.applied_parameters = parameters
         result.failure_reason = ""
         result.finished_at = timezone.now()
-        result.save()
+        with transaction.atomic():
+            # Publish only as the owner, under the row lock, so two workers can
+            # never both write a completed row.
+            current = ImageEnhancementResult.objects.select_for_update().only(
+                "status", "claim_token",
+            ).get(pk=result.pk)
+            if current.claim_token != token or current.status != EnhancementStatus.PROCESSING:
+                raise EnhancementSuperseded()
+            result.save()
         return result
-    except ValidationError:
-        if stored_name:
-            result.enhanced_file.storage.delete(stored_name)
-        result.status = EnhancementStatus.FAILED
-        result.failure_reason = "The image could not be enhanced safely."
-        result.processing_duration_ms = max(1, round((time.perf_counter() - started) * 1000))
-        result.finished_at = timezone.now()
-        result.save(update_fields=["status", "failure_reason", "processing_duration_ms", "finished_at", "updated_at"])
+    except EnhancementSuperseded:
+        logger.warning("Result %s was taken over or closed by another worker; this output was discarded.", result.pk)
+        _discard_stored_output(result, stored_name)
         raise
-    except (cv2.error, OSError, ValueError) as error:
-        if stored_name:
-            result.enhanced_file.storage.delete(stored_name)
-        result.status = EnhancementStatus.FAILED
-        result.failure_reason = "The image could not be enhanced safely."
-        result.processing_duration_ms = max(1, round((time.perf_counter() - started) * 1000))
-        result.finished_at = timezone.now()
-        result.save(update_fields=["status", "failure_reason", "processing_duration_ms", "finished_at", "updated_at"])
-        raise ValidationError("The image could not be enhanced safely.") from error
+    except EnhancementCancelled:
+        _discard_stored_output(result, stored_name)
+        _mark_result_cancelled(result, token)
+        raise
+    except TRANSIENT_INFRASTRUCTURE_ERRORS:
+        # The database went away; the row cannot be updated now. The task retries,
+        # and its last attempt records the failure.
+        _discard_stored_output(result, stored_name)
+        raise
+    except SoftTimeLimitExceeded:
+        _discard_stored_output(result, stored_name)
+        _mark_result_failed(result, started, TIME_LIMIT_FAILURE_REASON, token)
+        raise
+    except ValidationError:
+        _discard_stored_output(result, stored_name)
+        _mark_result_failed(result, started, UNSAFE_FAILURE_REASON, token)
+        raise
+    except Exception as error:
+        # Model runtimes fail in ways no fixed list covers (an out-of-memory
+        # RuntimeError, a MemoryError, a TypeError from a bad checkpoint). The
+        # user sees one safe sentence; the cause goes to the log.
+        logger.exception("Enhancement of result %s failed.", result.pk)
+        _discard_stored_output(result, stored_name)
+        _mark_result_failed(result, started, UNSAFE_FAILURE_REASON, token)
+        raise ValidationError(UNSAFE_FAILURE_REASON) from error
 
 
 EDITOR_CONTROL_NAMES = (

@@ -16,10 +16,30 @@ class ZeroDCEUnavailable(RuntimeError):
     """Raised when genuine Zero-DCE inference cannot be used safely."""
 
 
+def _verify_checksum(path):
+    """The file must be the one pinned in ZERO_DCE_MODEL_SHA256.
+
+    Zero-DCE was the one model loaded without an integrity check. Running is not
+    the same as being the expected file: two exports of the same weights by
+    different PyTorch versions both run, and differ in their bytes.
+    """
+    from identities.providers import verify_model_checksum
+    from rest_framework.exceptions import ValidationError
+
+    expected = str(settings.ZERO_DCE_MODEL_SHA256).strip().lower()
+    if len(expected) != 64:
+        raise ZeroDCEUnavailable("The Zero-DCE checksum is not configured.")
+    try:
+        verify_model_checksum(path, expected)
+    except ValidationError as error:
+        raise ZeroDCEUnavailable("The Zero-DCE ONNX model failed integrity verification.") from error
+
+
 def _load_zero_dce_model(model_path):
     path = Path(model_path)
     if not path.is_file():
         raise ZeroDCEUnavailable("The configured Zero-DCE ONNX model is unavailable.")
+    _verify_checksum(path)
     key = str(path.resolve())
     if key not in _MODEL_CACHE:
         try:
@@ -101,9 +121,10 @@ def enhance_with_zero_dce(image):
         inference_image, scalefactor=1.0 / 255.0, size=(infer_width, infer_height),
         mean=(0, 0, 0), swapRB=True, crop=False,
     )
+    with _MODEL_LOCK:
+        network = _load_zero_dce_model(settings.ZERO_DCE_MODEL_PATH)
     try:
         with _MODEL_LOCK:
-            network = _load_zero_dce_model(settings.ZERO_DCE_MODEL_PATH)
             network.setInput(blob)
             curves = network.forward()
     except cv2.error as error:
@@ -118,6 +139,7 @@ def enhance_with_zero_dce(image):
     )
     return output, {
         "provider": "facecloud_private_curve_onnx_opencv_dnn",
+        "device": "cpu",
         "model_path": Path(settings.ZERO_DCE_MODEL_PATH).name,
         "input_dimensions": [width, height],
         "inference_dimensions": [infer_width, infer_height],

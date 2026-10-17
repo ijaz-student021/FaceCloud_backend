@@ -52,6 +52,7 @@ EXACT = {
     "login_locked": ("login", "warning", "Sign-in was temporarily locked after repeated failures."),
     "logout": ("login", "info", "Signed out."),
     "logout_all": ("login", "info", "Signed out of every device."),
+    "session_revoked": ("login", "info", "A device was signed out."),
     "password_changed": ("login", "success", "Your password was changed."),
     "profile_updated": ("login", "success", "Your profile was updated."),
     "role_changed": ("admin", "info", "Your role was changed by an administrator."),

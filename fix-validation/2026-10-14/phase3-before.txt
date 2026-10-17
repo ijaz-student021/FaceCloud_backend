@@ -1,0 +1,10 @@
+code: /private/tmp/claude-501/-Users-Ali-FaceCloud-backend/25680eb7-bdb6-4c1e-bfbe-926a9cef1992/scratchpad/wt-diag/enhancement/services.py (commit 2f67f03, before Phase 3)
+old measure (Laplacian variance) on one sharp dead-leaves chart:
+  long edge  1536: variance   1324.8 blur defects []
+  long edge  1024: variance   1229.1 blur defects []
+  long edge   768: variance   2208.9 blur defects []
+  long edge   512: variance   3130.6 blur defects []
+  darkened x0.5: variance    332.0 blur defects []
+  darkened x0.25: variance     83.5 blur defects ['mild_blur']
+  flat grey frame: ['severe_blur']
+  3000x5333 close-up portrait: 9.36 ['severe_blur']

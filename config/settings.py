@@ -82,6 +82,7 @@ INSTALLED_APPS = [
     "thumbnails",
     "organizations",
     "moderation",
+    "contact",
     "search",
 ]
 
@@ -212,6 +213,13 @@ AI_RESTORATION_EDSR_MODEL_PATH = env(
     "AI_RESTORATION_EDSR_MODEL_PATH",
     default=str(BASE_DIR / ".runtime" / "models" / "EDSR_x2.pb"),
 )
+# The EDSR file must match this SHA-256 (docs/gpu/model_manifest.json): any
+# other file at the path is refused at load time, not only by the offline
+# manifest check.
+AI_RESTORATION_EDSR_MODEL_SHA256 = env(
+    "AI_RESTORATION_EDSR_MODEL_SHA256",
+    default="585623221baa070279a0d1e7e113a4c3faba0f318ca7fdd9a65d9afc0763d9b4",
+)
 AI_RESTORATION_SCALE = env.int("AI_RESTORATION_SCALE", default=2)
 AI_RESTORATION_MAX_INPUT_EDGE = env.int(
     "AI_RESTORATION_MAX_INPUT_EDGE",
@@ -248,10 +256,28 @@ NAFNET_MAX_MEAN_LUMINANCE_SHIFT = env.float("NAFNET_MAX_MEAN_LUMINANCE_SHIFT", d
 HD_RESTORATION_MAX_NATIVE_OUTPUT_PIXELS = env.int(
     "HD_RESTORATION_MAX_NATIVE_OUTPUT_PIXELS", default=20_000_000
 )
+# Real-ESRGAN is a 4x model, but its tiles are reduced to HD_RESTORATION_OUTPUT_SCALE
+# before they are accumulated, so memory follows the output, not the native 4x
+# result. This bounds that output; the native limit above still applies when the
+# output scale is 4.
+HD_RESTORATION_MAX_OUTPUT_PIXELS = env.int("HD_RESTORATION_MAX_OUTPUT_PIXELS", default=20_000_000)
+# Out-of-memory handling for every tiled model (enhancement/runtime.py): each
+# retry halves the tile edge, at most this many times and never below the minimum.
+# After that the stage gives up and the pipeline keeps its last safe image.
+ENHANCEMENT_OOM_MAX_RETRIES = env.int("ENHANCEMENT_OOM_MAX_RETRIES", default=2)
+ENHANCEMENT_MIN_TILE_SIZE = env.int("ENHANCEMENT_MIN_TILE_SIZE", default=64)
 ZERO_DCE_ENABLED = env.bool("ZERO_DCE_ENABLED", default=True)
 ZERO_DCE_MODEL_PATH = env(
     "ZERO_DCE_MODEL_PATH",
     default=str(BASE_DIR / ".runtime" / "models" / "zero_dce_epoch99.onnx"),
+)
+# The official Zero-DCE Epoch99 weights exported by scripts/export_zero_dce_onnx.py
+# under PyTorch 2.13.0 (docs/model-licenses/zero-dce-provenance.md). A file that
+# does not match is not loaded, and the OpenCV correction is used instead. Point
+# ZERO_DCE_MODEL_PATH at the private curve model only together with its own checksum.
+ZERO_DCE_MODEL_SHA256 = env(
+    "ZERO_DCE_MODEL_SHA256",
+    default="e5cb6f921c7997f89105f6aa86242f30ff3f5379f5c6cd5282eb2aada14dae14",
 )
 ZERO_DCE_MAX_INFERENCE_EDGE = env.int("ZERO_DCE_MAX_INFERENCE_EDGE", default=1024)
 ZERO_DCE_FULL_RESOLUTION_TILE_EDGE = env.int(
@@ -310,20 +336,46 @@ IDENTITY_GUARD_MIN_FACE_EDGE = env.int("IDENTITY_GUARD_MIN_FACE_EDGE", default=4
 # GFPGAN structural-similarity guard below); was off while that rollout was
 # still being validated.
 ADAPTIVE_DENOISE_ENABLED = env.bool("ADAPTIVE_DENOISE_ENABLED", default=True)
+# Denoise strength (the non-local-means ``h``) by measured noise score. Calibrated
+# against clean originals with synthetic Gaussian noise on four photographs
+# (scripts/evaluate_pipeline_cases.py and docs/features/10-12-image-enhancement.md):
+# the earlier ladder stopped at 7, which left a score-6 photo at SSIM 0.81 where
+# 10-12 reaches 0.84-0.85, and a score-10 photo at 0.50 where 16-18 reaches 0.63.
+# Each step sits at the low end of the range that scored best, to keep texture.
 ADAPTIVE_DENOISE_BREAKPOINTS = tuple(
     float(value)
     for value in env.list(
         "ADAPTIVE_DENOISE_BREAKPOINTS",
-        default=["1.0", "2.0", "3.5", "5.0", "7.0"],
+        default=["1.0", "2.0", "3.5", "5.0", "7.0", "9.0"],
     )
 )
 ADAPTIVE_DENOISE_STRENGTHS = tuple(
     int(value)
     for value in env.list(
         "ADAPTIVE_DENOISE_STRENGTHS",
-        default=["0", "3", "4", "5", "6", "7"],
+        default=["0", "3", "4", "7", "10", "13", "16"],
     )
 )
+# Whether a denoised candidate is kept (enhancement/denoise_guard.py). It is
+# compared with the image immediately before denoising:
+#  - it must remove at least this much fine-band noise (grey levels) from the
+#    flat regions, and that must be at least this share of what was there (grass
+#    and gravel "score" as noisy, but only a small share of real texture can be
+#    denoised away). Fixed on four photographs with added grain, then applied
+#    unchanged to eighteen others (ADR-021);
+#  - it must keep this fraction of the structured detail and of the edges, each
+#    measured above its own noise floor. The pipeline's denoiser kept 1.00 in
+#    every case measured and a Gaussian blur at most 0.82, so 0.85 separates a
+#    destructive candidate from a sound one; it is a guard, not a tuned value.
+DENOISE_MIN_NOISE_REMOVED = env.float("DENOISE_MIN_NOISE_REMOVED", default=1.0)
+DENOISE_MIN_NOISE_REDUCTION = env.float("DENOISE_MIN_NOISE_REDUCTION", default=0.30)
+# A candidate below that share is still kept when what it removed is noise-like
+# (fine-band over mid-band amplitude of the removed part: about 3.5 for pure
+# grain, about 1.8 for texture). Chosen with all 22 photographs in view: none of
+# the four design photographs depends on it, so it has no held-out check.
+DENOISE_MIN_RESIDUAL_WHITENESS = env.float("DENOISE_MIN_RESIDUAL_WHITENESS", default=3.0)
+DENOISE_MIN_DETAIL_RETENTION = env.float("DENOISE_MIN_DETAIL_RETENTION", default=0.85)
+DENOISE_MIN_EDGE_RETENTION = env.float("DENOISE_MIN_EDGE_RETENTION", default=0.85)
 # The company has confirmed a private commercial license for the supplied
 # checkpoint.  The artifact and license evidence remain outside source control.
 # Portable source defaults stay disabled because the licensed checkpoint is not
@@ -455,6 +507,25 @@ GFPGAN_MAX_CHROMA_SHIFT = env.float("GFPGAN_MAX_CHROMA_SHIFT", default=3.0)
 GFPGAN_MAX_HIGHLIGHT_CLIPPING_GROWTH = env.float(
     "GFPGAN_MAX_HIGHLIGHT_CLIPPING_GROWTH", default=1.0
 )
+# Generative face restoration only runs when the result can be compared with a
+# source face (consent, an identity model, and a face reliable enough to embed).
+# The explicit AI Max style is exempt. See enhancement/services.py
+# _face_restoration_gate.
+GFPGAN_REQUIRE_IDENTITY_CHECK = env.bool("GFPGAN_REQUIRE_IDENTITY_CHECK", default=True)
+# Face-region fidelity (enhancement/face_fidelity.py): each detected face is
+# compared with the image as it was before restoration and sharpening, and
+# blended back toward it when it leaves these limits. Texture ratio is fine-detail
+# energy after/before: below the minimum is smoothing (waxy skin), above the
+# maximum is over-sharpening, halos or amplified noise.
+FACE_FIDELITY_ENABLED = env.bool("FACE_FIDELITY_ENABLED", default=True)
+FACE_FIDELITY_MIN_STRUCTURAL_SIMILARITY = env.float("FACE_FIDELITY_MIN_STRUCTURAL_SIMILARITY", default=0.85)
+FACE_FIDELITY_MIN_TEXTURE_RETENTION = env.float("FACE_FIDELITY_MIN_TEXTURE_RETENTION", default=0.60)
+FACE_FIDELITY_MAX_TEXTURE_GAIN = env.float("FACE_FIDELITY_MAX_TEXTURE_GAIN", default=1.80)
+FACE_FIDELITY_MAX_CHROMA_SHIFT = env.float("FACE_FIDELITY_MAX_CHROMA_SHIFT", default=4.0)
+FACE_FIDELITY_MAX_HIGHLIGHT_CLIPPING_GROWTH = env.float("FACE_FIDELITY_MAX_HIGHLIGHT_CLIPPING_GROWTH", default=1.0)
+FACE_FIDELITY_MAX_FACES = env.int("FACE_FIDELITY_MAX_FACES", default=8)
+FACE_FIDELITY_MAX_EDGE = env.int("FACE_FIDELITY_MAX_EDGE", default=1024)
+FACE_FIDELITY_MIN_FACE_EDGE = env.int("FACE_FIDELITY_MIN_FACE_EDGE", default=40)
 PER_FACE_METRICS_ENABLED = env.bool("PER_FACE_METRICS_ENABLED", default=False)
 IDENTITY_EMBEDDING_ENABLED = env.bool("IDENTITY_EMBEDDING_ENABLED", default=False)
 FACE_DETECTOR_PROVIDER = env("FACE_DETECTOR_PROVIDER", default="haar_v1")
@@ -475,6 +546,23 @@ YUNET_TOP_K = env.int("YUNET_TOP_K", default=5000)
 ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION = env.bool(
     "ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION", default=True
 )
+# Largest source the enhancement pipeline works on at its native size. Uploads may
+# be up to MAX_IMAGE_PIXELS, but enhancement time and memory grow with every
+# pixel (measured on the CPU path, Apple Silicon, a noisy photo: 12 MP 6 s /
+# 1.3 GB, 24 MP 15 s / 1.8 GB, 48 MP 50 s / 2.1 GB peak process memory). Larger
+# sources are reduced to this budget first; the stored original is never
+# changed. 0 removes the limit.
+ENHANCEMENT_MAX_INPUT_PIXELS = env.int("ENHANCEMENT_MAX_INPUT_PIXELS", default=24_000_000)
+# A lossy (JPEG) output is decoded again before it is saved; it is refused if it
+# differs from the enhanced pixels by more than this mean absolute error (0-255).
+# Quality 95 measures well under 2. PNG output must match exactly.
+ENHANCEMENT_MAX_ENCODING_ERROR = env.float("ENHANCEMENT_MAX_ENCODING_ERROR", default=4.0)
+# One task at a time may enhance a result. A claim is refreshed at every pipeline
+# stage; one not refreshed for this long belongs to a worker that died and may be
+# taken over. It must outlast the slowest single stage on the slowest hardware.
+ENHANCEMENT_CLAIM_LEASE_SECONDS = env.int("ENHANCEMENT_CLAIM_LEASE_SECONDS", default=1800)
+if ENHANCEMENT_CLAIM_LEASE_SECONDS < 60:
+    raise ImproperlyConfigured("ENHANCEMENT_CLAIM_LEASE_SECONDS must be at least 60 seconds.")
 ENHANCEMENT_MODEL_LUMINANCE_THRESHOLD = env.float(
     "ENHANCEMENT_MODEL_LUMINANCE_THRESHOLD", default=0.45
 )
@@ -647,6 +735,30 @@ CELERY_TASK_TIME_LIMIT = env.int("CELERY_TASK_TIME_LIMIT", default=60 * 60)
 CELERY_TASK_SOFT_TIME_LIMIT = env.int("CELERY_TASK_SOFT_TIME_LIMIT", default=55 * 60)
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_TASK_ACKS_LATE = True
+# Longest delay before an enhancement task retries after a database failure
+# (exponential backoff with jitter, capped here).
+TASK_RETRY_BACKOFF_MAX_SECONDS = 60
+# With late acknowledgement, Redis hands a task to a second worker once it has
+# been unacknowledged for the visibility timeout. A message stays
+# unacknowledged for its whole delay *and* its run: a retry is delivered to a
+# worker at once, held there until its countdown ends, then run for up to the
+# task time limit. The longest countdown an enhancement task sets is a claim
+# wait (at most ENHANCEMENT_CLAIM_LEASE_SECONDS) or a database retry (at most
+# TASK_RETRY_BACKOFF_MAX_SECONDS). A shorter timeout gets a waiting or running
+# task delivered again: a queue test with a 30 s timeout and a 60 s lease left a
+# worker idle for ten minutes. The default adds 15 minutes for queueing.
+LONGEST_TASK_DELAY_SECONDS = max(ENHANCEMENT_CLAIM_LEASE_SECONDS, TASK_RETRY_BACKOFF_MAX_SECONDS)
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    "visibility_timeout": env.int(
+        "CELERY_VISIBILITY_TIMEOUT", default=CELERY_TASK_TIME_LIMIT + LONGEST_TASK_DELAY_SECONDS + 900,
+    ),
+}
+if CELERY_BROKER_TRANSPORT_OPTIONS["visibility_timeout"] <= CELERY_TASK_TIME_LIMIT + LONGEST_TASK_DELAY_SECONDS:
+    raise ImproperlyConfigured(
+        "CELERY_VISIBILITY_TIMEOUT must be longer than CELERY_TASK_TIME_LIMIT plus the longest delay a task "
+        "schedules for itself (ENHANCEMENT_CLAIM_LEASE_SECONDS, or the database retry backoff if longer), "
+        "or tasks are delivered again while still waiting or running."
+    )
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 SYSTEM_HEALTH_TIMEOUT_SECONDS = env.float("SYSTEM_HEALTH_TIMEOUT_SECONDS", default=1.0)
 FACECLOUD_VERSION = env("FACECLOUD_VERSION", default="dev")
@@ -800,11 +912,24 @@ SIGNUP_VERIFICATION_SUPPORT_EMAIL = env(
     default="support@facecloud.local",
 )
 
+# Rate limits (DRF throttles) and other cache users. Without CACHE_URL each
+# process keeps its own counters, so every limit multiplies by the number of
+# processes and resets on restart: fine for development, refused in production
+# (config/production_guard.py). Example: CACHE_URL=redis://127.0.0.1:6379/2
+CACHE_URL = env("CACHE_URL", default="")
+if CACHE_URL:
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": CACHE_URL}}
+else:
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "accounts.authentication.FaceCloudJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
+    # Paginated when the request passes page or page_size; a plain array
+    # otherwise, so existing clients keep working (config/pagination.py).
+    "DEFAULT_PAGINATION_CLASS": "config.pagination.OptionalPageNumberPagination",
     # Number of reverse proxies in front of Django. With 0 the socket address is
     # the client, so a spoofed X-Forwarded-For cannot evade throttling.
     "NUM_PROXIES": int(os.environ.get("TRUSTED_PROXY_COUNT", "0")),
@@ -822,6 +947,7 @@ REST_FRAMEWORK = {
         "token_refresh": "60/hour",
         "verification": "10/hour",
         "verification_status": "60/hour",
+        "contact": "5/hour",
         "password_reset": "10/hour",
         "password_change": "10/hour",
         "image_upload": "100/hour",
@@ -888,6 +1014,16 @@ SPECTACULAR_SETTINGS = {
 
 # Runs tests against a throwaway media folder instead of the real one.
 TEST_RUNNER = "config.test_runner.FaceCloudTestRunner"
+
+# Public contact form (contact app): where messages are delivered, and how
+# long they are kept. With no recipient the form answers 503 instead of
+# pretending to work.
+CONTACT_RECIPIENT_EMAILS = env.list("CONTACT_RECIPIENT_EMAILS", default=[])
+CONTACT_MESSAGE_RETENTION_DAYS = env.int("CONTACT_MESSAGE_RETENTION_DAYS", default=180)
+
+# How long records of ended sign-in sessions (device, IP address, times) are
+# kept for the user's own session list before they are deleted.
+SESSION_RECORD_RETENTION_DAYS = env.int("SESSION_RECORD_RETENTION_DAYS", default=30)
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),

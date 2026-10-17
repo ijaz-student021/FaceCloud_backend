@@ -18,7 +18,15 @@ from .models import (
 
 class EnhancementRequestSerializer(serializers.Serializer):
     level = serializers.ChoiceField(choices=EnhancementLevel.choices, default=EnhancementLevel.AUTO)
-    style = serializers.ChoiceField(choices=EnhancementStyle.choices, default=EnhancementStyle.NATURAL)
+    style = serializers.ChoiceField(
+        choices=EnhancementStyle.choices, default=EnhancementStyle.NATURAL,
+        help_text=(
+            "`natural` and `dynamic` restore faces only when the result can be checked against "
+            "the original. `ai_max` skips that requirement: it may restore faces without a "
+            "verified identity check. The result says so in `identity_check_bypassed` and "
+            "`identity_notice`."
+        ),
+    )
 
 
 class WatermarkOptionsSerializer(serializers.Serializer):
@@ -69,6 +77,35 @@ class GalleryEditRequestSerializer(serializers.Serializer):
         return attrs
 
 
+IDENTITY_STATUS_HELP = (
+    "`verified`: faces in the result were compared with the original and matched. "
+    "`inconclusive`: no reliable comparison was possible. `unavailable`: no check ran "
+    "(no consent, no identity model, or switched off). `failed`: compared and did not "
+    "match. Null when nothing was enhanced, and for records made before this field existed."
+)
+IDENTITY_BYPASSED_HELP = (
+    "True when faces were generatively restored without a verified identity check, "
+    "which only AI Max (or an operator setting) allows. Show `identity_notice` to the user."
+)
+IDENTITY_NOTICE_HELP = (
+    "A sentence for the user when identity was not verified under a bypass; otherwise empty."
+)
+
+
+def identity_fields(summary, legacy_status=None):
+    """``(identity_status, identity_check_bypassed, identity_notice)`` from a stored summary.
+
+    One definition for every endpoint that reports on an enhanced image, so the
+    same result cannot read as verified in one place and unverified in another.
+    """
+    summary = summary if isinstance(summary, dict) else {}
+    return (
+        summary.get("status") or legacy_status or None,
+        bool(summary.get("face_restoration_unverified")),
+        str(summary.get("notice") or ""),
+    )
+
+
 class ImageEditVersionSerializer(serializers.ModelSerializer):
     download_url = serializers.SerializerMethodField()
 
@@ -97,12 +134,16 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
     standardized_download_url = serializers.SerializerMethodField()
     editor_url = serializers.SerializerMethodField()
     current_edit = serializers.SerializerMethodField()
+    identity_status = serializers.SerializerMethodField(help_text=IDENTITY_STATUS_HELP)
+    identity_check_bypassed = serializers.SerializerMethodField(help_text=IDENTITY_BYPASSED_HELP)
+    identity_notice = serializers.SerializerMethodField(help_text=IDENTITY_NOTICE_HELP)
 
     class Meta:
         model = ImageEnhancementResult
         fields = [
             "id", "image", "batch_job", "requested_level", "applied_level",
             "requested_style", "status",
+            "identity_status", "identity_check_bypassed", "identity_notice",
             "output_name", "output_format", "output_width", "output_height",
             "output_file_size", "processing_duration_ms", "task_id", "applied_parameters",
             "failure_reason", "original_download_url", "standardized_download_url",
@@ -113,6 +154,19 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
     def _absolute(self, path):
         request = self.context.get("request")
         return request.build_absolute_uri(path) if request else path
+
+    def _identity(self, obj):
+        parameters = obj.applied_parameters if isinstance(obj.applied_parameters, dict) else {}
+        return identity_fields(parameters.get("identity_verification"), parameters.get("identity_status"))
+
+    def get_identity_status(self, obj) -> str | None:
+        return self._identity(obj)[0]
+
+    def get_identity_check_bypassed(self, obj) -> bool:
+        return self._identity(obj)[1]
+
+    def get_identity_notice(self, obj) -> str:
+        return self._identity(obj)[2]
 
     def get_original_download_url(self, obj) -> str:
         return self._absolute(f"/api/images/{obj.image_id}/download/")
@@ -308,15 +362,32 @@ class ModelComparisonOutputSerializer(serializers.ModelSerializer):
     label = serializers.SerializerMethodField()
     description = serializers.SerializerMethodField()
     preview_url = serializers.SerializerMethodField()
+    identity_status = serializers.SerializerMethodField(help_text=IDENTITY_STATUS_HELP)
+    identity_check_bypassed = serializers.SerializerMethodField(help_text=IDENTITY_BYPASSED_HELP)
+    identity_notice = serializers.SerializerMethodField(help_text=IDENTITY_NOTICE_HELP)
 
     class Meta:
         model = ModelComparisonOutput
         fields = [
             "profile", "label", "description", "outcome", "preview_url", "algorithm",
             "overall_score", "scores", "metrics", "faces_detected", "identity_guard",
+            "identity_status", "identity_check_bypassed", "identity_notice",
             "warnings", "processing_duration_ms", "failure_reason",
         ]
         read_only_fields = fields
+
+    def _identity(self, obj):
+        guard = obj.identity_guard if isinstance(obj.identity_guard, dict) else {}
+        return identity_fields(guard.get("verification"))
+
+    def get_identity_status(self, obj) -> str | None:
+        return self._identity(obj)[0]
+
+    def get_identity_check_bypassed(self, obj) -> bool:
+        return self._identity(obj)[1]
+
+    def get_identity_notice(self, obj) -> str:
+        return self._identity(obj)[2]
 
     def _profile(self, obj):
         return comparison_engine.PROFILES.get(obj.profile)

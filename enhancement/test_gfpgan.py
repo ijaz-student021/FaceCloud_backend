@@ -202,6 +202,10 @@ class GFPGANAdapterTests(SimpleTestCase):
         self.assertEqual(_numpy_nms(detections, 0.4), [0, 2])
 
 
+# These tests exercise the restoration path itself. Whether it may run at all
+# without a verifiable source face is the identity gate's job, tested in
+# test_staged_pipeline.py.
+@override_settings(GFPGAN_REQUIRE_IDENTITY_CHECK=False)
 class GFPGANPipelineTests(SimpleTestCase):
     @override_settings(GFPGAN_ENABLED=False)
     @patch("enhancement.services.restore_faces")

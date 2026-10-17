@@ -1,0 +1,14 @@
+[16:16:19] isolated database facecloud_queue_itest, Redis on :6391, media in /var/folders/vr/699tcg812llfc_4wgyns740m0000gn/T/facecloud-queue-7_ustlu_/media
+[11:16:20] worker web ready on queue 'celery' (venv environment)
+[11:16:22] worker gfpgan ready on queue 'gfpgan' (gfpgan environment)
+[ WARN:0@0.487] global net_impl_backend.cpp:345 setPreferableTarget Targets are not supported by the new graph engine for now
+[11:16:48] PASS  database_failure_then_retry: {"connections_terminated": 1, "retries_logged": 1, "status": "completed", "seconds_from_failure_to_completion": 24, "claim_attempt": 1, "output_files": ["ba358f04ef7c40c09793a1915b14a1d8.jpg"]}
+[11:16:51] DIAG active results before batch enhance: []
+[11:16:52] PASS  cancellation_mid_batch: {"job_status": "cancelled", "result_statuses": ["cancelled", "cancelled", "cancelled", "cancelled"], "cancelled_results_with_files": []}
+[11:16:57] worker slow-original ready on queue 'gfpgan' (gfpgan environment)
+[ WARN:0@34.646] global net_impl_backend.cpp:345 setPreferableTarget Targets are not supported by the new graph engine for now
+[11:16:59] worker duplicate ready on queue 'gfpgan' (gfpgan environment)
+[11:19:41] DIAG claimed_at samples: ['2026-10-14 11:16:57.875139+00:00', '2026-10-14 11:17:13.062422+00:00', '2026-10-14 11:17:28.662948+00:00', '2026-10-14 11:17:43.686622+00:00', '2026-10-14 11:17:58.707271+00:00', '2026-10-14 11:18:13.721474+00:00', '2026-10-14 11:18:28.739037+00:00', '2026-10-14 11:18:43.756903+00:00', '2026-10-14 11:18:58.782076+00:00', '2026-10-14 11:19:13.801158+00:00', '2026-10-14 11:19:28.261004+00:00', '2026-10-14 11:19:29.104909+00:00', '2026-10-14 11:19:40.465178+00:00', '2026-10-14 11:16:57.875139+00:00']
+[11:19:46] FAIL  duplicate_while_original_renews: {"status": "completed", "claim_tokens_seen": 1, "claim_renewed_over_seconds": 0, "lease_seconds": 60, "original_outcomes": ["succeeded in 163.14461399998982s: {'result_id': 6, 'status': 'completed'}"], "duplicate_outcomes": ["retry: Retry in 59s: ResultInProgress('Another worker is already enhancing this image.')", "retry: Retry in 46s: ResultInProgress('Another worker is already enhancing this im
+[11:19:50] worker gfpgan ready on queue 'gfpgan' (gfpgan environment)
+[11:19:51] wrote /private/tmp/claude-501/-Users-Ali-FaceCloud-backend/25680eb7-bdb6-4c1e-bfbe-926a9cef1992/scratchpad/wt-diag/.runtime/queue_integration/2026-10-14-diag

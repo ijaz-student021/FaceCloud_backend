@@ -1,3 +1,5 @@
+import re
+
 from django.contrib.auth import get_user_model, password_validation
 from django.contrib.auth.tokens import default_token_generator
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -14,6 +16,7 @@ from . import lockout
 from .services import (dashboard_for_user, derive_username, has_active_two_factor,
                        issue_login_tokens, make_two_factor_login_challenge,
                        record_auth_event, resolve_moderator_organization, split_full_name)
+from .sessions import record_rotation, token_session_is_active
 
 User = get_user_model()
 
@@ -151,7 +154,7 @@ class FaceCloudTokenObtainPairSerializer(serializers.Serializer):
                 "login_token": make_two_factor_login_challenge(user),
             }
         record_auth_event("login", request, user, identifier)
-        return issue_login_tokens(user)
+        return issue_login_tokens(user, request)
 
 
 class FaceCloudTokenRefreshSerializer(TokenRefreshSerializer):
@@ -166,16 +169,64 @@ class FaceCloudTokenRefreshSerializer(TokenRefreshSerializer):
             raise serializers.ValidationError({"detail": "This account is suspended."})
         if token.get("token_version", 0) != user.token_version:
             raise serializers.ValidationError({"detail": "This token has been revoked."})
-        return super().validate(attrs)
+        if not token_session_is_active(token, user):
+            raise serializers.ValidationError({"detail": "This session has been signed out."})
+        data = super().validate(attrs)
+        if "refresh" in data:
+            record_rotation(RefreshToken(data["refresh"]))
+        return data
+
+
+PROFILE_TEXT_FIELDS = ("display_name", "organization_name", "job_title", "country")
+PHONE_PATTERN = re.compile(r"^\+?[0-9][0-9 ()\-]{0,30}$")
 
 
 class UserSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(read_only=True, help_text="First and last name, or the username when no name is set.")
+    avatar_url = serializers.SerializerMethodField(
+        help_text="Authenticated URL of the user's own avatar (changes when it is replaced), or null.",
+    )
 
     class Meta:
         model = User
-        fields = ["id", "username", "email", "full_name", "role", "is_email_verified", "date_joined"]
-        read_only_fields = ["id", "full_name", "role", "is_email_verified", "date_joined"]
+        fields = [
+            "id", "username", "email", "full_name", "role", "is_email_verified", "date_joined",
+            "display_name", "organization_name", "job_title", "phone", "country", "avatar_url",
+        ]
+        read_only_fields = ["id", "full_name", "role", "is_email_verified", "date_joined", "avatar_url"]
+        extra_kwargs = {
+            "organization_name": {"help_text": "Free text about the user. It grants no organization access."},
+        }
+
+    def get_avatar_url(self, user) -> str | None:
+        if not user.avatar:
+            return None
+        version = int(user.avatar_updated_at.timestamp()) if user.avatar_updated_at else 0
+        return f"/api/user/avatar/?v={version}"
+
+    def _clean_text(self, value, field):
+        value = " ".join(str(value).split())
+        if any(ord(character) < 32 for character in value):
+            raise serializers.ValidationError(f"{field} contains control characters.")
+        return value
+
+    def validate_display_name(self, value):
+        return self._clean_text(value, "Name")
+
+    def validate_organization_name(self, value):
+        return self._clean_text(value, "Organization")
+
+    def validate_job_title(self, value):
+        return self._clean_text(value, "Job title")
+
+    def validate_country(self, value):
+        return self._clean_text(value, "Country")
+
+    def validate_phone(self, value):
+        value = value.strip()
+        if value and not PHONE_PATTERN.match(value):
+            raise serializers.ValidationError("Use digits, spaces, brackets, hyphens and an optional leading +.")
+        return value
 
     def validate_username(self, value):
         value = User.normalize_username(value).strip()
@@ -285,6 +336,44 @@ class AdminUserSerializer(serializers.ModelSerializer):
         if attrs.get("is_suspended") is False:
             attrs["suspension_reason"] = ""
         return attrs
+
+
+class AdminUserDetailSerializer(AdminUserSerializer):
+    """Read-only detail for administrators; PATCH still uses AdminUserSerializer."""
+
+    two_factor_enabled = serializers.SerializerMethodField()
+    active_sessions = serializers.SerializerMethodField()
+    organizations = serializers.SerializerMethodField()
+    usage = serializers.SerializerMethodField()
+
+    class Meta(AdminUserSerializer.Meta):
+        fields = AdminUserSerializer.Meta.fields + [
+            "last_login", "display_name", "organization_name", "job_title", "country",
+            "two_factor_enabled", "active_sessions", "organizations", "usage",
+        ]
+        read_only_fields = fields
+
+    def get_two_factor_enabled(self, user) -> bool:
+        return has_active_two_factor(user)
+
+    def get_active_sessions(self, user) -> int:
+        from .sessions import active_sessions
+
+        return len(active_sessions(user))
+
+    def get_organizations(self, user) -> list[dict]:
+        return [
+            {"id": membership.organization_id, "name": membership.organization.name,
+             "role": membership.role, "status": membership.status}
+            for membership in user.organization_memberships.select_related("organization").order_by("organization__name")
+        ]
+
+    def get_usage(self, user) -> dict:
+        return {
+            "upload_batches": user.upload_batches.count(),
+            "images": user.image_uploads.count(),
+            "enhancements": user.image_enhancement_results.count(),
+        }
 
 
 class AdminUserCreateSerializer(serializers.Serializer):

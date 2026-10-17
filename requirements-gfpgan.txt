@@ -1,28 +1,21 @@
-# Install in a dedicated Python 3.11 worker environment, not the main Python
-# 3.14 development environment. Install the hardware-appropriate PyTorch
-# 2.1.2/torchvision 0.16.2 build first, then install this file. The constraints
-# keep the older GFPGAN/BasicSR stack on compatible binary dependencies.
+# The isolated worker environment that can also run GFPGAN face restoration.
+#
+#   python3.12 -m venv .runtime/venvs/gfpgan
+#   .runtime/venvs/gfpgan/bin/pip install -r requirements-gfpgan.txt
+#
+# It is the backend's own requirements plus PyTorch and the GFPGAN stack, so the
+# worker can never drift from what the application imports. (It used to repeat
+# the backend's list by hand and had fallen behind: without `cryptography` the
+# worker could not start Django at all.)
+#
+# Python 3.12 or newer is required by Django 6. GFPGAN 1.3.8 depends on BasicSR
+# 1.4.2, which imports a module torchvision removed in 0.17; enhancement/gfpgan.py
+# supplies the one missing name at import time, so a current torchvision works.
+# The constraints file pins the binary packages the stack is known to load with.
 -c requirements-gfpgan-constraints.txt
-Django>=6.1.1,<7.0
-djangorestframework
-djangorestframework-simplejwt
-psycopg2-binary
-celery
-redis
-django-celery-results
-boto3
-django-storages
-opencv-contrib-python-headless==5.0.0.93
-opencv-python==5.0.0.93
-numpy==2.5.3
-Pillow
-drf-spectacular
-django-cors-headers
-django-environ
-reportlab
-pandas
-gunicorn
-whitenoise
+-r requirements.txt
+torch
+torchvision
 gfpgan==1.3.8
 basicsr==1.4.2
 facexlib==0.3.0
