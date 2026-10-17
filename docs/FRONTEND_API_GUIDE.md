@@ -388,7 +388,13 @@ POST .../{id}/regenerate/                                     after expiry or fa
 ```
 
 Statuses: `queued, generating, ready, failed` (packages also `expired`).
-Downloading before `ready` returns **409**; after expiry **410**. Packages
+Asking for a package that cannot be made yet is a **409** whose body is
+`{"detail": "<sentence>", "code": "<code>", ...}`; branch on `code`:
+`enhancement_required` (photos passed the checks but were never enhanced; also
+`accepted_images: n`; call `POST /api/enhancements/batches/{id}/`, wait, then ask
+again), `no_accepted_images` (nothing passed, nothing to enhance),
+`batch_still_processing`, `batch_empty`. Downloading before `ready` returns
+**409**; after expiry **410**. Packages
 (`package_type`: `accepted_results` or `complete_batch`) expire after a
 configurable time, so show an expiry and offer "regenerate".
 
