@@ -159,6 +159,190 @@ Retry and cancel are the existing `.../retry/` and `.../cancel/`.
   and `usage{upload_batches, images, enhancements}`.
 * `PATCH` is unchanged (role, suspension, `is_active`).
 
+### Typed dashboard and analytics (no shape change)
+`GET /api/user/dashboard/` and `GET /api/system/analytics/` are now documented
+field by field in Swagger, with units and what each number counts. The JSON is
+unchanged; generate types from the schema instead of hand-writing them.
+
+### Batch start errors (`POST /api/enhancements/batches/{id}/`)
+* `409 {detail, image_ids: [int]}`: some images already have an enhancement
+  queued or running; nothing was created. Show which images and retry later.
+* `500 {detail, error_reference}`: unexpected fault. Show the reference; the
+  cause is only in the server log.
+* The old catch-all `400` message no longer appears.
+
+### Moderator reports: `general_activity`
+`report_type: "general_activity"` is now valid (audit trail of the window
+summarised by action and actor, plus batches, images and reviews created).
+It takes the same `date_from`/`date_to`, formats and polling as the others.
+
+### Security alerts (admin, Security page)
+* `GET /api/system/security/alerts/` (paginated; filters `status`, `rule`,
+  `severity`): `{id, rule, subject, severity, status, event_count, threshold,
+  window_minutes, first_seen_at, last_seen_at, acknowledged_by,
+  acknowledged_at, acknowledgement_note}`. An empty list means no rule
+  crossed its threshold, **not** that the system is secure; do not show a
+  "secure" badge.
+* `GET .../alerts/{id}/` adds `evidence` (up to 50 triggering events).
+* `POST .../alerts/{id}/acknowledge/ {note}`: note required; `409` if already
+  acknowledged. Nothing is deleted; the evidence stays.
+* `GET /api/system/security/rules/` returns the thresholds in force; show
+  them on the page instead of hard-coding.
+* Rules: repeated failed logins (per account, per address), repeated 403s,
+  repeated 429s. Subjects look like `account:<email>`, `ip:<address>`,
+  `user:<id>`.
+
+### Moderator image previews (ModeratorImageReview, BatchManagement)
+`GET /api/organizations/{org}/moderator/images/{image_id}/preview/
+?variant=original|enhanced&size=256|1024` returns a JPEG thumbnail. Owners
+and moderators only; images in a personal space, rejected uploads and other
+organizations are `404`; every request is audited. Fetch as a blob (needs the
+bearer header). The response is `no-store`.
+
+### Moderator reprocess (BatchManagement)
+`POST /api/organizations/{org}/moderator/batches/{batch_id}/reprocess/
+{level?, style?, reason?}` starts enhancement again from the preserved
+originals as a **new version**. Earlier outputs are untouched.
+`201 {job_id, status, total_images}`; `409 {image_ids}` while any image has
+work in flight; `429` when the batch owner is at their fair-use limit.
+Progress and results are the batch owner's existing job/result endpoints.
+
+### Admin "Add user" by invitation
+* `POST /api/user/admin/invitations/ {email, role}` (roles `user`,
+  `moderator`; `admin` only for a superuser, otherwise `403`); `GET` lists
+  (`?status=`); `POST .../{id}/resend/`; `DELETE .../{id}/` cancels.
+  `409` if the email has an account or a pending invitation.
+* The invitee gets an email linking to
+  `{FRONTEND_URL}/accept-invitation?token=...`. **The frontend needs that
+  route.** It calls the public `POST /api/auth/invitations/inspect/ {token}`
+  (shows email and role; `404` if invalid, used or expired) and then
+  `POST /api/auth/invitations/accept/ {token, username, password}`, which
+  creates the verified account and answers like login (`201` with tokens).
+* `PATCH /api/user/admin/users/{id}/` now also returns `403` when an
+  administrator tries to grant `admin`.
+
+### Camera sessions (LiveEnhancement)
+* `POST /api/camera/sessions/ {device_label?, settings?}` starts a session;
+  `GET` lists the last 30 days; `GET .../{id}/` includes snapshots;
+  `POST .../{id}/end/`.
+* `POST .../{id}/snapshots/` (multipart `file`) saves **one** snapshot, only
+  when the user presses a save action. It is an ordinary single upload (same
+  response fields; check `image_status` for rejection) linked to the session;
+  `409` once the session ended.
+* There is no video endpoint. Local canvas filters are previews only; the
+  server never receives frames unless the user saves a snapshot. Session
+  metadata is deleted 30 days after it started; saved images stay.
+
+### Lightweight enhancement and editor controls (Phase A)
+Full detail: `docs/enhancement/lightweight-pipeline.md`. No frontend change is
+required for existing screens; these are the contracts to adopt.
+
+**Rendering policy.** Enhancement runs OpenCV/Pillow only (`lightweight_v1`).
+Zero-DCE, EDSR, NAFNet, Real-ESRGAN, GFPGAN, PureVision, PureScale and
+colourisation never run. Do not show or imply "AI restoration", face
+restoration, super-resolution or colourisation as available. Each result has
+`applied_parameters.render_policy`; stage reports for those stages read
+`skipped`, with the reason, not `fallback`.
+
+**Automatic level never brightens a dark photo.** The plan carries a
+`lift_withheld` routing decision. To lift a dark photo the user must choose a
+level (low, medium, high) or, in the editor, the `brighten` intent. Offer a
+"Brighten" choice next to Auto on the upload and result screens.
+
+**AI Max** still means level `high` plus denoising where noise is measured. A
+result with `applied_parameters.ai_max` and the warning "AI Max used the
+strongest local correction only" tells the user heavy restoration was not
+available. Show it.
+
+**Editor controls** (`GET /api/enhancements/editor/configuration/`; render the
+sliders from it, do not hard-code):
+* Controls: brightness, contrast, shadows, highlights, saturation, warmth,
+  **sharpness (new)**, and intensity. Signed, 0 neutral (intensity: 100).
+* `neutral_settings` is what **Reset** sets. Reset must not trigger Auto; Auto
+  and presets are separate requests. A neutral manual edit returns the source
+  unchanged and records `outcome: "no_change"`.
+* Each control has `minimum`/`maximum` (manual) and a much smaller
+  `auto_minimum`/`auto_maximum`; `description` is the exact renderer meaning;
+  `pillow_factor_per_unit` is for reference only.
+* `POST /api/enhancements/results/{id}/edits/` accepts `{mode, adjustments,
+  intent}`. `intent` (`auto` | `brighten` | `preserve`) is for `mode: "auto"`;
+  sending it with manual mode is a `400`. Unknown control names, booleans,
+  NaN/infinity and out-of-range numbers are `400` with a message per field
+  (it was silently ignored before).
+* Saved edits report `quality_metadata.requested`, `.validated`, `.applied`,
+  `.guard_reductions`, `.fallback_reasons`, `.renderer_version`, `.outcome`
+  and, for auto, `.auto{action, rationale, caution_flags}`. When
+  `applied` is smaller than `requested`, tell the user a safety guard reduced it.
+  `auto.action: "no_change"` means nothing needed fixing: say so, do not show
+  an "enhanced" badge.
+
+### Editor previews and saving (Phase B)
+Detail: `docs/enhancement/lightweight-pipeline.md` section 5.
+
+* `POST /api/enhancements/results/{id}/previews/` `{revision, mode, adjustments,
+  size?, source_version?}`. `revision` is a number you increment on every change.
+  `201` new preview, `200` the same revision and settings again (nothing re-rendered).
+  Response: `id`, `revision`, `is_latest`, `latest_revision`, `width`, `height`,
+  `output_format`, `applied_adjustments`, `render` (outcome, guard reductions),
+  `source_version`, `expires_at`.
+* `GET /api/enhancements/previews/{id}/image/` is authenticated: fetch it with
+  the token and show it as a blob; an `<img src>` without the header fails.
+* **Out-of-order answers:** show a preview only if its `revision` is the latest one
+  you sent, or `is_latest` is true. Do not cancel requests to "stop" the server;
+  closing a request cancels nothing and the result is reusable.
+* `409 stale_source` (carries the current `source_version`): the image changed;
+  reload it and the previews. `409 revision_conflict`: reuse of a revision with
+  other settings; send a higher number.
+* **Apply:** `POST /api/enhancements/previews/{id}/save/` returns `202` and an
+  edit version; poll `GET /api/enhancements/edits/{id}/` as before, then use the
+  protected download. `400` if an edit of that image is already running.
+* **Transparency:** `GET editor/configuration/` has `preview` (sizes, retention,
+  keep count) and `transparency`. PNG keeps alpha; a JPEG result has none and a
+  transparent source was flattened onto white before enhancement. Show a
+  checkerboard only for PNG results.
+* Previews expire after 24 hours (`expires_at`); a `404` on an old preview means
+  re-request it. Saved edits do not expire with previews.
+
+### Optional cloud advisor (Phase C)
+Detail: `docs/enhancement/openai-advisor.md`. Off by default: build the UI so it
+is hidden or disabled unless `GET /api/enhancements/advisor/configuration/`
+says `available: true`.
+
+* **Consent first, separately from face-identity consent.** Show
+  `disclosure` (what is sent / not sent, retention) and the `policy_version`,
+  then `POST /api/enhancements/advisor/consent/ {granted, policy_version}`.
+  `consent.granted` false (or `needs_renewal`) means: ask again. `403
+  advisor_consent_required` from any advisor call means the same. Withdrawal
+  is the same endpoint with `granted: false`.
+* **One explicit action only** ("Suggest settings" / cloud Auto). Never call it on
+  a slider move, on a timer or per camera frame; every call is a paid request.
+  `POST /api/enhancements/results/{id}/advisor/ {intent}` returns `202` with a
+  recommendation (`200` if an identical one already exists). Poll `GET
+  advisor/recommendations/{id}/` until `status` is `completed` (or `failed`,
+  `cancelled`, `superseded`).
+* **Several images:** `POST advisor/runs/ {result_ids, intent}` returns the run
+  and one item per image (`queued`, `reused`, or `skipped` with a reason). Poll
+  `GET advisor/runs/{id}/`; each image succeeds or falls back on its own. `POST
+  .../cancel/` exists on runs and recommendations.
+* **Show the result honestly.** `origin: "openai"` is the advisor's suggestion;
+  `origin: "local_fallback"` means the advisor could not be used
+  (`fallback_reason`, e.g. `refused`, `timeout`, `rate_limited`,
+  `budget_exhausted`, `consent_missing`, `guard_rejected`) and these are the
+  local conservative settings. `action` is `apply`, `no_change` (say "nothing
+  needed fixing") or `manual_review` (say the image needs your judgement). Show
+  `rationale` and `caution_flags`; `adjustments` are the exact slider values to
+  preview through the normal `previews/` endpoint (manual mode).
+* **Apply only when `usable` is true.** `unusable_reason` says why not:
+  `cancelled`, `superseded`, `edited_since` (you saved an edit after asking),
+  `source_changed`, `expired`, `nothing_to_apply`, `not_finished`. `POST
+  advisor/recommendations/{id}/apply/` creates a normal edit version (`202`, then
+  poll the edit as usual); `409 recommendation_stale` carries the reason. Ask
+  again instead of showing an old suggestion.
+* `503 advisor_unavailable` carries `reason` (`disabled`, `not_configured`,
+  `model_not_configured`); `429` is the per-user throttle.
+* The auto-intent default never lifts or darkens overall exposure; the advisor is
+  held to the same rule. Offer "Brighten" as a separate intent.
+
 ### Contact form (B07, public)
 `POST /api/contact/` (no authentication) takes
 `{name, email, company?, reason, message}`.
@@ -185,20 +369,14 @@ Leave the hidden `website` field out (or empty); it is a spam trap.
 | Settings → Privacy | `/api/privacy/consents/`, `/export/`, `/facial-data/` |
 | Moderator notification centre | `/api/notifications/` (assignment, escalation, overdue and batch-failed events are produced server-side) |
 
-## 4. Open decisions (product or owner)
+## 4. Product decisions
 
-* **D1 Security page:** a persistent alert and acknowledgement workflow needs
-  agreed alert rules. Until then the page should show the audit feed, not
-  "secure" claims.
-* **D2 Moderator image previews:** whether staff may view organization
-  members' images, and at which size, is a privacy decision. The batch detail
-  is metadata-only until it is made.
-* **D3 Reprocess actions:** reprocessing a completed batch (re-ingest,
-  re-evaluate quality or regenerate enhancement?) needs a definition first.
-* **D4 Admin "Add user":** a verified-invitation flow is recommended over
-  creating accounts directly.
-* **D5 Live camera sessions:** saved session history needs a retention rule;
-  snapshots already work through the upload and enhancement APIs.
+Resolved and implemented: security alert rules (D1), moderator previews (D2),
+reprocess semantics (D3), admin user invitations (D4), camera session
+retention (D5; 30 days, snapshots only on explicit action).
+
+Still open:
 * **D6 System telemetry:** host CPU, GPU and uptime history belong to an
   operational monitor, not Django; the page should show only
   `/api/system/health/` and `/queue/`.
+* Organization download packages for staff (owner-only today).

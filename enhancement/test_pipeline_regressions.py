@@ -48,7 +48,7 @@ def textured(height=64, width=96, base=110):
 
 
 class DeblurSurvivesFailedUpscaleTests(SimpleTestCase):
-    @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True})
+    @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
     @patch("enhancement.services.upscale_with_realesrgan")
     @patch("enhancement.services.deblur_with_nafnet")
     def test_stage_keeps_the_deblurred_image_when_the_upscaler_fails(self, deblur, upscale):
@@ -65,7 +65,7 @@ class DeblurSurvivesFailedUpscaleTests(SimpleTestCase):
         self.assertFalse(context.hd_restoration["applied"])
         self.assertIn("unavailable", context.hd_restoration["fallback_reason"])
 
-    @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True})
+    @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
     @patch("enhancement.services.upscale_with_realesrgan")
     @patch("enhancement.services.deblur_with_nafnet")
     def test_pipeline_reports_the_deblur_without_claiming_an_upscale(self, deblur, upscale):
@@ -80,7 +80,7 @@ class DeblurSurvivesFailedUpscaleTests(SimpleTestCase):
         self.assertNotIn("realesrgan", parameters["algorithm"])
         self.assertEqual(parameters["resolution_contract"]["pixel_grid_source"], "original_pixel_grid")
 
-    @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True})
+    @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
     @patch("enhancement.services.upscale_with_realesrgan")
     @patch("enhancement.services.deblur_with_nafnet")
     def test_both_failing_leaves_the_image_untouched(self, deblur, upscale):
@@ -95,7 +95,7 @@ class DeblurSurvivesFailedUpscaleTests(SimpleTestCase):
 
 
 class SingleUpscalerTests(SimpleTestCase):
-    @override_settings(**{**NO_MODELS, "AI_RESTORATION_ENABLED": True, "PURESCALE_ENABLED": True})
+    @override_settings(**{**NO_MODELS, "AI_RESTORATION_ENABLED": True, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
     @patch("enhancement.services.upscale_with_purescale")
     @patch("enhancement.services._load_edsr_model")
     def test_purescale_does_not_stack_on_edsr(self, load_edsr, purescale):
@@ -115,7 +115,7 @@ class SingleUpscalerTests(SimpleTestCase):
         self.assertIn("EDSR already upscaled", parameters["purescale"]["fallback_reason"])
         self.assertEqual(parameters["resolution_contract"]["pixel_grid_source"], "bounded_edsr_output_grid")
 
-    @override_settings(**{**NO_MODELS, "AI_RESTORATION_ENABLED": True, "PURESCALE_ENABLED": True})
+    @override_settings(**{**NO_MODELS, "AI_RESTORATION_ENABLED": True, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
     @patch("enhancement.services.upscale_with_purescale")
     @patch("enhancement.services._load_edsr_model", side_effect=RuntimeError("The configured EDSR model file is unavailable."))
     def test_purescale_still_runs_when_edsr_was_unavailable(self, _load_edsr, purescale):
@@ -139,7 +139,7 @@ class FinalMetricsTests(SimpleTestCase):
         self.assertEqual(parameters["quality_after"], analyze_image_quality(output))
         self.assertEqual(parameters["quality_after_measurement_point"], "final_output")
 
-    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True})
+    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
     @patch("enhancement.services.upscale_with_purescale")
     def test_quality_after_measures_the_upscaled_output_grid(self, purescale):
         purescale.side_effect = lambda image: (
@@ -175,7 +175,7 @@ class GuardReferenceTests(SimpleTestCase):
         self.assertLessEqual(guard["mean_chroma_shift"], guard["limits"]["max_chroma_shift"])
         self.assertEqual(context.current_image.shape[:2], (128, 192))
 
-    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True})
+    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
     @patch("enhancement.services.upscale_with_purescale")
     def test_an_upscaler_that_brightens_is_pulled_back_in_the_pipeline(self, purescale):
         def brightening_upscaler(image):
@@ -192,7 +192,7 @@ class GuardReferenceTests(SimpleTestCase):
         self.assertLessEqual(guard["luminance_gain"], guard["limits"]["max_luminance_gain"] + 0.5)
         self.assertLess(float(output.mean()) - float(source.mean()), 30.0)
 
-    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True})
+    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
     @patch("enhancement.services.upscale_with_purescale")
     def test_a_faithful_upscaler_is_kept_at_full_strength(self, purescale):
         purescale.side_effect = lambda image: (

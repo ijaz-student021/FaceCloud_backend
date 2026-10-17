@@ -180,6 +180,7 @@ class ModeratorReport(models.Model):
         QUALITY_SCORES = "quality_scores", "Quality scores"
         BATCHES = "batches", "Batches"
         DUPLICATE_DECISIONS = "duplicate_decisions", "Duplicate decisions"
+        GENERAL_ACTIVITY = "general_activity", "General activity"
 
     class Format(models.TextChoices):
         JSON = "json", "JSON"

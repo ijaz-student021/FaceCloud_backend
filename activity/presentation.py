@@ -60,6 +60,8 @@ EXACT = {
     "reactivated": ("admin", "success", "Your account was reactivated."),
     "account_deleted": ("admin", "info", "Your account was deleted."),
     "admin_created_account": ("admin", "info", "Your account was created by an administrator."),
+    "account_invited": ("admin", "info", "An account invitation was sent."),
+    "invitation_accepted": ("email", "success", "An account invitation was accepted."),
 }
 
 # Event families whose last word varies (group_renamed, group_merged, ...).

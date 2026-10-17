@@ -1,4 +1,4 @@
-"""Exercise the real Redis/Celery flow end to end, with real model checkpoints.
+"""Exercise the real Redis/Celery flow end to end.
 
 Nothing here runs eagerly or in-process: every task goes through Redis to a
 separately started Celery worker. The script provides its own isolated
@@ -8,23 +8,23 @@ infrastructure and removes it afterwards:
 * a new, empty PostgreSQL database (refused if one by that name exists);
 * a temporary media folder.
 
-Two kinds of worker are started, as a deployment would run them: the web
-environment's worker on the default queue (preprocessing, thumbnails), and the
-GFPGAN worker environment on the ``gfpgan`` queue, which receives every
-enhancement task when ``GFPGAN_QUEUE_ENABLED`` is on.
+One worker environment (the web environment) serves the default queue, as a
+deployment would run it: preprocessing, thumbnails and enhancement. The
+enhancement pipeline is OpenCV and Pillow only; there is no separate model worker.
 
     venv/bin/python scripts/check_queue_integration.py --portrait ~/Downloads/portrait.jpg
 
-Scenarios: routing and a real GFPGAN enhancement through upload, preprocessing,
-processing, storage, progress and download; duplicate delivery to two workers
-at once; a real database connection failure mid-task, then retry; cancellation
-mid-batch; a worker killed mid-task, then restarted; a duplicate arriving while
-the original runs one stage longer than the claim lease (renewal, bounded
-waiting); an old worker that fails after another took the result over; and a
-worker killed in the middle of a batch. Long stages and failures are injected
-by ``scripts/queue_harness_worker.py`` around the real pipeline. To keep the
-run short, the claim lease, task time limit and broker visibility timeout are
-lowered (60 s, 200 s and 300 s); the report says so.
+(Any photograph will do; the name is historical.)
+
+Scenarios: a full upload, preprocessing, enhancement, storage, progress and
+download flow; duplicate delivery to two workers at once; a real database
+connection failure mid-task, then retry; cancellation mid-batch; a worker killed
+mid-task, then restarted; a duplicate arriving while the original runs one stage
+longer than the claim lease (renewal, bounded waiting); an old worker that fails
+after another took the result over; and a worker killed in the middle of a batch.
+Long stages and failures are injected by ``scripts/queue_harness_worker.py``
+around the real pipeline. To keep the run short, the claim lease, task time limit
+and broker visibility timeout are lowered (60 s, 200 s and 300 s); the report says so.
 
 Results go to ``.runtime/queue_integration/<name>/`` (report.md, results.json,
 worker logs). Exit code is non-zero unless every scenario passed.
@@ -44,7 +44,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB_PYTHON = ROOT / "venv" / "bin" / "python"
-WORKER_PYTHON = ROOT / ".runtime" / "venvs" / "gfpgan" / "bin" / "python"
 
 
 def parse_arguments():
@@ -53,8 +52,8 @@ def parse_arguments():
     parser.add_argument("--name", default=time.strftime("%Y%m%d-%H%M%S"))
     parser.add_argument("--redis-port", type=int, default=6391)
     parser.add_argument("--database", default="facecloud_queue_itest")
-    # A PostgreSQL unix-socket directory (Homebrew's default), not a temporary file.
-    parser.add_argument("--db-host", default="/tmp")  # nosec B108
+    parser.add_argument("--db-host", default=os.environ.get("PGHOST", "/tmp"))  # nosec B108 - the usual PostgreSQL socket directory
+    parser.add_argument("--db-port", default="5432")
     parser.add_argument("--db-user", default=os.environ.get("USER", "postgres"))
     parser.add_argument("--keep", action="store_true", help="Leave the database and Redis running afterwards.")
     parser.add_argument("--scenarios", default="", help="Comma-separated subset to run (default: all).")
@@ -82,13 +81,11 @@ ENVIRONMENT = {
     "DB_USER": ARGUMENTS.db_user,
     "DB_PASSWORD": "unused-local-socket-auth",
     "DB_HOST": ARGUMENTS.db_host,
-    "DB_PORT": "5432",
+    "DB_PORT": str(ARGUMENTS.db_port),
     "MEDIA_ROOT": str(MEDIA),
     "CELERY_BROKER_URL": f"redis://127.0.0.1:{ARGUMENTS.redis_port}/0",
     "CELERY_RESULT_BACKEND": f"redis://127.0.0.1:{ARGUMENTS.redis_port}/1",
     "CELERY_TASK_ALWAYS_EAGER": "False",
-    "GFPGAN_ENABLED": "True",
-    "GFPGAN_QUEUE_ENABLED": "True",
     "IDENTITY_GUARD_ENABLED": "True",
     "THUMBNAIL_PREGENERATE": "False",
     "NOTIFICATION_EMAILS_ENABLED": "False",
@@ -112,16 +109,15 @@ def log(message):
 
 
 def start_infrastructure():
-    # The name reaches psql as a variable (:'name' is quoted by psql itself), never spliced into the SQL text.
+    # The name goes in as a psql variable (quoted by psql), never into the SQL text.
     existing = subprocess.run(
-        ["psql", "-h", ARGUMENTS.db_host, "-U", ARGUMENTS.db_user, "-d", "postgres", "-At",
-         "-v", f"name={ARGUMENTS.database}"],
-        input="select 1 from pg_database where datname = :'name'",
-        capture_output=True, text=True, check=True,
+        ["psql", "-h", ARGUMENTS.db_host, "-p", str(ARGUMENTS.db_port), "-U", ARGUMENTS.db_user, "-d", "postgres",
+         "-Atq", "-v", f"wanted={ARGUMENTS.database}"],
+        input="select 1 from pg_database where datname = :'wanted'", capture_output=True, text=True, check=True,
     ).stdout.strip()
     if existing:
         raise SystemExit(f"Database {ARGUMENTS.database} already exists; refusing to touch it.")
-    subprocess.run(["createdb", "-h", ARGUMENTS.db_host, "-U", ARGUMENTS.db_user, ARGUMENTS.database], check=True)
+    subprocess.run(["createdb", "-h", ARGUMENTS.db_host, "-p", str(ARGUMENTS.db_port), "-U", ARGUMENTS.db_user, ARGUMENTS.database], check=True)
     subprocess.run(
         ["redis-server", "--port", str(ARGUMENTS.redis_port), "--save", "", "--appendonly", "no",
          "--dir", str(WORK), "--daemonize", "yes", "--pidfile", str(WORK / "redis.pid"),
@@ -147,7 +143,7 @@ def stop_infrastructure():
         from django.db import connections
 
         connections.close_all()
-        subprocess.run(["dropdb", "-h", ARGUMENTS.db_host, "-U", ARGUMENTS.db_user, "--if-exists", "--force",
+        subprocess.run(["dropdb", "-h", ARGUMENTS.db_host, "-p", str(ARGUMENTS.db_port), "-U", ARGUMENTS.db_user, "--if-exists", "--force",
                         ARGUMENTS.database], capture_output=True)
         shutil.rmtree(WORK, ignore_errors=True)
 
@@ -339,21 +335,22 @@ def scenario_routing_and_full_flow(api, pictures):
         stored = handle.read()
     decoded = cv2.imdecode(np.frombuffer(body, dtype=np.uint8), cv2.IMREAD_COLOR)
     progress = api.client.get(f"/api/images/batches/{batch['id']}/progress/").json()
-    restoration = parameters.get("face_restoration", {})
-    stage = [entry for entry in parameters.get("stage_reports", []) if entry["stage"] == "face_restoration"]
+    retired_keys = [key for key in ("zero_dce", "hd_restoration", "purevision", "purescale", "face_restoration", "colorization")
+                    if key in parameters]
     routed = deliveries(row.task_id)
     record(
         "routing_and_full_flow",
-        "preprocessing on the web worker, enhancement on the GFPGAN worker; real GFPGAN applied with identity verified; "
+        "preprocessing and enhancement run on the worker; the result is the lightweight pipeline's, with no retired stage; "
         "file stored once; download returns the stored image; progress reports completion",
-        bool(finished) and row.status == "completed" and routed == {"gfpgan": 1}
-        and restoration.get("applied") and parameters.get("identity_status") == "verified"
+        bool(finished) and row.status == "completed" and routed == {"enhance": 1}
+        and parameters.get("render_policy", {}).get("name") == "lightweight_v1" and not retired_keys
+        and str(parameters.get("algorithm", "")).startswith("opencv_adaptive_restoration_router_v2")
         and download.status_code == 200 and body == stored and decoded is not None
         and list(decoded.shape[:2]) == [row.output_height, row.output_width],
         status=row.status, enhancement_task_delivered_to=routed,
         preprocessing_task_delivered_to=deliveries(preprocess_task) if preprocess_task else "n/a",
-        gfpgan_applied=restoration.get("applied"), gfpgan_device=(stage[0].get("device") if stage else None),
-        identity_status=parameters.get("identity_status"), similarity=parameters.get("identity_guard", {}).get("similarity"),
+        algorithm=parameters.get("algorithm"), retired_keys_in_result=retired_keys,
+        identity_status=parameters.get("identity_status"),
         download_status=download.status_code, download_matches_stored_file=body == stored,
         output=[row.output_width, row.output_height], processing_ms=row.processing_duration_ms,
         progress={key: progress.get(key) for key in ("status", "progress_percentage", "completed", "total") if key in progress},
@@ -366,7 +363,7 @@ def scenario_routing_and_full_flow(api, pictures):
 def scenario_duplicate_delivery(api, pictures):
     from enhancement.tasks import process_enhancement_image
 
-    start_worker("gfpgan-2", WORKER_PYTHON, "gfpgan")
+    start_worker("enhance-2", WEB_PYTHON, "celery")
     batch = api.upload(("duplicate.jpg", pictures["portrait_medium"]))
     image = api.wait_preprocessed(batch["id"])[0]
     queued = api.enhance(image.pk)
@@ -377,7 +374,7 @@ def scenario_duplicate_delivery(api, pictures):
     row = result_row(queued["id"])
     routed = deliveries(row.task_id)
     finished_lines = sum(len(re.findall(rf"Task enhancement.process_image\[{row.task_id}\] (succeeded|retry)", worker_log(name)))
-                         for name in ("gfpgan", "gfpgan-2"))
+                         for name in ("enhance", "enhance-2"))
     files = stored_outputs(row.pk)
     record(
         "duplicate_delivery",
@@ -386,38 +383,47 @@ def scenario_duplicate_delivery(api, pictures):
         status=row.status, deliveries=routed, task_outcome_lines=finished_lines, output_files=files,
         claim_attempt=row.claim_attempt,
     )
-    stop_worker("gfpgan-2")
+    stop_worker("enhance-2")
 
 
 def scenario_database_failure_then_retry(api, pictures):
+    """The lightweight pipeline finishes in well under a second, so a worker is held inside it
+    (an injected 25 s stage, after the claim) for the connection to be killed mid-task."""
     from django.db import connection
 
-    batch = api.upload(("db-failure.jpg", pictures["portrait_large"]))
-    image = api.wait_preprocessed(batch["id"])[0]
-    queued = api.enhance(image.pk)
-    processing = wait_for(lambda: result_row(queued["id"]).status == "processing", 120, interval=0.1)
-    time.sleep(1.0)  # into the pipeline, past the claim
-    with connection.cursor() as cursor:
-        cursor.execute(
-            "select pg_terminate_backend(pid) from pg_stat_activity "
-            "where datname = current_database() and pid <> pg_backend_pid()"
+    stop_worker("enhance")
+    start_worker("db-victim", WEB_PYTHON, "celery", fault="sleep:25")
+    try:
+        batch = api.upload(("db-failure.jpg", pictures["portrait_large"]))
+        image = api.wait_preprocessed(batch["id"])[0]
+        queued = api.enhance(image.pk)
+        processing = wait_for(lambda: result_row(queued["id"]).status == "processing", 120, interval=0.1)
+        time.sleep(1.0)  # into the pipeline, past the claim
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "select pg_terminate_backend(pid) from pg_stat_activity "
+                "where datname = current_database() and pid <> pg_backend_pid()"
+            )
+            terminated = len(cursor.fetchall())
+        started = time.time()
+        wait_for(lambda: result_row(queued["id"]).status in {"completed", "failed"}, 900)
+        seconds_to_complete = round(time.time() - started)
+        row = result_row(queued["id"])
+        text = worker_log("db-victim")
+        retried = len(re.findall(rf"Task enhancement.process_image\[{row.task_id}\] retry", text))
+        record(
+            "database_failure_then_retry",
+            "the worker's database connection is killed mid-task; the task retries, resumes its own claim and completes once",
+            bool(processing) and terminated >= 1 and row.status == "completed" and retried >= 1 and row.claim_attempt >= 1
+            and len(stored_outputs(row.pk)) == 1 and seconds_to_complete < 180,
+            connections_terminated=terminated, retries_logged=retried, status=row.status,
+            seconds_from_failure_to_completion=seconds_to_complete,
+            claim_attempt=row.claim_attempt, output_files=stored_outputs(row.pk),
         )
-        terminated = len(cursor.fetchall())
-    started = time.time()
-    wait_for(lambda: result_row(queued["id"]).status in {"completed", "failed"}, 900)
-    seconds_to_complete = round(time.time() - started)
-    row = result_row(queued["id"])
-    text = worker_log("gfpgan")
-    retried = len(re.findall(rf"Task enhancement.process_image\[{row.task_id}\] retry", text))
-    record(
-        "database_failure_then_retry",
-        "the worker's database connection is killed mid-task; the task retries, resumes its own claim and completes once",
-        bool(processing) and terminated >= 1 and row.status == "completed" and retried >= 1 and row.claim_attempt >= 1
-        and len(stored_outputs(row.pk)) == 1 and seconds_to_complete < 180,
-        connections_terminated=terminated, retries_logged=retried, status=row.status,
-        seconds_from_failure_to_completion=seconds_to_complete,
-        claim_attempt=row.claim_attempt, output_files=stored_outputs(row.pk),
-    )
+    finally:
+        if "db-victim" in PROCESSES:
+            stop_worker("db-victim")
+        start_worker("enhance", WEB_PYTHON, "celery")
 
 
 def scenario_cancellation(api, pictures):
@@ -445,16 +451,19 @@ def scenario_cancellation(api, pictures):
 
 
 def scenario_worker_killed_then_restarted(api, pictures):
+    """Held inside the pipeline by an injected 20 s stage, so the kill lands mid-task."""
+    stop_worker("enhance")
+    start_worker("victim", WEB_PYTHON, "celery", fault="sleep:20")
     batch = api.upload(("worker-restart.jpg", pictures["portrait_large"]))
     image = api.wait_preprocessed(batch["id"])[0]
     queued = api.enhance(image.pk)
     wait_for(lambda: result_row(queued["id"]).status == "processing", 120, interval=0.1)
     time.sleep(1.0)
-    stop_worker("gfpgan", kill=True)
+    stop_worker("victim", kill=True)
     killed_at = time.time()
     left = result_row(queued["id"])
-    log("GFPGAN worker killed mid-task (SIGKILL); restarting it")
-    start_worker("gfpgan", WORKER_PYTHON, "gfpgan")
+    log("Enhancement worker killed mid-task (SIGKILL); restarting a normal one")
+    start_worker("enhance", WEB_PYTHON, "celery")
     done = wait_for(lambda: result_row(queued["id"]).status in {"completed", "failed"}, 420, interval=1.0)
     row = result_row(queued["id"])
     record(
@@ -465,6 +474,7 @@ def scenario_worker_killed_then_restarted(api, pictures):
         deliveries=deliveries(row.task_id), output_files=stored_outputs(row.pk),
         note=f"visibility timeout {ARGUMENTS.visibility_timeout} s, task limit {TIME_LIMIT} s, claim lease {LEASE} s for this run; defaults are 105 min, 60 min and 30 min",
     )
+
 
 def task_outcomes(name, task_id):
     """What each execution of ``task_id`` on worker ``name`` returned, or that it retried."""
@@ -502,14 +512,14 @@ def scenario_duplicate_while_original_renews(api, pictures):
     """The original runs one 150 s stage (> two leases) with no checkpoint in it."""
     from enhancement.tasks import MAX_CLAIM_WAITS, process_enhancement_image
 
-    stop_worker("gfpgan")
-    start_worker("slow-original", WORKER_PYTHON, "gfpgan", fault="sleep:150")
+    stop_worker("enhance")
+    start_worker("slow-original", WEB_PYTHON, "celery", fault="sleep:150")
     try:
         batch = api.upload(("renewal.jpg", pictures["portrait_medium"]))
         image = api.wait_preprocessed(batch["id"])[0]
         queued = api.enhance(image.pk)
         wait_for(lambda: result_row(queued["id"]).status == "processing", 120, interval=0.2)
-        start_worker("duplicate", WORKER_PYTHON, "gfpgan")
+        start_worker("duplicate", WEB_PYTHON, "celery")
         process_enhancement_image.apply_async(args=[queued["id"]], task_id=queued["task_id"])
         row, seen = watch_row(queued["id"], lambda row: row.status in {"completed", "failed"}, 400)
         time.sleep(5)
@@ -533,7 +543,7 @@ def scenario_duplicate_while_original_renews(api, pictures):
         for name in ("slow-original", "duplicate"):
             if name in PROCESSES:
                 stop_worker(name)
-        start_worker("gfpgan", WORKER_PYTHON, "gfpgan")
+        start_worker("enhance", WEB_PYTHON, "celery")
 
 
 def scenario_old_worker_fails_after_takeover(api, pictures):
@@ -541,8 +551,8 @@ def scenario_old_worker_fails_after_takeover(api, pictures):
     the original wakes up and fails."""
     from enhancement.tasks import process_enhancement_image
 
-    stop_worker("gfpgan")
-    start_worker("old", WORKER_PYTHON, "gfpgan", fault="sleep_then_fail:20")
+    stop_worker("enhance")
+    start_worker("old", WEB_PYTHON, "celery", fault="sleep_then_fail:20")
     try:
         batch = api.upload(("takeover.jpg", pictures["portrait_medium"]))
         image = api.wait_preprocessed(batch["id"])[0]
@@ -552,7 +562,7 @@ def scenario_old_worker_fails_after_takeover(api, pictures):
         first_token = result_row(queued["id"]).claim_token
         PROCESSES["old"][0].send_signal(signal.SIGSTOP)
         log("old worker frozen (SIGSTOP) holding the claim")
-        start_worker("new", WORKER_PYTHON, "gfpgan", fault="sleep:45")
+        start_worker("new", WEB_PYTHON, "celery", fault="sleep:45")
         process_enhancement_image.apply_async(args=[queued["id"]], task_id=queued["task_id"])
         taken = wait_for(lambda: result_row(queued["id"]).claim_token not in {"", first_token}, 240)
         PROCESSES["old"][0].send_signal(signal.SIGCONT)
@@ -576,7 +586,7 @@ def scenario_old_worker_fails_after_takeover(api, pictures):
             if name in PROCESSES:
                 PROCESSES[name][0].send_signal(signal.SIGCONT)
                 stop_worker(name)
-        start_worker("gfpgan", WORKER_PYTHON, "gfpgan")
+        start_worker("enhance", WEB_PYTHON, "celery")
 
 
 def scenario_worker_killed_mid_batch(api, pictures):
@@ -584,8 +594,8 @@ def scenario_worker_killed_mid_batch(api, pictures):
     while the dead worker's claim on the current image is still live."""
     from enhancement.models import EnhancementBatchJob
 
-    stop_worker("gfpgan")
-    start_worker("batch-a", WORKER_PYTHON, "gfpgan", fault="sleep:60")
+    stop_worker("enhance")
+    start_worker("batch-a", WEB_PYTHON, "celery", fault="sleep:60")
     try:
         named = [(f"batch-death-{index}.jpg", pictures["portrait_medium"]) for index in range(6)]
         batch = api.upload(*named)
@@ -596,7 +606,7 @@ def scenario_worker_killed_mid_batch(api, pictures):
         # Kill late enough that the redelivery (visibility timeout after the
         # first delivery, plus Redis's ~10 s restore cycle) arrives while the
         # claim the dead worker last renewed is still within its lease.
-        start_worker("batch-b", WORKER_PYTHON, "gfpgan")  # idle until the batch is redelivered
+        start_worker("batch-b", WEB_PYTHON, "celery")  # idle until the batch is redelivered
         kill_after = ARGUMENTS.visibility_timeout - 15
         wait_for(lambda: time.time() - dispatched >= kill_after, kill_after + 10, interval=1.0)
         interrupted = [row for row in rows() if row.status == "processing"]
@@ -629,15 +639,14 @@ def scenario_worker_killed_mid_batch(api, pictures):
         for name in ("batch-a", "batch-b"):
             if name in PROCESSES:
                 stop_worker(name)
-        start_worker("gfpgan", WORKER_PYTHON, "gfpgan")
+        start_worker("enhance", WEB_PYTHON, "celery")
 
 
 def main():
     start_infrastructure()
     try:
         setup_django()
-        start_worker("web", WEB_PYTHON, "celery")
-        start_worker("gfpgan", WORKER_PYTHON, "gfpgan")
+        start_worker("enhance", WEB_PYTHON, "celery")
         api = Api()
         pictures = images(Path(ARGUMENTS.portrait).expanduser())
         chosen = {name.strip() for name in ARGUMENTS.scenarios.split(",") if name.strip()}
@@ -656,8 +665,8 @@ def main():
     finally:
         (OUTPUT / "results.json").write_text(json.dumps(RESULTS, indent=2, default=str))
         lines = [f"# Queue integration `{ARGUMENTS.name}`", "",
-                 "Real Redis, real Celery workers (web environment on `celery`, GFPGAN environment on `gfpgan`), "
-                 f"a throwaway PostgreSQL database and real checkpoints. Visibility timeout {ARGUMENTS.visibility_timeout} s, "
+                 "Real Redis, real Celery workers (web environment, default queue), "
+                 f"a throwaway PostgreSQL database and the real pipeline. Visibility timeout {ARGUMENTS.visibility_timeout} s, "
                  f"task time limit {TIME_LIMIT} s and claim lease {LEASE} s for this run.", "", "| Scenario | Expected | Result |", "|---|---|---|"]
         lines += [f"| {row['scenario']} | {row['expects']} | {'**PASS**' if row['passed'] else '**FAIL**'} |" for row in RESULTS]
         (OUTPUT / "report.md").write_text("\n".join(lines) + "\n")

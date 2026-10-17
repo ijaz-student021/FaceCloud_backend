@@ -1,6 +1,8 @@
 from django.urls import path
 
 from .views import (
+    InvitationAcceptView,
+    InvitationInspectView,
     FaceCloudTokenObtainPairView,
     FaceCloudTokenRefreshView,
     PasswordResetConfirmView,
@@ -19,6 +21,8 @@ from .views import (
 )
 
 urlpatterns = [
+    path("invitations/inspect/", InvitationInspectView.as_view(), name="invitation-inspect"),
+    path("invitations/accept/", InvitationAcceptView.as_view(), name="invitation-accept"),
     path("register/", RegisterView.as_view(), name="register"),
     path("login/", FaceCloudTokenObtainPairView.as_view(), name="login"),
     path("refresh/", FaceCloudTokenRefreshView.as_view(), name="refresh"),

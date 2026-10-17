@@ -114,11 +114,30 @@ class DefectDrivenRoutingTests(SimpleTestCase):
             parameters["quality_after"]["mean_luminance"], parameters["quality_before"]["mean_luminance"], delta=0.5,
         )
 
-    def test_a_dark_photo_is_still_corrected(self):
+    def test_a_dark_photo_is_corrected_when_a_level_is_chosen(self):
         dark = detailed(base=45)
-        output, _level, parameters = enhance_bgr(dark, "auto")
+        output, _level, parameters = enhance_bgr(dark, "medium")
         self.assertFalse(parameters["no_correction_needed"])
         self.assertGreater(float(output.mean()), float(dark.mean()) + 5)
+
+    def test_automatic_mode_does_not_brighten_a_dark_photo_and_says_why(self):
+        """Dark by design or underexposed cannot be told from pixels: auto asks, it does not guess."""
+        dark = detailed(base=45)
+        output, level, parameters = enhance_bgr(dark, "auto")
+        self.assertLessEqual(float(output.mean()), float(dark.mean()) + 1.0)
+        self.assertEqual(level, "low")
+        decisions = {entry["decision"]: entry["reason"] for entry in parameters["plan"]["routing"]}
+        self.assertIn("lift_withheld", decisions)
+        self.assertIn("Choose a level", decisions["lift_withheld"])
+        self.assertFalse(parameters["plan"]["steps"]["exposure"]["planned"])
+        self.assertIn("lift withheld", parameters["plan"]["steps"]["exposure"]["reason"])
+
+    def test_an_overexposed_dark_mean_photo_is_still_corrected_in_auto_mode(self):
+        """Withholding the lift must not stop highlight recovery."""
+        scene = detailed(base=60)
+        scene[:, : scene.shape[1] // 3] = 255  # a third of the frame is blown out
+        _output, _level, parameters = enhance_bgr(scene, "auto")
+        self.assertNotIn("lift_withheld", {entry["decision"] for entry in parameters["plan"]["routing"]})
 
     def test_a_compressed_photo_is_never_sharpened_or_given_local_contrast(self):
         compressed = jpeg(cv2.GaussianBlur(detailed(base=70), (0, 0), 1.5), 15)  # dark, soft and blocky
@@ -145,7 +164,8 @@ class DefectDrivenRoutingTests(SimpleTestCase):
 
     def test_a_dark_compressed_photo_is_brightened_without_stronger_blocks(self):
         compressed = jpeg(detailed(base=50), 15)
-        output, _level, parameters = enhance_bgr(compressed, "auto")
+        # Brightening a dark photo is asked for by choosing a level; "auto" withholds it.
+        output, _level, parameters = enhance_bgr(compressed, "high")
 
         self.assertGreater(float(output.mean()), float(compressed.mean()) + 5)
         # What local contrast and sharpening would have done to the same input.
@@ -153,8 +173,10 @@ class DefectDrivenRoutingTests(SimpleTestCase):
             context.input_quality["compression_artifacts"] = measure_compression_artifacts(context.source_image)
             return []
 
-        with patch("enhancement.services._apply_conservative_routing", side_effect=measure_only):
-            unrouted_output, _level, _parameters = enhance_bgr(compressed, "auto")
+        # The sharpness cap would also soften this counterfactual, so it is switched off for the comparison.
+        with patch("enhancement.services._apply_conservative_routing", side_effect=measure_only), \
+                patch("enhancement.services.SHARP_PHOTO_MAX_SHARPNESS_GAIN", 1e9):
+            unrouted_output, _level, _parameters = enhance_bgr(compressed, "high")
         routed = measure_compression_artifacts(output)["blockiness"][0]
         unrouted = measure_compression_artifacts(unrouted_output)["blockiness"][0]
         self.assertLess(routed, unrouted)
@@ -179,3 +201,26 @@ class TextureIsNotNoiseTests(SimpleTestCase):
         _output, _level, parameters = enhance_bgr(grainy, "auto")
         self.assertTrue(parameters["adaptive_denoise"]["applied"])
         self.assertEqual(parameters["adaptive_denoise"]["reason"], "measured_noise_accepted")
+
+
+class SharpPhotoSharpeningCapTests(SimpleTestCase):
+    """A photo that is already sharp is not pushed further than a bounded gain; a soft one is not limited."""
+
+    def test_a_sharp_photo_is_sharpened_less_than_without_the_cap(self):
+        sharp = detailed()
+        _output, _level, capped = enhance_bgr(sharp, "high")
+        with patch("enhancement.services.SHARP_PHOTO_MAX_SHARPNESS_GAIN", 1e9):
+            _output, _level, uncapped = enhance_bgr(sharp, "high")
+
+        self.assertEqual(capped["quality_before"]["blur"]["verdict"], "sharp")
+        self.assertIn("sharpen_capped", capped)
+        self.assertNotIn("sharpen_capped", uncapped)
+        self.assertLess(capped["sharpen"], uncapped["sharpen"])
+        self.assertLess(capped["quality_after"]["laplacian_sharpness"], uncapped["quality_after"]["laplacian_sharpness"])
+
+    def test_a_soft_photo_is_still_sharpened_in_full(self):
+        soft = cv2.GaussianBlur(detailed(), (0, 0), 2.2)
+        _output, _level, parameters = enhance_bgr(soft, "high")
+        self.assertNotIn("sharpen_capped", parameters)
+        self.assertGreater(parameters["quality_after"]["laplacian_sharpness"],
+                           parameters["quality_before"]["laplacian_sharpness"] * 1.3)

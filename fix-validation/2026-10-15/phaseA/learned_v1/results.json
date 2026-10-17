@@ -1,0 +1,1236 @@
+[
+  {
+    "photo": "bright__13",
+    "case": "original",
+    "megapixels": 1.18,
+    "level": "high",
+    "seconds": 0.37,
+    "peak_memory_mb": 309,
+    "peak_memory_growth_mb": 100,
+    "defects": [
+      "overexposed_highlights"
+    ],
+    "psnr_to_clean_before": 99.0,
+    "psnr_to_clean_after": 49.42,
+    "ssim_to_clean_before": 1.0,
+    "ssim_to_clean_after": 0.9994,
+    "luminance": [
+      240.6,
+      240.42
+    ],
+    "noise": [
+      0.0,
+      0.0
+    ],
+    "sharpness": [
+      744.97,
+      764.48
+    ],
+    "highlight_clipping": [
+      60.434,
+      60.527
+    ],
+    "chroma_shift": 0.0,
+    "stages_that_changed_pixels": [
+      "exposure_enhancement"
+    ],
+    "fallbacks": {},
+    "face_fidelity": {
+      "status": "no_faces",
+      "faces_checked": 0,
+      "faces_adjusted": 0
+    },
+    "identity_status": "inconclusive",
+    "identity": {
+      "status": "inconclusive",
+      "verified": false,
+      "reason": "No face large enough to judge was found in the source.",
+      "requirement_bypass": null,
+      "face_restoration_unverified": false,
+      "similarity": null,
+      "initial_similarity": null,
+      "faces_compared": 0,
+      "strength": 1.0
+    },
+    "gpu_peak_memory_mb": null,
+    "zero_dce_applied": false,
+    "model_stages_run": {},
+    "stage_durations_ms": {
+      "analyze_original": 142.248,
+      "exposure_enhancement": 4.776,
+      "output_guard_a": 47.906,
+      "measure_post_exposure_noise": 15.339,
+      "adaptive_denoise": 0.031,
+      "purevision_restoration": 0.012,
+      "low_resolution_restoration": 15.266,
+      "hd_restoration": 0.013,
+      "purescale_super_resolution": 0.005,
+      "face_restoration": 0.011,
+      "sharpen": 0.002,
+      "output_guard_b": 59.904,
+      "face_fidelity": 34.312,
+      "colorization": 0.021,
+      "dynamic_style": 0.005,
+      "identity_guard": 15.617,
+      "validate_output": 0.585
+    },
+    "no_correction_needed": false,
+    "minimal_processing": false,
+    "warnings": []
+  },
+  {
+    "photo": "bright__14",
+    "case": "original",
+    "megapixels": 1.92,
+    "level": "low",
+    "seconds": 0.35,
+    "peak_memory_mb": 374,
+    "peak_memory_growth_mb": 62,
+    "defects": [],
+    "psnr_to_clean_before": 99.0,
+    "psnr_to_clean_after": 99.0,
+    "ssim_to_clean_before": 1.0,
+    "ssim_to_clean_after": 1.0,
+    "luminance": [
+      178.58,
+      178.58
+    ],
+    "noise": [
+      0.0,
+      0.0
+    ],
+    "sharpness": [
+      289.92,
+      289.92
+    ],
+    "highlight_clipping": [
+      0.076,
+      0.076
+    ],
+    "chroma_shift": 0.0,
+    "stages_that_changed_pixels": [],
+    "fallbacks": {},
+    "face_fidelity": {
+      "status": "no_faces",
+      "faces_checked": 0,
+      "faces_adjusted": 0
+    },
+    "identity_status": "inconclusive",
+    "identity": {
+      "status": "inconclusive",
+      "verified": false,
+      "reason": "No face large enough to judge was found in the source.",
+      "requirement_bypass": null,
+      "face_restoration_unverified": false,
+      "similarity": null,
+      "initial_similarity": null,
+      "faces_compared": 0,
+      "strength": 1.0
+    },
+    "gpu_peak_memory_mb": null,
+    "zero_dce_applied": false,
+    "model_stages_run": {},
+    "stage_durations_ms": {
+      "analyze_original": 38.421,
+      "exposure_enhancement": 0.009,
+      "output_guard_a": 76.926,
+      "measure_post_exposure_noise": 25.154,
+      "adaptive_denoise": 0.024,
+      "purevision_restoration": 0.01,
+      "low_resolution_restoration": 24.381,
+      "hd_restoration": 0.012,
+      "purescale_super_resolution": 0.005,
+      "face_restoration": 0.009,
+      "sharpen": 0.002,
+      "output_guard_b": 94.628,
+      "face_fidelity": 23.994,
+      "colorization": 0.013,
+      "dynamic_style": 0.005,
+      "identity_guard": 20.957,
+      "validate_output": 0.227
+    },
+    "no_correction_needed": true,
+    "minimal_processing": true,
+    "warnings": []
+  },
+  {
+    "photo": "clean_mid__01",
+    "case": "original",
+    "megapixels": 1.92,
+    "level": "low",
+    "seconds": 0.31,
+    "peak_memory_mb": 374,
+    "peak_memory_growth_mb": 0,
+    "defects": [],
+    "psnr_to_clean_before": 99.0,
+    "psnr_to_clean_after": 99.0,
+    "ssim_to_clean_before": 1.0,
+    "ssim_to_clean_after": 1.0,
+    "luminance": [
+      134.38,
+      134.38
+    ],
+    "noise": [
+      0.0,
+      0.0
+    ],
+    "sharpness": [
+      37.85,
+      37.85
+    ],
+    "highlight_clipping": [
+      1.607,
+      1.607
+    ],
+    "chroma_shift": 0.0,
+    "stages_that_changed_pixels": [],
+    "fallbacks": {},
+    "face_fidelity": {
+      "status": "no_faces",
+      "faces_checked": 0,
+      "faces_adjusted": 0
+    },
+    "identity_status": "inconclusive",
+    "identity": {
+      "status": "inconclusive",
+      "verified": false,
+      "reason": "No face large enough to judge was found in the source.",
+      "requirement_bypass": null,
+      "face_restoration_unverified": false,
+      "similarity": null,
+      "initial_similarity": null,
+      "faces_compared": 0,
+      "strength": 1.0
+    },
+    "gpu_peak_memory_mb": null,
+    "zero_dce_applied": false,
+    "model_stages_run": {},
+    "stage_durations_ms": {
+      "analyze_original": 29.688,
+      "exposure_enhancement": 0.009,
+      "output_guard_a": 64.438,
+      "measure_post_exposure_noise": 21.41,
+      "adaptive_denoise": 0.019,
+      "purevision_restoration": 0.008,
+      "low_resolution_restoration": 21.021,
+      "hd_restoration": 0.011,
+      "purescale_super_resolution": 0.005,
+      "face_restoration": 0.009,
+      "sharpen": 0.002,
+      "output_guard_b": 85.876,
+      "face_fidelity": 21.092,
+      "colorization": 0.012,
+      "dynamic_style": 0.004,
+      "identity_guard": 21.355,
+      "validate_output": 0.208
+    },
+    "no_correction_needed": true,
+    "minimal_processing": true,
+    "warnings": []
+  },
+  {
+    "photo": "clean_mid__02",
+    "case": "original",
+    "megapixels": 2.07,
+    "level": "low",
+    "seconds": 0.37,
+    "peak_memory_mb": 410,
+    "peak_memory_growth_mb": 36,
+    "defects": [],
+    "psnr_to_clean_before": 99.0,
+    "psnr_to_clean_after": 99.0,
+    "ssim_to_clean_before": 1.0,
+    "ssim_to_clean_after": 1.0,
+    "luminance": [
+      156.82,
+      156.82
+    ],
+    "noise": [
+      0.0,
+      0.0
+    ],
+    "sharpness": [
+      254.35,
+      254.35
+    ],
+    "highlight_clipping": [
+      0.747,
+      0.747
+    ],
+    "chroma_shift": 0.0,
+    "stages_that_changed_pixels": [],
+    "fallbacks": {},
+    "face_fidelity": {
+      "status": "no_faces",
+      "faces_checked": 0,
+      "faces_adjusted": 0
+    },
+    "identity_status": "inconclusive",
+    "identity": {
+      "status": "inconclusive",
+      "verified": false,
+      "reason": "No face large enough to judge was found in the source.",
+      "requirement_bypass": null,
+      "face_restoration_unverified": false,
+      "similarity": null,
+      "initial_similarity": null,
+      "faces_compared": 0,
+      "strength": 1.0
+    },
+    "gpu_peak_memory_mb": null,
+    "zero_dce_applied": false,
+    "model_stages_run": {},
+    "stage_durations_ms": {
+      "analyze_original": 35.2,
+      "exposure_enhancement": 0.009,
+      "output_guard_a": 77.542,
+      "measure_post_exposure_noise": 26.276,
+      "adaptive_denoise": 0.019,
+      "purevision_restoration": 0.008,
+      "low_resolution_restoration": 25.406,
+      "hd_restoration": 0.011,
+      "purescale_super_resolution": 0.005,
+      "face_restoration": 0.008,
+      "sharpen": 0.002,
+      "output_guard_b": 98.839,
+      "face_fidelity": 28.982,
+      "colorization": 0.012,
+      "dynamic_style": 0.004,
+      "identity_guard": 25.482,
+      "validate_output": 0.239
+    },
+    "no_correction_needed": true,
+    "minimal_processing": true,
+    "warnings": []
+  },
+  {
+    "photo": "clean_mid__03",
+    "case": "original",
+    "megapixels": 1.92,
+    "level": "low",
+    "seconds": 0.39,
+    "peak_memory_mb": 416,
+    "peak_memory_growth_mb": 1,
+    "defects": [],
+    "psnr_to_clean_before": 99.0,
+    "psnr_to_clean_after": 99.0,
+    "ssim_to_clean_before": 1.0,
+    "ssim_to_clean_after": 1.0,
+    "luminance": [
+      131.76,
+      131.76
+    ],
+    "noise": [
+      0.0,
+      0.0
+    ],
+    "sharpness": [
+      107.98,
+      107.98
+    ],
+    "highlight_clipping": [
+      0.0,
+      0.0
+    ],
+    "chroma_shift": 0.0,
+    "stages_that_changed_pixels": [],
+    "fallbacks": {},
+    "face_fidelity": {
+      "status": "no_faces",
+      "faces_checked": 0,
+      "faces_adjusted": 0
+    },
+    "identity_status": "inconclusive",
+    "identity": {
+      "status": "inconclusive",
+      "verified": false,
+      "reason": "No face large enough to judge was found in the source.",
+      "requirement_bypass": null,
+      "face_restoration_unverified": false,
+      "similarity": null,
+      "initial_similarity": null,
+      "faces_compared": 0,
+      "strength": 1.0
+    },
+    "gpu_peak_memory_mb": null,
+    "zero_dce_applied": false,
+    "model_stages_run": {},
+    "stage_durations_ms": {
+      "analyze_original": 34.099,
+      "exposure_enhancement": 0.008,
+      "output_guard_a": 72.164,
+      "measure_post_exposure_noise": 25.608,
+      "adaptive_denoise": 0.019,
+      "purevision_restoration": 0.008,
+      "low_resolution_restoration": 25.84,
+      "hd_restoration": 0.011,
+      "purescale_super_resolution": 0.005,
+      "face_restoration": 0.009,
+      "sharpen": 0.002,
+      "output_guard_b": 98.807,
+      "face_fidelity": 21.163,
+      "colorization": 0.013,
+      "dynamic_style": 0.005,
+      "identity_guard": 20.452,
+      "validate_output": 0.212
+    },
+    "no_correction_needed": true,
+    "minimal_processing": true,
+    "warnings": []
+  },
+  {
+    "photo": "clean_mid__04",
+    "case": "original",
+    "megapixels": 1.92,
+    "level": "low",
+    "seconds": 0.33,
+    "peak_memory_mb": 421,
+    "peak_memory_growth_mb": 0,
+    "defects": [],
+    "psnr_to_clean_before": 99.0,
+    "psnr_to_clean_after": 99.0,
+    "ssim_to_clean_before": 1.0,
+    "ssim_to_clean_after": 1.0,
+    "luminance": [
+      130.55,
+      130.55
+    ],
+    "noise": [
+      0.0,
+      0.0
+    ],
+    "sharpness": [
+      122.23,
+      122.23
+    ],
+    "highlight_clipping": [
+      0.0,
+      0.0
+    ],
+    "chroma_shift": 0.0,
+    "stages_that_changed_pixels": [],
+    "fallbacks": {},
+    "face_fidelity": {
+      "status": "no_faces",
+      "faces_checked": 0,
+      "faces_adjusted": 0
+    },
+    "identity_status": "inconclusive",
+    "identity": {
+      "status": "inconclusive",
+      "verified": false,
+      "reason": "No face large enough to judge was found in the source.",
+      "requirement_bypass": null,
+      "face_restoration_unverified": false,
+      "similarity": null,
+      "initial_similarity": null,
+      "faces_compared": 0,
+      "strength": 1.0
+    },
+    "gpu_peak_memory_mb": null,
+    "zero_dce_applied": false,
+    "model_stages_run": {},
+    "stage_durations_ms": {
+      "analyze_original": 31.897,
+      "exposure_enhancement": 0.009,
+      "output_guard_a": 68.315,
+      "measure_post_exposure_noise": 23.287,
+      "adaptive_denoise": 0.017,
+      "purevision_restoration": 0.007,
+      "low_resolution_restoration": 23.904,
+      "hd_restoration": 0.011,
+      "purescale_super_resolution": 0.005,
+      "face_restoration": 0.008,
+      "sharpen": 0.002,
+      "output_guard_b": 92.136,
+      "face_fidelity": 21.33,
+      "colorization": 0.014,
+      "dynamic_style": 0.004,
+      "identity_guard": 20.643,
+      "validate_output": 0.211
+    },
+    "no_correction_needed": true,
+    "minimal_processing": true,
+    "warnings": []
+  },
+  {
+    "photo": "jpeg_artifacts__01",
+    "case": "original",
+    "megapixels": 1.92,
+    "level": "low",
+    "seconds": 0.32,
+    "peak_memory_mb": 426,
+    "peak_memory_growth_mb": 0,
+    "defects": [],
+    "psnr_to_clean_before": 99.0,
+    "psnr_to_clean_after": 99.0,
+    "ssim_to_clean_before": 1.0,
+    "ssim_to_clean_after": 1.0,
+    "luminance": [
+      134.41,
+      134.41
+    ],
+    "noise": [
+      0.0,
+      0.0
+    ],
+    "sharpness": [
+      35.86,
+      35.86
+    ],
+    "highlight_clipping": [
+      1.584,
+      1.584
+    ],
+    "chroma_shift": 0.0,
+    "stages_that_changed_pixels": [],
+    "fallbacks": {},
+    "face_fidelity": {
+      "status": "no_faces",
+      "faces_checked": 0,
+      "faces_adjusted": 0
+    },
+    "identity_status": "inconclusive",
+    "identity": {
+      "status": "inconclusive",
+      "verified": false,
+      "reason": "No face large enough to judge was found in the source.",
+      "requirement_bypass": null,
+      "face_restoration_unverified": false,
+      "similarity": null,
+      "initial_similarity": null,
+      "faces_compared": 0,
+      "strength": 1.0
+    },
+    "gpu_peak_memory_mb": null,
+    "zero_dce_applied": false,
+    "model_stages_run": {},
+    "stage_durations_ms": {
+      "analyze_original": 31.213,
+      "exposure_enhancement": 0.008,
+      "output_guard_a": 65.612,
+      "measure_post_exposure_noise": 22.556,
+      "adaptive_denoise": 0.02,
+      "purevision_restoration": 0.008,
+      "low_resolution_restoration": 22.767,
+      "hd_restoration": 0.012,
+      "purescale_super_resolution": 0.005,
+      "face_restoration": 0.009,
+      "sharpen": 0.002,
+      "output_guard_b": 87.669,
+      "face_fidelity": 20.926,
+      "colorization": 0.014,
+      "dynamic_style": 0.004,
+      "identity_guard": 20.636,
+      "validate_output": 0.254
+    },
+    "no_correction_needed": true,
+    "minimal_processing": true,
+    "warnings": []
+  },
+  {
+    "photo": "jpeg_artifacts__02",
+    "case": "original",
+    "megapixels": 2.07,
+    "level": "low",
+    "seconds": 0.35,
+    "peak_memory_mb": 438,
+    "peak_memory_growth_mb": 6,
+    "defects": [],
+    "psnr_to_clean_before": 99.0,
+    "psnr_to_clean_after": 99.0,
+    "ssim_to_clean_before": 1.0,
+    "ssim_to_clean_after": 1.0,
+    "luminance": [
+      156.86,
+      156.86
+    ],
+    "noise": [
+      0.0,
+      0.0
+    ],
+    "sharpness": [
+      201.79,
+      201.79
+    ],
+    "highlight_clipping": [
+      0.694,
+      0.694
+    ],
+    "chroma_shift": 0.0,
+    "stages_that_changed_pixels": [],
+    "fallbacks": {},
+    "face_fidelity": {
+      "status": "no_faces",
+      "faces_checked": 0,
+      "faces_adjusted": 0
+    },
+    "identity_status": "inconclusive",
+    "identity": {
+      "status": "inconclusive",
+      "verified": false,
+      "reason": "No face large enough to judge was found in the source.",
+      "requirement_bypass": null,
+      "face_restoration_unverified": false,
+      "similarity": null,
+      "initial_similarity": null,
+      "faces_compared": 0,
+      "strength": 1.0
+    },
+    "gpu_peak_memory_mb": null,
+    "zero_dce_applied": false,
+    "model_stages_run": {},
+    "stage_durations_ms": {
+      "analyze_original": 34.025,
+      "exposure_enhancement": 0.009,
+      "output_guard_a": 72.404,
+      "measure_post_exposure_noise": 24.309,
+      "adaptive_denoise": 0.018,
+      "purevision_restoration": 0.008,
+      "low_resolution_restoration": 24.719,
+      "hd_restoration": 0.011,
+      "purescale_super_resolution": 0.005,
+      "face_restoration": 0.008,
+      "sharpen": 0.002,
+      "output_guard_b": 97.311,
+      "face_fidelity": 25.966,
+      "colorization": 0.012,
+      "dynamic_style": 0.004,
+      "identity_guard": 25.613,
+      "validate_output": 0.233
+    },
+    "no_correction_needed": true,
+    "minimal_processing": true,
+    "warnings": []
+  },
+  {
+    "photo": "low_key__05",
+    "case": "original",
+    "megapixels": 1.57,
+    "level": "medium",
+    "seconds": 0.92,
+    "peak_memory_mb": 1163,
+    "peak_memory_growth_mb": 718,
+    "defects": [
+      "low_light"
+    ],
+    "psnr_to_clean_before": 99.0,
+    "psnr_to_clean_after": 23.04,
+    "ssim_to_clean_before": 1.0,
+    "ssim_to_clean_after": 0.8699,
+    "luminance": [
+      65.69,
+      82.06
+    ],
+    "noise": [
+      0.0,
+      1.0
+    ],
+    "sharpness": [
+      1904.54,
+      2009.11
+    ],
+    "highlight_clipping": [
+      0.522,
+      0.626
+    ],
+    "chroma_shift": 0.0,
+    "stages_that_changed_pixels": [
+      "exposure_enhancement",
+      "output_guard_a"
+    ],
+    "fallbacks": {},
+    "face_fidelity": {
+      "status": "no_faces",
+      "faces_checked": 0,
+      "faces_adjusted": 0
+    },
+    "identity_status": "inconclusive",
+    "identity": {
+      "status": "inconclusive",
+      "verified": false,
+      "reason": "No face large enough to judge was found in the source.",
+      "requirement_bypass": null,
+      "face_restoration_unverified": false,
+      "similarity": null,
+      "initial_similarity": null,
+      "faces_compared": 0,
+      "strength": 1.0
+    },
+    "gpu_peak_memory_mb": null,
+    "zero_dce_applied": true,
+    "model_stages_run": {},
+    "stage_durations_ms": {
+      "analyze_original": 26.846,
+      "exposure_enhancement": 601.488,
+      "output_guard_a": 66.937,
+      "measure_post_exposure_noise": 20.624,
+      "adaptive_denoise": 16.19,
+      "purevision_restoration": 0.025,
+      "low_resolution_restoration": 22.097,
+      "hd_restoration": 0.011,
+      "purescale_super_resolution": 0.005,
+      "face_restoration": 0.009,
+      "sharpen": 0.002,
+      "output_guard_b": 80.299,
+      "face_fidelity": 19.661,
+      "colorization": 0.015,
+      "dynamic_style": 0.019,
+      "identity_guard": 20.565,
+      "validate_output": 0.217
+    },
+    "no_correction_needed": false,
+    "minimal_processing": false,
+    "warnings": []
+  },
+  {
+    "photo": "low_key__06",
+    "case": "original",
+    "megapixels": 2.56,
+    "level": "medium",
+    "seconds": 1.81,
+    "peak_memory_mb": 1190,
+    "peak_memory_growth_mb": 27,
+    "defects": [
+      "low_light"
+    ],
+    "psnr_to_clean_before": 99.0,
+    "psnr_to_clean_after": 28.06,
+    "ssim_to_clean_before": 1.0,
+    "ssim_to_clean_after": 0.9754,
+    "luminance": [
+      93.42,
+      102.94
+    ],
+    "noise": [
+      0.0,
+      0.0
+    ],
+    "sharpness": [
+      76.16,
+      80.17
+    ],
+    "highlight_clipping": [
+      0.0,
+      0.0
+    ],
+    "chroma_shift": 0.0,
+    "stages_that_changed_pixels": [
+      "exposure_enhancement",
+      "output_guard_a"
+    ],
+    "fallbacks": {},
+    "face_fidelity": {
+      "status": "no_faces",
+      "faces_checked": 0,
+      "faces_adjusted": 0
+    },
+    "identity_status": "inconclusive",
+    "identity": {
+      "status": "inconclusive",
+      "verified": false,
+      "reason": "No face large enough to judge was found in the source.",
+      "requirement_bypass": null,
+      "face_restoration_unverified": false,
+      "similarity": null,
+      "initial_similarity": null,
+      "faces_compared": 0,
+      "strength": 1.0
+    },
+    "gpu_peak_memory_mb": null,
+    "zero_dce_applied": true,
+    "model_stages_run": {},
+    "stage_durations_ms": {
+      "analyze_original": 46.578,
+      "exposure_enhancement": 1317.639,
+      "output_guard_a": 102.771,
+      "measure_post_exposure_noise": 30.968,
+      "adaptive_denoise": 0.055,
+      "purevision_restoration": 0.051,
+      "low_resolution_restoration": 31.913,
+      "hd_restoration": 0.013,
+      "purescale_super_resolution": 0.006,
+      "face_restoration": 0.011,
+      "sharpen": 0.002,
+      "output_guard_b": 153.636,
+      "face_fidelity": 37.128,
+      "colorization": 0.031,
+      "dynamic_style": 0.026,
+      "identity_guard": 26.825,
+      "validate_output": 0.322
+    },
+    "no_correction_needed": false,
+    "minimal_processing": false,
+    "warnings": []
+  },
+  {
+    "photo": "low_key__07",
+    "case": "original",
+    "megapixels": 1.15,
+    "level": "high",
+    "seconds": 0.68,
+    "peak_memory_mb": 1190,
+    "peak_memory_growth_mb": 0,
+    "defects": [
+      "severe_low_light"
+    ],
+    "psnr_to_clean_before": 99.0,
+    "psnr_to_clean_after": 18.07,
+    "ssim_to_clean_before": 1.0,
+    "ssim_to_clean_after": 0.7375,
+    "luminance": [
+      38.65,
+      68.74
+    ],
+    "noise": [
+      0.0,
+      0.0
+    ],
+    "sharpness": [
+      1983.11,
+      1945.16
+    ],
+    "highlight_clipping": [
+      2.68,
+      2.903
+    ],
+    "chroma_shift": 0.0,
+    "stages_that_changed_pixels": [
+      "exposure_enhancement",
+      "output_guard_a"
+    ],
+    "fallbacks": {},
+    "face_fidelity": {
+      "status": "no_faces",
+      "faces_checked": 0,
+      "faces_adjusted": 0
+    },
+    "identity_status": "inconclusive",
+    "identity": {
+      "status": "inconclusive",
+      "verified": false,
+      "reason": "No face large enough to judge was found in the source.",
+      "requirement_bypass": null,
+      "face_restoration_unverified": false,
+      "similarity": null,
+      "initial_similarity": null,
+      "faces_compared": 0,
+      "strength": 1.0
+    },
+    "gpu_peak_memory_mb": null,
+    "zero_dce_applied": true,
+    "model_stages_run": {},
+    "stage_durations_ms": {
+      "analyze_original": 26.73,
+      "exposure_enhancement": 451.89,
+      "output_guard_a": 45.444,
+      "measure_post_exposure_noise": 15.425,
+      "adaptive_denoise": 0.056,
+      "purevision_restoration": 0.022,
+      "low_resolution_restoration": 15.53,
+      "hd_restoration": 0.011,
+      "purescale_super_resolution": 0.005,
+      "face_restoration": 0.009,
+      "sharpen": 0.002,
+      "output_guard_b": 58.973,
+      "face_fidelity": 15.931,
+      "colorization": 0.017,
+      "dynamic_style": 0.004,
+      "identity_guard": 16.014,
+      "validate_output": 0.16
+    },
+    "no_correction_needed": false,
+    "minimal_processing": false,
+    "warnings": []
+  },
+  {
+    "photo": "low_key__08",
+    "case": "original",
+    "megapixels": 1.44,
+    "level": "medium",
+    "seconds": 0.84,
+    "peak_memory_mb": 1252,
+    "peak_memory_growth_mb": 62,
+    "defects": [
+      "low_light"
+    ],
+    "psnr_to_clean_before": 99.0,
+    "psnr_to_clean_after": 22.58,
+    "ssim_to_clean_before": 1.0,
+    "ssim_to_clean_after": 0.8357,
+    "luminance": [
+      68.06,
+      85.34
+    ],
+    "noise": [
+      1.0,
+      1.0
+    ],
+    "sharpness": [
+      216.29,
+      242.75
+    ],
+    "highlight_clipping": [
+      0.0,
+      0.0
+    ],
+    "chroma_shift": 0.0,
+    "stages_that_changed_pixels": [
+      "exposure_enhancement",
+      "output_guard_a"
+    ],
+    "fallbacks": {},
+    "face_fidelity": {
+      "status": "passed",
+      "faces_checked": 1,
+      "faces_adjusted": 0
+    },
+    "identity_status": "verified",
+    "identity": {
+      "status": "verified",
+      "verified": true,
+      "reason": "",
+      "requirement_bypass": null,
+      "face_restoration_unverified": false,
+      "similarity": 0.9876,
+      "initial_similarity": 0.9876,
+      "faces_compared": 1,
+      "strength": 1.0
+    },
+    "gpu_peak_memory_mb": null,
+    "zero_dce_applied": true,
+    "model_stages_run": {},
+    "stage_durations_ms": {
+      "analyze_original": 25.924,
+      "exposure_enhancement": 486.35,
+      "output_guard_a": 52.331,
+      "measure_post_exposure_noise": 16.439,
+      "adaptive_denoise": 13.447,
+      "purevision_restoration": 0.122,
+      "low_resolution_restoration": 16.252,
+      "hd_restoration": 0.01,
+      "purescale_super_resolution": 0.005,
+      "face_restoration": 0.009,
+      "sharpen": 0.002,
+      "output_guard_b": 65.051,
+      "face_fidelity": 23.826,
+      "colorization": 0.016,
+      "dynamic_style": 0.005,
+      "identity_guard": 108.436,
+      "validate_output": 0.194
+    },
+    "no_correction_needed": false,
+    "minimal_processing": false,
+    "warnings": []
+  },
+  {
+    "photo": "textured__09",
+    "case": "original",
+    "megapixels": 1.57,
+    "level": "low",
+    "seconds": 0.32,
+    "peak_memory_mb": 1252,
+    "peak_memory_growth_mb": 0,
+    "defects": [],
+    "psnr_to_clean_before": 99.0,
+    "psnr_to_clean_after": 99.0,
+    "ssim_to_clean_before": 1.0,
+    "ssim_to_clean_after": 1.0,
+    "luminance": [
+      187.91,
+      187.91
+    ],
+    "noise": [
+      0.0,
+      0.0
+    ],
+    "sharpness": [
+      3198.46,
+      3198.46
+    ],
+    "highlight_clipping": [
+      1.072,
+      1.072
+    ],
+    "chroma_shift": 0.0,
+    "stages_that_changed_pixels": [],
+    "fallbacks": {},
+    "face_fidelity": {
+      "status": "no_faces",
+      "faces_checked": 0,
+      "faces_adjusted": 0
+    },
+    "identity_status": "inconclusive",
+    "identity": {
+      "status": "inconclusive",
+      "verified": false,
+      "reason": "No face large enough to judge was found in the source.",
+      "requirement_bypass": null,
+      "face_restoration_unverified": false,
+      "similarity": null,
+      "initial_similarity": null,
+      "faces_compared": 0,
+      "strength": 1.0
+    },
+    "gpu_peak_memory_mb": null,
+    "zero_dce_applied": false,
+    "model_stages_run": {},
+    "stage_durations_ms": {
+      "analyze_original": 29.365,
+      "exposure_enhancement": 0.009,
+      "output_guard_a": 64.65,
+      "measure_post_exposure_noise": 21.732,
+      "adaptive_denoise": 0.025,
+      "purevision_restoration": 0.009,
+      "low_resolution_restoration": 21.0,
+      "hd_restoration": 0.011,
+      "purescale_super_resolution": 0.005,
+      "face_restoration": 0.009,
+      "sharpen": 0.002,
+      "output_guard_b": 85.105,
+      "face_fidelity": 25.412,
+      "colorization": 0.017,
+      "dynamic_style": 0.005,
+      "identity_guard": 22.444,
+      "validate_output": 0.216
+    },
+    "no_correction_needed": true,
+    "minimal_processing": true,
+    "warnings": []
+  },
+  {
+    "photo": "textured__10",
+    "case": "original",
+    "megapixels": 1.39,
+    "level": "high",
+    "seconds": 0.38,
+    "peak_memory_mb": 1252,
+    "peak_memory_growth_mb": 0,
+    "defects": [
+      "overexposed_highlights"
+    ],
+    "psnr_to_clean_before": 99.0,
+    "psnr_to_clean_after": 58.45,
+    "ssim_to_clean_before": 1.0,
+    "ssim_to_clean_after": 1.0,
+    "luminance": [
+      227.27,
+      227.2
+    ],
+    "noise": [
+      0.0,
+      0.0
+    ],
+    "sharpness": [
+      2949.39,
+      2957.35
+    ],
+    "highlight_clipping": [
+      72.848,
+      72.858
+    ],
+    "chroma_shift": 0.0,
+    "stages_that_changed_pixels": [
+      "exposure_enhancement",
+      "output_guard_a"
+    ],
+    "fallbacks": {},
+    "face_fidelity": {
+      "status": "no_faces",
+      "faces_checked": 0,
+      "faces_adjusted": 0
+    },
+    "identity_status": "inconclusive",
+    "identity": {
+      "status": "inconclusive",
+      "verified": false,
+      "reason": "No face large enough to judge was found in the source.",
+      "requirement_bypass": null,
+      "face_restoration_unverified": false,
+      "similarity": null,
+      "initial_similarity": null,
+      "faces_compared": 0,
+      "strength": 1.0
+    },
+    "gpu_peak_memory_mb": null,
+    "zero_dce_applied": false,
+    "model_stages_run": {},
+    "stage_durations_ms": {
+      "analyze_original": 26.61,
+      "exposure_enhancement": 4.072,
+      "output_guard_a": 158.624,
+      "measure_post_exposure_noise": 19.278,
+      "adaptive_denoise": 0.018,
+      "purevision_restoration": 0.008,
+      "low_resolution_restoration": 19.275,
+      "hd_restoration": 0.012,
+      "purescale_super_resolution": 0.005,
+      "face_restoration": 0.009,
+      "sharpen": 0.002,
+      "output_guard_b": 75.738,
+      "face_fidelity": 20.014,
+      "colorization": 0.013,
+      "dynamic_style": 0.004,
+      "identity_guard": 17.358,
+      "validate_output": 0.164
+    },
+    "no_correction_needed": false,
+    "minimal_processing": false,
+    "warnings": []
+  },
+  {
+    "photo": "textured__11",
+    "case": "original",
+    "megapixels": 1.57,
+    "level": "low",
+    "seconds": 0.3,
+    "peak_memory_mb": 1252,
+    "peak_memory_growth_mb": 0,
+    "defects": [],
+    "psnr_to_clean_before": 99.0,
+    "psnr_to_clean_after": 99.0,
+    "ssim_to_clean_before": 1.0,
+    "ssim_to_clean_after": 1.0,
+    "luminance": [
+      187.42,
+      187.42
+    ],
+    "noise": [
+      0.0,
+      0.0
+    ],
+    "sharpness": [
+      2711.37,
+      2711.37
+    ],
+    "highlight_clipping": [
+      0.872,
+      0.872
+    ],
+    "chroma_shift": 0.0,
+    "stages_that_changed_pixels": [],
+    "fallbacks": {},
+    "face_fidelity": {
+      "status": "no_faces",
+      "faces_checked": 0,
+      "faces_adjusted": 0
+    },
+    "identity_status": "inconclusive",
+    "identity": {
+      "status": "inconclusive",
+      "verified": false,
+      "reason": "No face large enough to judge was found in the source.",
+      "requirement_bypass": null,
+      "face_restoration_unverified": false,
+      "similarity": null,
+      "initial_similarity": null,
+      "faces_compared": 0,
+      "strength": 1.0
+    },
+    "gpu_peak_memory_mb": null,
+    "zero_dce_applied": false,
+    "model_stages_run": {},
+    "stage_durations_ms": {
+      "analyze_original": 30.678,
+      "exposure_enhancement": 0.008,
+      "output_guard_a": 62.75,
+      "measure_post_exposure_noise": 23.127,
+      "adaptive_denoise": 0.017,
+      "purevision_restoration": 0.008,
+      "low_resolution_restoration": 22.238,
+      "hd_restoration": 0.011,
+      "purescale_super_resolution": 0.005,
+      "face_restoration": 0.009,
+      "sharpen": 0.002,
+      "output_guard_b": 82.825,
+      "face_fidelity": 19.095,
+      "colorization": 0.013,
+      "dynamic_style": 0.004,
+      "identity_guard": 19.245,
+      "validate_output": 0.183
+    },
+    "no_correction_needed": true,
+    "minimal_processing": true,
+    "warnings": []
+  },
+  {
+    "photo": "textured__12",
+    "case": "original",
+    "megapixels": 0.87,
+    "level": "medium",
+    "seconds": 0.92,
+    "peak_memory_mb": 1252,
+    "peak_memory_growth_mb": 0,
+    "defects": [
+      "low_light"
+    ],
+    "psnr_to_clean_before": 99.0,
+    "psnr_to_clean_after": 25.53,
+    "ssim_to_clean_before": 1.0,
+    "ssim_to_clean_after": 0.9371,
+    "luminance": [
+      79.16,
+      91.52
+    ],
+    "noise": [
+      1.0,
+      1.0
+    ],
+    "sharpness": [
+      2729.63,
+      2957.17
+    ],
+    "highlight_clipping": [
+      0.056,
+      0.064
+    ],
+    "chroma_shift": 0.0,
+    "stages_that_changed_pixels": [
+      "exposure_enhancement",
+      "output_guard_a"
+    ],
+    "fallbacks": {},
+    "face_fidelity": {
+      "status": "passed",
+      "faces_checked": 2,
+      "faces_adjusted": 0
+    },
+    "identity_status": "verified",
+    "identity": {
+      "status": "verified",
+      "verified": true,
+      "reason": "",
+      "requirement_bypass": null,
+      "face_restoration_unverified": false,
+      "similarity": 0.9672,
+      "initial_similarity": 0.9672,
+      "faces_compared": 2,
+      "strength": 1.0
+    },
+    "gpu_peak_memory_mb": null,
+    "zero_dce_applied": true,
+    "model_stages_run": {},
+    "stage_durations_ms": {
+      "analyze_original": 22.979,
+      "exposure_enhancement": 543.564,
+      "output_guard_a": 48.417,
+      "measure_post_exposure_noise": 19.608,
+      "adaptive_denoise": 8.046,
+      "purevision_restoration": 0.013,
+      "low_resolution_restoration": 19.814,
+      "hd_restoration": 0.012,
+      "purescale_super_resolution": 0.006,
+      "face_restoration": 0.01,
+      "sharpen": 0.002,
+      "output_guard_b": 72.467,
+      "face_fidelity": 27.342,
+      "colorization": 0.013,
+      "dynamic_style": 0.004,
+      "identity_guard": 115.236,
+      "validate_output": 0.136
+    },
+    "no_correction_needed": false,
+    "minimal_processing": false,
+    "warnings": []
+  }
+]

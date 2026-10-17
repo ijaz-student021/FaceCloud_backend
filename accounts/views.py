@@ -54,12 +54,14 @@ from .serializers import (
     TwoFactorRequiredResponseSerializer,
     TwoFactorSetupResponseSerializer,
     TwoFactorStatusSerializer,
+    UserDashboardSerializer,
     UserSerializer,
     VerifyRegistrationSerializer,
 )
 from .services import (
     confirm_two_factor,
     disable_two_factor,
+    issue_login_tokens,
     create_account_as_admin,
     derive_username,
     generate_verification_token,
@@ -915,9 +917,9 @@ class DeleteAccountView(APIView):
 class UserDashboardView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
-    @extend_schema(responses={200: OpenApiTypes.OBJECT})
+    @extend_schema(responses={200: UserDashboardSerializer})
     def get(self, request):
-        return Response(build_user_dashboard(request.user))
+        return Response(UserDashboardSerializer(build_user_dashboard(request.user)).data)
 
 
 @extend_schema_view(
@@ -996,6 +998,11 @@ class AdminUserUpdateView(generics.RetrieveUpdateAPIView):
         ):
             from rest_framework.exceptions import ValidationError
             raise ValidationError({"detail": "Administrators cannot remove their own access."})
+        new_role = serializer.validated_data.get("role")
+        if new_role is not None and new_role != target.role:
+            from .invitations import assert_can_grant
+
+            assert_can_grant(self.request.user, new_role)
         previous = {"role": target.role, "is_suspended": target.is_suspended, "is_active": target.is_active}
         user = serializer.save()
         changed = [key for key, value in previous.items() if getattr(user, key) != value]
@@ -1099,3 +1106,138 @@ class UserSessionRevokeView(APIView):
         revoke_session(session, "revoked_by_user")
         record_auth_event("session_revoked", request, request.user, request.user.email, {"session": str(session.pk)})
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# -- Administrator account invitations ---------------------------------------
+
+class AccountInvitationSerializer(serializers.Serializer):
+    id = serializers.IntegerField(read_only=True)
+    email = serializers.EmailField()
+    role = serializers.ChoiceField(choices=["user", "moderator", "admin"])
+    status = serializers.CharField(read_only=True)
+    invited_by = serializers.CharField(source="invited_by.username", read_only=True, allow_null=True)
+    expires_at = serializers.DateTimeField(read_only=True)
+    accepted_at = serializers.DateTimeField(read_only=True, allow_null=True)
+    created_at = serializers.DateTimeField(read_only=True)
+
+
+class AccountInvitationListCreateView(generics.ListAPIView):
+    """Administrators invite people to create an account with a role.
+
+    An administrator may grant user or moderator; only a superuser may grant
+    admin (403 otherwise). 409 when the email already has an account or a
+    pending invitation. The invitee receives a link with a one-time token.
+    """
+
+    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
+    serializer_class = AccountInvitationSerializer
+
+    def get_queryset(self):
+        from .models import AccountInvitation
+
+        queryset = AccountInvitation.objects.select_related("invited_by").order_by("-created_at", "-pk")
+        state = self.request.query_params.get("status")
+        return queryset.filter(status=state) if state else queryset
+
+    @extend_schema(request=AccountInvitationSerializer,
+                   responses={201: AccountInvitationSerializer, 400: OpenApiTypes.OBJECT,
+                              403: OpenApiTypes.OBJECT, 409: OpenApiTypes.OBJECT})
+    def post(self, request):
+        from .invitations import invite
+
+        payload = AccountInvitationSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        invitation = invite(actor=request.user, email=payload.validated_data["email"],
+                            role=payload.validated_data["role"])
+        record_auth_event("account_invited", request, request.user, invitation.email, {"role": invitation.role})
+        return Response(AccountInvitationSerializer(invitation).data, status=status.HTTP_201_CREATED)
+
+
+class AccountInvitationResendView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
+
+    @extend_schema(request=None, responses={200: AccountInvitationSerializer, 403: OpenApiTypes.OBJECT,
+                                            404: OpenApiTypes.OBJECT, 409: OpenApiTypes.OBJECT})
+    def post(self, request, pk):
+        from django.shortcuts import get_object_or_404
+
+        from .invitations import resend
+        from .models import AccountInvitation
+
+        invitation = resend(get_object_or_404(AccountInvitation, pk=pk), request.user)
+        return Response(AccountInvitationSerializer(invitation).data)
+
+
+class AccountInvitationCancelView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
+
+    @extend_schema(request=None, responses={204: None, 403: OpenApiTypes.OBJECT,
+                                            404: OpenApiTypes.OBJECT, 409: OpenApiTypes.OBJECT})
+    def delete(self, request, pk):
+        from django.shortcuts import get_object_or_404
+
+        from .invitations import cancel
+        from .models import AccountInvitation
+
+        cancel(get_object_or_404(AccountInvitation, pk=pk), request.user)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class InvitationTokenSerializer(serializers.Serializer):
+    token = serializers.CharField(max_length=128)
+
+
+class InvitationAcceptSerializer(InvitationTokenSerializer):
+    username = serializers.CharField(max_length=150)
+    password = serializers.CharField(write_only=True, trim_whitespace=False)
+
+
+class InvitationPreviewSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    role = serializers.CharField()
+    expires_at = serializers.DateTimeField()
+
+
+class InvitationInspectView(APIView):
+    """Public: what an invitation token is for, so the sign-up form can show it."""
+
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
+    throttle_scope = "invitation"
+
+    @extend_schema(request=InvitationTokenSerializer, responses={200: InvitationPreviewSerializer,
+                                                                 404: OpenApiTypes.OBJECT}, auth=[])
+    def post(self, request):
+        from .invitations import pending_invitation
+
+        payload = InvitationTokenSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        invitation = pending_invitation(payload.validated_data["token"])
+        if invitation is None:
+            return Response({"detail": "This invitation is invalid, used or expired."},
+                            status=status.HTTP_404_NOT_FOUND)
+        return Response(InvitationPreviewSerializer(invitation).data)
+
+
+class InvitationAcceptView(APIView):
+    """Public: create the invited account and sign in.
+
+    The email is the invitation's and is verified by the token; the role is
+    the one the administrator granted. Answers like login (tokens and user).
+    """
+
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
+    throttle_scope = "invitation"
+
+    @extend_schema(request=InvitationAcceptSerializer,
+                   responses={201: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT, 409: OpenApiTypes.OBJECT},
+                   auth=[])
+    def post(self, request):
+        from .invitations import accept
+
+        payload = InvitationAcceptSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        user, invitation = accept(**payload.validated_data)
+        record_auth_event("invitation_accepted", request, user, user.email, {"role": user.role})
+        return Response(issue_login_tokens(user, request), status=status.HTTP_201_CREATED)

@@ -1,4 +1,3 @@
-import cv2
 import numpy as np
 from django.test import SimpleTestCase, override_settings
 

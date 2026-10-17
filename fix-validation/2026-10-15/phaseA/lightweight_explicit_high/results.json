@@ -1,0 +1,401 @@
+[
+  {
+    "photo": "low_key__05",
+    "case": "original",
+    "megapixels": 1.57,
+    "level": "high",
+    "seconds": 0.45,
+    "peak_memory_mb": 379,
+    "peak_memory_growth_mb": 233,
+    "defects": [
+      "low_light"
+    ],
+    "psnr_to_clean_before": 99.0,
+    "psnr_to_clean_after": 25.25,
+    "ssim_to_clean_before": 1.0,
+    "ssim_to_clean_after": 0.9396,
+    "luminance": [
+      65.69,
+      76.36
+    ],
+    "noise": [
+      0.0,
+      1.0
+    ],
+    "sharpness": [
+      1904.54,
+      2555.92
+    ],
+    "highlight_clipping": [
+      0.522,
+      0.786
+    ],
+    "chroma_shift": 0.111,
+    "stages_that_changed_pixels": [
+      "exposure_enhancement",
+      "sharpen"
+    ],
+    "fallbacks": {},
+    "face_fidelity": {
+      "status": "no_faces",
+      "faces_checked": 0,
+      "faces_adjusted": 0
+    },
+    "identity_status": "inconclusive",
+    "identity": {
+      "status": "inconclusive",
+      "verified": false,
+      "reason": "No face large enough to judge was found in the source.",
+      "requirement_bypass": null,
+      "face_restoration_unverified": false,
+      "similarity": null,
+      "initial_similarity": null,
+      "faces_compared": 0,
+      "strength": 1.0
+    },
+    "gpu_peak_memory_mb": null,
+    "zero_dce_applied": false,
+    "model_stages_run": {},
+    "stage_durations_ms": {
+      "analyze_original": 127.418,
+      "exposure_enhancement": 5.726,
+      "output_guard_a": 64.735,
+      "measure_post_exposure_noise": 21.118,
+      "adaptive_denoise": 13.73,
+      "purevision_restoration": 0.015,
+      "low_resolution_restoration": 21.853,
+      "hd_restoration": 0.01,
+      "purescale_super_resolution": 0.005,
+      "face_restoration": 0.01,
+      "sharpen": 32.28,
+      "output_guard_b": 82.077,
+      "face_fidelity": 22.86,
+      "colorization": 0.013,
+      "dynamic_style": 0.005,
+      "identity_guard": 19.4,
+      "validate_output": 0.228
+    },
+    "no_correction_needed": false,
+    "minimal_processing": false,
+    "warnings": []
+  },
+  {
+    "photo": "low_key__06",
+    "case": "original",
+    "megapixels": 2.56,
+    "level": "high",
+    "seconds": 0.5,
+    "peak_memory_mb": 604,
+    "peak_memory_growth_mb": 221,
+    "defects": [
+      "low_light"
+    ],
+    "psnr_to_clean_before": 99.0,
+    "psnr_to_clean_after": 23.7,
+    "ssim_to_clean_before": 1.0,
+    "ssim_to_clean_after": 0.9595,
+    "luminance": [
+      93.42,
+      106.98
+    ],
+    "noise": [
+      0.0,
+      1.0
+    ],
+    "sharpness": [
+      76.16,
+      146.49
+    ],
+    "highlight_clipping": [
+      0.0,
+      0.0
+    ],
+    "chroma_shift": 0.144,
+    "stages_that_changed_pixels": [
+      "exposure_enhancement",
+      "sharpen"
+    ],
+    "fallbacks": {},
+    "face_fidelity": {
+      "status": "no_faces",
+      "faces_checked": 0,
+      "faces_adjusted": 0
+    },
+    "identity_status": "inconclusive",
+    "identity": {
+      "status": "inconclusive",
+      "verified": false,
+      "reason": "No face large enough to judge was found in the source.",
+      "requirement_bypass": null,
+      "face_restoration_unverified": false,
+      "similarity": null,
+      "initial_similarity": null,
+      "faces_compared": 0,
+      "strength": 1.0
+    },
+    "gpu_peak_memory_mb": null,
+    "zero_dce_applied": false,
+    "model_stages_run": {},
+    "stage_durations_ms": {
+      "analyze_original": 46.23,
+      "exposure_enhancement": 7.909,
+      "output_guard_a": 92.408,
+      "measure_post_exposure_noise": 30.067,
+      "adaptive_denoise": 0.023,
+      "purevision_restoration": 0.008,
+      "low_resolution_restoration": 29.504,
+      "hd_restoration": 0.011,
+      "purescale_super_resolution": 0.005,
+      "face_restoration": 0.01,
+      "sharpen": 58.328,
+      "output_guard_b": 117.937,
+      "face_fidelity": 30.882,
+      "colorization": 0.012,
+      "dynamic_style": 0.004,
+      "identity_guard": 27.345,
+      "validate_output": 0.296
+    },
+    "no_correction_needed": false,
+    "minimal_processing": false,
+    "warnings": []
+  },
+  {
+    "photo": "low_key__07",
+    "case": "original",
+    "megapixels": 1.15,
+    "level": "high",
+    "seconds": 0.25,
+    "peak_memory_mb": 606,
+    "peak_memory_growth_mb": 1,
+    "defects": [
+      "severe_low_light"
+    ],
+    "psnr_to_clean_before": 99.0,
+    "psnr_to_clean_after": 29.4,
+    "ssim_to_clean_before": 1.0,
+    "ssim_to_clean_after": 0.9589,
+    "luminance": [
+      38.65,
+      46.67
+    ],
+    "noise": [
+      0.0,
+      0.0
+    ],
+    "sharpness": [
+      1983.11,
+      2179.36
+    ],
+    "highlight_clipping": [
+      2.68,
+      2.748
+    ],
+    "chroma_shift": 0.034,
+    "stages_that_changed_pixels": [
+      "exposure_enhancement",
+      "sharpen"
+    ],
+    "fallbacks": {},
+    "face_fidelity": {
+      "status": "no_faces",
+      "faces_checked": 0,
+      "faces_adjusted": 0
+    },
+    "identity_status": "inconclusive",
+    "identity": {
+      "status": "inconclusive",
+      "verified": false,
+      "reason": "No face large enough to judge was found in the source.",
+      "requirement_bypass": null,
+      "face_restoration_unverified": false,
+      "similarity": null,
+      "initial_similarity": null,
+      "faces_compared": 0,
+      "strength": 1.0
+    },
+    "gpu_peak_memory_mb": null,
+    "zero_dce_applied": false,
+    "model_stages_run": {},
+    "stage_durations_ms": {
+      "analyze_original": 20.344,
+      "exposure_enhancement": 3.576,
+      "output_guard_a": 44.902,
+      "measure_post_exposure_noise": 15.962,
+      "adaptive_denoise": 0.019,
+      "purevision_restoration": 0.007,
+      "low_resolution_restoration": 16.67,
+      "hd_restoration": 0.012,
+      "purescale_super_resolution": 0.006,
+      "face_restoration": 0.01,
+      "sharpen": 22.143,
+      "output_guard_b": 60.213,
+      "face_fidelity": 15.13,
+      "colorization": 0.013,
+      "dynamic_style": 0.005,
+      "identity_guard": 15.202,
+      "validate_output": 0.13
+    },
+    "no_correction_needed": false,
+    "minimal_processing": false,
+    "warnings": []
+  },
+  {
+    "photo": "low_key__08",
+    "case": "original",
+    "megapixels": 1.44,
+    "level": "high",
+    "seconds": 0.34,
+    "peak_memory_mb": 654,
+    "peak_memory_growth_mb": 47,
+    "defects": [
+      "low_light"
+    ],
+    "psnr_to_clean_before": 99.0,
+    "psnr_to_clean_after": 32.08,
+    "ssim_to_clean_before": 1.0,
+    "ssim_to_clean_after": 0.9717,
+    "luminance": [
+      68.06,
+      74.21
+    ],
+    "noise": [
+      1.0,
+      1.0
+    ],
+    "sharpness": [
+      216.29,
+      218.75
+    ],
+    "highlight_clipping": [
+      0.0,
+      0.0
+    ],
+    "chroma_shift": 0.0,
+    "stages_that_changed_pixels": [
+      "exposure_enhancement"
+    ],
+    "fallbacks": {},
+    "face_fidelity": {
+      "status": "passed",
+      "faces_checked": 1,
+      "faces_adjusted": 0
+    },
+    "identity_status": "verified",
+    "identity": {
+      "status": "verified",
+      "verified": true,
+      "reason": "",
+      "requirement_bypass": null,
+      "face_restoration_unverified": false,
+      "similarity": 0.9836,
+      "initial_similarity": 0.9836,
+      "faces_compared": 1,
+      "strength": 1.0
+    },
+    "gpu_peak_memory_mb": null,
+    "zero_dce_applied": false,
+    "model_stages_run": {},
+    "stage_durations_ms": {
+      "analyze_original": 26.011,
+      "exposure_enhancement": 3.005,
+      "output_guard_a": 52.784,
+      "measure_post_exposure_noise": 17.808,
+      "adaptive_denoise": 9.475,
+      "purevision_restoration": 0.01,
+      "low_resolution_restoration": 18.022,
+      "hd_restoration": 0.01,
+      "purescale_super_resolution": 0.005,
+      "face_restoration": 0.009,
+      "sharpen": 0.002,
+      "output_guard_b": 69.844,
+      "face_fidelity": 18.652,
+      "colorization": 0.012,
+      "dynamic_style": 0.004,
+      "identity_guard": 90.435,
+      "validate_output": 0.156
+    },
+    "no_correction_needed": false,
+    "minimal_processing": false,
+    "warnings": []
+  },
+  {
+    "photo": "textured__12",
+    "case": "original",
+    "megapixels": 0.87,
+    "level": "high",
+    "seconds": 0.4,
+    "peak_memory_mb": 655,
+    "peak_memory_growth_mb": 1,
+    "defects": [
+      "low_light"
+    ],
+    "psnr_to_clean_before": 99.0,
+    "psnr_to_clean_after": 24.23,
+    "ssim_to_clean_before": 1.0,
+    "ssim_to_clean_after": 0.9435,
+    "luminance": [
+      79.16,
+      92.29
+    ],
+    "noise": [
+      1.0,
+      1.0
+    ],
+    "sharpness": [
+      2729.63,
+      4174.16
+    ],
+    "highlight_clipping": [
+      0.056,
+      0.226
+    ],
+    "chroma_shift": 0.165,
+    "stages_that_changed_pixels": [
+      "exposure_enhancement",
+      "sharpen"
+    ],
+    "fallbacks": {},
+    "face_fidelity": {
+      "status": "passed",
+      "faces_checked": 2,
+      "faces_adjusted": 0
+    },
+    "identity_status": "verified",
+    "identity": {
+      "status": "verified",
+      "verified": true,
+      "reason": "",
+      "requirement_bypass": null,
+      "face_restoration_unverified": false,
+      "similarity": 0.9826,
+      "initial_similarity": 0.9826,
+      "faces_compared": 2,
+      "strength": 1.0
+    },
+    "gpu_peak_memory_mb": null,
+    "zero_dce_applied": false,
+    "model_stages_run": {},
+    "stage_durations_ms": {
+      "analyze_original": 22.086,
+      "exposure_enhancement": 2.733,
+      "output_guard_a": 47.769,
+      "measure_post_exposure_noise": 18.758,
+      "adaptive_denoise": 7.276,
+      "purevision_restoration": 0.011,
+      "low_resolution_restoration": 18.859,
+      "hd_restoration": 0.01,
+      "purescale_super_resolution": 0.005,
+      "face_restoration": 0.009,
+      "sharpen": 15.965,
+      "output_guard_b": 67.248,
+      "face_fidelity": 28.678,
+      "colorization": 0.018,
+      "dynamic_style": 0.006,
+      "identity_guard": 139.011,
+      "validate_output": 0.11
+    },
+    "no_correction_needed": false,
+    "minimal_processing": false,
+    "warnings": []
+  }
+]

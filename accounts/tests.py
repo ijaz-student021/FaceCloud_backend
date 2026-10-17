@@ -273,7 +273,7 @@ class AuthenticationTests(APITestCase):
         self.assertFalse(User.objects.filter(username="resend-user").exists())
 
     def test_login_accepts_email_and_returns_user_dashboard(self):
-        user = self.create_user()
+        self.create_user()
         response = self.client.post(
             reverse("login"),
             {"email": "ALICE@EXAMPLE.COM", "password": self.password},

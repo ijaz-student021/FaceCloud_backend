@@ -57,7 +57,7 @@ for name, subset in (("calibration", cal), ("evaluation", ev)):
     per_variant = collections.defaultdict(collections.Counter)
     for r in subset:
         per_variant[r["variant"]][verdict(r, severe_t, mild_t)] += 1
-    print(f"  per variant:")
+    print("  per variant:")
     for variant, counts in per_variant.items():
         total = sum(counts.values())
         print(f"    {variant:22} " + "  ".join(f"{k}={v}" for k, v in sorted(counts.items())))

@@ -65,6 +65,8 @@ class AuthEvent(models.Model):
         ("logout", "Logout"),
         ("logout_all", "Logout from all devices"),
         ("session_revoked", "Session signed out"),
+        ("account_invited", "Account invitation sent"),
+        ("invitation_accepted", "Account invitation accepted"),
         ("password_changed", "Password changed"),
         ("password_reset", "Password reset"),
         ("profile_updated", "Profile updated"),
@@ -253,3 +255,37 @@ class UserSession(models.Model):
 
     def is_active_for(self, user, now):
         return self.revoked_at is None and self.expires_at > now and self.token_version == user.token_version
+
+
+class AccountInvitation(models.Model):
+    """An administrator's invitation to create an account with a given role.
+
+    Accepting proves control of the mailbox (the token arrives only there), so
+    the account is created with its email verified. Only the SHA-256 of the
+    token is stored.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        ACCEPTED = "accepted", "Accepted"
+        CANCELLED = "cancelled", "Cancelled"
+        EXPIRED = "expired", "Expired"
+
+    email = models.EmailField()
+    role = models.CharField(max_length=20, choices=User.ROLE_CHOICES)
+    token_hash = models.CharField(max_length=64, unique=True)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.PENDING)
+    invited_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    accepted_user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                                      related_name="+")
+    expires_at = models.DateTimeField()
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(Lower("email"), condition=models.Q(status="pending"),
+                                    name="accounts_one_pending_invitation_per_email"),
+        ]

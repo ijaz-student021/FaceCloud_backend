@@ -617,7 +617,8 @@ How stored events map to `type` / `status`:
 | `login` / `login_failed` / `login_locked` | login | success / error / warning |
 | `logout`, `logout_all`, `session_revoked` | login | info |
 | `password_changed`, `profile_updated` | login | success |
-| `role_changed`, `suspended`, `reactivated`, `account_deleted`, `admin_created_account` | admin | info / warning / success / info / info |
+| `role_changed`, `suspended`, `reactivated`, `account_deleted`, `admin_created_account`, `account_invited` | admin | info / warning / success / info / info / info |
+| `invitation_accepted` | email | success |
 | anything else | by category; `*failed` -> error, `*rejected`/`*cancelled`/`*expired` -> warning, `*completed`/`*ready` -> success, otherwise info | |
 
 ## 8b. Top-bar search

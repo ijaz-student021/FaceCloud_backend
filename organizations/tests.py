@@ -207,6 +207,36 @@ class MembershipProtectionTests(OrgFixtureMixin, TestCase):
         self.member_membership.refresh_from_db()
         self.assertEqual(self.member_membership.role, OrganizationMembership.Role.MEMBER)
 
+    def test_a_moderator_cannot_promote_a_member_to_moderator(self):
+        """Found by the frontend team: invitations refused it, the PATCH path did not."""
+        response = self.moderator_client.patch(
+            self.member_url(self.member_membership), {"role": "moderator"}, format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.member_membership.refresh_from_db()
+        self.assertEqual(self.member_membership.role, OrganizationMembership.Role.MEMBER)
+        self.assertFalse(
+            OrganizationAuditEvent.objects.filter(
+                organization=self.org, action=OrganizationAuditEvent.Action.MEMBER_ROLE_CHANGED,
+            ).exists()
+        )
+
+    def test_a_moderator_may_still_set_the_member_role_and_change_status_of_a_plain_member(self):
+        response = self.moderator_client.patch(
+            self.member_url(self.member_membership), {"role": "member", "status": "suspended"}, format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.member_membership.refresh_from_db()
+        self.assertEqual(self.member_membership.status, OrganizationMembership.Status.SUSPENDED)
+
+    def test_an_owner_can_promote_a_member_to_moderator(self):
+        response = self.owner_client.patch(
+            self.member_url(self.member_membership), {"role": "moderator"}, format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.member_membership.refresh_from_db()
+        self.assertEqual(self.member_membership.role, OrganizationMembership.Role.MODERATOR)
+
     def test_an_owner_can_promote_a_member_to_owner(self):
         response = self.owner_client.patch(
             self.member_url(self.member_membership), {"role": "owner"}, format="json",

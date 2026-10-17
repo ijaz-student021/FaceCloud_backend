@@ -78,7 +78,7 @@ class StageReportTests(SimpleTestCase):
         np.testing.assert_array_equal(source, untouched)
         self.assertIsNot(output, source)
 
-    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True})
+    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
     @patch("enhancement.services.upscale_with_purescale")
     def test_an_accepted_model_stage_records_its_model_device_and_tile(self, purescale):
         purescale.side_effect = lambda image: (
@@ -97,7 +97,7 @@ class StageReportTests(SimpleTestCase):
         )
         self.assertEqual(entry["checkpoint_sha256_prefix"], "c8fb698766f5")
 
-    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True})
+    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
     @patch("enhancement.services.upscale_with_purescale", side_effect=RuntimeError("unexpected tensor shape"))
     def test_an_unexpected_model_error_keeps_the_last_safe_image(self, _purescale):
         source = textured()
@@ -114,7 +114,7 @@ class StageReportTests(SimpleTestCase):
         self.assertIn("unexpected tensor shape", "\n".join(logged.output))
         self.assertEqual(parameters["resolution_contract"]["pixel_grid_source"], "original_pixel_grid")
 
-    @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True})
+    @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
     @patch("enhancement.services.upscale_with_realesrgan", side_effect=MemoryError())
     @patch("enhancement.services.deblur_with_nafnet", side_effect=MemoryError())
     def test_running_out_of_host_memory_in_a_model_stage_does_not_fail_the_image(self, _deblur, _upscale):
@@ -133,7 +133,7 @@ class StageReportTests(SimpleTestCase):
         with self.assertRaises(cv2.error):
             enhance_bgr(textured(), "low")
 
-    @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True})
+    @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
     @patch("enhancement.services.upscale_with_realesrgan")
     @patch("enhancement.services.deblur_with_nafnet")
     def test_a_kept_deblur_with_a_failed_upscale_is_reported_as_partial(self, deblur, upscale):
@@ -155,7 +155,7 @@ class ProcessingPlanTests(SimpleTestCase):
     def test_a_dark_noisy_image_is_planned_for_exposure_and_denoise(self):
         rng = np.random.default_rng(2)
         dark = np.clip(textured(720, 960, base=35).astype(np.int16) + rng.normal(0, 9, (720, 960, 3)), 0, 255).astype(np.uint8)
-        _output, level, parameters = enhance_bgr(dark, "auto")
+        _output, level, parameters = enhance_bgr(dark, "high")  # lifting a dark photo is asked for
 
         plan = parameters["plan"]
         self.assertEqual(level, "high")
@@ -187,12 +187,12 @@ class ProcessingPlanTests(SimpleTestCase):
 
     def test_the_plan_names_exactly_one_upscaler(self):
         small = textured()  # 96x64: low resolution
-        with override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "PURESCALE_ENABLED": True}):
+        with override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"}):
             with patch("enhancement.services.upscale_with_realesrgan", side_effect=RuntimeError("no model")), \
                     self.assertLogs("enhancement.services", level="ERROR"):
                 plan = enhance_bgr(small, "low")[2]["plan"]
             self.assertEqual(plan["steps"]["upscale"]["upscaler"], "realesrgan_x4plus")
-        with override_settings(**{**NO_MODELS, "AI_RESTORATION_ENABLED": True, "PURESCALE_ENABLED": True}):
+        with override_settings(**{**NO_MODELS, "AI_RESTORATION_ENABLED": True, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"}):
             with patch("enhancement.services._load_edsr_model", side_effect=RuntimeError("no model")), \
                     patch("enhancement.services.upscale_with_purescale", side_effect=RuntimeError("no model")), \
                     self.assertLogs("enhancement.services", level="ERROR"):
@@ -231,7 +231,7 @@ class IdentityStatusTests(SimpleTestCase):
             self.assertEqual(enhance_bgr(textured(), "low")[2]["identity_status"], expected)
 
 
-GFPGAN_ON = {**NO_MODELS, "GFPGAN_ENABLED": True, "IDENTITY_GUARD_ENABLED": True}
+GFPGAN_ON = {**NO_MODELS, "GFPGAN_ENABLED": True, "IDENTITY_GUARD_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"}
 
 
 def gentle_restoration(image):
@@ -443,7 +443,7 @@ class FaceFidelityTests(SimpleTestCase):
             detect.assert_not_called()
         self.assertEqual(parameters["face_fidelity"]["faces_adjusted"], 0)
 
-    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True})
+    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
     @patch("enhancement.services.upscale_with_purescale")
     def test_the_pipeline_reduces_an_upscaler_that_waxes_a_face(self, purescale):
         purescale.side_effect = lambda image: (
@@ -474,7 +474,7 @@ class CheckpointTests(SimpleTestCase):
         self.assertIn("identity_guard", seen)
         self.assertNotIn("output_guard_a", seen)
 
-    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True})
+    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
     @patch("enhancement.services.upscale_with_purescale")
     def test_cancelling_stops_before_the_next_expensive_stage(self, purescale):
         def cancel_at_upscale(stage):
@@ -885,7 +885,7 @@ class EvaluationDrivenBehaviourTests(SimpleTestCase):
         self.assertIn("No identity model is configured", parameters["identity_guard"]["fallback_reason"])
 
 
-@override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True})
+@override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
 class DeblurRoutingTests(SimpleTestCase):
     """Deblurring runs only on a photo whose blur was measured."""
 

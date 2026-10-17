@@ -11,7 +11,6 @@ import base64
 import time
 
 from django.contrib.auth import get_user_model
-from django.core import mail
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework.exceptions import Throttled, ValidationError
@@ -23,7 +22,6 @@ from .models import TwoFactorCredential, TwoFactorRecoveryCode
 from .services import (
     confirm_two_factor,
     disable_two_factor,
-    generate_recovery_codes,
     has_active_two_factor,
     issue_login_tokens,
     make_two_factor_login_challenge,

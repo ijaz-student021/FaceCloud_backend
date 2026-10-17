@@ -145,6 +145,15 @@ def policy_rule(cfg):
         problems.append(
             "BIOMETRIC_CONSENT_REQUIRED must be True: face embeddings may only be created with recorded consent."
         )
+    if cfg.get("OPENAI_ADVISOR_ENABLED"):
+        # Switching the cloud advisor on is a decision to send previews to an external service: it must be
+        # complete (a key from the secret store and a chosen model), never half-configured.
+        if not cfg.get("OPENAI_API_KEY") or _is_placeholder(cfg.get("OPENAI_API_KEY")):
+            problems.append("OPENAI_ADVISOR_ENABLED needs a real OPENAI_API_KEY from the secret store.")
+        if cfg.get("OPENAI_BASE_URL"):
+            problems.append("OPENAI_BASE_URL must be empty in production: previews may only go to the provider itself.")
+        if not cfg.get("OPENAI_ADVISOR_MODEL"):
+            problems.append("OPENAI_ADVISOR_ENABLED needs OPENAI_ADVISOR_MODEL (an image-capable model).")
     threshold = int(cfg.get("LOGIN_LOCK_THRESHOLD") or 0)
     if not 3 <= threshold <= 20:
         problems.append("LOGIN_LOCK_THRESHOLD must be between 3 and 20.")

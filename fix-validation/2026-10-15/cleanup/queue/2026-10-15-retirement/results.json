@@ -1,0 +1,162 @@
+[
+  {
+    "scenario": "routing_and_full_flow",
+    "expects": "preprocessing and enhancement run on the worker; the result is the lightweight pipeline's, with no retired stage; file stored once; download returns the stored image; progress reports completion",
+    "passed": true,
+    "status": "completed",
+    "enhancement_task_delivered_to": {
+      "enhance": 1
+    },
+    "preprocessing_task_delivered_to": "n/a",
+    "algorithm": "opencv_adaptive_restoration_router_v2",
+    "retired_keys_in_result": [],
+    "identity_status": "inconclusive",
+    "download_status": 200,
+    "download_matches_stored_file": true,
+    "output": [
+      194,
+      420
+    ],
+    "processing_ms": 149,
+    "progress": {
+      "status": "completed",
+      "progress_percentage": 100.0
+    }
+  },
+  {
+    "scenario": "duplicate_delivery",
+    "expects": "two deliveries of one task; the image is enhanced and published once",
+    "passed": true,
+    "status": "completed",
+    "deliveries": {
+      "enhance": 1,
+      "enhance-2": 2
+    },
+    "task_outcome_lines": 2,
+    "output_files": [
+      "0219d5b1cbeb4e11b8d3f1fad3899a5e.jpg"
+    ],
+    "claim_attempt": 0
+  },
+  {
+    "scenario": "database_failure_then_retry",
+    "expects": "the worker's database connection is killed mid-task; the task retries, resumes its own claim and completes once",
+    "passed": false,
+    "connections_terminated": 0,
+    "retries_logged": 0,
+    "status": "completed",
+    "seconds_from_failure_to_completion": 0,
+    "claim_attempt": 0,
+    "output_files": [
+      "0075d1196d634a7ab286c4be839b19aa.jpg"
+    ]
+  },
+  {
+    "scenario": "cancellation_mid_batch",
+    "expects": "cancel while the first image is processing: the job ends cancelled, unfinished images are cancelled and get no file",
+    "passed": true,
+    "job_status": "cancelled",
+    "result_statuses": [
+      "cancelled",
+      "cancelled",
+      "cancelled",
+      "cancelled"
+    ],
+    "cancelled_results_with_files": []
+  },
+  {
+    "scenario": "worker_killed_then_restarted",
+    "expects": "the task is redelivered after the visibility timeout, waits out the dead worker's claim, takes over and completes once",
+    "passed": false,
+    "status_when_killed": "completed",
+    "final_status": "completed",
+    "seconds_to_recover": 0,
+    "deliveries": {
+      "enhance": 1
+    },
+    "output_files": [
+      "6854c4a3419346a88f86ec6b27e84a89.jpg"
+    ],
+    "note": "visibility timeout 300 s, task limit 200 s, claim lease 60 s for this run; defaults are 105 min, 60 min and 30 min"
+  },
+  {
+    "scenario": "duplicate_while_original_renews",
+    "expects": "the original's claim is renewed through a stage longer than the lease; the duplicate waits a bounded number of times, never takes over, and leaves the result to the original, which publishes once",
+    "passed": true,
+    "status": "completed",
+    "claim_tokens_seen": 1,
+    "claim_renewed_over_seconds": 150,
+    "claim_times_seen": 11,
+    "lease_seconds": 60,
+    "original_outcomes": [
+      "succeeded in 150.50408691703342s: {'result_id': 9, 'status': 'completed'}"
+    ],
+    "duplicate_outcomes": [
+      "retry: Retry in 59s: ResultInProgress('Another worker is already enhancing this image.')",
+      "retry: Retry in 60s: ResultInProgress('Another worker is already enhancing this image.')",
+      "succeeded in 0.05896054196637124s: {'result_id': 9, 'status': 'in_progress'}"
+    ],
+    "output_files": [
+      "aaf1422c4e714d408d1a65879dc0d7e9.jpg"
+    ]
+  },
+  {
+    "scenario": "old_worker_fails_after_takeover",
+    "expects": "an old worker whose claim lapsed fails after another execution took the result over; the failure does not touch the new owner's row, which completes and is published once",
+    "passed": true,
+    "taken_over": true,
+    "old_worker_failed": true,
+    "statuses_seen": [
+      "processing",
+      "completed"
+    ],
+    "final_status": "completed",
+    "old_outcomes": [
+      "succeeded in 60.42481808300363s: {'result_id': 10, 'status': 'processing'}"
+    ],
+    "new_outcomes": [
+      "retry: Retry in 56s: ResultInProgress('Another worker is already enhancing this image.')",
+      "succeeded in 45.611517790996004s: {'result_id': 10, 'status': 'completed'}"
+    ],
+    "output_files": [
+      "fb5fbcffbd034fa786a066d78d375850.jpg"
+    ]
+  },
+  {
+    "scenario": "worker_killed_mid_batch",
+    "expects": "the batch is redelivered while the dead worker's claim is live; it comes back for that image once the claim lapses instead of skipping it; every image completes once and the job counts are right",
+    "passed": true,
+    "killed_seconds_after_dispatch": 285,
+    "interrupted": [
+      15
+    ],
+    "interrupted_claim_renewed_for_seconds": 30,
+    "job_status": "completed",
+    "result_statuses": [
+      "completed",
+      "completed",
+      "completed",
+      "completed",
+      "completed",
+      "completed"
+    ],
+    "counts": [
+      6,
+      6,
+      0
+    ],
+    "seconds_to_finish_after_kill": 50,
+    "batch_outcomes_after_redelivery": [
+      "retry: Retry in 32s",
+      "succeeded in 0.3921520420117304s: {'job_id': 2, 'status': 'completed', 'successful': 6, 'failed': 0}"
+    ],
+    "output_files": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ]
+  }
+]

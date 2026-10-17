@@ -25,7 +25,7 @@ class HDRestorationPipelineTests(SimpleTestCase):
         NAFNET_DEBLUR_ENABLED=True,
         HD_RESTORATION_OUTPUT_SCALE=2,
         GFPGAN_ENABLED=False,
-    )
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.upscale_with_realesrgan")
     @patch("enhancement.services.deblur_with_nafnet")
     def test_enabled_hd_restoration_returns_auditable_2x_output(self, deblur, upscale):
@@ -42,7 +42,7 @@ class HDRestorationPipelineTests(SimpleTestCase):
         HD_RESTORATION_ENABLED=True,
         NAFNET_DEBLUR_ENABLED=True,
         GFPGAN_ENABLED=False,
-    )
+    ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.upscale_with_realesrgan")
     @patch("enhancement.services.deblur_with_nafnet")
     def test_deblur_failure_still_allows_safe_super_resolution(self, deblur, upscale):

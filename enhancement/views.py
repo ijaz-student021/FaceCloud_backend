@@ -1,8 +1,10 @@
 import io
+import logging
 import uuid
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.http import FileResponse, HttpResponse
+from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
@@ -15,6 +17,7 @@ from rest_framework.views import APIView
 from uploads.models import ImageUpload, UploadBatch
 
 from .models import (
+    EditPreview,
     EnhancementBatchJob,
     EnhancementStatus,
     ImageEditVersion,
@@ -28,6 +31,10 @@ from .comparison import (
     validate_profiles,
 )
 from .serializers import (
+    EditPreviewSerializer,
+    PreviewListSerializer,
+    PreviewRequestSerializer,
+    EditorConfigurationSerializer,
     EnhancementBatchJobSerializer,
     EnhancementRequestSerializer,
     GalleryEditRequestSerializer,
@@ -39,10 +46,15 @@ from .serializers import (
     ModelComparisonSummarySerializer,
     WatermarkOptionsSerializer,
 )
+from . import policy as rendering_policy
+from .controls import INTENTS, RENDERER_VERSION, neutral_settings
+from .controls import contract as editor_contract
+from .editor_source import source_version, transparency_policy
+from .previews import StaleSource, create_preview
+from .batch_jobs import start_batch_enhancement
 from .services import create_enhancement_result, ensure_enhancement_capacity
 from .watermark import WatermarkError, render_watermarked
 from .tasks import (
-    process_enhancement_batch,
     process_enhancement_image,
     process_gallery_edit,
     run_model_comparison,
@@ -77,6 +89,9 @@ def _watermarked_name(name):
     stem, dot, extension = name.rpartition(".")
     return f"{stem}_watermarked.{extension}" if dot else f"{name}_watermarked"
 
+
+
+logger = logging.getLogger(__name__)
 
 class ImageEnhanceView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -125,6 +140,7 @@ class ImageEnhanceView(APIView):
         try:
             process_enhancement_image.apply_async(args=[result.pk], task_id=task_id)
         except Exception:
+            logger.exception("Enhancement result %s could not be queued.", result.pk)
             result.status = EnhancementStatus.FAILED
             result.failure_reason = "The background enhancement queue is unavailable."
             result.finished_at = timezone.now()
@@ -145,14 +161,32 @@ class BatchEnhanceView(APIView):
 
     @extend_schema(
         summary="Enhance every ready image in a batch",
+        description=(
+            "409 lists the images that already have an enhancement queued or running (nothing is "
+            "created). 500 carries only an error_reference; the cause is logged on the server."
+        ),
         request=EnhancementRequestSerializer,
         responses={
             201: EnhancementBatchJobSerializer,
             400: OpenApiTypes.OBJECT,
+            409: OpenApiTypes.OBJECT,
             429: OpenApiTypes.OBJECT,
+            500: OpenApiTypes.OBJECT,
         },
         examples=[
             OpenApiExample("Dynamic look", value={"level": "medium", "style": "dynamic"}, request_only=True),
+            OpenApiExample(
+                "Images already in progress",
+                value={"detail": "Some images in this batch already have an enhancement queued or running.",
+                       "image_ids": [41, 42]},
+                response_only=True, status_codes=["409"],
+            ),
+            OpenApiExample(
+                "Unexpected failure",
+                value={"detail": "The batch enhancement could not be started. Quote the reference if you "
+                                 "contact support.", "error_reference": "3f9a1c0b7e2d"},
+                response_only=True, status_codes=["500"],
+            ),
             OpenApiExample(
                 "Too many batch jobs in progress",
                 value={"detail": "You already have 2 batch enhancement jobs in progress (limit 2). Wait for some to finish, then try again."},
@@ -165,40 +199,9 @@ class BatchEnhanceView(APIView):
         payload = EnhancementRequestSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         ensure_enhancement_capacity(request.user, batch=True)
-        images = list(
-            batch.images.filter(status="uploaded", preprocessing_result__status="completed")
-            .select_related("preprocessing_result", "owner")
+        job = start_batch_enhancement(
+            batch, level=payload.validated_data["level"], style=payload.validated_data["style"],
         )
-        if not images:
-            raise ValidationError("This batch has no preprocessed images ready for enhancement.")
-        job = EnhancementBatchJob.objects.create(
-            owner=request.user,
-            source_batch=batch,
-            requested_level=payload.validated_data["level"],
-            requested_style=payload.validated_data["style"],
-            status=EnhancementStatus.PENDING,
-            total_images=len(images),
-        )
-        try:
-            for image in images:
-                create_enhancement_result(
-                    image, job.requested_level, batch_job=job,
-                    requested_style=job.requested_style,
-                )
-        except Exception:
-            job.delete()
-            raise ValidationError("One or more images already have an active enhancement operation.")
-        task_id = uuid.uuid4().hex
-        job.status = EnhancementStatus.QUEUED
-        job.task_id = task_id
-        job.save(update_fields=["status", "task_id", "updated_at"])
-        try:
-            process_enhancement_batch.apply_async(args=[job.pk], task_id=task_id)
-        except Exception:
-            job.status = EnhancementStatus.FAILED
-            job.failure_reason = "The background enhancement queue is unavailable."
-            job.finished_at = timezone.now()
-            job.save(update_fields=["status", "failure_reason", "finished_at", "updated_at"])
         job.refresh_from_db()
         return Response(
             EnhancementBatchJobSerializer(job, context={"request": request}).data,
@@ -371,45 +374,35 @@ class EnhancementComparisonView(APIView):
 
 
 class GalleryEditorConfigurationView(APIView):
+    """The editing contract: controls, ranges, neutral values, renderer and policy.
+
+    Reset sets ``neutral_settings``; Auto and presets are separate requests.
+    """
+
     permission_classes = [permissions.IsAuthenticated]
 
-    @extend_schema(responses={200: OpenApiTypes.OBJECT})
+    @extend_schema(responses={200: EditorConfigurationSerializer})
     def get(self, request):
         return Response(
             {
                 "modes": ["auto", "manual"],
                 "source": "completed_enhanced_image",
                 "non_destructive": True,
-                "preview_strategy": "client_side_preview_then_server_render",
-                "controls": {
-                    **{
-                        name: {
-                            "minimum": -100,
-                            "maximum": 100,
-                            "step": 1,
-                            "default": 0,
-                            "recommended_minimum": -50,
-                            "recommended_maximum": 50,
-                        }
-                        for name in (
-                            "brightness", "contrast", "shadows", "saturation",
-                            "highlights", "warmth",
-                        )
-                    },
-                    "intensity": {
-                        "minimum": 0,
-                        "maximum": 100,
-                        "step": 1,
-                        "default": 100,
-                        "recommended_minimum": 0,
-                        "recommended_maximum": 100,
-                        "description": (
-                            "How much of the AI enhancement to apply: 100 is "
-                            "the full enhanced result, 0 is the original "
-                            "unenhanced photo. Blends between the two."
-                        ),
-                    },
+                "preview_strategy": "server_preview_revisions_then_full_resolution_save",
+                "preview": {
+                    "default_edge": settings.ENHANCEMENT_PREVIEW_DEFAULT_EDGE,
+                    "max_edge": settings.ENHANCEMENT_PREVIEW_MAX_EDGE,
+                    "retention_hours": settings.ENHANCEMENT_PREVIEW_RETENTION_HOURS,
+                    "kept_per_image": settings.ENHANCEMENT_PREVIEW_KEEP_PER_RESULT,
+                    "source": "a bounded lossless copy of the enhanced image, cached per source_version",
+                    "revisions": "chosen by the client; the highest is the latest; older ones never overwrite newer ones",
                 },
+                "transparency": transparency_policy("png or jpeg, as the result"),
+                "renderer_version": RENDERER_VERSION,
+                "render_policy": rendering_policy.describe(),
+                "intents": list(INTENTS),
+                "neutral_settings": neutral_settings(),
+                "controls": editor_contract(),
             }
         )
 
@@ -438,49 +431,52 @@ class GalleryEditListCreateView(APIView):
 
     @extend_schema(
         request=GalleryEditRequestSerializer,
-        responses={202: ImageEditVersionSerializer, 410: OpenApiTypes.OBJECT},
+        responses={202: ImageEditVersionSerializer, 400: OpenApiTypes.OBJECT, 409: OpenApiTypes.OBJECT,
+                   410: OpenApiTypes.OBJECT},
+        description=(
+            "Renders a full-resolution edit version from the enhanced image, in the background. "
+            "409 stale_source when source_version is given and no longer current. Only one edit per "
+            "image may be in progress (400)."
+        ),
     )
     def post(self, request, result_id):
         result = self._result(request, result_id)
-        if not result.enhanced_file:
-            return Response(
-                {"detail": "The enhanced image is unavailable."},
-                status=status.HTTP_410_GONE,
-            )
         payload = GalleryEditRequestSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
-        task_id = uuid.uuid4().hex
-        try:
-            edit = ImageEditVersion.objects.create(
-                owner=request.user,
-                enhancement_result=result,
-                mode=payload.validated_data["mode"],
-                requested_adjustments=payload.validated_data["adjustments"],
-                status=EnhancementStatus.QUEUED,
-                task_id=task_id,
-            )
-        except IntegrityError as error:
-            raise ValidationError(
-                "This image already has an active gallery-edit operation."
-            ) from error
-        try:
-            process_gallery_edit.apply_async(args=[edit.pk], task_id=task_id)
-        except Exception:
-            edit.status = EnhancementStatus.FAILED
-            edit.failure_reason = "The background gallery-edit queue is unavailable."
-            edit.finished_at = timezone.now()
-            edit.save(
-                update_fields=[
-                    "status", "failure_reason", "finished_at", "updated_at",
-                ]
-            )
-        edit.refresh_from_db()
-        return Response(
-            ImageEditVersionSerializer(
-                edit, context={"request": request}
-            ).data,
-            status=status.HTTP_202_ACCEPTED,
+        return start_edit(
+            request, result, payload.validated_data["mode"], payload.validated_data["adjustments"],
+            claimed_version=payload.validated_data.get("source_version", ""),
         )
+
+
+def start_edit(request, result, mode, adjustments, *, claimed_version="", preview=None, advisor_recommendation=None):
+    """Queue a full-resolution edit of ``result``; shared by a direct save and a save from a preview."""
+    if not result.enhanced_file:
+        return Response({"detail": "The enhanced image is unavailable."}, status=status.HTTP_410_GONE)
+    version = source_version(result)
+    if claimed_version and claimed_version != version:
+        raise StaleSource(version)
+    task_id = uuid.uuid4().hex
+    try:
+        edit = ImageEditVersion.objects.create(
+            owner=request.user, enhancement_result=result, mode=mode, requested_adjustments=adjustments,
+            status=EnhancementStatus.QUEUED, task_id=task_id, source_version=version, from_preview=preview,
+            advisor_recommendation=advisor_recommendation,
+        )
+    except IntegrityError as error:
+        raise ValidationError("This image already has an active gallery-edit operation.") from error
+    try:
+        process_gallery_edit.apply_async(args=[edit.pk], task_id=task_id)
+    except Exception:
+        logger.exception("Gallery edit %s could not be queued.", edit.pk)
+        edit.status = EnhancementStatus.FAILED
+        edit.failure_reason = "The background gallery-edit queue is unavailable."
+        edit.finished_at = timezone.now()
+        edit.save(update_fields=["status", "failure_reason", "finished_at", "updated_at"])
+    edit.refresh_from_db()
+    return Response(
+        ImageEditVersionSerializer(edit, context={"request": request}).data, status=status.HTTP_202_ACCEPTED,
+    )
 
 
 class GalleryEditDetailView(APIView):
@@ -695,3 +691,112 @@ class ModelComparisonReportView(APIView):
         response = HttpResponse(build_report_csv(comparison), content_type="text/csv; charset=utf-8")
         response["Content-Disposition"] = f'attachment; filename="model-comparison-{comparison.pk}.csv"'
         return response
+
+
+class EditPreviewListCreateView(APIView):
+    """Bounded previews of an enhanced image, one immutable image per revision."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "edit_preview"
+
+    def _result(self, request, result_id):
+        return get_object_or_404(
+            ImageEnhancementResult.objects.filter(owner=request.user, status=EnhancementStatus.COMPLETED),
+            pk=result_id,
+        )
+
+    @extend_schema(responses={200: PreviewListSerializer})
+    def get(self, request, result_id):
+        result = self._result(request, result_id)
+        previews = list(EditPreview.objects.filter(owner=request.user, enhancement_result=result)
+                        .select_related("source", "owner", "enhancement_result")[:20])
+        return Response(PreviewListSerializer({
+            "source_version": source_version(result),
+            "latest_revision": previews[0].revision if previews else None,
+            "previews": previews,
+        }, context={"request": request}).data)
+
+    @extend_schema(
+        request=PreviewRequestSerializer,
+        responses={201: EditPreviewSerializer, 200: EditPreviewSerializer, 400: OpenApiTypes.OBJECT,
+                   409: OpenApiTypes.OBJECT, 410: OpenApiTypes.OBJECT, 429: OpenApiTypes.OBJECT},
+        description=(
+            "201 when rendered, 200 when the same revision with the same settings already exists. "
+            "409 stale_source (source_version is no longer current) or revision_conflict (the revision was "
+            "used with different settings). Closing the connection does not cancel the render."
+        ),
+    )
+    def post(self, request, result_id):
+        result = self._result(request, result_id)
+        if not result.enhanced_file:
+            return Response({"detail": "The enhanced image is unavailable."}, status=status.HTTP_410_GONE)
+        payload = PreviewRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+        preview, created = create_preview(
+            result, request.user, revision=data["revision"], mode=data["mode"], adjustments=data["adjustments"],
+            size=data.get("size"), claimed_version=data.get("source_version", ""),
+        )
+        return Response(
+            EditPreviewSerializer(preview, context={"request": request}).data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class EditPreviewDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _preview(self, request, pk):
+        return get_object_or_404(
+            EditPreview.objects.filter(owner=request.user).select_related("source", "enhancement_result", "owner"),
+            pk=pk,
+        )
+
+    @extend_schema(responses={200: EditPreviewSerializer, 404: OpenApiTypes.OBJECT})
+    def get(self, request, pk):
+        return Response(EditPreviewSerializer(self._preview(request, pk), context={"request": request}).data)
+
+    @extend_schema(responses={204: None, 404: OpenApiTypes.OBJECT})
+    def delete(self, request, pk):
+        self._preview(request, pk).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class EditPreviewImageView(APIView):
+    """The preview's own image. Authenticated, owner only; each id is immutable."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(responses={(200, "image/jpeg"): OpenApiTypes.BINARY, (200, "image/png"): OpenApiTypes.BINARY,
+                              404: OpenApiTypes.OBJECT})
+    def get(self, request, pk):
+        preview = get_object_or_404(EditPreview.objects.filter(owner=request.user), pk=pk)
+        content_type = "image/png" if preview.output_format == "png" else "image/jpeg"
+        response = FileResponse(preview.file.open("rb"), content_type=content_type)
+        response["Cache-Control"] = "private, max-age=3600"
+        response["Content-Disposition"] = f'inline; filename="preview-{preview.revision}.{ "png" if preview.output_format == "png" else "jpg"}"'
+        return response
+
+
+class EditPreviewSaveView(APIView):
+    """Save a preview at full resolution: a new edit version from the same settings, in the background."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        request=None,
+        responses={202: ImageEditVersionSerializer, 400: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT,
+                   409: OpenApiTypes.OBJECT, 410: OpenApiTypes.OBJECT},
+        description="409 stale_source when the image changed since the preview was made.",
+    )
+    def post(self, request, pk):
+        preview = get_object_or_404(
+            EditPreview.objects.filter(owner=request.user).select_related("source", "enhancement_result"), pk=pk,
+        )
+        result = preview.enhancement_result
+        if result.status != EnhancementStatus.COMPLETED:
+            raise Http404("The enhanced image is not available.")
+        return start_edit(
+            request, result, preview.mode, preview.requested_adjustments,
+            claimed_version=preview.source.source_version, preview=preview,
+        )

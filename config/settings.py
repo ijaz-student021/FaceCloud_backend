@@ -83,6 +83,8 @@ INSTALLED_APPS = [
     "organizations",
     "moderation",
     "contact",
+    "security",
+    "camera",
     "search",
 ]
 
@@ -209,6 +211,72 @@ PREPROCESS_JPEG_QUALITY = int(os.environ.get("PREPROCESS_JPEG_QUALITY", "95"))
 PREPROCESS_TRANSPARENT_BACKGROUND = os.environ.get("PREPROCESS_TRANSPARENT_BACKGROUND", "#FFFFFF")
 
 AI_RESTORATION_ENABLED = env.bool("AI_RESTORATION_ENABLED", default=True)
+# Editor previews (enhancement/previews.py). A preview is a bounded copy rendered
+# from a cached bounded source of the enhanced image, so a slider never decodes
+# the full-resolution file. Retention is separate from originals and saved
+# outputs: previews are disposable and deleted after ENHANCEMENT_PREVIEW_RETENTION_HOURS
+# (and only the newest ENHANCEMENT_PREVIEW_KEEP_PER_RESULT are kept per image).
+ENHANCEMENT_PREVIEW_DEFAULT_EDGE = env.int("ENHANCEMENT_PREVIEW_DEFAULT_EDGE", default=1024)
+ENHANCEMENT_PREVIEW_MAX_EDGE = env.int("ENHANCEMENT_PREVIEW_MAX_EDGE", default=1600)
+ENHANCEMENT_PREVIEW_JPEG_QUALITY = env.int("ENHANCEMENT_PREVIEW_JPEG_QUALITY", default=88)
+ENHANCEMENT_PREVIEW_RETENTION_HOURS = env.int("ENHANCEMENT_PREVIEW_RETENTION_HOURS", default=24)
+ENHANCEMENT_PREVIEW_KEEP_PER_RESULT = env.int("ENHANCEMENT_PREVIEW_KEEP_PER_RESULT", default=10)
+if not 128 <= ENHANCEMENT_PREVIEW_DEFAULT_EDGE <= ENHANCEMENT_PREVIEW_MAX_EDGE <= 4096:
+    raise ImproperlyConfigured(
+        "ENHANCEMENT_PREVIEW_DEFAULT_EDGE must be between 128 and ENHANCEMENT_PREVIEW_MAX_EDGE (at most 4096)."
+    )
+if ENHANCEMENT_PREVIEW_RETENTION_HOURS < 1 or ENHANCEMENT_PREVIEW_KEEP_PER_RESULT < 1:
+    raise ImproperlyConfigured("Preview retention and keep-per-result must be at least 1.")
+
+# Optional cloud adjustment advisor (enhancement/advisor_*.py). Off until an
+# operator turns it on AND supplies a key and a model; nothing is sent anywhere
+# otherwise. The key lives only in the environment / secret store: it is never
+# logged, returned by an endpoint, or committed. The model name is deliberately
+# not defaulted (choose an image-capable model your account can use). Requests
+# are normal Responses API calls with store=false, one image per call.
+OPENAI_ADVISOR_ENABLED = env.bool("OPENAI_ADVISOR_ENABLED", default=False)
+OPENAI_API_KEY = env("OPENAI_API_KEY", default="")
+OPENAI_ADVISOR_MODEL = env("OPENAI_ADVISOR_MODEL", default="")
+# Empty means the SDK's default (OpenAI). Set only to a local test server in development;
+# the production guard refuses any value, because previews must not be sent anywhere else.
+OPENAI_BASE_URL = env("OPENAI_BASE_URL", default="")
+OPENAI_ADVISOR_POLICY_VERSION = env("OPENAI_ADVISOR_POLICY_VERSION", default="advisor_policy_v1")
+OPENAI_ADVISOR_IMAGE_EDGE = env.int("OPENAI_ADVISOR_IMAGE_EDGE", default=768)
+OPENAI_ADVISOR_IMAGE_DETAIL = env("OPENAI_ADVISOR_IMAGE_DETAIL", default="low")
+OPENAI_ADVISOR_TIMEOUT_SECONDS = env.float("OPENAI_ADVISOR_TIMEOUT_SECONDS", default=30.0)
+OPENAI_ADVISOR_MAX_OUTPUT_TOKENS = env.int("OPENAI_ADVISOR_MAX_OUTPUT_TOKENS", default=700)
+OPENAI_ADVISOR_MAX_ATTEMPTS = env.int("OPENAI_ADVISOR_MAX_ATTEMPTS", default=3)
+OPENAI_ADVISOR_DEADLINE_SECONDS = env.int("OPENAI_ADVISOR_DEADLINE_SECONDS", default=180)
+OPENAI_ADVISOR_MAX_CONCURRENCY = env.int("OPENAI_ADVISOR_MAX_CONCURRENCY", default=3)
+OPENAI_ADVISOR_MAX_IMAGES_PER_RUN = env.int("OPENAI_ADVISOR_MAX_IMAGES_PER_RUN", default=20)
+OPENAI_ADVISOR_DAILY_REQUESTS_PER_USER = env.int("OPENAI_ADVISOR_DAILY_REQUESTS_PER_USER", default=40)
+OPENAI_ADVISOR_DAILY_REQUESTS_TOTAL = env.int("OPENAI_ADVISOR_DAILY_REQUESTS_TOTAL", default=500)
+OPENAI_ADVISOR_DAILY_TOKENS_TOTAL = env.int("OPENAI_ADVISOR_DAILY_TOKENS_TOTAL", default=1_000_000)
+OPENAI_ADVISOR_RECOMMENDATION_TTL_HOURS = env.int("OPENAI_ADVISOR_RECOMMENDATION_TTL_HOURS", default=24)
+OPENAI_ADVISOR_QUEUE_NAME = env("OPENAI_ADVISOR_QUEUE_NAME", default="")
+OPENAI_ADVISOR_RECORD_RETENTION_DAYS = env.int("OPENAI_ADVISOR_RECORD_RETENTION_DAYS", default=30)
+if OPENAI_ADVISOR_IMAGE_DETAIL not in ("low", "high", "auto"):
+    raise ImproperlyConfigured("OPENAI_ADVISOR_IMAGE_DETAIL must be low, high or auto.")
+if not 256 <= OPENAI_ADVISOR_IMAGE_EDGE <= 2048:
+    raise ImproperlyConfigured("OPENAI_ADVISOR_IMAGE_EDGE must be between 256 and 2048.")
+if min(OPENAI_ADVISOR_MAX_ATTEMPTS, OPENAI_ADVISOR_MAX_CONCURRENCY, OPENAI_ADVISOR_MAX_IMAGES_PER_RUN,
+       OPENAI_ADVISOR_MAX_OUTPUT_TOKENS, OPENAI_ADVISOR_DEADLINE_SECONDS) < 1 or OPENAI_ADVISOR_TIMEOUT_SECONDS <= 0:
+    raise ImproperlyConfigured("The OPENAI_ADVISOR_* attempt, concurrency, size, token and time limits must be positive.")
+if OPENAI_ADVISOR_TIMEOUT_SECONDS * OPENAI_ADVISOR_MAX_ATTEMPTS > OPENAI_ADVISOR_DEADLINE_SECONDS * 2:
+    raise ImproperlyConfigured("OPENAI_ADVISOR_DEADLINE_SECONDS is too short for the timeout and attempts configured.")
+
+# Which enhancement stages may run (enhancement/policy.py). "lightweight_v1"
+# (default): OpenCV and Pillow only; the learned-model settings below
+# (ZERO_DCE_ENABLED, HD_RESTORATION_ENABLED, ...) are ignored. "learned_v1": the
+# earlier behaviour, where each of those settings decides. Adapters and
+# checkpoints stay installed either way, so the change is reversible.
+ENHANCEMENT_RENDER_POLICY = env("ENHANCEMENT_RENDER_POLICY", default="lightweight_v1")
+if ENHANCEMENT_RENDER_POLICY not in ("lightweight_v1", "balanced_v1", "learned_v1"):
+    raise ImproperlyConfigured(
+        "ENHANCEMENT_RENDER_POLICY must be lightweight_v1, balanced_v1 or learned_v1, "
+        f"not {ENHANCEMENT_RENDER_POLICY!r}."
+    )
+
 AI_RESTORATION_EDSR_MODEL_PATH = env(
     "AI_RESTORATION_EDSR_MODEL_PATH",
     default=str(BASE_DIR / ".runtime" / "models" / "EDSR_x2.pb"),
@@ -307,6 +375,15 @@ EXTREME_LOW_LIGHT_MODEL_STRENGTH = env.float(
 # effective boost is its square root, so 9 means at most 3x). It never uses the
 # model's colours, which show false green/magenta casts. 1 or less switches it off.
 ENHANCEMENT_DARK_COLOUR_GAIN_MAX = env.float("ENHANCEMENT_DARK_COLOUR_GAIN_MAX", default=9.0)
+
+# Gentle noise reduction BEFORE a requested lift of a dark photo (enhancement/services.py::_prefilter_for_lift):
+# a lift amplifies sensor noise, so removing a little first leaves less of it afterwards. Off for clean or
+# well-lit photos and whenever a lift was not requested. "chroma" smooths only colour noise (cheap, edge-aware);
+# "nlm" also applies mild non-local-means to a bounded copy; "off" disables it.
+ENHANCEMENT_PREFILTER_MODE = env("ENHANCEMENT_PREFILTER_MODE", default="chroma")
+if ENHANCEMENT_PREFILTER_MODE not in ("off", "chroma", "nlm"):
+    raise ImproperlyConfigured("ENHANCEMENT_PREFILTER_MODE must be off, chroma or nlm.")
+ENHANCEMENT_PREFILTER_MAX_LUMINANCE = env.float("ENHANCEMENT_PREFILTER_MAX_LUMINANCE", default=90.0)
 
 # Identity-preserving enhancement: after the pipeline, the final image's faces
 # are compared to the source's faces with the same SFace embeddings used for
@@ -810,6 +887,8 @@ COLLAGE_TTL_HOURS = env.int("COLLAGE_TTL_HOURS", default=72)
 # Feature 48: hours between two photos that starts a new event in the timeline.
 EVENT_GAP_HOURS = env.float("EVENT_GAP_HOURS", default=6.0)
 ORG_INVITATION_TTL_HOURS = env.int("ORG_INVITATION_TTL_HOURS", default=72)
+# Administrator invitations to create an account (accounts/invitations.py).
+ACCOUNT_INVITATION_TTL_HOURS = env.int("ACCOUNT_INVITATION_TTL_HOURS", default=72)
 
 # Periodic maintenance. Nothing runs these unless a beat process is started
 # (scripts/run_beat.ps1 or `celery -A config beat`). Every entry is safe to run
@@ -817,6 +896,22 @@ ORG_INVITATION_TTL_HOURS = env.int("ORG_INVITATION_TTL_HOURS", default=72)
 CELERY_BEAT_SCHEDULE = {
     "reap-stuck-jobs": {
         "task": "operations.reap_stuck_jobs",
+        "schedule": crontab(minute="*/5"),
+    },
+    "cleanup-edit-previews": {
+        "task": "enhancement.cleanup_previews",
+        "schedule": crontab(minute=55, hour="*/2"),
+    },
+    "cleanup-advisor-records": {
+        "task": "enhancement.cleanup_advisor",
+        "schedule": crontab(minute=20, hour="*/6"),
+    },
+    "purge-camera-sessions": {
+        "task": "camera.purge_old_sessions",
+        "schedule": crontab(minute=45, hour=3),
+    },
+    "evaluate-security-alerts": {
+        "task": "security.evaluate_alert_rules",
         "schedule": crontab(minute="*/5"),
     },
     "expire-download-packages": {
@@ -930,6 +1025,8 @@ REST_FRAMEWORK = {
     # Paginated when the request passes page or page_size; a plain array
     # otherwise, so existing clients keep working (config/pagination.py).
     "DEFAULT_PAGINATION_CLASS": "config.pagination.OptionalPageNumberPagination",
+    # DRF's default handler, plus a record of 403/429 responses for security alerts.
+    "EXCEPTION_HANDLER": "config.exceptions.exception_handler",
     # Number of reverse proxies in front of Django. With 0 the socket address is
     # the client, so a spoofed X-Forwarded-For cannot evade throttling.
     "NUM_PROXIES": int(os.environ.get("TRUSTED_PROXY_COUNT", "0")),
@@ -948,6 +1045,9 @@ REST_FRAMEWORK = {
         "verification": "10/hour",
         "verification_status": "60/hour",
         "contact": "5/hour",
+        "edit_preview": "1200/hour",
+        "advisor": "60/hour",
+        "invitation": "30/hour",
         "password_reset": "10/hour",
         "password_change": "10/hour",
         "image_upload": "100/hour",
@@ -992,6 +1092,8 @@ SPECTACULAR_SETTINGS = {
     # different choice sets; name each set explicitly so the schema is stable.
     "ENUM_NAME_OVERRIDES": {
         "ProcessingStatusEnum": "enhancement.models.EnhancementStatus",
+        "SecurityAlertStatusEnum": "security.models.SecurityAlert.Status",
+        "SecurityAlertSeverityEnum": "security.models.SecurityAlert.Severity",
         "EnhancementLevelEnum": "enhancement.models.EnhancementLevel",
         "EnhancementStyleEnum": "enhancement.models.EnhancementStyle",
         "PackageStatusEnum": "downloads.models.DownloadPackage.Status",
@@ -1020,6 +1122,20 @@ TEST_RUNNER = "config.test_runner.FaceCloudTestRunner"
 # pretending to work.
 CONTACT_RECIPIENT_EMAILS = env.list("CONTACT_RECIPIENT_EMAILS", default=[])
 CONTACT_MESSAGE_RETENTION_DAYS = env.int("CONTACT_MESSAGE_RETENTION_DAYS", default=180)
+
+# Security alerts (security app). Within a sliding window of
+# SECURITY_ALERT_WINDOW_MINUTES, an alert opens for one subject (account,
+# address or user) at the threshold of failed logins, authorization failures
+# (403) or rate-limit violations (429; at most one counted per second).
+SECURITY_ALERT_WINDOW_MINUTES = env.int("SECURITY_ALERT_WINDOW_MINUTES", default=15)
+SECURITY_ALERT_FAILED_LOGIN_THRESHOLD = env.int("SECURITY_ALERT_FAILED_LOGIN_THRESHOLD", default=10)
+SECURITY_ALERT_AUTHORIZATION_FAILURE_THRESHOLD = env.int("SECURITY_ALERT_AUTHORIZATION_FAILURE_THRESHOLD", default=20)
+SECURITY_ALERT_RATE_LIMIT_THRESHOLD = env.int("SECURITY_ALERT_RATE_LIMIT_THRESHOLD", default=10)
+SECURITY_EVENT_RETENTION_DAYS = env.int("SECURITY_EVENT_RETENTION_DAYS", default=90)
+
+# Live camera (camera app): session metadata is kept this long; saved
+# snapshots are ordinary uploads and follow the image retention rules.
+CAMERA_SESSION_RETENTION_DAYS = env.int("CAMERA_SESSION_RETENTION_DAYS", default=30)
 
 # How long records of ended sign-in sessions (device, IP address, times) are
 # kept for the user's own session list before they are deleted.

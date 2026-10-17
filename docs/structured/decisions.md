@@ -275,3 +275,19 @@ context, decision, and consequences. Superseded decisions remain for history.
   without `cryptography` it could not start Django). The shim touches only a
   module that is absent, and is removed when BasicSR is replaced.
 
+## ADR-024 — The learned models stay installed but are off by default
+
+- **Status:** Accepted (clarifies ADR-009, ADR-010, ADR-022, ADR-023; they describe the models, this decides their default)
+- **Decision:** Automatic enhancement uses the `lightweight_v1` policy (OpenCV and Pillow only).
+  Zero-DCE, EDSR, NAFNet, Real-ESRGAN, GFPGAN, PureVision, PureScale and colourisation remain in
+  the backend, their checkpoints installed and checksum-verified, and run only when
+  `ENHANCEMENT_RENDER_POLICY=learned_v1` and the model's own setting are both on. A model that is
+  off is reported as `disabled` with the reason, never as a fallback, and every result records
+  its policy. The health endpoint lists each model as installed, verified and disabled.
+- **Why:** automatic mode must not brighten a photo that may be dark on purpose; generative face
+  restoration cannot be shown to keep the person; two checkpoints are non-commercial; no CUDA
+  path is validated. The models stay so they can be demonstrated and compared (Zero-DCE lifts a
+  very dark portrait from 27 to 57 mean luminance where the default leaves it dark).
+- **Consequence:** very dark, blurred or low-resolution photos are improved less by default.
+  `docs/enhancement/optional-models.md` says how to show and enable each model.
+

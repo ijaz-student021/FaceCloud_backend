@@ -46,7 +46,7 @@ separately in `frontend-handoff.md`; nothing here claims a frontend change.
 
 | ID | Page | Existing backend | Status | Gap / package |
 |---|---|---|---|---|
-| PAGE-038 | Dashboard | `GET /api/user/dashboard/` | exists | Typed response schema: B01 |
+| PAGE-038 | Dashboard | `GET /api/user/dashboard/` | typed `ce9c212` | — |
 | PAGE-049 | UploadCenter | `GET /api/images/upload/limits/` | added `698f68e` | — |
 | PAGE-051 | UploadSingle | `upload/single/`, batch progress, `enhancements/images/{id}/` | exists | — |
 | PAGE-050 | UploadMultiple | `upload/multiple/` | exists | — |
@@ -64,7 +64,7 @@ separately in `frontend-handoff.md`; nothing here claims a frontend change.
 | PAGE-048 | Settings: security | `user/sessions/`, `sessions/{id}/revoke/`, change-password, logout-all, 2FA | added `1a2c1b8` | — |
 | PAGE-048 | Settings: notifications | `notifications/preferences/` | exists | — |
 | PAGE-048 | Settings: privacy | `privacy/consents/`, `export/`, `facial-data/` | exists | Camera permission stays in the browser |
-| PAGE-043 | LiveEnhancement | upload + enhancement (snapshots) | exists | Sessions/history: deferred (needs retention spec); video: out of scope |
+| PAGE-043 | LiveEnhancement | `camera/sessions/`, snapshots, upload + enhancement | added `4586aa5` | 30-day metadata retention; no video endpoint exists |
 
 ## Moderator portal (organization-scoped)
 
@@ -74,10 +74,10 @@ separately in `frontend-handoff.md`; nothing here claims a frontend change.
 | PAGE-029 | ModeratorDashboard | `moderator/dashboard/`, `moderator/metrics/` | exists | — |
 | PAGE-026 | MemberManagement | members, invitations, resend, cancel, update, remove, audit | exists; capabilities `689f90d` | Copy "only invited by you" differs from policy (handoff) |
 | PAGE-036 | ReviewQueue | reviews list/claim/release/assign/bulk-decision | exists | — |
-| PAGE-030 | ModeratorImageReview | review detail/image/decision/escalate/merge | exists | Reprocess and before/after: deferred (decisions D2, D3) |
-| PAGE-024 | BatchManagement | `moderator/batches/{id}/`, retry, cancel | added `0765596` | Packages/reprocess: deferred (D2, D3) |
+| PAGE-030 | ModeratorImageReview | review detail/image/decision/escalate/merge, `moderator/images/{id}/preview/` | extended `18a3f86` | Audited previews (owner/moderator, not personal spaces) |
+| PAGE-024 | BatchManagement | `moderator/batches/{id}/`, retry, cancel, `reprocess/` | added `0765596`, `d2beaff` | Organization packages: still deferred |
 | PAGE-033 | NotificationCenter | user notifications; assignment/escalation/overdue/batch-failed producers verified | exists | — |
-| PAGE-035 | ReportsExports | `moderator/reports/` with date window | extended `f30722d` | "general activity" has no report type (handoff) |
+| PAGE-035 | ReportsExports | `moderator/reports/` with date window, `general_activity` | extended `f30722d`, `3809836` | — |
 | PAGE-028 | ModeratorAudit | `{org}/audit/` | exists | — |
 | PAGE-032 | ModeratorSettings | profile, notification preferences | exists | — |
 | PAGE-025/027/034 | IdentityReview, ModerationLogs, RejectedImages (unmounted) | moderation, audit | frontend-only | Consolidate or route (frontend decision) |
@@ -87,9 +87,9 @@ separately in `frontend-handoff.md`; nothing here claims a frontend change.
 | ID | Page | Existing backend | Status | Gap / package |
 |---|---|---|---|---|
 | PAGE-011 | AdminOverview | `system/analytics/`, `system/health/`, `system/queue/`, `system/moderation/` | exists | — |
-| PAGE-023 | Users | `user/admin/users/` list, GET detail, PATCH | extended `616b628` | Add-user: decision D4 |
+| PAGE-023 | Users | `user/admin/users/` list, GET detail, PATCH; `user/admin/invitations/` | extended `616b628`, `80ac70f` | Only a superuser may grant admin |
 | PAGE-014 | AuditLogs | `system/audit/` | exists | — |
-| PAGE-018 | Security | audit feed | deferred | Alert rules needed first (decision D1) |
+| PAGE-018 | Security | `system/security/alerts/`, acknowledge, rules | added `a747ff3` | Alert rules per product decision; thresholds configurable |
 | PAGE-012 | ApiDocs | `/api/docs/`, `/api/schema/`, `/api/redoc/` | exists | Frontend should link them (handoff) |
 | PAGE-013 | ApiTest | existing API | frontend-only | Use Swagger |
 | PAGE-021 | SystemMonitoring | health, queue, failed jobs | exists | Host telemetry: deferred (needs an operational monitor, not Django) |
@@ -104,6 +104,14 @@ separately in `frontend-handoff.md`; nothing here claims a frontend change.
 |---|---|---|
 | Pagination on 19 list endpoints (audit P2-14) | added `f8f9f4b` | B01, opt-in |
 | Per-process rate limits (audit P2-15) | added `33008a3` | B01, `CACHE_URL`, required in production |
-| Typed response schemas for aggregates | partial | New endpoints typed; dashboard/analytics still loosely typed |
+| Typed response schemas for aggregates | done `ce9c212` | Dashboard and analytics render through documented serializers, drift-tested |
 | EDSR runtime checksum (audit P2-16) | fixed `02ead0c` | B08 |
-| Deployment artefacts | deferred | B09, needs a hosting decision |
+| Deployment artefacts | prepared, not run | B09: local staging (PostgreSQL, Redis, Django, Celery, Beat); see `docs/deployment/` |
+
+## Lightweight enhancement (branch `feat/lightweight-enhancement`)
+
+| Phase | Scope | Status |
+|---|---|---|
+| A | `lightweight_v1` policy; no automatic lift of dark photos; control contract (sharpness added), float-LAB renderer, local recipe, configuration endpoint | implemented `053e8b0`, `4eac545`, `5c4ff92`; tests and schema pass |
+| B | Bounded authenticated previews, revision-specific atomic outputs, full-resolution save from a stable source, preview cleanup, edit-task hardening (alpha, deletion, duplicate delivery) | implemented; migration `0009` (disposable databases only); see `docs/enhancement/lightweight-pipeline.md` section 5 |
+| C | Optional OpenAI advisor (opt-in, separate consent, structured output), per-image jobs, budgets | implemented; migration `0010` (disposable databases only); tested with a **mocked** provider; real-API validation and advisor-assisted comparison **pending** (no key, no authorised images, no cost cap); see `docs/enhancement/openai-advisor.md` |

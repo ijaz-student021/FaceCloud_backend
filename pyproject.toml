@@ -1,0 +1,7 @@
+# Tooling configuration only; the project is installed from requirements.txt.
+[tool.ruff]
+extend-exclude = ["venv", ".runtime", "notebooks", "media"]
+
+[tool.ruff.lint]
+# Pyflakes (unused imports and variables, undefined names) and syntax errors. Widen deliberately.
+select = ["F", "E9"]

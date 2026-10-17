@@ -3,8 +3,12 @@ from rest_framework import serializers
 
 from . import comparison as comparison_engine
 from . import watermark as wm
+from .controls import INTENTS, ControlsSerializer
 from .models import (
+    AdvisorRecommendation,
+    AdvisorRun,
     EditMode,
+    EditPreview,
     EnhancementBatchJob,
     EnhancementLevel,
     EnhancementStatus,
@@ -57,23 +61,39 @@ class WatermarkOptionsSerializer(serializers.Serializer):
         return attrs
 
 
-class GalleryAdjustmentSerializer(serializers.Serializer):
-    brightness = serializers.FloatField(min_value=-100, max_value=100, default=0)
-    contrast = serializers.FloatField(min_value=-100, max_value=100, default=0)
-    shadows = serializers.FloatField(min_value=-100, max_value=100, default=0)
-    saturation = serializers.FloatField(min_value=-100, max_value=100, default=0)
-    highlights = serializers.FloatField(min_value=-100, max_value=100, default=0)
-    warmth = serializers.FloatField(min_value=-100, max_value=100, default=0)
-    intensity = serializers.FloatField(min_value=0, max_value=100, default=100)
+class GalleryAdjustmentSerializer(ControlsSerializer):
+    """Manual control values: signed numbers, 0 neutral (``intensity``: 0-100, 100 neutral).
+
+    Finite numbers only; booleans, NaN, infinity, out-of-range values and unknown
+    control names are field errors. See ``GET /api/enhancements/editor/configuration/``
+    for each control's range, meaning and Pillow-factor mapping.
+    """
 
 
 class GalleryEditRequestSerializer(serializers.Serializer):
     mode = serializers.ChoiceField(choices=EditMode.choices, default=EditMode.AUTO)
-    adjustments = GalleryAdjustmentSerializer(required=False, default=dict)
+    adjustments = GalleryAdjustmentSerializer(
+        required=False, default=dict,
+        help_text="Used in manual mode only. Omitted or empty means neutral (the edit changes nothing).",
+    )
+    intent = serializers.ChoiceField(
+        choices=INTENTS, default="auto",
+        help_text=(
+            "Auto mode only. auto: fix clear technical faults only (never lifts or darkens overall "
+            "exposure); brighten: also lift a dark photo; preserve: leave tonality alone."
+        ),
+    )
+
+    source_version = serializers.CharField(
+        required=False, allow_blank=True, max_length=32,
+        help_text="Optional: the source_version this edit is meant for; a 409 stale_source if it is no longer current.",
+    )
 
     def validate(self, attrs):
         if attrs["mode"] == EditMode.AUTO:
-            attrs["adjustments"] = {}
+            attrs["adjustments"] = {"intent": attrs["intent"]}
+        elif self.initial_data.get("intent") not in (None, "auto"):
+            raise serializers.ValidationError({"intent": "Intent applies to auto mode only."})
         return attrs
 
 
@@ -117,7 +137,8 @@ class ImageEditVersionSerializer(serializers.ModelSerializer):
             "output_width", "output_height", "output_file_size",
             "processing_duration_ms", "task_id", "quality_metadata",
             "failure_reason", "is_current", "download_url", "started_at",
-            "finished_at", "created_at", "updated_at",
+            "finished_at", "created_at", "updated_at", "source_version", "from_preview",
+            "advisor_recommendation",
         ]
 
     def get_download_url(self, obj) -> str | None:
@@ -437,3 +458,217 @@ class ModelComparisonSerializer(ModelComparisonSummarySerializer):
         path = f"/api/enhancements/comparisons/{obj.pk}/report/"
         request = self.context.get("request")
         return request.build_absolute_uri(path) if request else path
+
+
+class EditorControlSpecSerializer(serializers.Serializer):
+    label = serializers.CharField()
+    minimum = serializers.FloatField(help_text="Lowest value a person may set.")
+    maximum = serializers.FloatField(help_text="Highest value a person may set.")
+    step = serializers.FloatField()
+    default = serializers.FloatField(help_text="The value Reset sets; the same as neutral.")
+    neutral = serializers.FloatField(help_text="The value that changes nothing.")
+    recommended_minimum = serializers.FloatField()
+    recommended_maximum = serializers.FloatField()
+    auto_minimum = serializers.FloatField(help_text="Lowest value the local recipe or the cloud advisor may set.")
+    auto_maximum = serializers.FloatField(help_text="Highest value the local recipe or the cloud advisor may set.")
+    description = serializers.CharField(help_text="Exact renderer semantics.")
+    pillow_enhancer = serializers.CharField(
+        allow_null=True, help_text="The Pillow ImageEnhance class this approximates; null if none.",
+    )
+    pillow_factor_per_unit = serializers.FloatField(
+        allow_null=True,
+        help_text="Approximate Pillow factor = 1 + this * value (Pillow's neutral is 1.0, ours is 0).",
+    )
+
+
+class EditorConfigurationSerializer(serializers.Serializer):
+    modes = serializers.ListField(child=serializers.CharField())
+    source = serializers.CharField()
+    non_destructive = serializers.BooleanField()
+    preview_strategy = serializers.CharField()
+    renderer_version = serializers.CharField(help_text="Recorded on every saved edit.")
+    preview = serializers.DictField(help_text="Preview bounds, retention and revision rules.")
+    transparency = serializers.DictField(help_text="How alpha and JPEG compositing are handled.")
+    render_policy = serializers.DictField(help_text="The active rendering policy (what may run).")
+    intents = serializers.ListField(child=serializers.CharField(), help_text="Auto-mode intents.")
+    neutral_settings = serializers.DictField(
+        child=serializers.FloatField(), help_text="What Reset sets: a render with these values changes nothing.",
+    )
+    controls = serializers.DictField(child=EditorControlSpecSerializer())
+
+
+class PreviewRequestSerializer(GalleryEditRequestSerializer):
+    """A preview request: the same settings as a saved edit, plus the revision and source it is for."""
+
+    revision = serializers.IntegerField(
+        min_value=1, max_value=2_147_483_647,
+        help_text=(
+            "Chosen by the client, increasing with every change it wants to see. The highest revision is the "
+            "latest; an answer to an older one is stored but reported with is_latest false, and never replaces a "
+            "newer preview. Repeating a revision with the same settings returns the stored preview; with different "
+            "settings it is a 409."
+        ),
+    )
+    source_version = serializers.CharField(
+        required=False, allow_blank=True, max_length=32,
+        help_text="The source_version this request was made against; a 409 stale_source if it is no longer current.",
+    )
+    size = serializers.IntegerField(
+        required=False, min_value=1, max_value=65_535,
+        help_text="Longer edge in pixels (default and maximum are in the editor configuration).",
+    )
+
+
+class PreviewSourceSerializer(serializers.Serializer):
+    width = serializers.IntegerField()
+    height = serializers.IntegerField()
+    full_width = serializers.IntegerField(help_text="Size of the full-resolution image a save renders.")
+    full_height = serializers.IntegerField()
+    has_alpha = serializers.BooleanField()
+
+
+class EditPreviewSerializer(serializers.ModelSerializer):
+    source_version = serializers.CharField(source="source.source_version", read_only=True)
+    source = PreviewSourceSerializer(read_only=True)
+    image_url = serializers.SerializerMethodField(help_text="Authenticated URL of this preview's own image (immutable).")
+    latest_revision = serializers.SerializerMethodField()
+    is_latest = serializers.SerializerMethodField(help_text="False when a newer revision of this image exists.")
+    render = serializers.SerializerMethodField(help_text="What the renderer recorded: outcome, guard reductions, fallbacks, auto recipe.")
+
+    class Meta:
+        model = EditPreview
+        fields = [
+            "id", "enhancement_result", "revision", "source_version", "source", "mode", "requested_adjustments",
+            "applied_adjustments", "render", "output_format", "width", "height", "file_size", "image_url",
+            "latest_revision", "is_latest", "created_at", "expires_at",
+        ]
+        read_only_fields = fields
+
+    def _describe(self, preview):
+        from .previews import describe
+
+        return describe(preview)
+
+    def get_image_url(self, preview) -> str:
+        path = f"/api/enhancements/previews/{preview.pk}/image/"
+        request = self.context.get("request")
+        return request.build_absolute_uri(path) if request else path
+
+    def get_latest_revision(self, preview) -> int:
+        return self._describe(preview)["latest_revision"]
+
+    def get_is_latest(self, preview) -> bool:
+        return self._describe(preview)["is_latest"]
+
+    def get_render(self, preview) -> dict:
+        metadata = preview.render_metadata or {}
+        keys = ("outcome", "renderer_version", "render_policy", "validated", "safety_strength", "safety_reasons",
+                "guard_reductions", "fallback_reasons", "auto", "transparency")
+        return {key: metadata[key] for key in keys if key in metadata}
+
+
+class PreviewListSerializer(serializers.Serializer):
+    source_version = serializers.CharField(help_text="The current version of the enhanced image.")
+    latest_revision = serializers.IntegerField(allow_null=True)
+    previews = EditPreviewSerializer(many=True)
+
+
+# -- cloud adjustment advisor (Phase C) --------------------------------------------
+
+class AdvisorConsentRequestSerializer(serializers.Serializer):
+    granted = serializers.BooleanField()
+    policy_version = serializers.CharField(
+        max_length=40, help_text="The policy_version shown by GET advisor/configuration/; required to grant.",
+    )
+
+
+class AdvisorRecommendRequestSerializer(serializers.Serializer):
+    intent = serializers.ChoiceField(choices=["auto", "preserve", "brighten"], default="auto")
+
+
+class AdvisorRunRequestSerializer(AdvisorRecommendRequestSerializer):
+    result_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), allow_empty=False, max_length=200,
+        help_text="Enhanced results to advise on; one independent job per image.",
+    )
+
+
+class AdvisorRecommendationSerializer(serializers.ModelSerializer):
+    usable = serializers.SerializerMethodField(help_text="True only while this recommendation can still be applied.")
+    unusable_reason = serializers.SerializerMethodField(
+        help_text="cancelled, superseded, source_changed, edited_since, expired, source_unavailable, "
+                  "not_finished, nothing_to_apply, or empty when usable.",
+    )
+    usage = serializers.SerializerMethodField()
+    guard = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AdvisorRecommendation
+        fields = [
+            "id", "enhancement_result", "run", "intent", "status", "origin", "action", "adjustments", "rationale",
+            "caution_flags", "fallback_reason", "failure_reason", "usable", "unusable_reason", "model",
+            "policy_version", "renderer_version", "render_policy", "source_version", "attempts", "usage", "guard",
+            "created_at", "finished_at", "expires_at",
+        ]
+        read_only_fields = fields
+
+    def _state(self, recommendation):
+        from .advisor_service import staleness
+
+        cached = getattr(recommendation, "_advisor_state", None)
+        if cached is None:
+            if recommendation.status != "completed":
+                reason = recommendation.status if recommendation.status in ("cancelled", "superseded") else "not_finished"
+            else:
+                reason = staleness(recommendation)
+                if not reason and recommendation.action != "apply":
+                    reason = "nothing_to_apply"
+            cached = recommendation._advisor_state = reason
+        return cached
+
+    def get_usable(self, recommendation) -> bool:
+        return not self._state(recommendation)
+
+    def get_unusable_reason(self, recommendation) -> str:
+        return self._state(recommendation)
+
+    def get_usage(self, recommendation) -> dict:
+        return {
+            "input_tokens": recommendation.input_tokens, "output_tokens": recommendation.output_tokens,
+            "latency_ms": recommendation.latency_ms,
+        }
+
+    def get_guard(self, recommendation) -> dict:
+        guard = recommendation.guard or {}
+        return {key: guard[key] for key in (
+            "clamps_and_locks", "reductions", "intent_locks", "safety_strength", "guard_reductions", "safety_reasons",
+        ) if key in guard}
+
+
+class AdvisorRunSerializer(serializers.ModelSerializer):
+    status = serializers.SerializerMethodField()
+    counts = serializers.SerializerMethodField()
+    recommendations = AdvisorRecommendationSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = AdvisorRun
+        fields = ["id", "intent", "status", "counts", "recommendations", "cancelled_at", "created_at"]
+        read_only_fields = fields
+
+    def _rows(self, run):
+        return list(run.recommendations.all())
+
+    def get_status(self, run) -> str:
+        rows = self._rows(run)
+        if any(row.status in ("queued", "processing") for row in rows):
+            return "running"
+        return "cancelled" if run.cancelled_at else "completed"
+
+    def get_counts(self, run) -> dict:
+        rows = self._rows(run)
+        counts = {"total": len(rows)}
+        for row in rows:
+            counts[row.status] = counts.get(row.status, 0) + 1
+        counts["from_advisor"] = sum(1 for row in rows if row.origin == "openai")
+        counts["local_fallback"] = sum(1 for row in rows if row.origin == "local_fallback")
+        return counts

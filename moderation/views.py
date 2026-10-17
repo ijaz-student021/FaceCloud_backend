@@ -1,6 +1,6 @@
 from django.conf import settings
 from django.db.models import F
-from django.http import FileResponse
+from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
@@ -598,3 +598,127 @@ class ModeratorBatchDetailView(OrganizationScopedMixin, APIView):
         return Response(ModeratorBatchDetailSerializer({
             "batch": batch, "images": rows, "counts_from_images": dict(counts),
         }).data)
+
+
+def organization_images(organization):
+    """Images submitted to ``organization``: its batches, never a personal space."""
+    from uploads.models import ImageUpload
+
+    if organization.is_personal:
+        return ImageUpload.objects.none()
+    return ImageUpload.objects.filter(batch__organization=organization)
+
+
+class ModeratorImagePreviewView(OrganizationScopedMixin, APIView):
+    """A thumbnail of an image submitted to this organization (owner or moderator).
+
+    ``variant=original`` (default) is the uploaded image; ``variant=enhanced``
+    is its latest completed enhancement output. Always a JPEG thumbnail of at
+    most the requested size, never the full-size file. Images of another
+    organization, and images in a personal space, are 404. Every preview is
+    recorded in the organization's audit log.
+    """
+
+    require_owner_or_moderator = True
+    throttle_scope = "thumbnail"
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("variant", str, enum=["original", "enhanced"], description="Default: original."),
+            OpenApiParameter("size", int, description="Longest edge; one of THUMBNAIL_SIZES (default 256)."),
+        ],
+        responses={(200, "image/jpeg"): OpenApiTypes.BINARY, **ERROR_RESPONSES},
+    )
+    def get(self, request, organization_id, image_id):
+        from django.http import FileResponse, HttpResponse
+        from rest_framework.exceptions import NotFound, ValidationError
+
+        from enhancement.models import EnhancementStatus
+        from organizations.models import OrganizationAuditEvent
+        from organizations.services import record_audit_event
+        from thumbnails.services import (
+            ThumbnailUnavailable, allowed_sizes, default_size, get_or_create_thumbnail, render_thumbnail,
+        )
+
+        variant = request.query_params.get("variant", "original")
+        if variant not in ("original", "enhanced"):
+            raise ValidationError({"variant": "Choose original or enhanced."})
+        raw_size = request.query_params.get("size", "")
+        if raw_size and (not raw_size.isdigit() or int(raw_size) not in allowed_sizes()):
+            raise ValidationError({"size": f"Choose one of: {', '.join(str(size) for size in allowed_sizes())}."})
+        size = int(raw_size) if raw_size else default_size()
+        image = get_object_or_404(organization_images(self.organization).filter(status="uploaded"), pk=image_id)
+        try:
+            if variant == "original":
+                thumbnail = get_or_create_thumbnail(image, size)
+                response = FileResponse(thumbnail.file.open("rb"), content_type="image/jpeg")
+            else:
+                result = (image.enhancement_results.filter(status=EnhancementStatus.COMPLETED)
+                          .exclude(enhanced_file="").order_by("-finished_at", "-pk").first())
+                if result is None:
+                    raise NotFound("This image has no completed enhancement.")
+                payload, _width, _height = render_thumbnail(result.enhanced_file, size)
+                response = HttpResponse(payload, content_type="image/jpeg")
+        except ThumbnailUnavailable as error:
+            raise NotFound(str(error)) from error
+        record_audit_event(
+            self.organization, request.user, OrganizationAuditEvent.Action.MODERATOR_IMAGE_PREVIEWED,
+            target_type="image", target_id=image.pk, new_value={"variant": variant, "size": size},
+            request=request,
+        )
+        response["Cache-Control"] = "private, no-store"
+        return response
+
+
+class ModeratorReprocessSerializer(serializers.Serializer):
+    level = serializers.ChoiceField(choices=["auto", "low", "medium", "high"], default="auto")
+    style = serializers.ChoiceField(choices=["natural", "dynamic", "ai_max"], default="natural")
+    reason = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
+
+
+class ModeratorReprocessResponseSerializer(serializers.Serializer):
+    job_id = serializers.IntegerField()
+    status = serializers.CharField()
+    total_images = serializers.IntegerField()
+
+
+class ModeratorBatchReprocessView(OrganizationScopedMixin, APIView):
+    """Run enhancement again for a batch submitted to this organization.
+
+    Every eligible image gets a new enhancement result (a new version) made
+    from its preserved original. Originals and earlier outputs are never
+    changed or removed. 409 when any image already has enhancement queued or
+    running (nothing is started); the batch owner's fair-use limit applies
+    (429). Recorded in the organization audit log.
+    """
+
+    require_owner_or_moderator = True
+    throttle_scope = "org_batch_action"
+
+    @extend_schema(request=ModeratorReprocessSerializer,
+                   responses={201: ModeratorReprocessResponseSerializer, 409: OpenApiTypes.OBJECT,
+                              429: OpenApiTypes.OBJECT, 500: OpenApiTypes.OBJECT, **ERROR_RESPONSES})
+    def post(self, request, organization_id, batch_id):
+        from enhancement.batch_jobs import start_batch_enhancement
+        from enhancement.services import ensure_enhancement_capacity
+        from organizations.models import OrganizationAuditEvent
+        from organizations.services import record_audit_event
+
+        if self.organization.is_personal:
+            raise Http404("Batch not found.")
+        batch = get_object_or_404(UploadBatch.objects.select_related("owner"), pk=batch_id,
+                                  organization_id=self.organization.pk)
+        payload = ModeratorReprocessSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        ensure_enhancement_capacity(batch.owner, batch=True)
+        job = start_batch_enhancement(batch, level=payload.validated_data["level"],
+                                      style=payload.validated_data["style"])
+        record_audit_event(
+            self.organization, request.user, OrganizationAuditEvent.Action.BATCH_REPROCESSED_BY_MODERATOR,
+            target_type="batch", target_id=batch.pk, reason=payload.validated_data["reason"],
+            new_value={"job_id": job.pk, "level": job.requested_level, "style": job.requested_style,
+                       "images": job.total_images},
+            request=request,
+        )
+        return Response({"job_id": job.pk, "status": job.status, "total_images": job.total_images},
+                        status=status.HTTP_201_CREATED)

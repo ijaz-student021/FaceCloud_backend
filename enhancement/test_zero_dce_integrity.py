@@ -52,7 +52,7 @@ class ZeroDCEIntegrityTests(SimpleTestCase):
         with override_settings(
             ZERO_DCE_ENABLED=True, ZERO_DCE_MODEL_PATH=str(self.path), ZERO_DCE_MODEL_SHA256="0" * 64,
             AI_RESTORATION_ENABLED=False, IDENTITY_GUARD_ENABLED=False,
-        ):
+        ENHANCEMENT_RENDER_POLICY="learned_v1"):
             _output, _level, parameters = enhance_bgr(dark, "auto")
         self.assertFalse(parameters["zero_dce"]["applied"])
         self.assertIn("integrity verification", parameters["zero_dce"]["fallback_reason"])

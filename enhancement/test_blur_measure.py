@@ -6,6 +6,8 @@ statistics are the same at every size, so a change of verdict with size is a
 fault of the measure, not of the picture. Real photographs were studied
 separately (docs/evaluation/2026-10-14-blur-measure.md).
 """
+from functools import lru_cache
+
 import cv2
 import numpy as np
 from unittest.mock import patch
@@ -16,7 +18,6 @@ from .models import EnhancementLevel, EnhancementStyle
 from .services import (
     BLUR_PROXY_LONG_EDGE,
     EnhancementPipelineContext,
-    _build_processing_plan,
     analyze_image_quality,
     analyze_original_stage,
     hd_restoration_stage,
@@ -26,8 +27,13 @@ from .services import (
 from .test_pipeline_regressions import NO_MODELS
 
 
+@lru_cache(maxsize=8)
 def dead_leaves(size=1536, seed=7, colour=True):
-    """Overlapping discs, radii ~ r^-3 between 2 px and 1/6 of the image."""
+    """Overlapping discs, radii ~ r^-3 between 2 px and 1/6 of the image.
+
+    Cached (drawing 60,000 discs is slower than any test that uses the chart)
+    and read-only, so no test can change another's input.
+    """
     rng = np.random.default_rng(seed)
     height, width = size * 2 // 3, size
     image = np.full((height, width, 3), 128, np.uint8)
@@ -39,6 +45,7 @@ def dead_leaves(size=1536, seed=7, colour=True):
         centre = (int(rng.integers(0, width)), int(rng.integers(0, height)))
         shade = rng.integers(20, 236, 3) if colour else np.repeat(rng.integers(20, 236), 3)
         cv2.circle(image, centre, int(round(radius)), tuple(int(v) for v in shade), -1, lineType=cv2.LINE_AA)
+    image.setflags(write=False)
     return image
 
 
@@ -116,7 +123,7 @@ class VerdictTests(SimpleTestCase):
 
 
 @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True,
-                      "GFPGAN_ENABLED": True, "GFPGAN_ALLOW_MILD_BLUR": True})
+                      "GFPGAN_ENABLED": True, "GFPGAN_ALLOW_MILD_BLUR": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
 class OneVerdictForEveryStageTests(SimpleTestCase):
     """Sharpening, deblurring, face restoration, denoise protection and the plan
     all follow the same input verdict."""

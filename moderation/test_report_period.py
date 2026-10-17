@@ -60,6 +60,7 @@ class ReportPeriodTests(ReportFixtureMixin, TestCase):
             "quality_scores": lambda body: body["summary"]["scored_photos"],
             "batches": lambda body: body["summary"]["total_batches"],
             "duplicate_decisions": lambda body: body["summary"]["total_matches"],
+            "general_activity": lambda body: body["summary"]["reviews_created"],
         }
         self.assertEqual(set(counted), set(ModeratorReport.ReportType.values))
         for report_type, count in counted.items():

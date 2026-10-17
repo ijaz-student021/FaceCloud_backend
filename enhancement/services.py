@@ -31,6 +31,16 @@ from uploads.decoding import to_working_colour
 from uploads.models import ImagePreprocessingResult, UploadBatch
 from quality_control.models import ImageQualityDecision
 
+from . import policy as rendering_policy
+from .controls import (
+    CONTROL_NAMES, INTENTS, RENDERER_POLICY_NAME, RENDERER_VERSION, is_neutral,
+    recommend_local_adjustments, validate_controls,
+)
+from .editor_source import (
+    attach, read_enhanced_with_alpha, restore_hidden, source_version, transparency_policy, visible_for_measurement,
+)
+from .tone import render_tone
+from .policy import learned_stage_enabled
 from .models import (
     EditMode,
     EnhancementBatchJob,
@@ -149,6 +159,7 @@ class EnhancementPipelineContext:
     dynamic_style: dict = field(default_factory=dict)
     identity_guard: dict = field(default_factory=dict)
     zero_dce: dict = field(default_factory=dict)
+    prefilter: dict = field(default_factory=dict)
     quality_guards: dict = field(default_factory=dict)
     post_exposure_noise: dict = field(default_factory=dict)
     adaptive_denoise: dict = field(default_factory=dict)
@@ -196,10 +207,14 @@ def _timed_pipeline_stage(context, stage_name):
 
 
 def _auto_level(mean_luminance, highlight_clipping_percent=0.0):
-    if mean_luminance < 65:
-        return EnhancementLevel.HIGH
-    if mean_luminance < 115:
-        return EnhancementLevel.MEDIUM
+    # Darkness chose the level only to decide how hard to lift. Under the
+    # lightweight policy automatic mode never lifts a dark photo (its intent
+    # cannot be read from pixels), so darkness no longer raises the level.
+    if rendering_policy.active_policy() == rendering_policy.LEARNED:
+        if mean_luminance < 65:
+            return EnhancementLevel.HIGH
+        if mean_luminance < 115:
+            return EnhancementLevel.MEDIUM
     # Overexposure needs correcting as much as darkness does; the level only
     # ever followed darkness, so a blown-out photo got the gentlest setting.
     # Judged on clipped highlights, not on brightness: a high-key portrait or a
@@ -477,6 +492,7 @@ def restore_low_resolution(image, quality):
     """Apply bounded pretrained EDSR only when the source is low resolution."""
     metadata = {
         "requested": "low_resolution" in quality["defects"],
+        "enabled": learned_stage_enabled("AI_RESTORATION_ENABLED"),
         "applied": False,
         "provider": "opencv_dnn_edsr",
         "device": "cpu",
@@ -485,8 +501,8 @@ def restore_low_resolution(image, quality):
     }
     if not metadata["requested"]:
         return image, metadata
-    if not settings.AI_RESTORATION_ENABLED:
-        metadata["fallback_reason"] = "AI restoration is disabled."
+    if not learned_stage_enabled("AI_RESTORATION_ENABLED"):
+        metadata["fallback_reason"] = rendering_policy.disabled_reason("AI restoration")
         return image, metadata
     height, width = image.shape[:2]
     metadata["maximum_input_edge"] = settings.AI_RESTORATION_MAX_INPUT_EDGE
@@ -986,7 +1002,25 @@ def _apply_conservative_routing(context):
     automatic = (
         context.requested_level == EnhancementLevel.AUTO and context.style == EnhancementStyle.NATURAL
     )
-    if automatic and not (defects & _LIGHTING_DEFECTS):
+    # A dark photo may be underexposed or dark by design (low-key portraits,
+    # night scenes); pixel statistics cannot tell them apart (the mean luminance
+    # and highlight level of real photos form a continuum, not two groups). So
+    # in the lightweight policy, automatic mode withholds the lift and says so;
+    # an explicit level or style, or the editor's "brighten" intent, asks for it.
+    dark = defects & {"low_light", "severe_low_light"}
+    withheld = (
+        automatic and bool(dark) and "overexposed_highlights" not in defects
+        and rendering_policy.active_policy() != rendering_policy.LEARNED
+    )
+    if withheld:
+        policy["skip_exposure"] = True
+        policy["exposure_lift_withheld"] = True
+        decisions.append({
+            "stage": "exposure_enhancement", "decision": "lift_withheld",
+            "reason": "Dark photo: whether it is meant to be dark cannot be told from the pixels, so it was "
+                      "not brightened. Choose a level (low, medium or high) to lift it.",
+        })
+    elif automatic and not (defects & _LIGHTING_DEFECTS):
         policy["skip_exposure"] = True
         decisions.append({"stage": "exposure_enhancement", "decision": "skipped",
                           "reason": "No lighting defect was measured."})
@@ -1005,15 +1039,15 @@ def _planned_upscaler(defects, width, height):
     Only one ever changes the pixel grid; a later one runs only if the earlier
     one was unavailable.
     """
-    if settings.HD_RESTORATION_ENABLED:
+    if learned_stage_enabled("HD_RESTORATION_ENABLED"):
         return "realesrgan_x4plus", "The HD pipeline is enabled."
     if (
         "low_resolution" in defects
-        and settings.AI_RESTORATION_ENABLED
+        and learned_stage_enabled("AI_RESTORATION_ENABLED")
         and min(width, height) <= settings.AI_RESTORATION_MAX_INPUT_EDGE
     ):
         return "opencv_dnn_edsr", "The source is low resolution."
-    if settings.PURESCALE_ENABLED:
+    if learned_stage_enabled("PURESCALE_ENABLED"):
         return "purescale_safmn_2x", "PureScale is enabled."
     return None, "No upscaler is enabled for this image."
 
@@ -1058,7 +1092,8 @@ def _build_processing_plan(context):
         "steps": {
             "exposure": step(
                 not context.policy.get("skip_exposure"),
-                "Low light: learned curves when available, otherwise the OpenCV correction."
+                "Dark photo: lift withheld, lighting intent is unknown." if context.policy.get("exposure_lift_withheld")
+                else "Low light: learned curves when available, otherwise the OpenCV correction."
                 if context.zero_dce["requested"]
                 else f"Lighting defects: {', '.join(lighting_defects)}." if lighting_defects
                 else "No lighting defect was measured." if context.policy.get("skip_exposure")
@@ -1070,22 +1105,22 @@ def _build_processing_plan(context):
                 "Decided after exposure, from the noise that correction reveals.",
             ),
             "deblur": step(
-                settings.HD_RESTORATION_ENABLED and settings.NAFNET_DEBLUR_ENABLED and blur_defects,
-                "Deblurring is disabled." if not (settings.HD_RESTORATION_ENABLED and settings.NAFNET_DEBLUR_ENABLED)
+                learned_stage_enabled("HD_RESTORATION_ENABLED") and learned_stage_enabled("NAFNET_DEBLUR_ENABLED") and blur_defects,
+                "Deblurring is disabled." if not (learned_stage_enabled("HD_RESTORATION_ENABLED") and learned_stage_enabled("NAFNET_DEBLUR_ENABLED"))
                 else f"Blur defects: {', '.join(blur_defects)}." if blur_defects
                 else "No blur was measured.",
             ),
             "upscale": {**step(upscaler is not None, upscaler_reason), "upscaler": upscaler},
             "face_restoration": step(
-                face_restoration_wanted and settings.GFPGAN_ENABLED,
+                face_restoration_wanted and learned_stage_enabled("GFPGAN_ENABLED"),
                 "Blur or low resolution on a face-restoration-enabled deployment."
-                if face_restoration_wanted and settings.GFPGAN_ENABLED
+                if face_restoration_wanted and learned_stage_enabled("GFPGAN_ENABLED")
                 else "Face restoration is disabled." if face_restoration_wanted
                 else "No blur or low-resolution defect.",
             ),
             "sharpen": step(context.policy.get("sharpen", 0) > 0, f"Blur defects: {', '.join(blur_defects) or 'none'}."),
             "colorization": step(
-                context.colorization["requested"] and settings.COLORIZATION_ENABLED,
+                context.colorization["requested"] and learned_stage_enabled("COLORIZATION_ENABLED"),
                 "The source is near-grayscale." if context.colorization["requested"] else "The source has colour.",
             ),
             "style": step(explicit_style, f"Requested style: {context.style}."),
@@ -1133,11 +1168,60 @@ def analyze_original_stage(context):
     return context
 
 
+_PREFILTER_NLM_MAX_PIXELS = 4_000_000
+
+
+def _chroma_prefilter(image):
+    """Smooth colour noise only: chroma planes denoised on a bounded copy, then re-aligned to the luminance edges."""
+    height, width = image.shape[:2]
+    ycc = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
+    luma, red, blue = cv2.split(ycc)
+    scale = min(1.0, 1024.0 / max(height, width))
+    small = (max(1, round(width * scale)), max(1, round(height * scale)))
+    planes = []
+    for plane in (red, blue):
+        reduced = cv2.resize(plane, small, interpolation=cv2.INTER_AREA) if scale < 1.0 else plane
+        smooth = cv2.fastNlMeansDenoising(reduced, None, 9, 5, 15)
+        smooth = cv2.resize(smooth, (width, height), interpolation=cv2.INTER_CUBIC) if scale < 1.0 else smooth
+        # a guided filter keeps the smoothed colour from bleeding across luminance edges
+        planes.append(cv2.ximgproc.guidedFilter(luma, smooth, 8, 25.0))
+    return cv2.cvtColor(cv2.merge((luma, planes[0], planes[1])), cv2.COLOR_YCrCb2BGR)
+
+
+def _prefilter_for_lift(context, source):
+    """The image to lift, and what was done to it. Only a requested lift of a clearly dark photo is filtered."""
+    mode = settings.ENHANCEMENT_PREFILTER_MODE
+    metadata = {"mode": mode, "applied": False, "reason": ""}
+    context.prefilter = metadata
+    if mode == "off":
+        metadata["reason"] = "switched off"
+        return source
+    if context.input_quality["mean_luminance"] > settings.ENHANCEMENT_PREFILTER_MAX_LUMINANCE:
+        metadata["reason"] = "the photo is not dark enough for a lift to amplify noise"
+        return source
+    height, width = source.shape[:2]
+    if mode == "nlm" and height * width <= _PREFILTER_NLM_MAX_PIXELS:
+        filtered = cv2.fastNlMeansDenoisingColored(source, None, 2, 12, 5, 15)
+        metadata["method"] = "colour non-local-means (h=2, hColor=12)"
+    else:
+        filtered = _chroma_prefilter(source)
+        metadata["method"] = "chroma-only, guided by luminance"
+        if mode == "nlm":
+            metadata["reason"] = "too large for non-local-means; chroma-only used"
+    metadata["applied"] = True
+    metadata["mean_change"] = round(float(np.mean(np.abs(filtered.astype(np.int16) - source.astype(np.int16)))), 3)
+    return filtered
+
+
 def exposure_enhancement_stage(context):
     """Apply learned exposure curves or the auditable OpenCV fallback."""
     source = context.source_image
     working = source
-    if context.zero_dce["requested"] and settings.ZERO_DCE_ENABLED and context.use_zero_dce:
+    # A lift withheld by the routing (automatic mode on a dark photo) is not made by Zero-DCE either.
+    if (
+        context.zero_dce["requested"] and learned_stage_enabled("ZERO_DCE_ENABLED") and context.use_zero_dce
+        and not context.policy.get("skip_exposure")
+    ):
         try:
             working, zero_metadata = enhance_with_zero_dce(source)
             context.zero_dce.update(zero_metadata)
@@ -1146,8 +1230,9 @@ def exposure_enhancement_stage(context):
             context.zero_dce["fallback_reason"] = str(error)
     elif context.zero_dce["requested"]:
         context.zero_dce["fallback_reason"] = (
-            "Zero-DCE is disabled." if not settings.ZERO_DCE_ENABLED
-            else "Zero-DCE was switched off for this run."
+            rendering_policy.disabled_reason("Zero-DCE") if not learned_stage_enabled("ZERO_DCE_ENABLED")
+            else "The lift was withheld (automatic mode); choose a level to lift."
+            if context.policy.get("skip_exposure") else "Zero-DCE was switched off for this run."
         )
 
     if context.zero_dce["applied"]:
@@ -1163,6 +1248,7 @@ def exposure_enhancement_stage(context):
     if policy.get("skip_exposure"):
         # Nothing about this photo's light was found wanting; leave it alone.
         return context
+    source = _prefilter_for_lift(context, source)
     lab = cv2.cvtColor(source, cv2.COLOR_BGR2LAB)
     luminance, channel_a, channel_b = cv2.split(lab)
     corrected = cv2.LUT(luminance, _gamma_lut(policy["gamma"]))
@@ -1396,13 +1482,13 @@ def purevision_restoration_stage(context):
     deployment.
     """
     metadata = {
-        "enabled": bool(settings.PUREVISION_ENABLED),
-        "requested": bool(settings.PUREVISION_ENABLED),
+        "enabled": bool(learned_stage_enabled("PUREVISION_ENABLED")),
+        "requested": bool(learned_stage_enabled("PUREVISION_ENABLED")),
         "applied": False,
         "fallback_reason": "",
     }
-    if not settings.PUREVISION_ENABLED:
-        metadata["fallback_reason"] = "PureVision is disabled."
+    if not learned_stage_enabled("PUREVISION_ENABLED"):
+        metadata["fallback_reason"] = rendering_policy.disabled_reason("PureVision")
         context.purevision = metadata
         return context
     if context.input_quality["mean_luminance"] < settings.EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD:
@@ -1428,7 +1514,7 @@ def purevision_restoration_stage(context):
 def low_resolution_restoration_stage(context):
     """Run EDSR only after denoise and only if resolution is still low."""
     quality_at_stage = analyze_image_quality(context.current_image)
-    if settings.HD_RESTORATION_ENABLED:
+    if learned_stage_enabled("HD_RESTORATION_ENABLED"):
         restored = context.current_image
         metadata = {
             "requested": False,
@@ -1452,20 +1538,20 @@ def low_resolution_restoration_stage(context):
 def hd_restoration_stage(context):
     """Optionally deblur with NAFNet and create a 2x/4x HD display output."""
     metadata = {
-        "enabled": bool(settings.HD_RESTORATION_ENABLED),
-        "requested": bool(settings.HD_RESTORATION_ENABLED),
+        "enabled": bool(learned_stage_enabled("HD_RESTORATION_ENABLED")),
+        "requested": bool(learned_stage_enabled("HD_RESTORATION_ENABLED")),
         "applied": False,
         "deblur": {
-            "enabled": bool(settings.NAFNET_DEBLUR_ENABLED),
-            "requested": bool(settings.HD_RESTORATION_ENABLED and settings.NAFNET_DEBLUR_ENABLED),
+            "enabled": bool(learned_stage_enabled("NAFNET_DEBLUR_ENABLED")),
+            "requested": bool(learned_stage_enabled("HD_RESTORATION_ENABLED") and learned_stage_enabled("NAFNET_DEBLUR_ENABLED")),
             "applied": False,
         },
-        "super_resolution": {"requested": bool(settings.HD_RESTORATION_ENABLED), "applied": False},
+        "super_resolution": {"requested": bool(learned_stage_enabled("HD_RESTORATION_ENABLED")), "applied": False},
         "fallback_reason": "",
         "recognition_policy": "display_output_only; recognition_uses_original",
     }
-    if not settings.HD_RESTORATION_ENABLED:
-        metadata["fallback_reason"] = "HD restoration is disabled."
+    if not learned_stage_enabled("HD_RESTORATION_ENABLED"):
+        metadata["fallback_reason"] = rendering_policy.disabled_reason("HD restoration")
         context.hd_restoration = metadata
         return context
     source_dimensions = [int(context.current_image.shape[1]), int(context.current_image.shape[0])]
@@ -1473,11 +1559,11 @@ def hd_restoration_stage(context):
     # Without an analysis (a stage called on its own) there is nothing to gate on.
     defects = context.input_quality.get("defects")
     blur_measured = defects is None or bool({"mild_blur", "severe_blur"} & set(defects))
-    if settings.NAFNET_DEBLUR_ENABLED and not blur_measured:
+    if learned_stage_enabled("NAFNET_DEBLUR_ENABLED") and not blur_measured:
         # A deblurring network run on a sharp photo can only invent or remove
         # detail; it is not run without measured blur.
         metadata["deblur"]["fallback_reason"] = "No blur was measured; deblurring was not needed."
-    elif settings.NAFNET_DEBLUR_ENABLED:
+    elif learned_stage_enabled("NAFNET_DEBLUR_ENABLED"):
         try:
             deblurred, deblur_metadata = deblur_with_nafnet(context.current_image)
             metadata["deblur"].update(deblur_metadata)
@@ -1533,17 +1619,17 @@ def purescale_super_resolution_stage(context):
     the intended deployment.
     """
     metadata = {
-        "enabled": bool(settings.PURESCALE_ENABLED),
+        "enabled": bool(learned_stage_enabled("PURESCALE_ENABLED")),
         "requested": bool(
-            settings.PURESCALE_ENABLED
+            learned_stage_enabled("PURESCALE_ENABLED")
             and not context.hd_restoration.get("applied")
             and not context.restoration.get("applied")
         ),
         "applied": False,
         "fallback_reason": "",
     }
-    if not settings.PURESCALE_ENABLED:
-        metadata["fallback_reason"] = "PureScale is disabled."
+    if not learned_stage_enabled("PURESCALE_ENABLED"):
+        metadata["fallback_reason"] = rendering_policy.disabled_reason("PureScale")
         context.purescale = metadata
         return context
     if context.hd_restoration.get("applied"):
@@ -1589,7 +1675,7 @@ def restore_degraded_faces(image, input_quality):
     metadata = {
         "requested": bool(eligible_defects),
         "eligible_defects": eligible_defects,
-        "enabled": bool(settings.GFPGAN_ENABLED),
+        "enabled": bool(learned_stage_enabled("GFPGAN_ENABLED")),
         "applied": False,
         "provider": "private_gfpgan_v1_4",
         "fallback_reason": "",
@@ -1601,8 +1687,8 @@ def restore_degraded_faces(image, input_quality):
     if not metadata["requested"]:
         metadata["fallback_reason"] = "Face restoration is not required."
         return image, metadata
-    if not settings.GFPGAN_ENABLED:
-        metadata["fallback_reason"] = "Private face restoration is disabled."
+    if not learned_stage_enabled("GFPGAN_ENABLED"):
+        metadata["fallback_reason"] = rendering_policy.disabled_reason("Private face restoration")
         return image, metadata
 
     blend = min(max(float(settings.GFPGAN_OUTPUT_BLEND), 0.0), 0.60)
@@ -1761,7 +1847,7 @@ def face_restoration_stage(context):
     if context.face_restoration_withdrawn:
         return context  # the withdrawn record written by enhance_bgr stands
     refusal = ""
-    if settings.GFPGAN_ENABLED and context.plan.get("steps", {}).get("face_restoration", {}).get("planned", True):
+    if learned_stage_enabled("GFPGAN_ENABLED") and context.plan.get("steps", {}).get("face_restoration", {}).get("planned", True):
         refusal = _face_restoration_gate(context)
     if refusal:
         restored, metadata = context.current_image, {
@@ -1803,9 +1889,37 @@ def sharpen_stage(context):
         detail = image.astype(np.float32) - blurred.astype(np.float32)
         edge_strength = _gradient_edge_strength(image)
         edge_strength = cv2.merge([edge_strength] * 3).astype(np.float32)
-        sharpened = image.astype(np.float32) + detail * strength * edge_strength
-        context.current_image = np.clip(sharpened, 0, 255).astype(np.uint8)
+        source = context.source_image
+        gray_source = cv2.cvtColor(source if source.shape == image.shape else image, cv2.COLOR_BGR2GRAY)
+        already_sharp = measure_blur(gray_source)["verdict"] == "sharp"
+        sharpened = _sharpen(image, detail, edge_strength, strength)
+        if already_sharp:
+            # A photo that was already sharp gains little from more and starts to look crunchy, so the
+            # total increase over the original (local contrast and sharpening together) is bounded. A soft
+            # photo is not limited.
+            ceiling = _laplacian_sharpness(gray_source) * SHARP_PHOTO_MAX_SHARPNESS_GAIN
+            current = _laplacian_sharpness(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY))
+            after = _laplacian_sharpness(cv2.cvtColor(sharpened, cv2.COLOR_BGR2GRAY))
+            if after > ceiling:
+                headroom = max(0.0, ceiling - current)
+                strength *= headroom / (after - current) if after > current else 0.0
+                context.policy["sharpen"] = round(strength, 4)
+                context.policy["sharpen_capped"] = "Already sharp: sharpening limited to keep the result natural."
+                sharpened = _sharpen(image, detail, edge_strength, strength) if strength > 0 else image
+        context.current_image = sharpened
     return context
+
+
+# The most that sharpening may raise the Laplacian sharpness of a photo that is already sharp.
+SHARP_PHOTO_MAX_SHARPNESS_GAIN = 1.25
+
+
+def _laplacian_sharpness(gray):
+    return float(cv2.meanStdDev(cv2.Laplacian(gray, cv2.CV_64F))[1][0][0] ** 2)
+
+
+def _sharpen(image, detail, edge_strength, strength):
+    return np.clip(image.astype(np.float32) + detail * strength * edge_strength, 0, 255).astype(np.uint8)
 
 
 def _guard_b_reference(context):
@@ -1981,13 +2095,13 @@ def colorization_stage(context):
     or fights the new colour.
     """
     metadata = {
-        "enabled": bool(settings.COLORIZATION_ENABLED),
+        "enabled": bool(learned_stage_enabled("COLORIZATION_ENABLED")),
         "requested": context.colorization["requested"],
         "applied": False,
         "fallback_reason": "",
     }
-    if not settings.COLORIZATION_ENABLED:
-        metadata["fallback_reason"] = "Colorization is disabled."
+    if not learned_stage_enabled("COLORIZATION_ENABLED"):
+        metadata["fallback_reason"] = rendering_policy.disabled_reason("Colorization")
         context.colorization = metadata
         return context
     if not context.colorization["requested"]:
@@ -2146,7 +2260,7 @@ def _failed_stage_metadata(context, attribute, reason):
     }
     if attribute == "hd_restoration":
         metadata.update({
-            "enabled": bool(settings.HD_RESTORATION_ENABLED),
+            "enabled": bool(learned_stage_enabled("HD_RESTORATION_ENABLED")),
             "deblur": {"applied": False, "fallback_reason": reason},
             "super_resolution": {"applied": False},
         })
@@ -2348,7 +2462,10 @@ def enhance_bgr(
         context.output_quality = normalized_comparison["after"]
     else:
         context.output_quality = analyze_image_quality(context.current_image)
-    if context.zero_dce["requested"] and not context.zero_dce["applied"]:
+    if (
+        context.zero_dce["requested"] and not context.zero_dce["applied"]
+        and learned_stage_enabled("ZERO_DCE_ENABLED")  # only a model that could have run is "unavailable"
+    ):
         context.warnings.append(
             "Zero-DCE was requested for low light but was unavailable; "
             "the adaptive OpenCV fallback was used."
@@ -2359,6 +2476,9 @@ def enhance_bgr(
         and not context.face_restoration["applied"]
     ):
         context.warnings.append(
+            "Severe blur or low resolution cannot be corrected by the lightweight "
+            "pipeline; the baseline avoids inventing detail."
+            if not rendering_policy.describe()["heavy_restoration_available"] else
             "Severe blur or low resolution requires an AI restoration model; "
             "the baseline avoids inventing facial detail."
         )
@@ -2385,6 +2505,28 @@ def enhance_bgr(
     if context.identity_guard.get("applied"):
         algorithm = f"{algorithm}+identity_guard"
 
+    render_policy = rendering_policy.describe()
+    ai_max = None
+    if context.style == EnhancementStyle.AI_MAX:
+        ai_max = {
+            "requested": True,
+            "applied_level": context.applied_level,
+            "heavy_restoration_available": render_policy["heavy_restoration_available"],
+            "behaviour": (
+                "AI Max applies the strongest local correction (high level; denoising only where noise is measured). "
+                "Face restoration, super-resolution and the other learned stages are available "
+                "only under the learned_v1 rendering policy; this result used "
+                f"{render_policy['name']}."
+                if not render_policy["heavy_restoration_available"] else
+                "AI Max also allows the enabled learned stages."
+            ),
+        }
+        if not render_policy["heavy_restoration_available"]:
+            context.warnings.append(
+                "AI Max used the strongest local correction only: heavy restoration is not available "
+                f"under the {render_policy['name']} rendering policy."
+            )
+
     parameters = {
         **context.policy,
         "style": context.style,
@@ -2393,6 +2535,8 @@ def enhance_bgr(
         "mean_input_luminance": context.input_quality["mean_luminance"],
         "algorithm": algorithm,
         "pipeline_version": "staged_candidate_pipeline_v4",
+        "render_policy": render_policy,
+        **({"ai_max": ai_max} if ai_max else {}),
         "colour_policy": (
             "learned_rgb_curves"
             if context.zero_dce["applied"]
@@ -2424,17 +2568,18 @@ def enhance_bgr(
         "face_restoration": context.face_restoration,
         "colorization": context.colorization,
         "zero_dce": context.zero_dce,
+        "prefilter": context.prefilter,
         "stage_order": context.stage_order,
         "stage_timings_ms": context.stage_timings_ms,
         "feature_flags": {
             "adaptive_denoise_enabled": settings.ADAPTIVE_DENOISE_ENABLED,
-            "gfpgan_enabled": settings.GFPGAN_ENABLED,
+            "gfpgan_enabled": learned_stage_enabled("GFPGAN_ENABLED"),
             "gfpgan_queue_enabled": settings.GFPGAN_QUEUE_ENABLED,
-            "hd_restoration_enabled": settings.HD_RESTORATION_ENABLED,
-            "nafnet_deblur_enabled": settings.NAFNET_DEBLUR_ENABLED,
-            "purevision_enabled": settings.PUREVISION_ENABLED,
-            "purescale_enabled": settings.PURESCALE_ENABLED,
-            "colorization_enabled": settings.COLORIZATION_ENABLED,
+            "hd_restoration_enabled": learned_stage_enabled("HD_RESTORATION_ENABLED"),
+            "nafnet_deblur_enabled": learned_stage_enabled("NAFNET_DEBLUR_ENABLED"),
+            "purevision_enabled": learned_stage_enabled("PUREVISION_ENABLED"),
+            "purescale_enabled": learned_stage_enabled("PURESCALE_ENABLED"),
+            "colorization_enabled": learned_stage_enabled("COLORIZATION_ENABLED"),
             "identity_guard_enabled": settings.IDENTITY_GUARD_ENABLED,
             "face_fidelity_enabled": settings.FACE_FIDELITY_ENABLED,
             "gfpgan_require_identity_check": settings.GFPGAN_REQUIRE_IDENTITY_CHECK,
@@ -3023,66 +3168,17 @@ def _process_claimed_result(result, token):
         raise ValidationError(UNSAFE_FAILURE_REASON) from error
 
 
-EDITOR_CONTROL_NAMES = (
-    "brightness",
-    "contrast",
-    "shadows",
-    "saturation",
-    "highlights",
-    "warmth",
-)
+EDITOR_CONTROL_NAMES = CONTROL_NAMES
 
 
-def _auto_editor_adjustments(quality):
-    """Create restrained corrections from the image rather than a fixed preset."""
-    percentiles = quality["luminance_percentiles"]
-    brightness = np.clip((135.0 - quality["mean_luminance"]) * 0.22, -16, 16)
-    contrast = np.clip((48.0 - quality["contrast_stddev"]) * 0.65, -8, 20)
-    shadows = np.clip((68.0 - percentiles["p25"]) * 0.35, 0, 22)
-    highlights = -np.clip((percentiles["p95"] - 224.0) * 0.45, 0, 24)
-    return {
-        "brightness": round(float(brightness), 2),
-        "contrast": round(float(contrast), 2),
-        "shadows": round(float(shadows), 2),
-        "saturation": 0.0,
-        "highlights": round(float(highlights), 2),
-        "warmth": 0.0,
-    }
+def _auto_editor_adjustments(quality, intent="auto", blockiness_detected=False):
+    """The control values of the local recipe (see controls.recommend_local_adjustments)."""
+    return recommend_local_adjustments(quality, intent, blockiness_detected=blockiness_detected)["controls"]
 
 
 def _render_editor_controls(source, controls, strength=1.0):
-    """Apply bounded tone controls in LAB while preserving the source pixel grid."""
-    lab = cv2.cvtColor(source, cv2.COLOR_BGR2LAB).astype(np.float32)
-    luminance, channel_a, channel_b = cv2.split(lab)
-    effective = {
-        name: float(controls.get(name, 0.0)) * strength
-        for name in EDITOR_CONTROL_NAMES
-    }
-
-    luminance += effective["brightness"] * 0.35
-    midpoint = float(np.median(luminance))
-    contrast_factor = 1.0 + (effective["contrast"] * 0.005)
-    luminance = midpoint + ((luminance - midpoint) * contrast_factor)
-
-    normalized = np.clip(luminance / 255.0, 0.0, 1.0)
-    shadow_mask = np.square(1.0 - normalized)
-    highlight_mask = np.square(normalized)
-    luminance += shadow_mask * effective["shadows"] * 0.45
-    luminance += highlight_mask * effective["highlights"] * 0.40
-
-    saturation_factor = 1.0 + (effective["saturation"] * 0.004)
-    channel_a = 128.0 + ((channel_a - 128.0) * saturation_factor)
-    channel_b = 128.0 + ((channel_b - 128.0) * saturation_factor)
-    # Warmth shifts the blue-yellow axis: positive is warmer (more yellow).
-    channel_b += effective["warmth"] * 0.30
-    rendered_lab = cv2.merge(
-        (
-            np.clip(luminance, 0, 255).astype(np.uint8),
-            np.clip(channel_a, 0, 255).astype(np.uint8),
-            np.clip(channel_b, 0, 255).astype(np.uint8),
-        )
-    )
-    return cv2.cvtColor(rendered_lab, cv2.COLOR_LAB2BGR), effective
+    """Apply bounded tone controls in float LAB (enhancement/tone.py)."""
+    return render_tone(source, controls, strength)
 
 
 def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline=None):
@@ -3093,71 +3189,97 @@ def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline
     toward it -- this is the "how much AI enhancement" slider: 100 is the
     full enhanced result (the default, matching prior behaviour), 0 is the
     unenhanced original.
+
+    Auto uses the local recipe (``requested_adjustments["intent"]`` may be
+    "auto", "preserve" or "brighten"); Manual uses the validated control values.
+    The returned metadata records what was requested, validated and applied,
+    each guard reduction, any fallback and the renderer version.
     """
     if source is None or source.size == 0:
         raise ValidationError("The enhanced image cannot be edited safely.")
     if mode not in EditMode.values:
         raise ValidationError({"mode": "Choose auto or manual."})
 
+    requested_raw = dict(requested_adjustments or {})
     before = analyze_image_quality(source)
+    recommendation = None
     if mode == EditMode.AUTO:
-        controls = _auto_editor_adjustments(before)
+        intent = requested_raw.get("intent", "auto")
+        if intent not in INTENTS:
+            raise ValidationError({"intent": f"Choose one of: {', '.join(INTENTS)}."})
+        recommendation = recommend_local_adjustments(
+            before, intent, blockiness_detected=measure_compression_artifacts(source)["detected"],
+        )
+        controls = recommendation["controls"]
         intensity = 100.0
     else:
-        requested_adjustments = requested_adjustments or {}
-        controls = {
-            name: float(requested_adjustments.get(name, 0.0))
-            for name in EDITOR_CONTROL_NAMES
-        }
-        intensity = float(np.clip(requested_adjustments.get("intensity", 100.0), 0.0, 100.0))
+        validated = validate_controls({key: value for key, value in requested_raw.items() if key != "intent"})
+        intensity = validated.pop("intensity")
+        controls = validated
 
+    fallback_reasons = []
     strength = 1.0
     clipping_limit = max(
         settings.ENHANCEMENT_MAX_HIGHLIGHT_CLIPPING_PERCENT,
         before["highlight_clipping_percent"] + 2.0,
     )
     reasons = []
-    rendered = source.copy()
-    effective = controls
+    guard_reductions = []
+    rendered, effective = source.copy(), {name: 0.0 for name in CONTROL_NAMES}
     after = before
-    for _attempt in range(10):
-        rendered, effective = _render_editor_controls(source, controls, strength)
-        after = analyze_image_quality(rendered)
-        contrast_floor = before["contrast_stddev"] * 0.70
-        if (
-            after["highlight_clipping_percent"] <= clipping_limit
-            and after["contrast_stddev"] >= contrast_floor
-        ):
-            break
-        if after["highlight_clipping_percent"] > clipping_limit:
-            if "highlight_clipping_limited" not in reasons:
-                reasons.append("highlight_clipping_limited")
-        if after["contrast_stddev"] < contrast_floor:
-            if "contrast_loss_limited" not in reasons:
-                reasons.append("contrast_loss_limited")
-        strength *= 0.78
+    if not is_neutral(controls):
+        for _attempt in range(10):
+            rendered, effective = _render_editor_controls(source, controls, strength)
+            after = analyze_image_quality(rendered)
+            contrast_floor = before["contrast_stddev"] * 0.70
+            if (
+                after["highlight_clipping_percent"] <= clipping_limit
+                and after["contrast_stddev"] >= contrast_floor
+            ):
+                break
+            attempt_reasons = []
+            if after["highlight_clipping_percent"] > clipping_limit:
+                attempt_reasons.append("highlight_clipping_limited")
+            if after["contrast_stddev"] < contrast_floor:
+                attempt_reasons.append("contrast_loss_limited")
+            for reason in attempt_reasons:
+                if reason not in reasons:
+                    reasons.append(reason)
+            guard_reductions.append({"strength": round(strength, 4), "reasons": attempt_reasons})
+            strength *= 0.78
 
     intensity_applied = False
-    if baseline is not None and intensity < 100.0:
-        baseline_reference = baseline
-        if baseline_reference.shape[:2] != rendered.shape[:2]:
-            baseline_reference = cv2.resize(
-                baseline_reference,
-                (rendered.shape[1], rendered.shape[0]),
-                interpolation=cv2.INTER_CUBIC,
-            )
-        blend = intensity / 100.0
-        rendered = cv2.addWeighted(rendered, blend, baseline_reference, 1.0 - blend, 0)
-        after = analyze_image_quality(rendered)
-        intensity_applied = True
+    if intensity < 100.0:
+        if baseline is None:
+            fallback_reasons.append("intensity_not_applied_no_unenhanced_baseline")
+        else:
+            baseline_reference = baseline
+            if baseline_reference.shape[:2] != rendered.shape[:2]:
+                baseline_reference = cv2.resize(
+                    baseline_reference,
+                    (rendered.shape[1], rendered.shape[0]),
+                    interpolation=cv2.INTER_CUBIC,
+                )
+            blend = intensity / 100.0
+            rendered = cv2.addWeighted(rendered, blend, baseline_reference, 1.0 - blend, 0)
+            after = analyze_image_quality(rendered)
+            intensity_applied = True
 
-    return rendered, {
+    unchanged = np.array_equal(rendered, source)
+    metadata = {
         "mode": mode,
-        "policy": "non_destructive_gallery_editor_v1",
+        "policy": RENDERER_POLICY_NAME,
+        "renderer_version": RENDERER_VERSION,
+        "render_policy": rendering_policy.active_policy(),
+        "outcome": "no_change" if unchanged else "rendered",
         "requested": controls,
+        "validated": {**controls, "intensity": round(intensity, 2)},
         "effective": {name: round(value, 3) for name, value in effective.items()},
+        "applied": {name: round(value, 3) for name, value in effective.items()},
         "safety_strength": round(strength, 4),
         "safety_reasons": reasons,
+        "guard_reductions": guard_reductions,
+        "fallback_reasons": fallback_reasons,
         "quality_before": before,
         "quality_after": after,
         "dimensions_preserved": source.shape[:2] == rendered.shape[:2],
@@ -3167,21 +3289,9 @@ def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline
             "policy": "blend_toward_preprocessed_original",
         },
     }
-
-
-def _read_edited_source(edit):
-    source_file = edit.enhancement_result.enhanced_file
-    if not source_file:
-        raise ValidationError("The enhanced image is unavailable.")
-    source_file.open("rb")
-    try:
-        payload = source_file.read()
-    finally:
-        source_file.close()
-    decoded = cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_COLOR)
-    if decoded is None:
-        raise ValidationError("The enhanced image cannot be decoded safely.")
-    return decoded
+    if recommendation is not None:
+        metadata["auto"] = {key: recommendation[key] for key in ("action", "intent", "rationale", "caution_flags")}
+    return rendered, metadata
 
 
 def _read_preprocessed_baseline(preprocessing):
@@ -3196,78 +3306,140 @@ def _read_preprocessed_baseline(preprocessing):
     return cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_COLOR)
 
 
-def process_image_edit(edit):
-    """Render and persist a gallery edit as a separate immutable file version."""
+class EditSuperseded(Exception):
+    """The edit was deleted (cancelled) or taken over while it rendered; nothing is published."""
+
+
+class EditInProgress(Exception):
+    """Another execution holds a live claim on this edit."""
+
+
+def process_image_edit(edit, token=None, resume_token=""):
+    """Render and persist a gallery edit as a separate immutable file version.
+
+    Only the execution holding the claim renders, and only it publishes, under
+    the row lock: a second delivery of the same task returns without rendering,
+    and an edit deleted (cancelled) while it renders is never brought back.
+    ``token`` is this execution's claim; ``resume_token`` is the claim the
+    caller's previous, ended attempt held, which it may resume.
+
+    The edit is rendered from the enhanced image it was made from
+    (``source_version``), at full resolution, in one pass, and keeps its
+    transparency (see editor_source.py).
+    """
+    token = token or uuid.uuid4().hex
+    lease = timedelta(seconds=settings.ENHANCEMENT_CLAIM_LEASE_SECONDS)
     with transaction.atomic():
-        edit = (
+        locked = (
             ImageEditVersion.objects.select_for_update()
             .select_related("enhancement_result__preprocessing_result", "owner")
-            .get(pk=edit.pk)
+            .filter(pk=edit.pk).first()
         )
+        if locked is None:
+            raise EditSuperseded()
+        edit = locked
         if edit.status == EnhancementStatus.COMPLETED and edit.edited_file:
             return edit
-        if edit.status == EnhancementStatus.CANCELLED:
+        if edit.status in (EnhancementStatus.CANCELLED, EnhancementStatus.FAILED) and edit.finished_at:
             return edit
+        now = timezone.now()
+        if (
+            edit.status == EnhancementStatus.PROCESSING and edit.claim_token and edit.claimed_at
+            and now - edit.claimed_at < lease and not (resume_token and edit.claim_token == resume_token)
+        ):
+            raise EditInProgress()
+        current_version = source_version(edit.enhancement_result)
+        if edit.source_version and edit.source_version != current_version:
+            edit.status = EnhancementStatus.FAILED
+            edit.failure_reason = "The image changed after this edit was requested. Start the edit again."
+            edit.claim_token = ""
+            edit.finished_at = now
+            edit.save(update_fields=["status", "failure_reason", "claim_token", "finished_at", "updated_at"])
+            return edit
+        edit.source_version = edit.source_version or current_version
         edit.status = EnhancementStatus.PROCESSING
-        edit.started_at = edit.started_at or timezone.now()
+        edit.claim_token = token
+        edit.claimed_at = now
+        edit.started_at = edit.started_at or now
         edit.failure_reason = ""
-        edit.save(
-            update_fields=["status", "started_at", "failure_reason", "updated_at"]
-        )
+        edit.save(update_fields=[
+            "status", "claim_token", "claimed_at", "started_at", "failure_reason", "source_version", "updated_at",
+        ])
 
     started = time.perf_counter()
     stored_name = None
     try:
-        source = _read_edited_source(edit)
-        preprocessing = edit.enhancement_result.preprocessing_result
+        result = edit.enhancement_result
+        preprocessing = result.preprocessing_result
+        source, alpha = read_enhanced_with_alpha(result)
         baseline = _read_preprocessed_baseline(preprocessing)
+        requested = dict(edit.requested_adjustments or {})
         rendered, metadata = apply_gallery_adjustments(
-            source,
-            edit.mode,
-            edit.requested_adjustments,
-            baseline=baseline,
+            visible_for_measurement(source, alpha), edit.mode, requested, baseline=baseline,
         )
-        payload, extension, output_format = _encode_output(rendered, preprocessing)
-        source_stem = Path(edit.enhancement_result.output_name).stem
+        rendered = restore_hidden(rendered, source, alpha)
+        output_image = attach(rendered, alpha)
+        payload, extension, output_format = _encode_output(output_image, preprocessing)
+        metadata["encoded_output"] = _verify_encoded_output(payload, output_image, output_format)
+        metadata["transparency"] = {
+            "source_had_alpha": alpha is not None, "preserved": alpha is not None,
+            "policy": transparency_policy(output_format),
+        }
+        metadata["source_version"] = edit.source_version
+        source_stem = Path(result.output_name).stem
         output_name = f"{source_stem}_edit_{edit.pk}{extension}"
         edit.edited_file.save(output_name, ContentFile(payload), save=False)
         stored_name = edit.edited_file.name
-        edit.status = EnhancementStatus.COMPLETED
-        edit.applied_adjustments = metadata["effective"]
-        edit.output_name = output_name
-        edit.output_format = output_format
-        edit.output_width = int(rendered.shape[1])
-        edit.output_height = int(rendered.shape[0])
-        edit.output_file_size = len(payload)
-        edit.processing_duration_ms = max(
-            1, round((time.perf_counter() - started) * 1000)
-        )
-        edit.quality_metadata = metadata
-        edit.failure_reason = ""
-        edit.finished_at = timezone.now()
+        duration = max(1, round((time.perf_counter() - started) * 1000))
         with transaction.atomic():
+            # Publish only as the owner, under the row lock, from the row as it is now.
+            current = ImageEditVersion.objects.select_for_update().filter(pk=edit.pk).first()
+            if (
+                current is None or current.claim_token != token
+                or current.status != EnhancementStatus.PROCESSING
+            ):
+                raise EditSuperseded()
+            current.edited_file.name = stored_name
+            current.status = EnhancementStatus.COMPLETED
+            current.claim_token = ""
+            current.applied_adjustments = metadata["effective"]
+            current.output_name = output_name
+            current.output_format = output_format
+            current.output_width = int(rendered.shape[1])
+            current.output_height = int(rendered.shape[0])
+            current.output_file_size = len(payload)
+            current.processing_duration_ms = duration
+            current.quality_metadata = metadata
+            current.failure_reason = ""
+            current.finished_at = timezone.now()
             ImageEditVersion.objects.filter(
-                enhancement_result=edit.enhancement_result,
-                is_current=True,
-            ).exclude(pk=edit.pk).update(is_current=False)
-            edit.is_current = True
-            edit.save()
-        return edit
+                enhancement_result=current.enhancement_result_id, is_current=True,
+            ).exclude(pk=current.pk).update(is_current=False)
+            current.is_current = True
+            current.save()
+        return current
+    except EditSuperseded:
+        logger.warning("Edit %s was deleted or taken over while it rendered; its output was discarded.", edit.pk)
+        if stored_name:
+            edit.edited_file.storage.delete(stored_name)
+        raise
+    except TRANSIENT_INFRASTRUCTURE_ERRORS:
+        if stored_name:
+            edit.edited_file.storage.delete(stored_name)
+        raise  # the task retries with this claim; its last attempt records the failure
     except Exception as error:
         if stored_name:
             edit.edited_file.storage.delete(stored_name)
-        edit.status = EnhancementStatus.FAILED
-        edit.failure_reason = "The gallery edit could not be rendered safely."
-        edit.processing_duration_ms = max(
-            1, round((time.perf_counter() - started) * 1000)
+        failed = ImageEditVersion.objects.filter(pk=edit.pk, claim_token=token).update(
+            status=EnhancementStatus.FAILED, claim_token="", finished_at=timezone.now(),
+            failure_reason="The gallery edit could not be rendered safely.",
+            processing_duration_ms=max(1, round((time.perf_counter() - started) * 1000)),
         )
-        edit.finished_at = timezone.now()
-        edit.save(
-            update_fields=[
-                "status", "failure_reason", "processing_duration_ms",
-                "finished_at", "updated_at",
-            ]
-        )
+        if not failed:
+            raise EditSuperseded() from error
         if isinstance(error, ValidationError):
             raise
+        logger.exception("Gallery edit %s failed.", edit.pk)
         raise ValidationError("The gallery edit could not be rendered safely.") from error
+
+

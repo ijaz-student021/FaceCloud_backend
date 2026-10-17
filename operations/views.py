@@ -16,7 +16,7 @@ from .analytics import InvalidAnalyticsFilter, build_admin_analytics
 from .audit import InvalidAuditFilter, build_audit_feed
 from .jobs import InvalidJobKind, list_failed_jobs, queue_status
 from .moderation_overview import InvalidModerationOverviewFilter, build_admin_moderation_overview
-from .serializers import AdminFailedBatchSerializer
+from .serializers import AdminAnalyticsSerializer, AdminFailedBatchSerializer
 from .services import UNAVAILABLE, build_system_health
 
 
@@ -58,7 +58,7 @@ class AdminAnalyticsView(APIView):
             OpenApiParameter("model", OpenApiTypes.STR, description="Filter enhancements by a model/algorithm name substring."),
             OpenApiParameter("owner", OpenApiTypes.INT, description="Restrict every total to one user's id."),
         ],
-        responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        responses={200: AdminAnalyticsSerializer, 400: OpenApiTypes.OBJECT},
     )
     def get(self, request):
         params = request.query_params
@@ -69,7 +69,7 @@ class AdminAnalyticsView(APIView):
             )
         except InvalidAnalyticsFilter as error:
             raise ValidationError({"detail": [str(error)]}) from error
-        return Response(payload)
+        return Response(AdminAnalyticsSerializer(payload).data)
 
 
 class AdminListPagination(PageNumberPagination):

@@ -5,14 +5,13 @@ is *reported*, not what a real model does to a face.
 """
 from unittest.mock import patch
 
-import cv2
 from django.test import SimpleTestCase, override_settings
 from rest_framework.test import APIClient
 
 from .models import ImageEnhancementResult
 from .serializers import EnhancementRequestSerializer, ImageEnhancementResultSerializer
 from .services import enhance_bgr, process_enhancement_result
-from .test_pipeline_regressions import NO_MODELS, ResultFixture, textured
+from .test_pipeline_regressions import NO_MODELS, ResultFixture
 from .test_blur_measure import blurred_photo
 from .test_staged_pipeline import GFPGAN_ON, gentle_restoration
 

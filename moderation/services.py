@@ -901,6 +901,43 @@ def build_duplicate_decisions_payload(organization, period=None):
                             period, "duplicate match created_at")
 
 
+def build_general_activity_payload(organization, period=None):
+    """Everything recorded in the organization's audit trail, plus period totals.
+
+    Rows are audit events (who did what to which member, review or batch);
+    the summary counts them by action and by actor and adds how many batches,
+    images and reviews were created in the window. Names of the organization's
+    own members appear, as they do in its audit log; no image content or
+    facial data.
+    """
+    events = _in_period(OrganizationAuditEvent.objects.filter(organization=organization), "created_at", period)
+    rows = [
+        {
+            "event_id": row["id"], "action": row["action"], "actor_id": row["actor_id"],
+            "actor": row["actor__username"] or "", "target_type": row["target_type"],
+            "target_id": row["target_id"], "reason": row["reason"], "created_at": row["created_at"].isoformat(),
+        }
+        for row in events.order_by("-created_at", "-pk").values(
+            "id", "action", "actor_id", "actor__username", "target_type", "target_id", "reason", "created_at",
+        )[:REPORT_ROW_LIMIT]
+    ]
+    batches = _in_period(UploadBatch.objects.filter(organization=organization), "created_at", period)
+    summary = {
+        "audit_events": events.count(),
+        "by_action": dict(Counter(events.values_list("action", flat=True)).most_common()),
+        "by_actor": dict(Counter(
+            name or "(system)" for name in events.values_list("actor__username", flat=True)
+        ).most_common()),
+        "batches_created": batches.count(),
+        "images_uploaded": sum(batches.values_list("total_files", flat=True)),
+        "reviews_created": _in_period(
+            ModeratorReview.objects.filter(organization=organization), "created_at", period,
+        ).count(),
+    }
+    return _report_envelope(organization, ModeratorReport.ReportType.GENERAL_ACTIVITY, summary, rows,
+                            period, "audit event created_at; batch and review created_at")
+
+
 _REPORT_PAYLOAD_BUILDERS = {
     ModeratorReport.ReportType.REVIEW_SUMMARY: build_review_summary_payload,
     ModeratorReport.ReportType.MODERATOR_ACTIVITY: build_moderator_activity_payload,
@@ -908,6 +945,7 @@ _REPORT_PAYLOAD_BUILDERS = {
     ModeratorReport.ReportType.QUALITY_SCORES: build_quality_scores_payload,
     ModeratorReport.ReportType.BATCHES: build_batches_payload,
     ModeratorReport.ReportType.DUPLICATE_DECISIONS: build_duplicate_decisions_payload,
+    ModeratorReport.ReportType.GENERAL_ACTIVITY: build_general_activity_payload,
 }
 
 

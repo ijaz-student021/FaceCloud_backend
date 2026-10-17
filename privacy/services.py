@@ -298,6 +298,19 @@ def build_privacy_export(user):
         BiometricConsent.objects.filter(user=user),
         ("purpose", "granted", "policy_version", "created_at"),
     )
+    from enhancement.models import AdvisorConsent, AdvisorRecommendation
+
+    advisor_consents = collect(
+        "external_ai_consents",
+        AdvisorConsent.objects.filter(user=user),
+        ("granted", "policy_version", "created_at"),
+    )
+    advisor_recommendations = collect(
+        "advisor_recommendations",
+        AdvisorRecommendation.objects.filter(owner=user).order_by("-created_at"),
+        ("id", "enhancement_result_id", "intent", "model", "status", "origin", "action", "fallback_reason",
+         "input_tokens", "output_tokens", "created_at"),
+    )
     requests = collect(
         "privacy_requests",
         PrivacyRequest.objects.filter(user=user),
@@ -324,6 +337,14 @@ def build_privacy_export(user):
             },
         },
         "consents": consents,
+        "external_ai_consents": advisor_consents,
+        "advisor_recommendations": advisor_recommendations,
+        "camera_sessions": [
+            {"id": str(session.pk), "device_label": session.device_label, "settings": session.settings,
+             "started_at": session.started_at, "ended_at": session.ended_at,
+             "snapshot_image_ids": list(session.snapshots.values_list("image_id", flat=True))}
+            for session in user.camera_sessions.order_by("-started_at")
+        ],
         "images": images,
         "enhancements": enhancement_rows,
         "identity": {

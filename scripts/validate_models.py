@@ -39,7 +39,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
+# Model validation exercises each learned model on purpose, so it selects the
+# learned_v1 rendering policy (enhancement/policy.py); the default policy
+# would keep every one of them off.
 OFF = dict(
+    ENHANCEMENT_RENDER_POLICY="learned_v1",
     ZERO_DCE_ENABLED=False, AI_RESTORATION_ENABLED=False, HD_RESTORATION_ENABLED=False,
     NAFNET_DEBLUR_ENABLED=False, PURESCALE_ENABLED=False, PUREVISION_ENABLED=False,
     GFPGAN_ENABLED=False, COLORIZATION_ENABLED=False, IDENTITY_GUARD_ENABLED=False,
@@ -459,7 +463,6 @@ def run_combinations(portrait_path, output_dir):
     django.setup()
     from unittest.mock import patch
 
-    from django.conf import settings
     from django.test.utils import override_settings
 
     from enhancement import hd_restoration
