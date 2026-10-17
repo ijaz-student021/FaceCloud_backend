@@ -33,7 +33,7 @@ STAGE_ENGINES = {
     "deblur": [("nafnet_gopro", "NAFNET_DEBLUR_ENABLED", "NAFNET_MODEL_PATH", "NAFNET_MODEL_SHA256", "MIT")],
     "face_restore": [
         ("codeformer", "CODEFORMER_ENABLED", "CODEFORMER_MODEL_PATH", "CODEFORMER_MODEL_SHA256", "S-Lab 1.0 (non-commercial)"),
-        ("gfpgan", "GFPGAN_ENABLED", "GFPGAN_MODEL_PATH", "", "non-commercial"),
+        ("gfpgan", "GFPGAN_ENABLED", "GFPGAN_MODEL_PATH", "GFPGAN_MODEL_SHA256", "non-commercial"),
     ],
     "upscale": [("realesrgan", "HD_RESTORATION_ENABLED", "REALESRGAN_MODEL_PATH", "REALESRGAN_MODEL_SHA256", "BSD-3-Clause")],
 }
