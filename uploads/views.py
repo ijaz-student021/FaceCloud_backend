@@ -13,6 +13,7 @@ from rest_framework.pagination import PageNumberPagination
 from enhancement.models import ImageEnhancementResult
 from identities.models import IdentityFace, IdentityMembership
 
+from .display_status import with_status_relations
 from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
 from .progress import batch_progress_payload
 from .serializers import (
@@ -37,6 +38,16 @@ def _all_request_files(request):
     return [uploaded for field in request.FILES for uploaded in request.FILES.getlist(field)]
 
 
+def _images_with_status():
+    return Prefetch("images", queryset=with_status_relations(ImageUpload.objects.select_related("preprocessing_result")))
+
+
+def _batch_response(request, batch):
+    """The upload response: the batch with each photo's status, loaded in a fixed number of queries."""
+    batch = UploadBatch.objects.prefetch_related(_images_with_status()).get(pk=batch.pk)
+    return Response(UploadBatchSerializer(batch, context={"request": request}).data, status=status.HTTP_201_CREATED)
+
+
 class SingleImageUploadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
@@ -53,7 +64,7 @@ class SingleImageUploadView(APIView):
         if len(files) != 1:
             raise ValidationError({"file": "Select exactly one image for single-image upload."})
         batch = create_image_batch(request.user, "single", files)
-        return Response(UploadBatchSerializer(batch, context={"request": request}).data, status=status.HTTP_201_CREATED)
+        return _batch_response(request, batch)
 
 
 class MultipleImageUploadView(APIView):
@@ -75,7 +86,7 @@ class MultipleImageUploadView(APIView):
             raise ValidationError({"files": "Submit all images using the repeated 'files' field."})
         batch = create_image_batch(request.user, "multiple", files)
         batch = enqueue_batch_preprocessing(batch)
-        return Response(UploadBatchSerializer(batch, context={"request": request}).data, status=status.HTTP_201_CREATED)
+        return _batch_response(request, batch)
 
 
 class ZipImageUploadView(APIView):
@@ -96,7 +107,7 @@ class ZipImageUploadView(APIView):
         uploaded_zip = files[0]
         batch = create_zip_batch(request.user, uploaded_zip)
         batch = enqueue_batch_preprocessing(batch)
-        return Response(UploadBatchSerializer(batch, context={"request": request}).data, status=status.HTTP_201_CREATED)
+        return _batch_response(request, batch)
 
 
 class UploadBatchListView(generics.ListAPIView):
@@ -104,10 +115,7 @@ class UploadBatchListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        images = ImageUpload.objects.select_related("preprocessing_result")
-        return UploadBatch.objects.filter(owner=self.request.user).prefetch_related(
-            Prefetch("images", queryset=images)
-        )
+        return UploadBatch.objects.filter(owner=self.request.user).prefetch_related(_images_with_status())
 
 
 class UploadBatchDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -115,10 +123,7 @@ class UploadBatchDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        images = ImageUpload.objects.select_related("preprocessing_result")
-        return UploadBatch.objects.filter(owner=self.request.user).prefetch_related(
-            Prefetch("images", queryset=images)
-        )
+        return UploadBatch.objects.filter(owner=self.request.user).prefetch_related(_images_with_status())
 
     def perform_destroy(self, instance):
         delete_batch(instance)

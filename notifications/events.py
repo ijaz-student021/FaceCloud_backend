@@ -1,6 +1,11 @@
 from .models import UserNotification
 from .services import create_user_notification
 
+# Where a notification's "open" link goes. These are routes of the frontend's user portal
+# (src/App.tsx): "Your uploads" is /dashboard/jobs and person folders are /dashboard/groups.
+JOBS_PATH = "/dashboard/jobs"
+GROUPS_PATH = "/dashboard/groups"
+
 
 def notify_upload_received(batch_id):
     from uploads.models import UploadBatch
@@ -18,7 +23,7 @@ def notify_upload_received(batch_id):
         severity=UserNotification.Severity.INFO,
         resource_type="batch",
         resource_id=batch.pk,
-        action_path="/dashboard/uploads",
+        action_path=JOBS_PATH,
         metadata={"batch_id": batch.pk, "status": batch.status},
     )
     return notification
@@ -38,7 +43,7 @@ def notify_processing_started(batch_id):
         severity=UserNotification.Severity.INFO,
         resource_type="batch",
         resource_id=batch.pk,
-        action_path="/dashboard/uploads",
+        action_path=JOBS_PATH,
         metadata={"batch_id": batch.pk, "status": batch.processing_status},
     )
     return notification
@@ -305,7 +310,7 @@ def notify_batch_completed(batch_id, counts=None):
         severity=severity,
         resource_type="batch",
         resource_id=batch.pk,
-        action_path="/dashboard/uploads",
+        action_path=JOBS_PATH,
         metadata={
             "batch_id": batch.pk,
             "status": batch.processing_status,
@@ -400,7 +405,7 @@ def notify_identity_export_result(export):
         ),
         resource_type="identity_export",
         resource_id=export.pk,
-        action_path="/dashboard/person-folders",
+        action_path=GROUPS_PATH,
         metadata={
             "export_id": export.pk,
             "group_id": export.identity_group_id,
