@@ -6,7 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import ActivityEvent
-from .serializers import TimelineEntrySerializer
+from .serializers import TimelineEntrySerializer, TimelinePageSerializer
 from .services import get_user_timeline
 
 _CATEGORY_CHOICES = [choice for choice, _ in ActivityEvent.Category.choices] + ["auth"]
@@ -23,7 +23,7 @@ class UserActivityTimelineView(APIView):
             OpenApiParameter("page", OpenApiTypes.INT),
             OpenApiParameter("page_size", OpenApiTypes.INT),
         ],
-        responses={200: OpenApiTypes.OBJECT},
+        responses={200: TimelinePageSerializer},
     )
     def get(self, request):
         category = request.query_params.get("category")

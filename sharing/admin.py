@@ -5,7 +5,7 @@ from .models import ShareLink
 
 @admin.register(ShareLink)
 class ShareLinkAdmin(admin.ModelAdmin):
-    list_display = ("id", "owner", "enhancement_result", "expires_at", "revoked_at", "access_count")
+    list_display = ("id", "owner", "enhancement_result", "identity_export", "expires_at", "revoked_at", "access_count")
     list_filter = ("revoked_at",)
     # The token hash is left out on purpose; nothing in the admin should help
     # reconstruct or brute-force a link.

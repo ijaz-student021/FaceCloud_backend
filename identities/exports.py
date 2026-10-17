@@ -78,14 +78,18 @@ def _members_for_export(export):
         owner_id=export.owner_id,
         status=EnhancementStatus.COMPLETED,
     ).order_by("-created_at")
+    memberships = IdentityMembership.objects.filter(
+        owner_id=export.owner_id,
+        identity_group_id=export.identity_group_id,
+        identity_group__owner_id=export.owner_id,
+        identity_face__owner_id=export.owner_id,
+        identity_face__image__owner_id=export.owner_id,
+    )
+    if export.image_ids:
+        # A subset the person picked; anything since removed from the folder simply drops out.
+        memberships = memberships.filter(identity_face__image_id__in=export.image_ids)
     return list(
-        IdentityMembership.objects.filter(
-            owner_id=export.owner_id,
-            identity_group_id=export.identity_group_id,
-            identity_group__owner_id=export.owner_id,
-            identity_face__owner_id=export.owner_id,
-            identity_face__image__owner_id=export.owner_id,
-        )
+        memberships
         .exclude(state__in=[
             IdentityMembership.State.REJECTED,
             IdentityMembership.State.REMOVED,
@@ -225,6 +229,7 @@ def build_identity_export_archive(export):
             "include_enhanced": export.include_enhanced,
             "include_report": export.include_report,
             "report_format": export.report_format,
+            "image_ids": list(export.image_ids),
         },
         "files": [
             {key: value for key, value in item.items() if key != "file_field"}

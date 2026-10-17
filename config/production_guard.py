@@ -9,9 +9,12 @@ Each rule is a function of the settings mapping that returns a list of problems,
 so they are unit-tested one by one (`config/test_production_guard.py`).
 """
 
+from urllib.parse import urlsplit
+
 PLACEHOLDERS = ("replace-with", "example.com", "changeme", "change-me", "your-")
 DEV_MAIL_BACKENDS = ("console", "locmem", "dummy", "filebased")
 DEV_HOSTS = {"testserver", "*"}
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}  # nosec B104 - a deny-list entry for FRONTEND_URL, never bound
 MIN_SECRET_LENGTH = 50
 MIN_KEY_LENGTH = 32
 MIN_HSTS_SECONDS = 31_536_000  # one year
@@ -74,6 +77,10 @@ def hosts_and_origins_rule(cfg):
         value = str(cfg.get(name) or "")
         if not value.startswith("https://") or _is_placeholder(value):
             problems.append(f"{name} must be the real https:// address (got '{value}').")
+    # Every verification and password-reset email links here: a localhost address would send real users to their own machine.
+    frontend_host = (urlsplit(str(cfg.get("FRONTEND_URL") or "")).hostname or "").lower()
+    if frontend_host in LOCAL_HOSTS:
+        problems.append(f"FRONTEND_URL must be the public address of the frontend, not '{frontend_host}': emailed links would not work.")
     return problems
 
 

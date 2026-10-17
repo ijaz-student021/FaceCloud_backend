@@ -9,14 +9,14 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('accounts', '0007_user_profile_fields_and_avatar'),
+        ('accounts', '0009_user_profile_fields_and_avatar'),
     ]
 
     operations = [
         migrations.AlterField(
             model_name='authevent',
             name='event',
-            field=models.CharField(choices=[('registration_pending', 'Registration pending'), ('verification_code_sent', 'Verification code sent'), ('registered', 'Registered'), ('email_verified', 'Email verified'), ('login', 'Login'), ('login_failed', 'Login failed'), ('login_locked', 'Login temporarily locked'), ('logout', 'Logout'), ('logout_all', 'Logout from all devices'), ('session_revoked', 'Session signed out'), ('password_changed', 'Password changed'), ('password_reset', 'Password reset'), ('profile_updated', 'Profile updated'), ('role_changed', 'Role changed'), ('suspended', 'Suspended'), ('reactivated', 'Reactivated'), ('account_deleted', 'Account deleted'), ('two_factor_enabled', 'Two-factor authentication enabled'), ('two_factor_disabled', 'Two-factor authentication disabled'), ('two_factor_recovery_codes_regenerated', 'Two-factor recovery codes regenerated')], max_length=40),
+            field=models.CharField(choices=[('registration_pending', 'Registration pending'), ('verification_code_sent', 'Verification code sent'), ('registered', 'Registered'), ('email_verified', 'Email verified'), ('login', 'Login'), ('login_failed', 'Login failed'), ('login_locked', 'Login temporarily locked'), ('logout', 'Logout'), ('logout_all', 'Logout from all devices'), ('session_revoked', 'Session signed out'), ('password_changed', 'Password changed'), ('password_reset', 'Password reset'), ('profile_updated', 'Profile updated'), ('role_changed', 'Role changed'), ('suspended', 'Suspended'), ('reactivated', 'Reactivated'), ('account_deleted', 'Account deleted'), ('admin_created_account', 'Account created by an administrator'), ('two_factor_enabled', 'Two-factor authentication enabled'), ('two_factor_disabled', 'Two-factor authentication disabled'), ('two_factor_recovery_codes_regenerated', 'Two-factor recovery codes regenerated')], max_length=40),
         ),
         migrations.CreateModel(
             name='UserSession',

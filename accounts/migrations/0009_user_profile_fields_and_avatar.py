@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('accounts', '0006_alter_authevent_event_twofactorcredential_and_more'),
+        ('accounts', '0008_admin_created_account_and_user_manager'),
     ]
 
     operations = [

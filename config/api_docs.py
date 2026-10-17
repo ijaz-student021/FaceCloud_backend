@@ -11,7 +11,7 @@ FaceCloud AI: authenticated facial-image upload, enhancement, validation, identi
 
 ## Quick start (the enhancement flow)
 
-1. `POST /api/auth/register/` then `POST /api/auth/verify-email/` (six-digit code), then `POST /api/auth/login/`. Send the returned
+1. `POST /api/auth/register/` then `POST /api/auth/verify-email/` with the `registration_id` and `token` from the emailed link, then `POST /api/auth/login/`. Send the returned
    `access` token as `Authorization: Bearer <access>` on every other call (in Swagger UI, press the **Authorize** button and paste the access token). Refresh it with `POST /api/auth/refresh/`.
 2. `POST /api/images/upload/single/` (multipart field `file`). The response is an **upload batch**; the image is `images[0]`.
 3. `POST /api/enhancements/images/{image_id}/` with `{"level": "auto", "style": "natural"}`. Returns **202** and a result with `status: "queued"`.
@@ -49,14 +49,17 @@ TAGS = [
     {"name": "privacy", "description": "Consents, data export, facial-data erasure and the user's own privacy audit."},
     {"name": "organizations", "description": "Organizations, members, invitations, moderation queues, exports and reports. Access depends on the caller's role in the organization."},
     {"name": "contact", "description": "The public contact form."},
+    {"name": "search", "description": "The top-bar search over the caller's own photographs, person folders and upload batches."},
     {"name": "system", "description": "Administrator-only platform operations: health, queue, analytics, audit, security alerts, platform-wide images and failed jobs."},
 ]
 
 # operationId -> (summary, description)
 CATALOGUE = {
+    # ---- search --------------------------------------------------------------------------------------------------------
+    "search_list": ("Search your photographs, people and uploads", "`q` (at least 2 characters) is matched case-insensitively as a substring against photograph file names, person-folder names and upload names (a ZIP's file name counts). `limit` is per kind (default 5, maximum 10). Only the caller's own records are searched."),
     # ---- auth ----------------------------------------------------------------------------------------------------------
-    "auth_register_create": ("Start a registration", "Creates a *pending* registration and emails a six-digit code. The account exists only after `POST /api/auth/verify-email/` succeeds. Returns 202 with `registration_id`, a masked email and the code lifetime. An active registration for the same username or email gives 400."),
-    "auth_verify_email_create": ("Verify the emailed code and create the account", "Send `registration_id` and the six-digit `code`. On success the account is created (201). Wrong codes are counted."),
+    "auth_register_create": ("Start a registration", "Creates a *pending* registration and emails a verification link (`registration_id` and `token`). The account exists only after `POST /api/auth/verify-email/` succeeds. Returns 202 with `registration_id`, a masked email and the code lifetime. An active registration for the same username or email gives 400."),
+    "auth_verify_email_create": ("Verify the emailed link and create the account", "Send the `registration_id` and `token` from the emailed link. On success the account is created (201). Wrong tokens are counted."),
     "auth_verify_email_resend_create": ("Resend the verification code", "Invalidates the current code and sends a new one to the same address, subject to a cooldown and a resend limit (429 when exceeded)."),
     "auth_registrations_status_retrieve": ("Check a registration in progress", "Masked status of a pending registration (no secrets): whether it is waiting for a code, expired or complete."),
     "auth_verify_email_change_retrieve": ("Confirm an email-address change", "Opened from the link emailed to the new address; confirms the change."),
@@ -82,6 +85,7 @@ CATALOGUE = {
     "user_logout_all_create": ("Log out everywhere", "Signs out every session of the user."),
     "user_change_password_create": ("Change my password", "Send `current_password` and `new_password`. Existing tokens are revoked, so sign in again."),
     "user_delete_account_destroy": ("Delete my account", "Deletes the account after the password is confirmed (send `password`). Permanent."),
+    "user_admin_users_create": ("Create an account for someone (administrators)", "Creates an already-verified account at once, with no verification email: `email`, `password`, `role` (`user` or `moderator`; never `admin`) and optionally `username`, `full_name` and, for a moderator, `organization_id`. Answers 201 with the same representation as the list. The password is hashed and appears in no response, event or log."),
     "user_admin_users_list": ("List users (administrators)", ""),
     "user_admin_users_retrieve": ("Get a user (administrators)", "An account's detail for administrators."),
     "user_admin_users_partial_update": ("Change a user (administrators)", "Role, suspension and similar account fields."),
@@ -176,6 +180,8 @@ CATALOGUE = {
     "identities_exports_destroy": ("Delete an identity export", ""),
     "identities_exports_download_retrieve": ("Download an identity export", ""),
     "identities_exports_regenerate_create": ("Rebuild an identity export", ""),
+    "identities_exports_share_create": ("Share a finished person-folder ZIP", "Makes a time-limited public link to a ready export. The raw `token` and `public_url` appear only in this response; revoke with `POST /api/shares/{id}/revoke/`. The link never outlives the ZIP. 409 if the export is not ready, 410 if it has expired."),
+    "identities_groups_images_list": ("List the photographs in a person folder", "Paginated, newest first. Each row has the thumbnail, size, `display_status` (the same value as `GET /api/images/my/`) and `matching_confidence` (a percentage; null when the photograph has no score)."),
     "identities_memberships_move_partial_update": ("Move a face to another group", ""),
     "identities_memberships_remove_partial_update": ("Remove a face from its group", ""),
     "identities_assignments_review_partial_update": ("Review a face assignment", "Confirm or reject an uncertain assignment."),
@@ -302,11 +308,11 @@ CATALOGUE = {
 # operationId -> {"request": {...}, "responses": {"200": {...}}} : example bodies shown in Swagger UI.
 EXAMPLES = {
     "auth_register_create": {
-        "request": {"username": "amina", "email": "amina@example.com", "password": "ForestRiver!4821", "password_confirm": "ForestRiver!4821"},
+        "request": {"full_name": "Amina Khan", "email": "amina@example.com", "password": "ForestRiver!4821", "password_confirm": "ForestRiver!4821"},
         "responses": {"202": {"registration_id": "0b6f1c1e-6a4e-4b0e-9b6e-3f2a5d1c7e90", "email": "a***a@example.com",
-                              "detail": "A six-digit verification code has been sent.", "expires_in_seconds": 900, "resend_available_in_seconds": 60}},
+                              "detail": "A verification link has been sent to your email address.", "expires_in_seconds": 900, "resend_available_in_seconds": 60}},
     },
-    "auth_verify_email_create": {"request": {"registration_id": "0b6f1c1e-6a4e-4b0e-9b6e-3f2a5d1c7e90", "code": "482913"}},
+    "auth_verify_email_create": {"request": {"registration_id": "0b6f1c1e-6a4e-4b0e-9b6e-3f2a5d1c7e90", "token": "<token from the emailed link>"}},
     "auth_login_create": {
         "request": {"identifier": "amina@example.com", "password": "ForestRiver!4821"},
         "responses": {"200": {"refresh": "<refresh token>", "access": "<access token>", "role": "user",

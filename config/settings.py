@@ -88,6 +88,7 @@ INSTALLED_APPS = [
     "contact",
     "security",
     "camera",
+    "search",
 ]
 
 MIDDLEWARE = [
@@ -985,6 +986,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "accounts.cleanup_login_attempts",
         "schedule": crontab(minute=50, hour=3),
     },
+    # Abandoned and finished signups; without this the pending table only ever grows.
+    "purge-pending-registrations": {
+        "task": "accounts.cleanup_pending_registrations",
+        "schedule": crontab(minute=55, hour=3),
+    },
     "expire-share-links": {
         "task": "sharing.cleanup_expired",
         "schedule": crontab(minute=0, hour=4),
@@ -1011,8 +1017,9 @@ NOTIFICATION_RETENTION_DAYS = env.int("NOTIFICATION_RETENTION_DAYS", default=90)
 NOTIFICATION_EMAIL_MAX_RETRIES = env.int(
     "NOTIFICATION_EMAIL_MAX_RETRIES", default=3,
 )
-SIGNUP_VERIFICATION_CODE_LIFETIME_SECONDS = env.int(
-    "SIGNUP_VERIFICATION_CODE_LIFETIME_SECONDS", default=600,
+# The signup email carries a link ({FRONTEND_URL}/verify-email?registration_id=...&token=...), valid this long.
+SIGNUP_VERIFICATION_LINK_LIFETIME_SECONDS = env.int(
+    "SIGNUP_VERIFICATION_LINK_LIFETIME_SECONDS", default=86400,
 )
 SIGNUP_VERIFICATION_RESEND_COOLDOWN_SECONDS = env.int(
     "SIGNUP_VERIFICATION_RESEND_COOLDOWN_SECONDS", default=60,
@@ -1092,6 +1099,7 @@ REST_FRAMEWORK = {
         "share_create": "60/hour",
         "model_comparison": "30/hour",
         "identity_search": "30/hour",
+        "search": "600/hour",
         "share_public": "120/hour",
         "org_invite": "30/hour",
         "org_export": "10/hour",
@@ -1185,7 +1193,7 @@ LOGIN_LOCK_MAX_SECONDS = env.int("LOGIN_LOCK_MAX_SECONDS", default=900)
 LOGIN_FAILURE_WINDOW_SECONDS = env.int("LOGIN_FAILURE_WINDOW_SECONDS", default=900)
 
 PUBLIC_BACKEND_URL = os.environ.get("PUBLIC_BACKEND_URL", "http://127.0.0.1:8000")
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://127.0.0.1:3000")
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")  # the frontend dev server; emailed links point here
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "noreply@facecloud.local")
 EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
 EMAIL_HOST = os.environ.get("EMAIL_HOST", "")

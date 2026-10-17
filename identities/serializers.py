@@ -1,3 +1,5 @@
+from django.conf import settings
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from uploads.models import ImageUpload
@@ -16,16 +18,61 @@ class IdentityAnalysisSerializer(serializers.ModelSerializer):
         fields = ("id", "image", "status", "face_count", "assigned_count", "review_count", "provider", "policy_version", "failure_reason", "processing_duration_ms", "started_at", "finished_at", "created_at", "updated_at")
 
 
+INACTIVE_MEMBERSHIP_STATES = (IdentityMembership.State.REJECTED, IdentityMembership.State.REMOVED)
+COVER_IMAGE_LIMIT = 4
+
+
+def active_memberships_of(group):
+    """The group's members, from the list view's prefetch when it ran, else one query."""
+    prefetched = getattr(group, "active_memberships", None)
+    if prefetched is not None:
+        return prefetched
+    return list(
+        group.memberships.exclude(state__in=INACTIVE_MEMBERSHIP_STATES).select_related("identity_face__image")
+    )
+
+
+class CoverImageSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    thumbnail_url = serializers.CharField()
+
+
 class IdentityGroupSerializer(serializers.ModelSerializer):
     preview_image = serializers.SerializerMethodField()
+    cover_images = serializers.SerializerMethodField()
+    matching_confidence = serializers.SerializerMethodField()
 
     class Meta:
         model = IdentityGroup
-        fields = ("id", "display_name", "state", "member_count", "preview_image", "created_at", "updated_at")
+        fields = (
+            "id", "display_name", "state", "member_count", "preview_image",
+            "cover_images", "matching_confidence", "created_at", "updated_at",
+        )
 
     def get_preview_image(self, obj) -> int | None:
-        membership = obj.memberships.exclude(state__in=[IdentityMembership.State.REJECTED, IdentityMembership.State.REMOVED]).select_related("identity_face").first()
-        return membership.identity_face.image_id if membership else None
+        members = active_memberships_of(obj)
+        return members[0].identity_face.image_id if members else None
+
+    @extend_schema_field(CoverImageSerializer(many=True))
+    def get_cover_images(self, obj):
+        """Up to four distinct photos of the folder, each with its thumbnail address."""
+        request = self.context.get("request")
+        covers, seen = [], set()
+        for member in active_memberships_of(obj):
+            image = member.identity_face.image
+            if image.pk in seen or image.status != "uploaded" or not image.original_file:
+                continue
+            seen.add(image.pk)
+            path = f"/api/images/{image.pk}/thumbnail/"
+            covers.append({"id": image.pk, "thumbnail_url": request.build_absolute_uri(path) if request else path})
+            if len(covers) == COVER_IMAGE_LIMIT:
+                break
+        return covers
+
+    def get_matching_confidence(self, obj) -> float | None:
+        """Average member similarity as a percentage (0-100, one decimal); null when no member has a score."""
+        scores = [m.similarity_score for m in active_memberships_of(obj) if m.similarity_score is not None]
+        return round(100 * sum(scores) / len(scores), 1) if scores else None
 
 
 class IdentityMembershipSerializer(serializers.ModelSerializer):
@@ -84,6 +131,12 @@ class IdentityGroupExportRequestSerializer(serializers.Serializer):
         choices=IdentityGroupExport.ReportFormat.choices,
         default=IdentityGroupExport.ReportFormat.JSON,
     )
+    image_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), required=False, allow_null=True,
+        allow_empty=False, max_length=1000,
+        help_text="Optional subset of this folder's photos to export. Omit it to export everything. "
+                  "An id that is not in the folder is a 400.",
+    )
 
     def validate(self, attrs):
         if not any(attrs[key] for key in (
@@ -96,6 +149,19 @@ class IdentityGroupExportRequestSerializer(serializers.Serializer):
         return attrs
 
 
+class IdentityExportShareRequestSerializer(serializers.Serializer):
+    ttl_hours = serializers.IntegerField(
+        required=False, min_value=1,
+        help_text="How long the link works. Defaults to SHARE_LINK_DEFAULT_TTL_HOURS and never outlasts the ZIP.",
+    )
+    label = serializers.CharField(required=False, allow_blank=True, max_length=120)
+
+    def validate_ttl_hours(self, value):
+        if value > settings.SHARE_LINK_MAX_TTL_HOURS:
+            raise serializers.ValidationError(f"A link can last at most {settings.SHARE_LINK_MAX_TTL_HOURS} hours.")
+        return value
+
+
 class IdentityGroupExportSerializer(serializers.ModelSerializer):
     group = serializers.IntegerField(source="identity_group_id", read_only=True)
     download_url = serializers.SerializerMethodField()
@@ -104,7 +170,7 @@ class IdentityGroupExportSerializer(serializers.ModelSerializer):
         model = IdentityGroupExport
         fields = (
             "id", "group", "include_originals", "include_preprocessed",
-            "include_enhanced", "include_report", "report_format", "status",
+            "include_enhanced", "include_report", "report_format", "image_ids", "status",
             "progress_percentage", "display_name", "manifest", "file_size",
             "failure_reason", "download_url", "generated_at", "expires_at",
             "created_at", "updated_at",

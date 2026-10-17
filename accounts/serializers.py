@@ -2,6 +2,7 @@ import re
 
 from django.contrib.auth import get_user_model, password_validation
 from django.contrib.auth.tokens import default_token_generator
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q
 from django.db.models.functions import Lower
 from django.utils.encoding import force_str
@@ -12,9 +13,9 @@ from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from . import lockout
-from .services import (dashboard_for_user,
-                       issue_login_tokens,
-                       record_auth_event)
+from .services import (dashboard_for_user, derive_username,
+                       issue_login_tokens, record_auth_event,
+                       resolve_moderator_organization, split_full_name)
 from .sessions import record_rotation, token_session_is_active
 
 User = get_user_model()
@@ -34,8 +35,18 @@ def validate_unique_email(value, instance=None):
     return email
 
 
+def clean_full_name(value):
+    """Trim and collapse inner whitespace; a name must have a visible character."""
+    cleaned = " ".join((value or "").split())
+    if not cleaned:
+        raise serializers.ValidationError("Enter your full name.")
+    return cleaned
+
+
 class RegisterSerializer(serializers.Serializer):
-    username = serializers.CharField(max_length=150)
+    full_name = serializers.CharField(max_length=150)
+    # Optional: when absent (or blank) the view derives it from the email's local part.
+    username = serializers.CharField(max_length=150, required=False, allow_blank=True)
     email = serializers.EmailField(required=True, allow_blank=False)
     password = serializers.CharField(write_only=True, trim_whitespace=False)
     password_confirm = serializers.CharField(
@@ -44,9 +55,12 @@ class RegisterSerializer(serializers.Serializer):
         trim_whitespace=False,
     )
 
+    def validate_full_name(self, value):
+        return clean_full_name(value)
+
     def validate_username(self, value):
         value = User.normalize_username(value).strip()
-        if User.objects.filter(username__iexact=value).exists():
+        if value and User.objects.filter(username__iexact=value).exists():
             raise serializers.ValidationError("A user with this username already exists.")
         return value
 
@@ -59,16 +73,22 @@ class RegisterSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"password_confirm": "Passwords do not match."}
             )
-        candidate = User(username=attrs.get("username"), email=attrs.get("email"))
+        if not attrs.get("username"):
+            attrs.pop("username", None)
+        first_name, last_name = split_full_name(attrs["full_name"])
+        candidate = User(
+            username=attrs.get("username") or attrs["email"].partition("@")[0],
+            email=attrs.get("email"), first_name=first_name, last_name=last_name,
+        )
         password_validation.validate_password(attrs["password"], user=candidate)
         return attrs
 
 
 class VerifyRegistrationSerializer(serializers.Serializer):
     registration_id = serializers.UUIDField()
-    code = serializers.RegexField(
-        regex=r"^\d{6}$",
-        error_messages={"invalid": "Enter the six-digit verification code."},
+    token = serializers.CharField(
+        max_length=256,
+        error_messages={"blank": "The verification link is incomplete.", "required": "The verification link is incomplete."},
     )
 
 
@@ -156,6 +176,7 @@ PHONE_PATTERN = re.compile(r"^\+?[0-9][0-9 ()\-]{0,30}$")
 
 
 class UserSerializer(serializers.ModelSerializer):
+    full_name = serializers.CharField(read_only=True, help_text="First and last name, or the username when no name is set.")
     avatar_url = serializers.SerializerMethodField(
         help_text="Authenticated URL of the user's own avatar (changes when it is replaced), or null.",
     )
@@ -163,10 +184,10 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            "id", "username", "email", "role", "is_email_verified", "date_joined",
+            "id", "username", "email", "full_name", "role", "is_email_verified", "date_joined",
             "display_name", "organization_name", "job_title", "phone", "country", "avatar_url",
         ]
-        read_only_fields = ["id", "role", "is_email_verified", "date_joined", "avatar_url"]
+        read_only_fields = ["id", "full_name", "role", "is_email_verified", "date_joined", "avatar_url"]
         extra_kwargs = {
             "organization_name": {"help_text": "Free text about the user. It grants no organization access."},
         }
@@ -219,9 +240,20 @@ class ProfileUpdateSerializer(UserSerializer):
     current_password = serializers.CharField(
         write_only=True, required=False, trim_whitespace=False
     )
+    full_name = serializers.CharField(required=False, max_length=150, help_text="Stored as first name (first word) and last name (the rest).")
 
     class Meta(UserSerializer.Meta):
         fields = UserSerializer.Meta.fields + ["current_password"]
+        read_only_fields = [name for name in UserSerializer.Meta.read_only_fields if name != "full_name"]
+
+    def validate_full_name(self, value):
+        return clean_full_name(value)
+
+    def update(self, instance, validated_data):
+        full_name = validated_data.pop("full_name", None)
+        if full_name is not None:
+            instance.first_name, instance.last_name = split_full_name(full_name)
+        return super().update(instance, validated_data)
 
     def validate(self, attrs):
         password = attrs.pop("current_password", None)
@@ -284,13 +316,15 @@ class DeleteAccountSerializer(serializers.Serializer):
 
 
 class AdminUserSerializer(serializers.ModelSerializer):
+    full_name = serializers.CharField(read_only=True)
+
     class Meta:
         model = User
         fields = [
-            "id", "username", "email", "role", "is_email_verified", "is_suspended",
+            "id", "username", "email", "full_name", "role", "is_email_verified", "is_suspended",
             "suspension_reason", "is_active", "date_joined",
         ]
-        read_only_fields = ["id", "username", "email", "is_email_verified", "date_joined"]
+        read_only_fields = ["id", "username", "email", "full_name", "is_email_verified", "date_joined"]
 
     def validate(self, attrs):
         if attrs.get("is_suspended") is False:
@@ -330,6 +364,47 @@ class AdminUserDetailSerializer(AdminUserSerializer):
             "images": user.image_uploads.count(),
             "enhancements": user.image_enhancement_results.count(),
         }
+
+
+class AdminUserCreateSerializer(serializers.Serializer):
+    """What an administrator sends to create an account: the same checks as signup, without the verification email."""
+
+    username = serializers.CharField(max_length=150, required=False, allow_blank=True)
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True, trim_whitespace=False)
+    role = serializers.ChoiceField(choices=["user", "moderator"], default="user",
+                                   help_text="`user` or `moderator`. An administrator account cannot be created here.")
+    organization_id = serializers.IntegerField(required=False, allow_null=True,
+                                               help_text="Moderators only. Needed when there is more than one organization.")
+    full_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
+
+    def validate_username(self, value):
+        value = User.normalize_username(value).strip()
+        if value and User.objects.filter(username__iexact=value).exists():
+            raise serializers.ValidationError("A user with this username already exists.")
+        return value
+
+    def validate_email(self, value):
+        return validate_unique_email(value)
+
+    def validate_full_name(self, value):
+        return " ".join((value or "").split())
+
+    def validate(self, attrs):
+        username = attrs.get("username") or derive_username(attrs["email"])
+        first_name, last_name = split_full_name(attrs.get("full_name", ""))
+        candidate = User(username=username, email=attrs["email"], first_name=first_name, last_name=last_name)
+        try:
+            password_validation.validate_password(attrs["password"], user=candidate)
+        except DjangoValidationError as error:
+            raise serializers.ValidationError({"password": list(error.messages)}) from error
+        attrs["username"] = username
+        organization_id = attrs.get("organization_id")
+        if attrs["role"] == "moderator":
+            attrs["organization"] = resolve_moderator_organization(organization_id)
+        elif organization_id is not None:
+            raise serializers.ValidationError({"organization_id": ["Only a moderator is placed in an organization."]})
+        return attrs
 
 
 # -- User dashboard (GET /api/user/dashboard/) --------------------------------

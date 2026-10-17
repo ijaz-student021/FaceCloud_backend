@@ -15,7 +15,7 @@ Status definitions:
 
 | Area | Status |
 |---|---|
-| Authentication and account management | Complete, including six-digit pending signup verification and password reset by email |
+| Authentication and account management | Complete, including link-verified pending signup and password reset by email |
 | Role-based authorization | Complete |
 | Authentication audit events | Complete |
 | Single, multiple, and ZIP image upload | Complete |
@@ -64,9 +64,11 @@ Status definitions:
 
 Provides the complete account lifecycle and proves the identity of API users.
 
-- Registration with username, email, and password
-- Six-digit email verification before permanent user creation
-- Hashed pending password and code storage
+- Registration with full name, email, and password (username optional)
+- Email-link verification before permanent user creation (single-use token, hashed, 24 h by default); full name on signup, optional username
+- An administrator can create verified accounts (`POST /api/user/admin/users/`, user or moderator); `createsuperuser` makes a verified admin that can sign in
+- Login `role` and `dashboard` are one value: `moderator` also for an active organization moderator; the person's `full_name` is on every user object
+- Hashed pending password and token storage
 - Verification expiry, attempt locking, resend cooldown, and hourly send limits
 - Atomic verified-user creation and pending-secret cleanup
 - Required, unique, normalized email addresses
@@ -80,7 +82,7 @@ Provides the complete account lifecycle and proves the identity of API users.
 - Account deletion with password confirmation
 - Blocking of unverified, inactive, and suspended users
 - Password reset by email (`POST /api/auth/password-reset/`, then `/confirm/`).
-- Two-factor authentication was **removed** (2026-10-16): login is always one step. Migration `accounts/0010_remove_two_factor`
+- Two-factor authentication was **removed** (2026-10-16): login is always one step. Migration `accounts/0012_remove_two_factor`
   drops its tables; earlier audit events keep their names.
 
 ### Feature 02: Role-based authorization — Complete

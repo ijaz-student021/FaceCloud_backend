@@ -41,15 +41,16 @@ one helper that accepts both shapes.
 
 ## 2. Sign up, log in, stay logged in
 
-Registration is a two-step flow. No account exists until the emailed
-six-digit code is verified.
+Registration is a two-step flow. No account exists until the link in the
+verification email is opened.
 
 ```text
-POST /api/auth/register/            {username, email, password}
-   -> 202 {registration_id, ...}    (a code is emailed)
-POST /api/auth/verify-email/        {registration_id, code}
-   -> 201                           (account now exists)
-POST /api/auth/verify-email/resend/ {registration_id}     (new code, has a cooldown)
+POST /api/auth/register/            {full_name, email, password, password_confirm?, username?}
+   -> 202 {registration_id, ...}    (an email with a link is sent)
+        link: {FRONTEND_URL}/verify-email?registration_id=<uuid>&token=<token>
+POST /api/auth/verify-email/        {registration_id, token}      (both come from the link)
+   -> 201                           (account now exists; the link works once)
+POST /api/auth/verify-email/resend/ {registration_id}     (new link, the old one stops working; has a cooldown)
 GET  /api/auth/registrations/{registration_id}/status/    (masked status, for a "check your email" screen)
 ```
 
@@ -60,9 +61,15 @@ POST /api/auth/login/  {identifier, password}     (identifier = username or emai
    -> 200 {access, refresh, role, dashboard, user}
 ```
 
-- `role` is `user`, `moderator` or `admin`. `dashboard` is the same value
-  (`"user"`, `"moderator"`, `"admin"`), meant for choosing which dashboard to
-  open after login.
+- `role` is `user`, `moderator` or `admin`. `dashboard` is **always the same
+  value** (`"user"`, `"moderator"`, `"admin"`), meant for choosing which
+  dashboard to open after login. A person who is an *active moderator of an
+  active organization* gets `moderator` even though their stored account role is
+  `user` (`user.role` is the stored value; organization owners stay `user`).
+  This chooses the portal only: what each endpoint allows is unchanged.
+- Every user object (`user` here, `GET/PATCH /api/user/profile/`, the admin user
+  list) carries `full_name` (the username when no name is set). `PATCH
+  /api/user/profile/ {full_name}` changes it.
 - Wrong credentials, an unverified account and a suspended account all return
   **400** with the same kind of message (not 401), so accounts cannot be
   enumerated. Show the message as is.
@@ -247,7 +254,20 @@ error for it.
   until consent exists.
 - `GET /api/identities/groups/` and `/{id}/` list and show folders
   (`display_name`, `member_count`, `preview_image`). **Embeddings and centroids
-  are never returned**; do not expect them.
+  are never returned**; do not expect them. Each folder also has
+  `cover_images` (up to four distinct photos, `[{id, thumbnail_url}]`, empty for
+  an empty folder) and `matching_confidence` (the average of its members'
+  similarity scores **as a percentage, 0-100 with one decimal**, so `98.4` can be
+  shown as `98.4%`; `null` when no member has a score, never a made-up number).
+  The detail response also keeps `memberships` (raw 0-1 `similarity_score` per
+  face).
+- **Photos in a folder:** `GET /api/identities/groups/{id}/images/` (paginated:
+  `{count, next, previous, results}`, `?page=`, `?page_size=` up to 100, newest
+  first). Each row: `id`, `original_name`, `thumbnail_url`, `file_size`,
+  `width`, `height`, `display_status` (the same value `GET /api/images/my/`
+  reports), `matching_confidence` (this photo's best score in the folder, same
+  percentage scale; `null` when unscored). A photo with two faces of the same
+  person appears once. Another user's folder is a 404.
 - Manage folders: `PATCH .../groups/{id}/rename/ {display_name}`,
   `POST .../groups/{id}/merge/ {source_group_id, reason}` (merges the source
   into this folder), `PATCH .../groups/{id}/profile/`,
@@ -272,7 +292,26 @@ error for it.
   "no matches"). The query photo and its embedding are never stored anywhere;
   do not expect a way to look up a past search.
 - Per-folder ZIP export is async: `POST .../groups/{group_id}/exports/`, poll
-  `GET /api/identities/exports/{id}/`, then `.../download/`.
+  `GET /api/identities/exports/{id}/`, then `.../download/`. The request body
+  accepts an optional `image_ids: [int, ...]` to export only those photos;
+  leave it out to export the whole folder. Every id must be a photo currently
+  in that folder, otherwise the answer is **400** `{"image_ids": ["These photos
+  are not in this folder: 12, 40."]}` and nothing is queued. An empty list is a
+  400 too (omit the field, or send `null`, for "everything"). Two requests for
+  the same set of photos share one queued job; a different set is its own job.
+  The export object reports the `image_ids` it was made for (`[]` = all) and
+  regenerating keeps them.
+- **Share a finished folder ZIP:** `POST /api/identities/exports/{id}/share/
+  {ttl_hours?, label?}` -> **201** with the same body as an image share link
+  (`id`, `state`, `expires_at`, `token`, `public_url`, `info_url`, ...,
+  `identity_export: <export id>`, `result: null`). The `token` appears **only in
+  this response**; copy `public_url` straight away. Anyone with `public_url`
+  (no login) gets the ZIP as a download. The link never outlives the ZIP (its
+  `expires_at` is capped at the export's), is revoked with
+  `POST /api/shares/{link id}/revoke/`, and answers **410** once revoked or
+  expired. Only a `ready`, unexpired export can be shared: a queued/generating
+  one is **409**, an expired one **410** (regenerate it first). Share links
+  count toward the same per-user limit as image links.
 
 ## 5a. Duplicates
 
@@ -345,10 +384,38 @@ The token is never shown again, so display and copy it immediately.
 `POST /api/shares/{id}/revoke/`. Preview the watermark before sharing with
 `GET /api/enhancements/results/{id}/watermark-preview/`.
 
+**Share link shape.** `GET /api/shares/` and `/{id}/` never return a token or a
+public address. A link made from a person-folder ZIP has `identity_export` set
+and `result` null; an image link has `result` set and `identity_export` null.
+
+**Downloads screen.** `GET /api/downloads/` (paginated history, newest first)
+keeps its original fields and adds, per row:
+
+| Field | Meaning |
+|---|---|
+| `kind` | `single` (one photo: original, standardized, enhanced, edited), `batch` (a ZIP: batch package or person-folder ZIP) or `report` |
+| `expires_at` | When the file ends (batch package / folder ZIP expiry); for an enhanced or edited photo with a live share link, when that link ends; otherwise `null` |
+| `image_count` | Photos in the ZIP or batch report; `null` for a single photo and for an image report |
+| `has_active_link` | `true` when a live (not revoked, not expired) share link exists for it. The link itself is never listed |
+
+To give the user a **fresh secure link** from a row, use the existing endpoints
+(`resource_type` and `resource_id` say what the row is):
+
+| `resource_type` | Mint a link with |
+|---|---|
+| `enhanced_image` (`resource_id` = result id) | `POST /api/shares/ {result: resource_id}` |
+| `edited_image` (`resource_id` = edit id) | `POST /api/shares/ {result: <its result>, edit: resource_id}` |
+| `identity_group_package` (`resource_id` = export id) | `POST /api/identities/exports/{resource_id}/share/`; if expired, `POST .../exports/{id}/regenerate/` first |
+| `batch_package` (`resource_id` = package id) | no public link; while `ready` use the authenticated `/api/downloads/packages/{id}/download/`, and `POST .../packages/{id}/regenerate/` after expiry |
+| `original_image`, `standardized_image`, `processing_report` | no share link; use the authenticated download endpoints |
+
 **Public share page** (no login, no Authorization header):
 `GET /api/shares/public/{token}/info/` for metadata (size, expiry, whether it is
 watermarked) and `GET /api/shares/public/{token}/` for the image. 404 means the
-token is unknown, **410** means expired, revoked or the owner is inactive.
+token is unknown, **410** means expired, revoked or the owner is inactive. For a
+person-folder link `info` reports `content_type: "application/zip"` and the
+public address answers with the ZIP as an attachment (`Content-Disposition:
+attachment`), never watermarked.
 
 ## 7. Organizations and the moderator area
 
@@ -472,12 +539,92 @@ for the settings screen. Each notification has a `title`, `message`, `severity`,
 `resource_type`/`resource_id` and an `action_path` you can route to. Poll the
 unread count (every 30 to 60 seconds is plenty); there is no websocket.
 
+**Severity -> toast/colour.** `severity` is already one of `info`, `success`,
+`warning`, `error`, so use it directly as the notification type (there is no
+separate `type` field to map). Typical sources: `success` (batch finished, report
+or package ready), `warning` (a photo needs review, or a job finished only partly), `error` (a job
+failed or a photo was rejected), `info` (everything else). Note the notification
+`event_type` is the specific event name, not the colour.
+
 Moderators and owners of an organization also receive `event_type`
 `moderator_batch_failed` when one of the organization's batches fails entirely
 (`resource_type` `batch`, `metadata.batch_id` and `metadata.organization_id`,
 `action_path` `/moderator/batches`). It is in-app only, follows the
 `moderator_review_updates` preference, and never goes to the person who uploaded
 the batch (they get their own `batch_completed`).
+
+## 8a. Activity (history button and Activity page)
+
+`GET /api/user/activity/?category=&page=&page_size=` (default 20 per page, max
+100) answers `{page, page_size, has_next, results: [...]}`. Each entry has the
+display fields
+
+| Field | Values |
+|---|---|
+| `id` | stable string, `activity-<n>` or `auth-<n>` |
+| `type` | `upload`, `enhance`, `validate`, `download`, `live`, `group`, `reject`, `login`, `email`, `admin` (`live` is reserved: nothing emits it yet) |
+| `message` | a ready-to-show sentence |
+| `timestamp` | ISO 8601, same instant as `created_at` |
+| `status` | `success`, `warning`, `error`, `info` |
+
+and the original record fields (`source`, `category`, `event`, `object_type`,
+`object_id`, `identifier`, `ip_address`, `details`, `created_at`), unchanged.
+`category` filters to one of `upload, processing, moderation, download, group,
+share, admin, privacy, auth`.
+
+How stored events map to `type` / `status`:
+
+| Stored event | type | status |
+|---|---|---|
+| `upload_received` | upload | info |
+| `processing_started` | enhance | info |
+| `batch_completed` / `batch_partial` / `batch_failed` / `batch_cancelled` | enhance | success / warning / error / warning |
+| `enhancement_completed` / `enhancement_failed` / `enhancement_cancelled` | enhance | success / error / warning |
+| `quality_accepted` / `quality_failed` | validate | success / error |
+| `quality_rejected` / `quality_needs_review` | reject | warning |
+| `package_*`, `identity_export_*`, `report_*` (`ready` / `failed` / `expired`) | download | success / error / warning |
+| `share_link_created` / `share_link_revoked` | download | success / info |
+| `group_renamed`, `group_merged`, `group_moved`, `group_removed`, `group_profile_set`, `group_deleted`, `group_reviewed` | group | info |
+| `consent_granted` / `consent_withdrawn` | validate | success / warning |
+| `facial_data_erased` / `data_exported` | group / download | success |
+| `registration_pending`, `verification_code_sent` | email | info |
+| `registered`, `email_verified`, `password_reset` | email | success |
+| `login` / `login_failed` / `login_locked` | login | success / error / warning |
+| `logout`, `logout_all`, `session_revoked` | login | info |
+| `password_changed`, `profile_updated` | login | success |
+| `role_changed`, `suspended`, `reactivated`, `account_deleted`, `admin_created_account`, `account_invited` | admin | info / warning / success / info / info / info |
+| `invitation_accepted` | email | success |
+| anything else | by category; `*failed` -> error, `*rejected`/`*cancelled`/`*expired` -> warning, `*completed`/`*ready` -> success, otherwise info | |
+
+## 8b. Top-bar search
+
+`GET /api/search/?q=<text>&limit=<n>` (signed in). `q` must be at least 2
+characters after trimming, otherwise **400** `{"q": ["Type at least 2 characters
+to search."]}`. `limit` is per kind: default 5, maximum 10 (larger values are
+capped; `0`, negatives or non-numbers are a 400). Matching is case-insensitive
+"contains"; `%` and `_` in `q` are ordinary characters. Only the caller's own
+records are searched.
+
+```json
+{
+  "query": "beach",
+  "images": [{"id": 12, "name": "beach-01.jpg", "thumbnail_url": "http://.../api/images/12/thumbnail/",
+              "status": "ready", "created_at": "2026-10-16T09:12:00Z"}],
+  "groups": [{"id": 3, "display_name": "Beach friends", "member_count": 4}],
+  "jobs":   [{"id": 7, "display_name": "Beach weekend", "status": "uploaded", "total_files": 3,
+              "created_at": "2026-10-16T09:10:00Z"}]
+}
+```
+
+`images` match the original file name (`status` is the same `display_status` as
+`/api/images/my/`; `thumbnail_url` is `null` for a rejected image), `groups` match
+the folder name (active folders only) and `jobs` are upload batches, matched on
+the name the person gave the batch **or** the ZIP's file name (`wedding-photos.zip`
+is found by "wedding"). A job's `display_name` is always the label "Your uploads"
+shows: the chosen name, else the ZIP's file name, else `Upload <id>`, so a row is
+never blank. Single and multiple uploads that were never renamed have no name to
+search; they appear as `Upload <id>` wherever they are listed but are not found
+by that label. Rate limit: 600 requests per hour per user.
 
 ## 9. Privacy screens
 
@@ -487,14 +634,41 @@ the batch (they get their own `batch_completed`).
   the erasure.
 - `GET /api/privacy/export/` downloads the user's own data as JSON (biometric
   templates are never included).
+- **"Consent required" is machine-readable.** When something that needs
+  face-recognition consent is refused because the person has not agreed (starting
+  identity analysis `POST /api/identities/images/{id}/`, face search
+  `POST /api/identities/search/`, and a person collage `POST /api/collages/`
+  with `source_type: "person"`), the status stays **400** and the sentence is
+  unchanged, and the body now carries `"code": "consent_required"`:
+  `{"detail": ["Biometric consent is required before face search."], "code":
+  "consent_required"}` (the collage form has `detail` as a plain string). Match on
+  `code`, then send the person to the consent screen. Before this change the two
+  identity endpoints answered with a bare list `["..."]`.
 
 ## 10. Admin pages (role `admin` only)
 
 `/api/system/health/`, `/queue/`, `/analytics/`, `/audit/`, `/moderation/`,
 `/batches/failed/`, `POST /api/system/batches/{id}/retry/`, `/jobs/failed/`,
-`GET /api/user/admin/users/` and `PATCH /api/user/admin/users/{id}/`,
+`GET /api/user/admin/users/` (a plain array), `POST /api/user/admin/users/` (create an account) and
+`PATCH /api/user/admin/users/{id}/`,
 `GET /api/privacy/audit/`. A non-admin gets 403; use the `role` from login to
 hide these routes, but never rely on that for security.
+
+**Creating an account (Add User / Create moderator forms)**
+
+```text
+POST /api/user/admin/users/  {username, email, password, role: "user" | "moderator", organization_id?, full_name?}
+   -> 201 {id, username, email, full_name, role, is_email_verified, is_suspended, suspension_reason, is_active, date_joined}
+   -> 400 {"email": [...]} / {"username": [...]} / {"password": [...]} / {"role": [...]}      (field errors)
+   -> 400 {"detail": "Create an organization first, then try again."}                         (moderator, no organization)
+   -> 400 {"detail": "There is more than one organization: send organization_id to choose one."}
+   -> 403 for anyone who is not an administrator
+```
+
+The account is created already verified; no email is sent and the password is never returned, so show the sign-in details to the
+administrator once and hand them over. `confirm password` is checked in the browser only. `role: "admin"` is refused. A moderator is
+added to an active non-personal organization, so the moderator panel (which takes the first non-personal organization of
+`GET /api/organizations/`) finds it; they log in with `role` and `dashboard` = `moderator`.
 
 ## 11. Things the UI must handle
 
