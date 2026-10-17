@@ -87,6 +87,9 @@ class GuardRuleTests(SimpleTestCase):
         self.assertFlags("must be a real https:// origin", CORS_ALLOWED_ORIGINS=["http://app.facecloud-app.net"])
         self.assertFlags("must be a real https:// origin", CORS_ALLOWED_ORIGINS=["https://example.com"])
 
+    def test_the_development_email_backend_is_refused_in_production(self):
+        self.assertFlags("EMAIL_BACKEND is a development backend", EMAIL_BACKEND="config.dev_email.DevConsoleEmailBackend")
+
     def test_public_urls_must_be_real_https_addresses(self):
         self.assertFlags("PUBLIC_BACKEND_URL", PUBLIC_BACKEND_URL="http://127.0.0.1:8000")
         self.assertFlags("FRONTEND_URL", FRONTEND_URL="https://example.com")

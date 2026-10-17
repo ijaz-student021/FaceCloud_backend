@@ -1196,6 +1196,11 @@ PUBLIC_BACKEND_URL = os.environ.get("PUBLIC_BACKEND_URL", "http://127.0.0.1:8000
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")  # the frontend dev server; emailed links point here
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "noreply@facecloud.local")
 EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
+# In development, print emails as readable text with their links on lines you can copy (config/dev_email.py): the console backend's
+# quoted-printable output mangles "=" and long lines, so a copied verification link fails. Only when DEBUG is on; production refuses it.
+DEV_PRINT_EMAIL_LINKS = os.environ.get("DEV_PRINT_EMAIL_LINKS", str(DEBUG)).lower() == "true"
+if DEBUG and DEV_PRINT_EMAIL_LINKS and EMAIL_BACKEND == "django.core.mail.backends.console.EmailBackend":
+    EMAIL_BACKEND = "config.dev_email.DevConsoleEmailBackend"
 EMAIL_HOST = os.environ.get("EMAIL_HOST", "")
 EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
 EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
