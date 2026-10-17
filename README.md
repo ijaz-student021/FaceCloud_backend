@@ -326,7 +326,10 @@ configuration is production-safe, and lists every problem at once
    stored images, run `python manage.py encrypt_stored_media` once.
 3. **Real hosts:** `DJANGO_ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS` (https, no
    wildcard, `CORS_ALLOW_ALL_ORIGINS=False`), `PUBLIC_BACKEND_URL` and
-   `FRONTEND_URL` (https). Placeholders such as `example.com` are rejected.
+   `FRONTEND_URL` (https). Placeholders such as `example.com` are rejected, and so are
+   `localhost`/`127.0.0.1` for both URLs: `PUBLIC_BACKEND_URL` is in every share
+   link's `public_url` and defaults to `http://127.0.0.1:8000` for development, so
+   production will not start until it is set to the real API address.
 4. **HTTPS:** `SECURE_SSL_REDIRECT=True` (or `TRUST_PROXY_SSL_HEADER=True` behind a
    proxy that terminates TLS), secure session and CSRF cookies, and
    `SECURE_HSTS_SECONDS` of at least one year. Set `TRUSTED_PROXY_COUNT` to the
