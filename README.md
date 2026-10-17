@@ -120,6 +120,9 @@ python manage.py createsuperuser   # the first administrator
 python manage.py runserver
 ```
 
+After every `git pull`, run `python manage.py migrate` (check first with `python manage.py migrate --check`) and restart the
+server; see [Local development after pulling](docs/deployment/local-staging.md#local-development-after-pulling).
+
 API documentation is served by drf-spectacular once the server is running.
 
 ### The first administrator, and accounts created by an administrator
