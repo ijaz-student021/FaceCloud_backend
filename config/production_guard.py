@@ -85,10 +85,17 @@ def hosts_and_origins_rule(cfg):
         value = str(cfg.get(name) or "")
         if not value.startswith("https://") or _is_placeholder(value):
             problems.append(f"{name} must be the real https:// address (got '{value}').")
-    # Every verification and password-reset email links here: a localhost address would send real users to their own machine.
+    # FRONTEND_URL is in every verification and password-reset email; PUBLIC_BACKEND_URL is in every share link's
+    # public_url. A localhost address would send real users to their own machine, so a loopback host is refused
+    # even when it is written as https.
     frontend_host = (urlsplit(str(cfg.get("FRONTEND_URL") or "")).hostname or "").lower()
     if frontend_host in LOCAL_HOSTS:
         problems.append(f"FRONTEND_URL must be the public address of the frontend, not '{frontend_host}': emailed links would not work.")
+    backend_host = (urlsplit(str(cfg.get("PUBLIC_BACKEND_URL") or "")).hostname or "").lower()
+    if backend_host in LOCAL_HOSTS:
+        problems.append(
+            f"PUBLIC_BACKEND_URL must be the public address of this API, not '{backend_host}': share links would not open for recipients."
+        )
     return problems
 
 
