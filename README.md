@@ -24,7 +24,7 @@ feature catalogue and status table; this README does not duplicate it.
 
 | Area | Summary |
 |---|---|
-| Accounts | Pending registration with six-digit email verification, JWT login with refresh rotation, optional two-factor authentication (TOTP, recovery codes), per-account login backoff, password reset, logout from all devices, admin / moderator / user roles, suspension, audit trail |
+| Accounts | Pending registration with email-link verification, JWT login with refresh rotation, optional two-factor authentication (TOTP, recovery codes), per-account login backoff, password reset, logout from all devices, admin / moderator / user roles, suspension, audit trail |
 | Uploads | Single, multiple and ZIP upload; content-based validation of JPG, PNG, WebP, BMP, TIFF and static GIF; ZIP-slip and ZIP-bomb protection; UUID storage paths; owner-only access |
 | Gallery | Automatic event/timeline grouping of a user's photos, face-aware collages from an event or a person (asynchronous, consent-gated for person collages), and cached, encrypted JPEG thumbnails so a gallery never loads full originals |
 | Quality control | Sharpness, exposure, contrast, noise and resolution scoring with explainable accept / review / reject decisions |
@@ -86,7 +86,7 @@ owner-scoped access.
 
 ```
 config/            settings, URL routing, Celery app, storage encryption
-accounts/          users, JWT authentication, six-digit signup, roles, audit events
+accounts/          users, JWT authentication, link-verified signup, roles, audit events
 uploads/           ingestion, storage, preprocessing
 validation/        face detection and validation
 quality_control/   quality scoring and decisions
@@ -116,24 +116,37 @@ python -m venv venv
 pip install -r requirements.txt
 Copy-Item .env.example .env      # then edit database credentials and secrets
 python manage.py migrate
+python manage.py createsuperuser   # the first administrator
 python manage.py runserver
 ```
 
 API documentation is served by drf-spectacular once the server is running.
 
-### Six-digit signup verification
+### The first administrator, and accounts created by an administrator
+
+`createsuperuser` makes an account that can sign in straight away: it is created verified (`is_email_verified=True`) with the `admin`
+role, because a superuser has no signup email to click. Then sign in at the frontend's `/admin/login` page with that email or username;
+the login response carries `role` and `dashboard` = `admin`. Accounts that were created *before* this change keep their old values
+(a superuser with `is_email_verified=False` cannot sign in until it is set to true).
+
+Everyone else is created either by signup (email link) or by an administrator: `POST /api/user/admin/users/`
+(`{username, email, password, role: "user" | "moderator", organization_id?, full_name?}`) creates an already-verified account and hands
+no email or password back. A moderator is placed in an organization (the one in `organization_id`, otherwise the only active
+non-personal one). See [`docs/features/33-administrative-management.md`](docs/features/33-administrative-management.md).
+
+### Signup with an emailed verification link
 
 Registration is deliberately a pending workflow: no permanent account exists
-until the code is verified.
+until the emailed link is opened.
 
 ```text
 POST /api/auth/register/
         |
         v
-PendingRegistration with hashed password and hashed six-digit code
+PendingRegistration with hashed password, full name and a SHA-256 hash of a single-use token
         |
         v
-Plain-text and HTML verification email
+Plain-text and HTML email with {FRONTEND_URL}/verify-email?registration_id=...&token=...
         |
         v
 POST /api/auth/verify-email/
@@ -145,18 +158,17 @@ Locked row + transaction.atomic()
 Verified User + audit events + cleared pending secrets
 ```
 
-Codes are generated with Python's cryptographic `secrets` module and stored
-only as Django hashes, with a configurable code lifetime, resend cooldown,
-hourly-send limit, and maximum failed attempts (`SIGNUP_VERIFICATION_*` in
-`.env.example`). See
-[`docs/features/01-authentication-and-authorization.md`](docs/features/01-authentication-and-authorization.md)
-and [`docs/PRD_6_DIGIT_SIGNUP_EMAIL_VERIFICATION.md`](docs/PRD_6_DIGIT_SIGNUP_EMAIL_VERIFICATION.md).
+The form sends `full_name`, `email` and `password` (`username` is optional and derived from the email when omitted). The token
+(`secrets.token_urlsafe(32)`) is stored only as a SHA-256 hash, compared in constant time, works once, and expires after
+`SIGNUP_VERIFICATION_LINK_LIFETIME_SECONDS` (default 24 h); resend, cooldown, hourly-send limit and failed-attempt locking are
+unchanged (`SIGNUP_VERIFICATION_*` in `.env.example`). See
+[`docs/features/01-authentication-and-authorization.md`](docs/features/01-authentication-and-authorization.md).
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| POST | `/api/auth/register/` | Start a pending registration and send a code |
-| POST | `/api/auth/verify-email/` | Verify the code and create the account |
-| POST | `/api/auth/verify-email/resend/` | Invalidate and replace the current code |
+| POST | `/api/auth/register/` | Start a pending registration and email a verification link |
+| POST | `/api/auth/verify-email/` | Verify `registration_id` + `token` and create the account |
+| POST | `/api/auth/verify-email/resend/` | Invalidate the current link and email a new one |
 | GET | `/api/auth/registrations/{registration_id}/status/` | Read masked registration status |
 | GET | `/api/auth/verify-email/change/{uidb64}/{token}/` | Verify an existing account's changed email |
 | POST | `/api/auth/login/` | Obtain JWT access and refresh tokens |
@@ -320,7 +332,9 @@ configuration is production-safe, and lists every problem at once
    `SECURE_HSTS_SECONDS` of at least one year. Set `TRUSTED_PROXY_COUNT` to the
    number of proxies in front of Django.
 5. **Infrastructure:** PostgreSQL with a real password, an SMTP `EMAIL_BACKEND`
-   and `EMAIL_HOST`, and `CELERY_TASK_ALWAYS_EAGER=False`.
+   and `EMAIL_HOST`, `CELERY_TASK_ALWAYS_EAGER=False`, and `CACHE_URL` pointing at a
+   shared Redis (rate limits live in the cache; a per-process cache would multiply
+   every limit by the number of workers and reset it on restart).
 6. **Privacy policy:** `BIOMETRIC_CONSENT_REQUIRED=True`. Also choose
    `FACIAL_DATA_RETENTION_DAYS`; `check --deploy` warns while it is 0.
 7. Run the worker and exactly one beat process, and serve with
@@ -341,4 +355,3 @@ Then run `python manage.py check --deploy` for Django's own checks.
 - [`docs/features`](docs/features): per-feature design, verification and limits
 - [`docs/structured`](docs/structured): architecture, decisions, tasks
 - [`docs/12_DAY_COMPLETION_PLAN.md`](docs/12_DAY_COMPLETION_PLAN.md): delivery plan
-- [`docs/PRD_6_DIGIT_SIGNUP_EMAIL_VERIFICATION.md`](docs/PRD_6_DIGIT_SIGNUP_EMAIL_VERIFICATION.md): signup verification PRD

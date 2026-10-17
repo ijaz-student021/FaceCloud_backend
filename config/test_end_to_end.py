@@ -1,6 +1,6 @@
 """One realistic pass through the whole product, over the real HTTP API.
 
-Registration by emailed code, login, upload, progress polling, thumbnails, an
+Registration by emailed link, login, upload, progress polling, thumbnails, an
 encrypted round trip, events, enhancement, a collage and notifications, in the
 order a frontend would call them. Background jobs run in-process
 (``CELERY_TASK_ALWAYS_EAGER``) against a throwaway database, so it needs no
@@ -63,13 +63,13 @@ class EndToEndFlowTests(TransactionTestCase):
     def test_the_whole_journey(self):
         self.client = APIClient()
 
-        # 1. Sign up with the emailed code, then log in.
+        # 1. Sign up with the emailed link, then log in.
         registered = self.call("post", "/api/auth/register/", 202, data={
-            "username": "e2e-user", "email": "e2e@example.com", "password": PASSWORD,
+            "username": "e2e-user", "full_name": "E2E User", "email": "e2e@example.com", "password": PASSWORD,
         }, format="json")
-        code = re.search(r"\b(\d{6})\b", mail.outbox[-1].body).group(1)
+        token = re.search(r"token=([A-Za-z0-9_-]+)", mail.outbox[-1].body).group(1)
         self.call("post", "/api/auth/verify-email/", 201, data={
-            "registration_id": registered.data["registration_id"], "code": code,
+            "registration_id": registered.data["registration_id"], "token": token,
         }, format="json")
         login = self.call("post", "/api/auth/login/", 200, data={"identifier": "e2e@example.com", "password": PASSWORD}, format="json")
         self.assertEqual(login.data["role"], "user")
@@ -139,9 +139,9 @@ class EndToEndFlowTests(TransactionTestCase):
         self.assertIn("batch_completed", kinds)
         stranger = APIClient()
         stranger_tokens = None
-        registered = stranger.post("/api/auth/register/", {"username": "e2e-other", "email": "other@example.com", "password": PASSWORD}, format="json")
+        registered = stranger.post("/api/auth/register/", {"username": "e2e-other", "full_name": "Other Person", "email": "other@example.com", "password": PASSWORD}, format="json")
         stranger.post("/api/auth/verify-email/", {
-            "registration_id": registered.data["registration_id"], "code": re.search(r"\b(\d{6})\b", mail.outbox[-1].body).group(1),
+            "registration_id": registered.data["registration_id"], "token": re.search(r"token=([A-Za-z0-9_-]+)", mail.outbox[-1].body).group(1),
         }, format="json")
         stranger_tokens = stranger.post("/api/auth/login/", {"identifier": "other@example.com", "password": PASSWORD}, format="json").data
         stranger.credentials(HTTP_AUTHORIZATION=f"Bearer {stranger_tokens['access']}")

@@ -37,9 +37,11 @@ rows.
 |---|---|---|
 | enhancement 0007_result_processing_claim | claim token and claimed_at columns | none; defaults |
 | enhancement 0008_claim_task_and_attempt | claim task id and attempt columns | none; defaults |
-| accounts 0007_user_profile_fields_and_avatar | profile columns, avatar | none; empty defaults |
-| accounts 0008_user_sessions | new `UserSession` table; auth-event choice | none |
-| accounts 0009_account_invitations | new `AccountInvitation` table; auth-event choices | none |
+| accounts 0009_user_profile_fields_and_avatar | profile columns, avatar (renumbered from 0007 after `main` took 0007/0008) | none; empty defaults |
+| accounts 0010_user_sessions | new `UserSession` table; auth-event choices (renumbered from 0008) | none |
+| accounts 0011_account_invitations | new `AccountInvitation` table; auth-event choices (renumbered from 0009) | none |
+
+A database that already ran these under their old names (`0007_user_profile_fields_and_avatar`, `0008_user_sessions`, `0009_account_invitations`) must not simply run `migrate`: the columns exist, so Django would try to add them again. Back it up, then either rename the three rows in `django_migrations` to the new names or recreate the database.
 | moderation 0006_report_period | `date_from`, `date_to`, `period_key` (`"all"`); constraint replaced | Existing reports get `period_key="all"`. **Precondition:** at most one queued or generating report per (organization, type, format); this already held under the old constraint |
 | moderation 0007_general_activity_report | report-type choice | none |
 | organizations 0009_moderator_preview_and_reprocess_actions | audit-action choices | none |

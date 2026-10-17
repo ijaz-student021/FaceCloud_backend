@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from events.services import get_event
 from identities.models import IdentityGroup, IdentityMembership
+from privacy.errors import CONSENT_REQUIRED
 from uploads.models import ImageUpload
 
 from .layouts import MAX_PHOTOS, MIN_PHOTOS, evenly_spaced
@@ -21,6 +22,12 @@ ACTIVE_STATUSES = (Collage.Status.QUEUED, Collage.Status.GENERATING)
 
 class CollageNotPossible(ValueError):
     """The request cannot produce a collage (too few usable photos, no consent)."""
+
+    code = None
+
+
+class CollageConsentRequired(CollageNotPossible):
+    code = CONSENT_REQUIRED
 
 
 class SourceNotFound(LookupError):
@@ -62,7 +69,7 @@ def select_collage_photos(owner, source_type, source_ref, gap_hours=None):
         from privacy.services import biometric_processing_allowed
 
         if not biometric_processing_allowed(owner):
-            raise CollageNotPossible("Biometric consent is required to make a collage of a person.")
+            raise CollageConsentRequired("Biometric consent is required to make a collage of a person.")
         group = IdentityGroup.objects.filter(pk=source_ref, owner=owner, state=IdentityGroup.State.ACTIVE).first()
         if group is None:
             raise SourceNotFound("person")

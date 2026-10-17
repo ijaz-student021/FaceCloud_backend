@@ -58,15 +58,15 @@ class PersonalOrganizationCreationTests(OrgFixtureMixin, TestCase):
     def test_registering_a_new_account_creates_its_personal_organization(self):
         started = self.client.post(
             reverse("register"),
-            {"username": "new-org-user", "email": "new-org-user@example.com", "password": "StrongPass!4729"},
+            {"username": "new-org-user", "full_name": "New Org User", "email": "new-org-user@example.com", "password": "StrongPass!4729"},
             format="json",
         )
         self.assertEqual(started.status_code, status.HTTP_202_ACCEPTED)
-        code = re.search(r"\b(\d{6})\b", mail.outbox[-1].body).group(1)
+        token = re.search(r"token=([A-Za-z0-9_-]+)", mail.outbox[-1].body).group(1)
 
         verified = self.client.post(
             reverse("verify-email"),
-            {"registration_id": started.data["registration_id"], "code": code},
+            {"registration_id": started.data["registration_id"], "token": token},
             format="json",
         )
 

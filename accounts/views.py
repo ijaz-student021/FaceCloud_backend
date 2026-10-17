@@ -3,7 +3,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.contrib.auth.hashers import check_password, make_password
+from django.contrib.auth.hashers import make_password
 from django.contrib.auth.tokens import default_token_generator
 from django.db import IntegrityError, transaction
 from django.db.models import Q
@@ -36,6 +36,7 @@ from .sessions import revoke_all as revoke_all_sessions
 from .sessions import session_for_token
 from .serializers import (
     AdminUserDetailSerializer,
+    AdminUserCreateSerializer,
     AdminUserSerializer,
     ChangePasswordSerializer,
     DeleteAccountSerializer,
@@ -60,13 +61,18 @@ from .serializers import (
 from .services import (
     confirm_two_factor,
     disable_two_factor,
-    generate_verification_code,
     issue_login_tokens,
+    create_account_as_admin,
+    derive_username,
+    generate_verification_token,
+    hash_verification_token,
+    split_full_name,
+    verification_token_matches,
     mask_email,
     record_auth_event,
     regenerate_recovery_codes,
     send_password_reset_email,
-    send_signup_verification_code,
+    send_signup_verification_link,
     send_verification_email,
     setup_two_factor,
     two_factor_status,
@@ -80,9 +86,12 @@ logger = logging.getLogger(__name__)
 LoginResponseSerializer = inline_serializer("LoginResponse", {
     "access": serializers.CharField(help_text="Short-lived (15 min) access token."),
     "refresh": serializers.CharField(help_text="Rotating refresh token (7 days)."),
-    "role": serializers.ChoiceField(choices=User.ROLE_CHOICES),
+    "role": serializers.ChoiceField(
+        choices=User.ROLE_CHOICES,
+        help_text="The portal the person belongs to (user, moderator or admin); always equal to `dashboard`.",
+    ),
     "dashboard": serializers.CharField(
-        help_text="Which dashboard the frontend should route to: user, moderator or admin.",
+        help_text="Which dashboard the frontend should route to: user, moderator or admin. A moderator of an organization gets moderator.",
     ),
     "user": UserSerializer(),
 })
@@ -92,15 +101,18 @@ LoginResponseSerializer = inline_serializer("LoginResponse", {
     post=extend_schema(
         summary="Start registration",
         description=(
-            "Creates a pending registration and emails a six-digit verification code. "
-            "No account exists until the code is verified with POST /verify-email/."
+            "Creates a pending registration and emails a verification **link** "
+            "(`{FRONTEND_URL}/verify-email?registration_id=...&token=...`). "
+            "No account exists until the link's `registration_id` and `token` are sent to POST /verify-email/. "
+            "`username` is optional: when omitted it is derived from the email address."
         ),
         request=RegisterSerializer,
         responses={202: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
         examples=[
             OpenApiExample(
                 "New account",
-                value={"username": "alice", "email": "alice@example.com", "password": "A-long-unique-passphrase-7"},
+                value={"full_name": "Alice Johnson", "email": "alice@example.com", "password": "A-long-unique-passphrase-7",
+                       "password_confirm": "A-long-unique-passphrase-7"},
                 request_only=True,
             ),
             OpenApiExample(
@@ -118,87 +130,109 @@ class RegisterView(APIView):
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        username = serializer.validated_data["username"]
+        supplied_username = serializer.validated_data.get("username")
+        full_name = serializer.validated_data["full_name"]
         email = serializer.validated_data["email"]
         password = serializer.validated_data["password"]
-        code = generate_verification_code()
+        token = generate_verification_token()
         now = timezone.now()
         expires_at = now + timedelta(
-            seconds=settings.SIGNUP_VERIFICATION_CODE_LIFETIME_SECONDS
+            seconds=settings.SIGNUP_VERIFICATION_LINK_LIFETIME_SECONDS
         )
         resend_at = now + timedelta(
             seconds=settings.SIGNUP_VERIFICATION_RESEND_COOLDOWN_SECONDS
         )
 
-        try:
-            with transaction.atomic():
-                active = list(
-                    PendingRegistration.objects.select_for_update().filter(
-                        Q(username__iexact=username) | Q(email__iexact=email),
-                        status__in=PendingRegistration.ACTIVE_STATUSES,
+        pending = None
+        for attempt in range(3):
+            try:
+                with transaction.atomic():
+                    username = supplied_username
+                    if not username:
+                        # Registering again with the same address keeps its pending row (and its username) when still free.
+                        same_email = PendingRegistration.objects.filter(
+                            email__iexact=email, status__in=PendingRegistration.ACTIVE_STATUSES,
+                        ).first()
+                        if same_email and not User.objects.filter(username__iexact=same_email.username).exists():
+                            username = same_email.username
+                        else:
+                            username = derive_username(email)
+                    active = list(
+                        PendingRegistration.objects.select_for_update().filter(
+                            Q(username__iexact=username) | Q(email__iexact=email),
+                            status__in=PendingRegistration.ACTIVE_STATUSES,
+                        )
                     )
-                )
-                conflicting = next(
-                    (
-                        item
-                        for item in active
-                        if item.username.lower() != username.lower()
-                        or item.email.lower() != email.lower()
-                    ),
-                    None,
-                )
-                if conflicting:
+                    conflicting = next(
+                        (
+                            item
+                            for item in active
+                            if item.username.lower() != username.lower()
+                            or item.email.lower() != email.lower()
+                        ),
+                        None,
+                    )
+                    if conflicting:
+                        return Response(
+                            {
+                                "detail": (
+                                    "An active registration already uses this "
+                                    "username or email address."
+                                )
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+
+                    pending = active[0] if active else PendingRegistration()
+                    pending.username = username
+                    pending.full_name = full_name
+                    pending.email = email
+                    pending.password_hash = make_password(password)
+                    pending.token_hash = hash_verification_token(token)
+                    pending.status = PendingRegistration.STATUS_PENDING
+                    pending.failed_attempts = 0
+                    pending.resend_count = 1
+                    pending.resend_window_started_at = now
+                    pending.token_expires_at = expires_at
+                    pending.resend_available_at = resend_at
+                    pending.consumed_at = None
+                    pending.created_user = None
+                    pending.save()
+
+                    send_signup_verification_link(email, pending.public_id, token, full_name)
+                    record_auth_event(
+                        "registration_pending",
+                        request,
+                        identifier=email,
+                        details={"registration_id": str(pending.public_id)},
+                    )
+                    record_auth_event(
+                        "verification_code_sent",
+                        request,
+                        identifier=email,
+                        details={"registration_id": str(pending.public_id), "kind": "link"},
+                    )
+                break
+            except IntegrityError:
+                # Two sign-ups chose the same derived username at once: derive again. A username the person typed is theirs to change.
+                if supplied_username or attempt == 2:
                     return Response(
-                        {
-                            "detail": (
-                                "An active registration already uses this "
-                                "username or email address."
-                            )
-                        },
-                        status=status.HTTP_400_BAD_REQUEST,
+                        {"detail": "That username was just taken. Please try again."},
+                        status=status.HTTP_409_CONFLICT,
                     )
-
-                pending = active[0] if active else PendingRegistration()
-                pending.username = username
-                pending.email = email
-                pending.password_hash = make_password(password)
-                pending.code_hash = make_password(code)
-                pending.status = PendingRegistration.STATUS_PENDING
-                pending.failed_attempts = 0
-                pending.resend_count = 1
-                pending.resend_window_started_at = now
-                pending.code_expires_at = expires_at
-                pending.resend_available_at = resend_at
-                pending.consumed_at = None
-                pending.created_user = None
-                pending.save()
-
-                send_signup_verification_code(email, code)
-                record_auth_event(
-                    "registration_pending",
-                    request,
-                    identifier=email,
-                    details={"registration_id": str(pending.public_id)},
+            except Exception:
+                logger.exception("Unable to send signup verification email.")
+                return Response(
+                    {"detail": "Verification email delivery is temporarily unavailable."},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
                 )
-                record_auth_event(
-                    "verification_code_sent",
-                    request,
-                    identifier=email,
-                    details={"registration_id": str(pending.public_id)},
-                )
-        except Exception:
-            logger.exception("Unable to send signup verification email.")
-            return Response(
-                {"detail": "Verification email delivery is temporarily unavailable."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
 
         return Response(
             {
                 "registration_id": str(pending.public_id),
                 "email": mask_email(email),
-                "detail": "A six-digit verification code has been sent.",
-                "expires_in_seconds": settings.SIGNUP_VERIFICATION_CODE_LIFETIME_SECONDS,
+                "detail": "A verification link has been sent to your email address.",
+                "expires_in_seconds": settings.SIGNUP_VERIFICATION_LINK_LIFETIME_SECONDS,
                 "resend_available_in_seconds": (
                     settings.SIGNUP_VERIFICATION_RESEND_COOLDOWN_SECONDS
                 ),
@@ -352,8 +386,12 @@ class VerifyEmailView(APIView):
     throttle_scope = "verification"
 
     @extend_schema(
-        summary="Verify a signup code",
-        description="Verifies the six-digit code and, on success, creates the account.",
+        summary="Verify a signup link",
+        description=(
+            "Send the `registration_id` and `token` from the link in the signup email. On success the account is created (201). "
+            "The token works once and expires after SIGNUP_VERIFICATION_LINK_LIFETIME_SECONDS; wrong tokens are counted and "
+            "the registration locks (423) after too many."
+        ),
         request=VerifyRegistrationSerializer,
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
     )
@@ -361,7 +399,7 @@ class VerifyEmailView(APIView):
         serializer = VerifyRegistrationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         registration_id = serializer.validated_data["registration_id"]
-        code = serializer.validated_data["code"]
+        token = serializer.validated_data["token"]
         now = timezone.now()
 
         with transaction.atomic():
@@ -379,17 +417,17 @@ class VerifyEmailView(APIView):
                 pending.status == PendingRegistration.STATUS_CONSUMED
                 and pending.created_user
             ):
+                # The link is in a URL (history, referrers, logs): say only that the account exists, never who it belongs to.
                 return Response(
                     {
                         "detail": "Account has already been created.",
-                        "user": UserSerializer(pending.created_user).data,
                         "login_required": True,
                     },
                     status=status.HTTP_200_OK,
                 )
             if pending.status == PendingRegistration.STATUS_LOCKED:
                 return Response(
-                    {"detail": "Too many incorrect attempts. Request a new code."},
+                    {"detail": "Too many incorrect attempts. Request a new link."},
                     status=status.HTTP_423_LOCKED,
                 )
             if pending.status in {
@@ -400,18 +438,18 @@ class VerifyEmailView(APIView):
                     {"detail": "Invalid or expired verification request."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            if pending.code_expires_at <= now:
+            if pending.token_expires_at <= now:
                 pending.status = PendingRegistration.STATUS_EXPIRED
                 pending.save(update_fields=["status", "updated_at"])
                 return Response(
                     {
                         "detail": (
-                            "The verification code has expired. Request a new code."
+                            "The verification link has expired. Request a new link."
                         )
                     },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            if not check_password(code, pending.code_hash):
+            if not verification_token_matches(token, pending.token_hash):
                 pending.failed_attempts += 1
                 attempts_remaining = max(
                     0,
@@ -431,9 +469,9 @@ class VerifyEmailView(APIView):
                 return Response(
                     {
                         "detail": (
-                            "Too many incorrect attempts. Request a new code."
+                            "Too many incorrect attempts. Request a new link."
                             if attempts_remaining == 0
-                            else "Incorrect verification code."
+                            else "This verification link is not valid. Request a new link."
                         ),
                         "attempts_remaining": attempts_remaining,
                     },
@@ -446,12 +484,12 @@ class VerifyEmailView(APIView):
             ).exists():
                 pending.status = PendingRegistration.STATUS_CANCELLED
                 pending.password_hash = ""
-                pending.code_hash = ""
+                pending.token_hash = ""
                 pending.save(
                     update_fields=[
                         "status",
                         "password_hash",
-                        "code_hash",
+                        "token_hash",
                         "updated_at",
                     ]
                 )
@@ -467,9 +505,12 @@ class VerifyEmailView(APIView):
 
             try:
                 with transaction.atomic():
+                    first_name, last_name = split_full_name(pending.full_name)
                     user = User(
                         username=pending.username,
                         email=pending.email,
+                        first_name=first_name,
+                        last_name=last_name,
                         role="user",
                         is_email_verified=True,
                     )
@@ -479,12 +520,12 @@ class VerifyEmailView(APIView):
             except IntegrityError:
                 pending.status = PendingRegistration.STATUS_CANCELLED
                 pending.password_hash = ""
-                pending.code_hash = ""
+                pending.token_hash = ""
                 pending.save(
                     update_fields=[
                         "status",
                         "password_hash",
-                        "code_hash",
+                        "token_hash",
                         "updated_at",
                     ]
                 )
@@ -502,14 +543,14 @@ class VerifyEmailView(APIView):
             pending.consumed_at = now
             pending.created_user = user
             pending.password_hash = ""
-            pending.code_hash = ""
+            pending.token_hash = ""   # single use: nothing is left to match
             pending.save(
                 update_fields=[
                     "status",
                     "consumed_at",
                     "created_user",
                     "password_hash",
-                    "code_hash",
+                    "token_hash",
                     "updated_at",
                 ]
             )
@@ -531,8 +572,8 @@ class ResendVerificationView(APIView):
     throttle_scope = "verification"
 
     @extend_schema(
-        summary="Resend a signup code",
-        description="Invalidates the current code and sends a new one to the same pending registration.",
+        summary="Resend a signup link",
+        description="Invalidates the current link and emails a new one for the same pending registration.",
         request=ResendVerificationSerializer,
         responses={200: OpenApiTypes.OBJECT, 429: OpenApiTypes.OBJECT},
     )
@@ -542,9 +583,9 @@ class ResendVerificationView(APIView):
         registration_id = serializer.validated_data["registration_id"]
         now = timezone.now()
         generic_detail = (
-            "If the registration is eligible, a new verification code has been sent."
+            "If the registration is eligible, a new verification link has been sent."
         )
-        code = generate_verification_code()
+        token = generate_verification_token()
 
         try:
             with transaction.atomic():
@@ -565,7 +606,7 @@ class ResendVerificationView(APIView):
                     )
                     return Response(
                         {
-                            "detail": "Please wait before requesting another code.",
+                            "detail": "Please wait before requesting another link.",
                             "retry_after_seconds": retry_after,
                         },
                         status=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -609,12 +650,12 @@ class ResendVerificationView(APIView):
                 if conflicting_user or conflicting_pending:
                     pending.status = PendingRegistration.STATUS_CANCELLED
                     pending.password_hash = ""
-                    pending.code_hash = ""
+                    pending.token_hash = ""
                     pending.save(
                         update_fields=[
                             "status",
                             "password_hash",
-                            "code_hash",
+                            "token_hash",
                             "updated_at",
                         ]
                     )
@@ -623,9 +664,9 @@ class ResendVerificationView(APIView):
                         status=status.HTTP_409_CONFLICT,
                     )
 
-                pending.code_hash = make_password(code)
-                pending.code_expires_at = now + timedelta(
-                    seconds=settings.SIGNUP_VERIFICATION_CODE_LIFETIME_SECONDS
+                pending.token_hash = hash_verification_token(token)   # the old link stops working here
+                pending.token_expires_at = now + timedelta(
+                    seconds=settings.SIGNUP_VERIFICATION_LINK_LIFETIME_SECONDS
                 )
                 pending.resend_available_at = now + timedelta(
                     seconds=settings.SIGNUP_VERIFICATION_RESEND_COOLDOWN_SECONDS
@@ -634,7 +675,7 @@ class ResendVerificationView(APIView):
                 pending.resend_count += 1
                 pending.status = PendingRegistration.STATUS_PENDING
                 pending.save()
-                send_signup_verification_code(pending.email, code)
+                send_signup_verification_link(pending.email, pending.public_id, token, pending.full_name)
                 record_auth_event(
                     "verification_code_sent",
                     request,
@@ -642,6 +683,7 @@ class ResendVerificationView(APIView):
                     details={
                         "registration_id": str(pending.public_id),
                         "reason": "resend",
+                        "kind": "link",
                     },
                 )
         except Exception:
@@ -683,7 +725,7 @@ class RegistrationStatusView(APIView):
         public_status = pending.status
         if (
             public_status == PendingRegistration.STATUS_PENDING
-            and pending.code_expires_at <= now
+            and pending.token_expires_at <= now
         ):
             public_status = PendingRegistration.STATUS_EXPIRED
         return Response(
@@ -692,7 +734,7 @@ class RegistrationStatusView(APIView):
                 "email": mask_email(pending.email),
                 "expires_in_seconds": max(
                     0,
-                    int((pending.code_expires_at - now).total_seconds()),
+                    int((pending.token_expires_at - now).total_seconds()),
                 ),
                 "resend_available_in_seconds": max(
                     0,
@@ -880,10 +922,58 @@ class UserDashboardView(APIView):
         return Response(UserDashboardSerializer(build_user_dashboard(request.user)).data)
 
 
-class AdminUserListView(generics.ListAPIView):
+@extend_schema_view(
+    get=extend_schema(summary="List every account (administrators)"),
+    post=extend_schema(
+        summary="Create an account (administrators)",
+        description=(
+            "Creates an **already verified** account for someone, with a password the administrator hands over. No email is sent "
+            "and the password is never returned or logged. `role` is `user` or `moderator` (never `admin`). A moderator is also "
+            "added to an organization so the moderator panel can find it: the one in `organization_id`, otherwise the only active "
+            "non-personal organization; with none or several the request is refused (400 `detail`). `username` may be left blank "
+            "(derived from the email); `full_name` is optional. Errors are field errors under `email`, `username`, `password`, "
+            "`role`. Respond 201 with the same representation the list returns."
+        ),
+        request=AdminUserCreateSerializer,
+        responses={201: AdminUserSerializer, 400: OpenApiTypes.OBJECT, 403: OpenApiTypes.OBJECT},
+        examples=[
+            OpenApiExample("A plain user", value={"username": "sara", "email": "sara@example.com", "password": "Ocean!Breeze2026x",
+                                                   "role": "user"}, request_only=True),
+            OpenApiExample("A moderator", value={"username": "omar", "email": "omar@example.com", "password": "Ocean!Breeze2026x",
+                                                  "role": "moderator", "organization_id": 3}, request_only=True),
+            OpenApiExample("Created", value={"id": 12, "username": "omar", "email": "omar@example.com", "full_name": "omar",
+                                             "role": "moderator", "is_email_verified": True, "is_suspended": False,
+                                             "suspension_reason": "", "is_active": True, "date_joined": "2026-10-16T15:30:00Z"},
+                           response_only=True, status_codes=["201"]),
+            OpenApiExample("Several organizations", value={"detail": "There is more than one organization: send organization_id to choose one."},
+                           response_only=True, status_codes=["400"]),
+            OpenApiExample("Weak password", value={"password": ["This password is too common."]}, response_only=True, status_codes=["400"]),
+        ],
+    ),
+)
+class AdminUserListView(generics.ListCreateAPIView):
+    """``GET`` lists everyone (a plain array unless ``page``/``page_size`` is sent); ``POST`` creates an account."""
+
     queryset = User.objects.all().order_by("-date_joined")
     serializer_class = AdminUserSerializer
     permission_classes = [permissions.IsAuthenticated, IsAdminRole]
+
+    def get_serializer_class(self):
+        return AdminUserCreateSerializer if self.request.method == "POST" else AdminUserSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = AdminUserCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            user = create_account_as_admin(
+                administrator=request.user, username=data["username"], email=data["email"], password=data["password"],
+                role=data["role"], organization=data.get("organization"), full_name=data.get("full_name", ""), request=request,
+            )
+        except IntegrityError:
+            # A concurrent request took the username or email between the validation and the insert.
+            raise serializers.ValidationError({"email": ["A user with this email or username already exists."]}) from None
+        return Response(AdminUserSerializer(user).data, status=status.HTTP_201_CREATED)
 
 
 class AdminUserUpdateView(generics.RetrieveUpdateAPIView):
