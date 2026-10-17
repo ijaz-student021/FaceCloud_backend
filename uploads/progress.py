@@ -3,6 +3,7 @@ from datetime import timedelta
 from django.db.models import Avg
 from django.utils import timezone
 
+from .display_status import image_display_status
 from .models import BatchImageProgress, ImageUpload, UploadBatch
 
 
@@ -144,12 +145,30 @@ def recompute_batch_progress(batch_id):
     return {"total": total, "counts": counts, "percentage": percentage, "stage": stage, "status": processing_status}
 
 
+def _progress_records(batch):
+    from django.db.models import Prefetch
+
+    from enhancement.models import ImageEnhancementResult
+
+    return (
+        batch.image_progress.select_related(
+            "image", "image__preprocessing_result", "image__face_validation", "image__quality_decision",
+        )
+        .prefetch_related(Prefetch(
+            "image__enhancement_results",
+            queryset=ImageEnhancementResult.objects.order_by("-created_at"),
+            to_attr="ordered_enhancement_results",
+        ))
+        .order_by("image_id")
+    )
+
+
 def batch_progress_payload(batch):
     for image_id in batch.images.values_list("pk", flat=True):
         sync_image_progress(image_id)
     summary = recompute_batch_progress(batch.pk)
     batch.refresh_from_db()
-    records = list(batch.image_progress.select_related("image").order_by("image_id"))
+    records = list(_progress_records(batch))
     durations = [(item.finished_at - item.started_at).total_seconds() for item in records if item.started_at and item.finished_at]
     remaining = summary["counts"]["queued"] + summary["counts"]["processing"]
     eta = timezone.now() + timedelta(seconds=(sum(durations) / len(durations)) * remaining) if durations and remaining else None
@@ -162,6 +181,7 @@ def batch_progress_payload(batch):
         "images": [{
             "image_id": item.image_id, "filename": item.image.original_name,
             "stage": item.stage, "status": item.status,
+            "display_status": image_display_status(item.image),
             "progress_percentage": item.progress_percentage,
             "failure_stage": item.failure_stage, "failure_reason": item.failure_reason,
             "retry_count": item.retry_count, "updated_at": item.updated_at,
