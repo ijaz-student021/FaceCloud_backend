@@ -3,7 +3,7 @@ from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.db.models import OuterRef, Prefetch, Q, Subquery
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import generics, permissions, serializers, status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
@@ -14,6 +14,7 @@ from rest_framework.pagination import PageNumberPagination
 from enhancement.models import ImageEnhancementResult
 from identities.models import IdentityFace, IdentityMembership
 
+from .display_status import with_status_relations
 from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
 from .progress import batch_progress_payload
 from .serializers import (
@@ -38,6 +39,16 @@ def _all_request_files(request):
     return [uploaded for field in request.FILES for uploaded in request.FILES.getlist(field)]
 
 
+def _images_with_status():
+    return Prefetch("images", queryset=with_status_relations(ImageUpload.objects.select_related("preprocessing_result")))
+
+
+def _batch_response(request, batch):
+    """The upload response: the batch with each photo's status, loaded in a fixed number of queries."""
+    batch = UploadBatch.objects.prefetch_related(_images_with_status()).get(pk=batch.pk)
+    return Response(UploadBatchSerializer(batch, context={"request": request}).data, status=status.HTTP_201_CREATED)
+
+
 class SingleImageUploadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
@@ -54,7 +65,7 @@ class SingleImageUploadView(APIView):
         if len(files) != 1:
             raise ValidationError({"file": "Select exactly one image for single-image upload."})
         batch = create_image_batch(request.user, "single", files)
-        return Response(UploadBatchSerializer(batch, context={"request": request}).data, status=status.HTTP_201_CREATED)
+        return _batch_response(request, batch)
 
 
 class MultipleImageUploadView(APIView):
@@ -76,7 +87,7 @@ class MultipleImageUploadView(APIView):
             raise ValidationError({"files": "Submit all images using the repeated 'files' field."})
         batch = create_image_batch(request.user, "multiple", files)
         batch = enqueue_batch_preprocessing(batch)
-        return Response(UploadBatchSerializer(batch, context={"request": request}).data, status=status.HTTP_201_CREATED)
+        return _batch_response(request, batch)
 
 
 class ZipImageUploadView(APIView):
@@ -97,7 +108,7 @@ class ZipImageUploadView(APIView):
         uploaded_zip = files[0]
         batch = create_zip_batch(request.user, uploaded_zip)
         batch = enqueue_batch_preprocessing(batch)
-        return Response(UploadBatchSerializer(batch, context={"request": request}).data, status=status.HTTP_201_CREATED)
+        return _batch_response(request, batch)
 
 
 class UploadBatchListView(generics.ListAPIView):
@@ -105,10 +116,7 @@ class UploadBatchListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        images = ImageUpload.objects.select_related("preprocessing_result")
-        return UploadBatch.objects.filter(owner=self.request.user).prefetch_related(
-            Prefetch("images", queryset=images)
-        )
+        return UploadBatch.objects.filter(owner=self.request.user).prefetch_related(_images_with_status())
 
 
 class UploadBatchDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -116,10 +124,7 @@ class UploadBatchDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        images = ImageUpload.objects.select_related("preprocessing_result")
-        return UploadBatch.objects.filter(owner=self.request.user).prefetch_related(
-            Prefetch("images", queryset=images)
-        )
+        return UploadBatch.objects.filter(owner=self.request.user).prefetch_related(_images_with_status())
 
     def perform_destroy(self, instance):
         delete_batch(instance)
@@ -154,12 +159,26 @@ class UploadBatchRetryView(APIView):
         return Response(batch_progress_payload(batch), status=status.HTTP_202_ACCEPTED)
 
 
+BATCH_FILTER = OpenApiParameter(
+    "batch", int, required=False, description="Only photos from this upload batch (a batch id of yours).",
+)
+
+
+@extend_schema_view(get=extend_schema(parameters=[BATCH_FILTER]))
 class ImageUploadListView(generics.ListAPIView):
+    """Every photo the caller uploaded; ``?batch=<id>`` narrows it to one upload."""
+
     serializer_class = ImageUploadSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return ImageUpload.objects.filter(owner=self.request.user).select_related("batch", "preprocessing_result")
+        queryset = ImageUpload.objects.filter(owner=self.request.user).select_related("batch", "preprocessing_result")
+        batch = self.request.query_params.get("batch")
+        if batch:
+            if not batch.isdigit():
+                raise ValidationError({"batch": "Batch must be a positive integer."})
+            queryset = queryset.filter(batch_id=int(batch))
+        return queryset
 
 
 class MyImagesPagination(PageNumberPagination):
@@ -214,6 +233,7 @@ def my_images_queryset(user):
     )
 
 
+@extend_schema_view(get=extend_schema(parameters=[BATCH_FILTER]))
 class MyImageListView(generics.ListAPIView):
     serializer_class = MyImageSerializer
     permission_classes = [permissions.IsAuthenticated]
