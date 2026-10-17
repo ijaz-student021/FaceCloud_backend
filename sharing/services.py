@@ -36,26 +36,43 @@ def active_links(owner, now=None):
     )
 
 
-def create_share_link(*, owner, result, edit=None, ttl_hours=None, label="", watermark=None):
-    """Create a link and return ``(link, raw_token)``; the token is never stored."""
+def _new_link(*, owner, ttl_hours, label, watermark, cap=None, **target):
+    """Shared by every kind of link: the per-user limit, the token, the audit event."""
     limit = settings.SHARE_LINK_MAX_ACTIVE_PER_USER
     if limit and active_links(owner).count() >= limit:
         raise TooManyShareLinks(
             f"You already have {limit} active share links. Revoke one or wait for it to expire."
         )
     ttl = ttl_hours or settings.SHARE_LINK_DEFAULT_TTL_HOURS
+    expires_at = timezone.now() + timedelta(hours=ttl)
+    if cap is not None:
+        expires_at = min(expires_at, cap)
     token = secrets.token_urlsafe(32)
     link = ShareLink.objects.create(
-        owner=owner, enhancement_result=result, edit_version=edit,
-        token_hash=hash_token(token), label=label,
-        watermark=watermark or {},
-        expires_at=timezone.now() + timedelta(hours=ttl),
+        owner=owner, token_hash=hash_token(token), label=label,
+        watermark=watermark or {}, expires_at=expires_at, **target,
     )
     record_activity_event(
         owner, "share", "share_link_created", object_type="ShareLink", object_id=link.pk,
         details={"expires_at": link.expires_at.isoformat(), "watermarked": bool(watermark)},
     )
     return link, token
+
+
+def create_share_link(*, owner, result, edit=None, ttl_hours=None, label="", watermark=None):
+    """Create a link and return ``(link, raw_token)``; the token is never stored."""
+    return _new_link(
+        owner=owner, ttl_hours=ttl_hours, label=label, watermark=watermark,
+        enhancement_result=result, edit_version=edit,
+    )
+
+
+def create_export_share_link(*, owner, export, ttl_hours=None, label=""):
+    """A link to a person folder's finished ZIP; it never outlives the ZIP itself."""
+    return _new_link(
+        owner=owner, ttl_hours=ttl_hours, label=label, watermark=None,
+        cap=export.expires_at, identity_export=export,
+    )
 
 
 def revoke_share_link(link):
@@ -78,6 +95,7 @@ def resolve_public_link(token):
     link = (
         ShareLink.objects.select_related(
             "owner", "enhancement_result", "enhancement_result__image", "edit_version",
+            "identity_export",
         )
         .filter(token_hash=hash_token(token or ""))
         .first()
@@ -87,11 +105,27 @@ def resolve_public_link(token):
     owner = link.owner
     if link.state() != ShareLink.State.ACTIVE or not owner.is_active or owner.is_suspended:
         raise LinkGone()
+    if link.identity_export_id and not export_is_servable(link.identity_export):
+        raise LinkGone()
     return link
+
+
+def export_is_servable(export):
+    """A folder ZIP can be served while it is ready, unexpired and still stored."""
+    from identities.models import IdentityGroupExport
+
+    if export.status != IdentityGroupExport.Status.READY or not export.export_file:
+        return False
+    if export.expires_at and export.expires_at <= timezone.now():
+        return False
+    return export.export_file.storage.exists(export.export_file.name)
 
 
 def shared_file(link):
     """``(file_field, output_format, filename, width, height)`` for what the link shows."""
+    if link.identity_export_id:
+        export = link.identity_export
+        return export.export_file, "zip", export.display_name or "photos.zip", None, None
     edit = link.edit_version
     if edit is not None:
         return (

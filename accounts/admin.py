@@ -25,25 +25,27 @@ class PendingRegistrationAdmin(admin.ModelAdmin):
     list_display = (
         "public_id",
         "username",
+        "full_name",
         "email",
         "status",
         "failed_attempts",
-        "code_expires_at",
+        "token_expires_at",
         "created_at",
     )
-    list_filter = ("status", "created_at", "code_expires_at")
+    list_filter = ("status", "created_at", "token_expires_at")
     search_fields = ("public_id", "username", "email")
     readonly_fields = (
         "public_id",
         "username",
+        "full_name",
         "email",
         "password_hash",
-        "code_hash",
+        "token_hash",
         "status",
         "failed_attempts",
         "resend_count",
         "resend_window_started_at",
-        "code_expires_at",
+        "token_expires_at",
         "resend_available_at",
         "consumed_at",
         "created_user",

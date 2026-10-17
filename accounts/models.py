@@ -2,13 +2,27 @@ import uuid
 
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
-from django.contrib.auth.models import AbstractUser
+from django.contrib.auth.models import AbstractUser, UserManager
 from django.db import models
 from django.db.models.functions import Lower
 
 
 def avatar_upload_path(instance, filename):
     return f"users/{instance.pk}/avatar/{uuid.uuid4().hex}.png"
+
+
+class FaceCloudUserManager(UserManager):
+    """``create_superuser`` makes an account that can actually sign in.
+
+    A superuser has no signup email to click, and login refuses ``is_email_verified=False``, so ``manage.py createsuperuser`` used to
+    produce an account that could not log in. It is now verified and has the ``admin`` role unless the caller says otherwise.
+    ``create_user`` is unchanged: a normal account still has to verify its email.
+    """
+
+    def create_superuser(self, username, email=None, password=None, **extra_fields):
+        extra_fields.setdefault("is_email_verified", True)
+        extra_fields.setdefault("role", "admin")
+        return super().create_superuser(username, email, password, **extra_fields)
 
 
 class User(AbstractUser):
@@ -31,6 +45,13 @@ class User(AbstractUser):
     avatar = models.FileField(upload_to=avatar_upload_path, blank=True)
     avatar_updated_at = models.DateTimeField(null=True, blank=True)
 
+    objects = FaceCloudUserManager()
+
+    @property
+    def full_name(self):
+        """First and last name as one string; the username when the person has no name on record."""
+        return self.get_full_name().strip() or self.get_username()
+
 
 class AuthEvent(models.Model):
     EVENT_CHOICES = [
@@ -51,6 +72,7 @@ class AuthEvent(models.Model):
         ("suspended", "Suspended"),
         ("reactivated", "Reactivated"),
         ("account_deleted", "Account deleted"),
+        ("admin_created_account", "Account created by an administrator"),
         ("two_factor_enabled", "Two-factor authentication enabled"),
         ("two_factor_disabled", "Two-factor authentication disabled"),
         ("two_factor_recovery_codes_regenerated", "Two-factor recovery codes regenerated"),
@@ -104,8 +126,11 @@ class PendingRegistration(models.Model):
     public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     username = models.CharField(max_length=150)
     email = models.EmailField(max_length=254)
+    # What the person typed on the signup form; copied to first_name / last_name when the account is created.
+    full_name = models.CharField(max_length=150, blank=True, default="")
     password_hash = models.CharField(max_length=128)
-    code_hash = models.CharField(max_length=128)
+    # SHA-256 (hex) of the single-use link token; the token itself is never stored.
+    token_hash = models.CharField(max_length=128)
     status = models.CharField(
         max_length=16,
         choices=STATUS_CHOICES,
@@ -114,7 +139,7 @@ class PendingRegistration(models.Model):
     failed_attempts = models.PositiveSmallIntegerField(default=0)
     resend_count = models.PositiveSmallIntegerField(default=1)
     resend_window_started_at = models.DateTimeField()
-    code_expires_at = models.DateTimeField()
+    token_expires_at = models.DateTimeField()
     resend_available_at = models.DateTimeField()
     consumed_at = models.DateTimeField(null=True, blank=True)
     created_user = models.OneToOneField(
@@ -143,7 +168,7 @@ class PendingRegistration(models.Model):
         ]
         indexes = [
             models.Index(
-                fields=["status", "code_expires_at"],
+                fields=["status", "token_expires_at"],
                 name="acct_pending_status_exp_idx",
             ),
             models.Index(fields=["email"], name="accounts_pending_email_idx"),

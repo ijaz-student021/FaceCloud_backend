@@ -5,8 +5,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
 
-from enhancement.models import EnhancementBatchJob, ImageEnhancementResult
-from identities.models import IdentityAnalysis
+from enhancement.models import ImageEnhancementResult
 from uploads.models import (
     BatchImageProgress,
     ImagePreprocessingResult,

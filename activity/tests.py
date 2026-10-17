@@ -3,10 +3,8 @@ from django.test import TestCase
 from django.urls import reverse
 from rest_framework.test import APITestCase
 
-from accounts.models import AuthEvent
 from accounts.services import record_auth_event
 
-from .models import ActivityEvent
 from .services import get_user_timeline, record_activity_event
 
 User = get_user_model()

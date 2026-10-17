@@ -205,6 +205,11 @@ class IdentityGroupExport(models.Model):
         choices=ReportFormat.choices,
         default=ReportFormat.JSON,
     )
+    # Photos the person picked from the folder; empty means every photo in it.
+    # selection_key is a digest of the sorted ids ("" for all) so the
+    # one-active-export rule below can tell two different selections apart.
+    image_ids = models.JSONField(default=list, blank=True)
+    selection_key = models.CharField(max_length=64, blank=True, default="")
     status = models.CharField(
         max_length=12,
         choices=Status.choices,
@@ -240,7 +245,7 @@ class IdentityGroupExport(models.Model):
                 fields=[
                     "owner", "identity_group", "include_originals",
                     "include_preprocessed", "include_enhanced",
-                    "include_report", "report_format",
+                    "include_report", "report_format", "selection_key",
                 ],
                 condition=Q(status__in=["queued", "generating"]),
                 name="identity_one_active_group_export",

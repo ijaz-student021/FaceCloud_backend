@@ -7,11 +7,11 @@ import numpy as np
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from organizations.services import get_default_organization
+from privacy.errors import ConsentRequired
 from uploads.models import ImagePreprocessingResult, UploadBatch
 from validation.models import FaceValidationResult
 from validation.services import get_face_detector
@@ -126,7 +126,7 @@ def search_by_face(owner, uploaded_file):
     from privacy.services import biometric_processing_allowed
 
     if not biometric_processing_allowed(owner):
-        raise ValidationError("Biometric consent is required before face search.")
+        raise ConsentRequired("Biometric consent is required before face search.")
     provider = get_identity_provider()
     provider.healthcheck()
     detector = get_face_detector()
@@ -282,7 +282,7 @@ def enqueue_identity_analysis(image, force=False):
     from privacy.services import biometric_processing_allowed
     from .tasks import analyze_image_identity_task
     if not biometric_processing_allowed(image.owner):
-        raise ValidationError("Biometric consent is required before identity analysis.")
+        raise ConsentRequired("Biometric consent is required before identity analysis.")
     provider = get_identity_provider()
     provider.healthcheck()
     analysis, should_queue = create_or_reset_identity_analysis(image, force)

@@ -23,7 +23,6 @@ from .models import (
     ModelComparisonOutput,
 )
 from .comparison import (
-    PROFILES as COMPARISON_PROFILES,
     build_report_csv,
     ensure_comparison_capacity,
     validate_profiles,

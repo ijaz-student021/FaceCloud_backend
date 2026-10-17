@@ -8,6 +8,19 @@ roles, suspension and reactivation were already complete before this feature
 operational side: monitoring failed work and acting on it, and a platform-wide
 audit trail.
 
+## Creating accounts (added 2026-10-16)
+
+`POST /api/user/admin/users/` (administrators only, `accounts.AdminUserListView`) creates an already-verified account: `{username, email,
+password, role: "user" | "moderator", organization_id?, full_name?}` -> `201` with the same representation the list returns. The signup
+password rules and duplicate checks apply (field errors under `email`, `username`, `password`, `role`); a blank username is derived from the
+email; `role: "admin"` is refused. For a moderator, the account and an active moderator `OrganizationMembership` are created in one
+transaction, in the organization given by `organization_id` or else the only active non-personal one (none or several -> 400 with a
+plain `detail`; a suspended, missing or personal organization is refused). One `admin_created_account` `AuthEvent` names the administrator
+(`details.administrator_id`) and the new account; the password is never logged, returned or emailed. Admin-created accounts get **no personal
+workspace** (signup creates one when the email is verified). Verified by tests: such a user can sign in and upload (their batches belong to no
+organization), and a moderator's own uploads are tagged to the organization they moderate, because that is their only membership.
+`createsuperuser` now produces a verified `admin` account (`accounts.models.FaceCloudUserManager`).
+
 ## What it adds
 
 | Endpoint | Purpose |

@@ -1,3 +1,4 @@
+from django.db.models import Exists, F, OuterRef, Prefetch, Subquery
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from drf_spectacular.types import OpenApiTypes
@@ -9,8 +10,12 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from uploads.models import ImageUpload
+from uploads.views import MyImagesPagination, my_images_queryset
 from downloads.models import DownloadEvent
 from downloads.services import record_download
+
+from sharing.serializers import ShareLinkCreatedSerializer
+from sharing.services import create_export_share_link
 
 from .export_services import (IdentityExportNotReadyError,
                               enqueue_identity_group_export,
@@ -20,7 +25,8 @@ from .management import (delete_empty_group, merge_groups, move_membership,
                          remove_membership, rename_group, set_profile_membership)
 from .models import (IdentityAnalysis, IdentityChange, IdentityGroup,
                      IdentityGroupExport, IdentityMembership)
-from .serializers import (IdentityAnalysisSerializer, IdentityAnalyzeRequestSerializer,
+from .image_serializers import IdentityGroupImageSerializer
+from .serializers import (IdentityAnalysisSerializer, IdentityExportShareRequestSerializer, IdentityAnalyzeRequestSerializer,
                           IdentityChangeSerializer,
                           IdentityGroupExportRequestSerializer,
                           IdentityGroupExportSerializer, IdentityGroupSerializer,
@@ -97,12 +103,25 @@ class IdentityVisualSearchView(APIView):
         return Response(IdentitySearchResponseSerializer(payload, context={"request": request}).data)
 
 
+def _member_prefetch():
+    """Each group's members (with their photo) in one extra query for a whole page of groups."""
+    return Prefetch(
+        "memberships",
+        queryset=IdentityMembership.objects.exclude(
+            state__in=[IdentityMembership.State.REJECTED, IdentityMembership.State.REMOVED],
+        ).select_related("identity_face__image"),
+        to_attr="active_memberships",
+    )
+
+
 class IdentityGroupListView(generics.ListAPIView):
     serializer_class = IdentityGroupSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return IdentityGroup.objects.filter(owner=self.request.user, state=IdentityGroup.State.ACTIVE)
+        return IdentityGroup.objects.filter(
+            owner=self.request.user, state=IdentityGroup.State.ACTIVE,
+        ).prefetch_related(_member_prefetch())
 
 
 class IdentityGroupDetailView(generics.RetrieveAPIView):
@@ -110,14 +129,34 @@ class IdentityGroupDetailView(generics.RetrieveAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return IdentityGroup.objects.filter(owner=self.request.user).prefetch_related("memberships__identity_face")
+        return IdentityGroup.objects.filter(owner=self.request.user).prefetch_related(_member_prefetch())
 
     def retrieve(self, request, *args, **kwargs):
         group = self.get_object()
         data = IdentityGroupSerializer(group, context={"request": request}).data
-        memberships = group.memberships.exclude(state__in=[IdentityMembership.State.REJECTED, IdentityMembership.State.REMOVED]).select_related("identity_face__image")
-        data["memberships"] = IdentityMembershipSerializer(memberships, many=True).data
+        data["memberships"] = IdentityMembershipSerializer(group.active_memberships, many=True).data
         return Response(data)
+
+
+class IdentityGroupImagesView(generics.ListAPIView):
+    """The photos in one person folder, newest first, with the facts a folder grid shows."""
+
+    serializer_class = IdentityGroupImageSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = MyImagesPagination
+
+    def get_queryset(self):
+        group = get_object_or_404(IdentityGroup.objects.filter(owner=self.request.user), pk=self.kwargs["pk"])
+        members = IdentityMembership.objects.filter(
+            owner=self.request.user, identity_group=group, identity_face__image=OuterRef("pk"),
+        ).exclude(state__in=[IdentityMembership.State.REJECTED, IdentityMembership.State.REMOVED])
+        best = members.order_by(F("similarity_score").desc(nulls_last=True)).values("similarity_score")[:1]
+        return (
+            my_images_queryset(self.request.user)
+            .filter(Exists(members))
+            .annotate(group_similarity=Subquery(best))
+            .order_by("-created_at", "-pk")
+        )
 
 
 class IdentityReviewListView(generics.ListAPIView):
@@ -348,6 +387,46 @@ class IdentityGroupExportDownloadView(APIView):
         )
 
 
+class IdentityGroupExportShareView(APIView):
+    """A time-limited public link to a finished folder ZIP, made and revoked like an image share link."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "share_create"
+
+    @extend_schema(
+        summary="Share a finished person-folder ZIP",
+        description=(
+            "Returns the raw token **once**; only its hash is stored. Revoke with "
+            "`POST /api/shares/{id}/revoke/`; the link also stops working when the ZIP expires. "
+            "The recipient opens `public_url` (no login) and receives the ZIP as a download."
+        ),
+        request=IdentityExportShareRequestSerializer,
+        responses={
+            201: ShareLinkCreatedSerializer, 400: OpenApiTypes.OBJECT, 409: OpenApiTypes.OBJECT,
+            410: OpenApiTypes.OBJECT, 429: OpenApiTypes.OBJECT,
+        },
+    )
+    def post(self, request, pk):
+        export = get_object_or_404(IdentityGroupExport.objects.filter(owner=request.user), pk=pk)
+        payload = IdentityExportShareRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        if expire_identity_export_if_needed(export):
+            raise IdentityExportExpired("This identity export has expired. Request regeneration to continue.")
+        if export.status != IdentityGroupExport.Status.READY:
+            raise IdentityExportNotReady("Only a finished identity export can be shared.")
+        if not export.export_file or not export.export_file.storage.exists(export.export_file.name):
+            raise IdentityExportExpired("The generated identity export is unavailable.")
+        link, token = create_export_share_link(
+            owner=request.user, export=export,
+            ttl_hours=payload.validated_data.get("ttl_hours"), label=payload.validated_data.get("label", ""),
+        )
+        link.token = token
+        return Response(
+            ShareLinkCreatedSerializer(link, context={"request": request}).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
 class IdentityGroupExportRegenerateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     throttle_scope = "download_package"
@@ -378,6 +457,7 @@ class IdentityGroupExportRegenerateView(APIView):
             "include_enhanced": export.include_enhanced,
             "include_report": export.include_report,
             "report_format": export.report_format,
+            "image_ids": list(export.image_ids),
         }
         try:
             regenerated, created = enqueue_identity_group_export(

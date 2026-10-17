@@ -36,6 +36,7 @@ process next to the worker: `.\scripts\run_beat.ps1`.
 | expire-share-links | `sharing.cleanup_expired` | daily 04:00 |
 | expire-model-comparisons | `enhancement.cleanup_comparisons` | daily 04:30 |
 | expire-notifications | `notifications.cleanup_expired` | daily 03:45 |
+| purge-pending-registrations | `accounts.cleanup_pending_registrations` | daily 03:55 |
 
 Every entry is safe to repeat and does nothing when its feature is off (the
 retention purge is a no-op while `FACIAL_DATA_RETENTION_DAYS=0`). A test checks

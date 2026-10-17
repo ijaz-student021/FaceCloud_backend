@@ -8,11 +8,11 @@ The backend supports three roles: user, moderator, and administrator. A public r
 
 ## 2. Implemented requirements
 
-- Registration with username, required email, and password
+- Registration with full name, required email, and password (username optional: derived from the email)
 - Case-insensitive username and email uniqueness validation
 - Django password validators and secure password hashing
-- Six-digit signup verification with pending registrations
-- Verification-code expiry, attempt locking, resend cooldown, and hourly limits
+- Signup verification by an emailed link (single-use token) with pending registrations
+- Verification-link expiry, attempt locking, resend cooldown, and hourly limits
 - Login using username, email, or a common identifier field
 - JWT access and refresh tokens
 - Refresh-token rotation and blacklisting
@@ -31,8 +31,8 @@ The backend supports three roles: user, moderator, and administrator. A public r
 ```text
 Registration
   -> serializer validation
-  -> pending password and six-digit code hashes
-  -> verification-code email
+  -> pending password hash, full name and a SHA-256 hash of a one-time token
+  -> email with {FRONTEND_URL}/verify-email?registration_id=...&token=...
   -> locked pending-row verification
   -> atomic verified user creation
   -> pending secrets cleared
@@ -82,12 +82,12 @@ Stores temporary signup state until email ownership is proven:
 
 - Opaque UUID registration ID
 - Normalized username and email
-- Django password hash and verification-code hash
+- Django password hash, the person's full name and the SHA-256 hash of the verification token
 - Expiry, resend cooldown, attempt, and hourly-send limits
 - Pending, locked, expired, cancelled, or consumed status
 - Optional link to the final user for idempotent verification
 
-No permanent `User` exists before successful code verification. Final user
+No permanent `User` exists before successful link verification. Final user
 creation, pending-record consumption, and audit events run in one
 `transaction.atomic()` database transaction.
 
@@ -100,11 +100,11 @@ The account schema is introduced by migrations `accounts.0001` through
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| POST | `/api/auth/register/` | Start pending registration and email a six-digit code |
+| POST | `/api/auth/register/` | Start pending registration (`full_name`, `email`, `password`; `username` optional) and email a verification link |
 | POST | `/api/auth/login/` | Login using username, email, or identifier |
 | POST | `/api/auth/refresh/` | Rotate tokens and return a new access token |
-| POST | `/api/auth/verify-email/` | Verify a signup code and atomically create the user |
-| POST | `/api/auth/verify-email/resend/` | Replace and resend a signup code |
+| POST | `/api/auth/verify-email/` | Verify `registration_id` + `token` and atomically create the user (first/last name from the full name) |
+| POST | `/api/auth/verify-email/resend/` | Replace the token and resend the link |
 | GET | `/api/auth/registrations/{registration_id}/status/` | Read masked pending status |
 | GET | `/api/auth/verify-email/change/{uid}/{token}/` | Verify an existing user's changed email |
 | POST | `/api/auth/password-reset/` | Request password-reset email |
@@ -174,7 +174,7 @@ The frontend must redirect using `dashboard`, but protected backend endpoints st
 ## 8. Security controls
 
 - Passwords are never stored in plain text.
-- Signup codes are generated with `secrets` and stored only as Django hashes.
+- Signup tokens are generated with `secrets.token_urlsafe(32)` and stored only as a SHA-256 hash; they are compared in constant time, work once and are never logged.
 - Permanent users are created only after verified pending rows are locked.
 - Final user creation and pending consumption are atomic.
 - Public registration cannot select a moderator or administrator role.
@@ -198,7 +198,7 @@ Important environment settings include:
 - `PUBLIC_BACKEND_URL`
 - `FRONTEND_URL`
 - SMTP email settings
-- `SIGNUP_VERIFICATION_CODE_LIFETIME_SECONDS`
+- `SIGNUP_VERIFICATION_LINK_LIFETIME_SECONDS`
 - `SIGNUP_VERIFICATION_RESEND_COOLDOWN_SECONDS`
 - `SIGNUP_VERIFICATION_MAX_ATTEMPTS`
 - `SIGNUP_VERIFICATION_MAX_SENDS_PER_HOUR`

@@ -1,3 +1,4 @@
+import hashlib
 import re
 from unittest import mock
 
@@ -51,15 +52,19 @@ class AuthenticationTests(APITestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token.access_token}")
         return token
 
-    def latest_verification_code(self):
-        match = re.search(r"\b(\d{6})\b", mail.outbox[-1].body)
-        self.assertIsNotNone(match, "Verification email did not contain a six-digit code.")
-        return match.group(1)
+    def latest_verification_link(self):
+        """``(registration_id, token)`` from the newest email's link."""
+        match = re.search(r"/verify-email\?registration_id=([0-9a-f-]{36})&token=([A-Za-z0-9_-]+)", mail.outbox[-1].body)
+        self.assertIsNotNone(match, "Verification email did not contain a verification link.")
+        return match.group(1), match.group(2)
+
+    def latest_verification_token(self):
+        return self.latest_verification_link()[1]
 
     def test_registration_normalizes_email_and_sends_verification(self):
         response = self.client.post(
             reverse("register"),
-            {"username": "NewUser", "email": "  NewUser@Example.COM ", "password": self.password},
+            {"username": "NewUser", "full_name": "New User", "email": "  NewUser@Example.COM ", "password": self.password},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
@@ -68,11 +73,11 @@ class AuthenticationTests(APITestCase):
             public_id=response.data["registration_id"]
         )
         self.assertEqual(pending.email, "newuser@example.com")
-        code = self.latest_verification_code()
+        registration_id, token = self.latest_verification_link()
+        self.assertEqual(registration_id, str(pending.public_id))
         self.assertTrue(check_password(self.password, pending.password_hash))
-        self.assertTrue(check_password(code, pending.code_hash))
-        self.assertNotIn(self.password, pending.password_hash)
-        self.assertNotIn(code, pending.code_hash)
+        self.assertEqual(pending.token_hash, hashlib.sha256(token.encode()).hexdigest())   # only a hash is stored
+        self.assertNotIn(token, pending.token_hash)
         self.assertEqual(len(mail.outbox), 1)
         self.assertTrue(
             AuthEvent.objects.filter(
@@ -128,22 +133,24 @@ class AuthenticationTests(APITestCase):
         self.create_user()
         weak = self.client.post(
             reverse("register"),
-            {"username": "weak", "email": "weak@example.com", "password": "password"},
+            {"username": "weak", "full_name": "Weak Password", "email": "weak@example.com", "password": "password"},
             format="json",
         )
         duplicate = self.client.post(
             reverse("register"),
-            {"username": "other", "email": "ALICE@EXAMPLE.COM", "password": self.password},
+            {"username": "other", "full_name": "Other Person", "email": "ALICE@EXAMPLE.COM", "password": self.password},
             format="json",
         )
         self.assertEqual(weak.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(duplicate.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("email", duplicate.data)   # a field error under email, as before
 
     def test_email_verification_enables_login(self):
         started = self.client.post(
             reverse("register"),
             {
                 "username": "pending-alice",
+                "full_name": "Pending Alice",
                 "email": "pending-alice@example.com",
                 "password": self.password,
             },
@@ -156,7 +163,7 @@ class AuthenticationTests(APITestCase):
             reverse("verify-email"),
             {
                 "registration_id": started.data["registration_id"],
-                "code": self.latest_verification_code(),
+                "token": self.latest_verification_token(),
             },
             format="json",
         )
@@ -171,7 +178,7 @@ class AuthenticationTests(APITestCase):
         self.assertEqual(pending.status, PendingRegistration.STATUS_CONSUMED)
         self.assertEqual(pending.created_user, user)
         self.assertEqual(pending.password_hash, "")
-        self.assertEqual(pending.code_hash, "")
+        self.assertEqual(pending.token_hash, "")
         self.assertTrue(
             AuthEvent.objects.filter(user=user, event="registered").exists()
         )
@@ -184,13 +191,14 @@ class AuthenticationTests(APITestCase):
             reverse("register"),
             {
                 "username": "atomic-user",
+                "full_name": "Atomic User",
                 "email": "atomic@example.com",
                 "password": self.password,
             },
             format="json",
         )
         registration_id = started.data["registration_id"]
-        code = self.latest_verification_code()
+        token = self.latest_verification_token()
 
         with mock.patch(
             "accounts.views.record_auth_event",
@@ -199,7 +207,7 @@ class AuthenticationTests(APITestCase):
             with self.assertRaises(RuntimeError):
                 self.client.post(
                     reverse("verify-email"),
-                    {"registration_id": registration_id, "code": code},
+                    {"registration_id": registration_id, "token": token},
                     format="json",
                 )
 
@@ -214,6 +222,7 @@ class AuthenticationTests(APITestCase):
             reverse("register"),
             {
                 "username": "locked-user",
+                "full_name": "Locked User",
                 "email": "locked@example.com",
                 "password": self.password,
             },
@@ -221,7 +230,7 @@ class AuthenticationTests(APITestCase):
         )
         payload = {
             "registration_id": started.data["registration_id"],
-            "code": "999999",
+            "token": "not-the-real-token",
         }
         first = self.client.post(reverse("verify-email"), payload, format="json")
         second = self.client.post(reverse("verify-email"), payload, format="json")
@@ -233,39 +242,35 @@ class AuthenticationTests(APITestCase):
         self.assertFalse(User.objects.filter(username="locked-user").exists())
 
     @override_settings(SIGNUP_VERIFICATION_RESEND_COOLDOWN_SECONDS=0)
-    def test_resend_invalidates_previous_code(self):
-        with mock.patch(
-            "accounts.views.generate_verification_code",
-            side_effect=["111111", "222222"],
-        ):
-            started = self.client.post(
-                reverse("register"),
-                {
-                    "username": "resend-user",
-                    "email": "resend@example.com",
-                    "password": self.password,
-                },
-                format="json",
-            )
-            old_code = self.latest_verification_code()
-            resent = self.client.post(
-                reverse("resend-verification"),
-                {"registration_id": started.data["registration_id"]},
-                format="json",
-            )
-        new_code = self.latest_verification_code()
-
-        self.assertEqual(resent.status_code, status.HTTP_200_OK)
-        self.assertNotEqual(old_code, new_code)
-        rejected = self.client.post(
-            reverse("verify-email"),
+    def test_resend_invalidates_previous_link(self):
+        started = self.client.post(
+            reverse("register"),
             {
-                "registration_id": started.data["registration_id"],
-                "code": old_code,
+                "username": "resend-user",
+                "full_name": "Resend User",
+                "email": "resend@example.com",
+                "password": self.password,
             },
             format="json",
         )
+        old_token = self.latest_verification_token()
+        resent = self.client.post(
+            reverse("resend-verification"),
+            {"registration_id": started.data["registration_id"]},
+            format="json",
+        )
+        new_token = self.latest_verification_token()
+
+        self.assertEqual(resent.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(mail.outbox), 2)
+        self.assertNotEqual(old_token, new_token)
+        rejected = self.client.post(
+            reverse("verify-email"),
+            {"registration_id": started.data["registration_id"], "token": old_token},
+            format="json",
+        )
         self.assertEqual(rejected.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(User.objects.filter(username="resend-user").exists())
 
     def test_login_accepts_email_and_returns_user_dashboard(self):
         user = self.create_user()

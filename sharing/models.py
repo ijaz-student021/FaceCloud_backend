@@ -13,9 +13,15 @@ class ShareLink(models.Model):
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="share_links",
     )
+    # Exactly one of enhancement_result (a photo) and identity_export (a person
+    # folder's ZIP) is set; the constraint below keeps it that way.
     enhancement_result = models.ForeignKey(
         "enhancement.ImageEnhancementResult", on_delete=models.CASCADE,
-        related_name="share_links",
+        related_name="share_links", null=True, blank=True,
+    )
+    identity_export = models.ForeignKey(
+        "identities.IdentityGroupExport", on_delete=models.CASCADE,
+        related_name="share_links", null=True, blank=True,
     )
     # When set, the link shows this edit instead of the enhanced result itself.
     edit_version = models.ForeignKey(
@@ -34,6 +40,15 @@ class ShareLink(models.Model):
     class Meta:
         ordering = ["-created_at"]
         indexes = [models.Index(fields=["owner", "-created_at"])]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(enhancement_result__isnull=False, identity_export__isnull=True)
+                    | models.Q(enhancement_result__isnull=True, identity_export__isnull=False)
+                ),
+                name="sharelink_exactly_one_target",
+            ),
+        ]
 
     class State(models.TextChoices):
         ACTIVE = "active", "Active"
@@ -48,6 +63,8 @@ class ShareLink(models.Model):
         return self.State.ACTIVE
 
     def __str__(self):
+        if self.identity_export_id:
+            return f"share {self.pk} of folder export {self.identity_export_id}"
         return f"share {self.pk} of result {self.enhancement_result_id}"
 
 
