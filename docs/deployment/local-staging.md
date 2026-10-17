@@ -64,3 +64,41 @@ docker compose -f docker-compose.staging.yml --env-file .env.staging run --rm we
 The end-to-end queue checks in `scripts/check_queue_integration.py` run
 outside Docker (they start their own Redis and database). Run them on the host
 before relying on staging.
+
+## Local development after pulling
+
+A local SQLite database does not follow the code by itself. After every `git pull` (or branch switch) that brings new
+migrations, the running code expects columns the file does not have yet. The typical symptom: Django admin or the API fails with
+`OperationalError: no such column: accounts_user.display_name`, and the frontend then shows "Authentication credentials were
+not provided" because restoring the session (token refresh) fails on the server.
+
+**Every time you pull:**
+
+```sh
+python manage.py migrate --check      # exit code 0: nothing pending; 1: migrations are waiting
+python manage.py showmigrations --plan | grep "\[ \]"    # which ones
+cp db.sqlite3 /tmp/db-before-migrate.sqlite3                 # a cheap backup first (see merge-and-migration-plan.md, section 4, for the full one)
+python manage.py migrate
+```
+
+Restart the server after migrating. `runserver` reloads on code changes but never applies migrations.
+
+**Know which database the server uses.** There can be several files at once (a checkout's own `db.sqlite3`, a `.runtime/...`
+file, a copy you made for a demo). The server uses `DB_NAME` from its environment or `.env`; if neither is set it uses
+`db.sqlite3` next to `manage.py` of the checkout it was started from. To see it:
+`python manage.py shell -c "from django.db import connection; print(connection.settings_dict['NAME'])"` with the same environment,
+or `lsof -p <server pid> | grep cwd` and `ps eww -p <pid>` for its `DB_NAME`.
+
+**When a migration was renumbered** (for example `accounts` 0007/0008 became 0009/0010 when `main` took those numbers): look for
+the old names in your database before migrating.
+
+```sh
+sqlite3 db.sqlite3 "select app, name from django_migrations where app = 'accounts' and name like '000%' order by name;"
+```
+
+* Only the names `main` has, and some are pending: just run `migrate`.
+* Old names present (`0007_user_profile_fields_and_avatar`, `0008_user_sessions`, `0009_account_invitations`,
+  `0010_remove_two_factor`): do not run a plain `migrate`, the tables already exist. Back up, then follow the rename/fake
+  procedure in `docs/deployment/merge-and-migration-plan.md` (it was rehearsed on a copy: delete the four old rows,
+  `migrate accounts 0008`, `migrate accounts 0012 --fake`, `migrate`), or recreate the file.
+* Anything else looks inconsistent: stop, keep the backup, and rebuild from `dumpdata` instead of guessing.
