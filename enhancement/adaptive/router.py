@@ -10,8 +10,9 @@ Rules, each tied to a measured condition in the ``QualityReport``:
 * **Low light** only when the *subject* is under-exposed (``low_light_subject``) or a face-less frame is dark and has no
   bright lights (``low_light``). A dark scene with a visible face is left alone.
 * **Denoising** for moderate or high noise; the model only when it is enabled, otherwise the classical filter.
-* **Motion deblurring** only for blur that the analyzer typed as motion (or mixed), never for defocus, and not on a
-  photograph with heavy compression artifacts (the model would sharpen the blocks).
+* **Deblurring** for blur that the analyzer typed as motion (or mixed), or for a *strongly blurred main face* whatever the frame
+  reads (a blurred subject in front of a sharp background; a large defocus, where the model measurably helps), never for the
+  frame's own defocus or a soft face, and not on a photograph with heavy compression artifacts (the model would sharpen the blocks).
 * **Face restoration** only for a face whose quality is "poor" and which is large enough to restore (a smaller face is
   not reconstructed, however damaged), never for a good one; variants start at high fidelity (little change).
 * **Super-resolution** only when the photograph (or its face) is genuinely small, at the smallest useful scale.
@@ -69,6 +70,16 @@ class AdaptiveEnhancementRouter:
             variants = [{"name": "blend 1.0", "blend": 1.0}, {"name": "blend 0.65", "blend": 0.65}]
             return Step(operation, engines, variants, f"Noise: {report.noise['status']} (estimate {report.noise['estimate']})."), ""
         if operation == ops.DEBLUR:
+            # The main face's own blur decides first: a blurred subject in front of a sharp background reads as "no blur" for the frame,
+            # and a large defocus is where the motion-deblurring model measurably helps (a small one it hurts, so only "high" counts).
+            face_blurred = main is not None and report.face_blur.get("status") == "high"
+            if face_blurred:
+                if report.compression["status"] == "heavy":
+                    return None, "Heavy compression artifacts: deblurring would sharpen the blocks."
+                if not engines:
+                    return None, "No deblurring model is switched on."
+                return Step(operation, engines, [{"name": "blend 1.0", "blend": 1.0}, {"name": "blend 0.6", "blend": 0.6}],
+                            f"The main face is blurred (face detail {report.face_blur['detail']})."), ""
             if report.blur["status"] not in ("low", "high"):
                 return None, ""
             if report.blur["status"] == "low" and report.blur["type"] != "motion":

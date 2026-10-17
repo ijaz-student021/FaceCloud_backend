@@ -24,10 +24,11 @@ they could, because returning the original is a safe answer and returning an alt
 Reference-based metrics (PSNR, SSIM, optional LPIPS) exist for tests and benchmarks where a clean reference is known
 (``reference_metrics``); a photograph in the wild has none, and no no-reference number here replaces looking at it.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
+from django.conf import settings
 
 from .colour import lift_colour_metrics
 
@@ -65,8 +66,12 @@ class Limits:
     deblur_min_edge_gain: float = 1.10
     deblur_max_edge_gain: float = 2.50
     face_min_detail_gain: float = 1.25      # face detail after / before
+    face_deblur_min_detail_gain: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN", 1.25)))   # a deblur chosen for a blurred *face* must raise the face's own detail at least this much
     face_max_detail: float = 260.0          # above this (sharp faces: median 119, p90 175) the detail is probably invented
     face_landmark_shift_max: float = 0.04   # of the face width, mean over the five landmarks
+    # An upscaled candidate's landmarks are found again on an interpolated image, so a little jitter is not a changed face: plain bicubic
+    # enlargement of three 240 px portraits already shifted them by 0.019, 0.026 and 0.037 (measured on real photographs).
+    face_landmark_shift_max_upscale: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX", 0.06)))
     upscale_detail_gain_max: float = 3.0
 
 
@@ -133,23 +138,29 @@ def edge_energy(image, long_edge=1024):
     return float(np.mean(np.abs(laplacian)))
 
 
-def landmark_shift(faces_before, faces_after):
-    """Mean landmark displacement over the face width, matching each original face to the nearest candidate face."""
+def landmark_shift(faces_before, faces_after, scale=1.0):
+    """Mean landmark displacement over the face width, matching each original face to the nearest candidate face.
+
+    ``scale`` is the candidate's size over the original's (2.0 after a x2 upscale): the original's faces are brought onto the
+    candidate's pixel grid first. Without it every face of an upscaled candidate looked "lost" (its centre had moved away by
+    the enlargement itself), so a super-resolution result was never accepted for a photograph that had a face.
+    """
     shifts = []
     for before in faces_before:
         if not before.landmarks or len(before.landmarks) != 5:
             continue
-        centre = np.array([before.box[0] + before.box[2] / 2, before.box[1] + before.box[3] / 2])
+        centre = scale * np.array([before.box[0] + before.box[2] / 2, before.box[1] + before.box[3] / 2])
+        width = scale * before.box[2]
         best = None
         for after in faces_after:
             if not after.landmarks or len(after.landmarks) != 5:
                 continue
             distance = float(np.linalg.norm(centre - np.array([after.box[0] + after.box[2] / 2, after.box[1] + after.box[3] / 2])))
-            if distance < before.box[2] and (best is None or distance < best[0]):
+            if distance < width and (best is None or distance < best[0]):
                 best = (distance, after)
         if best is None:
             return None  # a face that was there is no longer found
-        shifts.append(float(np.mean(np.linalg.norm(np.array(before.landmarks) - np.array(best[1].landmarks), axis=1)) / before.box[2]))
+        shifts.append(float(np.mean(np.linalg.norm(scale * np.array(before.landmarks) - np.array(best[1].landmarks), axis=1)) / width))
     return float(np.mean(shifts)) if shifts else 0.0
 
 
@@ -268,8 +279,10 @@ class FinalImageQualityValidator:
         if not self.original_report.faces:
             verdict["gates"]["identity"] = {"passed": True, "status": "no_face"}
             return
-        shift = landmark_shift(self.original_report.faces, candidate_report.faces)
-        landmarks_ok = shift is not None and shift <= self.limits.face_landmark_shift_max
+        scale = candidate_report.width / self.original_report.width if self.original_report.width else 1.0
+        shift = landmark_shift(self.original_report.faces, candidate_report.faces, scale)
+        shift_max = self.limits.face_landmark_shift_max_upscale if operation == "super_resolution" else self.limits.face_landmark_shift_max
+        landmarks_ok = shift is not None and shift <= shift_max
         status = {"passed": landmarks_ok, "landmark_shift": None if shift is None else round(shift, 4)}
         if not landmarks_ok:
             verdict["reasons"].append("face_lost" if shift is None else "face_geometry_changed")
@@ -328,6 +341,17 @@ class FinalImageQualityValidator:
         if operation == "motion_deblurring":
             gain = edge_energy(candidate) / max(edge_energy(parent), 1e-6)
             retention_before, retention_after = before.blur["retention"], after.blur["retention"]
+            if before.face_blur.get("status") == "high" and after.face_blur.get("detail") is not None:
+                # Chosen for a blurred face, so judged on the face: its own detail must rise clearly (and not past what a real
+                # face holds), while the frame as a whole is not over-sharpened.
+                face_before, face_after = before.face_blur["detail"], after.face_blur["detail"]
+                face_gain = face_after / max(face_before, 1.0)
+                gate("improves_defect",
+                     face_gain >= limits.face_deblur_min_detail_gain and face_after <= limits.face_max_detail
+                     and gain <= limits.deblur_max_edge_gain,
+                     {"face_detail_before": face_before, "face_detail_after": face_after, "face_detail_gain": round(face_gain, 3),
+                      "edge_gain": round(gain, 3)}, "face_not_clearer_or_over_sharpened")
+                return float(np.clip((face_gain - 1.0) / 3.0, 0, 1))
             gate("improves_defect", limits.deblur_min_edge_gain <= gain <= limits.deblur_max_edge_gain,
                  {"edge_gain": round(gain, 3), "retention_before": retention_before, "retention_after": retention_after},
                  "edges_not_restored_or_over_sharpened")

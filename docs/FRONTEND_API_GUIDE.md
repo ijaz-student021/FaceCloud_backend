@@ -230,6 +230,25 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}     -> 201
   `standardized_download_url` and an `editor_url`. `applied_level` may differ
   from the requested level (the backend adapts to the image), so show what was
   actually applied.
+- **What was done (restoration).** A blurred face or a low-resolution photograph goes through the restoration chain when the server can
+  run it (deblur, face restoration, upscale to HD; `docs/deployment/restoration-chain.md`). Every result carries three fields that
+  say so, so a barely changed photograph is never presented as restored:
+  - `applied_stages`: what changed the pixels, in order: `[{"stage": "deblur", "engine": "nafnet_gopro", "variant": "blend 1.0"},
+    {"stage": "upscale", "engine": "realesrgan", "variant": "x2", "scale": 2, "input_size": [240, 320], "output_size": [480, 640]}]`.
+    Stages: `low_light`, `denoise`, `deblur`, `face_restore`, `upscale`. `[]` when nothing changed.
+  - `skipped_stages`: restoration the photograph called for that did not run: `[{"stage": "face_restore", "reason": "codeformer: switched
+    off (CODEFORMER_ENABLED=False), ..."}]`.
+  - `hd_unavailable_reason`: one sentence when restoration was needed and not done (`"Restoration was needed but not available on this
+    server: deblur (nafnet_gopro: checkpoint not found at ...)"`), else `null`. Show it where you would show "HD", for example "HD
+    restoration is not available on this server", and do not claim the photograph was improved when `applied_stages` is empty.
+  Because the output can be larger than the upload, read `output_width` / `output_height` (and `applied_stages[].output_size`) rather
+  than assuming the original size.
+- **Blur and low resolution do not reject a photograph that has a face.** The quality decision (`GET /api/quality/images/{id}/` and
+  `quality_decision` in `GET /api/images/my/`) measures sharpness on the face: `measurements.sharpness_basis` is `face` or `frame`,
+  `measurements.face_blur_warning` is `true` for a blurred face (show a "will be sharpened" hint, not an error), and
+  `rejection_reasons` no longer contains `severe_blur`, `borderline_blur` or `borderline_resolution` for such a photograph. A photograph
+  is still rejected as `resolution_too_low` when its shorter edge is under 240 px, and a photograph with no face and a severely blurred
+  frame is still rejected.
 - **429 on start** means the user already has the maximum number of active
   enhancement jobs. The message states the limit; retry after some finish.
 - Compare before/after: `GET /api/enhancements/results/{id}/comparison/`.
