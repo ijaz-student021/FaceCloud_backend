@@ -32,6 +32,14 @@ class PackageNotReady(APIException):
     default_code = "package_not_ready"
 
 
+class PackageNotReadyWithReason(PackageNotReady):
+    """409 with ``detail`` (the message), a stable ``code`` and any counts, kept as real JSON types."""
+
+    def __init__(self, error):
+        super().__init__(str(error))
+        self.detail = {"detail": str(error), "code": error.code, **error.extra}
+
+
 class PackageExpired(APIException):
     status_code = status.HTTP_410_GONE
     default_detail = "This generated package has expired."
@@ -53,7 +61,8 @@ def _enqueue_response(request, *, batch, package_type, report_format):
             report_format=report_format,
         )
     except PackageNotReadyError as error:
-        raise PackageNotReady(str(error)) from error
+        # Same 409 and message as before, plus a stable code (and counts) a client can act on.
+        raise PackageNotReadyWithReason(error) from error
     response_status = status.HTTP_202_ACCEPTED if created else status.HTTP_200_OK
     return Response(
         {

@@ -16,16 +16,24 @@ TERMINAL_BATCH_STATUSES = {"completed", "partial", "failed", "cancelled"}
 
 
 class PackageNotReadyError(ValueError):
-    pass
+    """The package cannot be made yet. ``code`` and ``extra`` let a client decide what to do next."""
+
+    def __init__(self, message, code="package_not_ready", **extra):
+        super().__init__(message)
+        self.code = code
+        self.extra = extra
 
 
 def ensure_package_ready(batch, package_type):
     if batch.processing_status not in TERMINAL_BATCH_STATUSES:
         raise PackageNotReadyError(
-            "Batch processing must reach a terminal state before packaging."
+            "Batch processing must reach a terminal state before packaging.",
+            code="batch_still_processing",
         )
     if not batch.images.exists():
-        raise PackageNotReadyError("The batch has no images available for packaging.")
+        raise PackageNotReadyError(
+            "The batch has no images available for packaging.", code="batch_empty",
+        )
     if package_type == DownloadPackage.PackageType.ACCEPTED_RESULTS:
         available = ImageEnhancementResult.objects.filter(
             owner_id=batch.owner_id,
@@ -35,8 +43,21 @@ def ensure_package_ready(batch, package_type):
             status=EnhancementStatus.COMPLETED,
         ).exists()
         if not available:
+            # Photos that passed the checks but were never enhanced can be fixed by the caller:
+            # POST /api/enhancements/batches/{id}/ and ask again.
+            awaiting = batch.images.filter(
+                owner_id=batch.owner_id,
+                quality_decision__status="completed",
+                quality_decision__decision="accepted",
+            ).count()
+            if awaiting:
+                raise PackageNotReadyError(
+                    "The accepted photos have not been enhanced yet. Enhance the batch, then ask for the package again.",
+                    code="enhancement_required", accepted_images=awaiting,
+                )
             raise PackageNotReadyError(
-                "The batch has no accepted enhanced images ready for download."
+                "The batch has no accepted enhanced images ready for download.",
+                code="no_accepted_images",
             )
 
 
