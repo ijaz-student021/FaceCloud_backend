@@ -250,7 +250,7 @@ request, and weekly (to catch vulnerabilities published later):
 
 | Job | Checks |
 |---|---|
-| Tests and schema | `check`, no missing migrations, OpenAPI schema with zero warnings, the test suite (without the `slow` tests) against PostgreSQL |
+| Tests and schema | `ruff check .` (unused imports and variables, undefined names), `check`, no missing migrations, OpenAPI schema with zero warnings, the test suite (without the `slow` tests) against PostgreSQL |
 | Dependency audit and static analysis | `pip-audit` on `requirements.txt`; `bandit` failing on medium or high findings |
 | Production configuration | The app refuses an unsafe production environment, and starts and passes `check --deploy` with a correct one |
 
@@ -269,6 +269,19 @@ git checkout -b your-branch-name
 git push -u origin your-branch-name
 gh pr create --base main
 ```
+
+**Before you push** (the same commands CI runs; the lint step is the one that is easiest to forget):
+
+```sh
+ruff check .                                              # CI pins a recent ruff: pip install ruff, or: uvx ruff check .
+python manage.py check && python manage.py makemigrations --check --dry-run
+python manage.py spectacular --file /tmp/schema.yml --validate --fail-on-warn
+python manage.py test
+bandit -r <the package list in .github/workflows/ci.yml> -x "*/tests.py,*/test_*.py,*/migrations,enhancement/archs" -ll
+pip-audit -r requirements.txt
+```
+
+`ruff check . --fix` removes unused imports for you.
 
 Open the PR, wait for CI to go green, then merge. Merged branches are deleted
 automatically.

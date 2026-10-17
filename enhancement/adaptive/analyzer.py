@@ -26,6 +26,9 @@ from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
+from django.conf import settings
+
+from enhancement.face_sharpness import face_detail
 
 
 @dataclass(frozen=True)
@@ -72,6 +75,10 @@ class Thresholds:
     # Gaussian blur 1.5 px -> 21, 3 px -> 7; a 2.5x smaller (low-resolution) face -> 36 (p90 48); JPEG q15 -> 90.
     face_detail_poor: float = 50.0
     face_detail_acceptable: float = 75.0
+    # The face itself is blurred (not just soft): below this detail the deblurring model is considered even when the frame reads as
+    # sharp (a blurred subject in front of a sharp background) or as defocus (a large defocus is where the model helps; see
+    # docs/evaluation/2026-10-15-blur-routing.md). Between this and face_detail_poor the face is "low": soft, restored if a face model is on.
+    face_blur_high: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_FACE_BLUR_HIGH", 25.0)))
     min_face_confidence: float = 0.5
 
 
@@ -99,6 +106,7 @@ class QualityReport:
     compression: dict
     colour: dict
     faces: list = field(default_factory=list)
+    face_blur: dict = field(default_factory=dict)   # the main face's own blur: {"status": none|low|high|unknown, "detail": ...}
     conditions: list = field(default_factory=list)
     recommended_operations: list = field(default_factory=list)
     limitations: list = field(default_factory=list)
@@ -127,7 +135,8 @@ class QualityReport:
             "resolution_status": self.resolution["status"], "face_count": self.face_count,
             "face_quality": main.quality if main else "none",
             "exposure": self.exposure, "noise": self.noise, "blur": self.blur, "resolution": self.resolution,
-            "compression": self.compression, "colour": self.colour, "faces": faces, "conditions": self.conditions,
+            "compression": self.compression, "colour": self.colour, "faces": faces, "face_blur": self.face_blur,
+            "conditions": self.conditions,
             "recommended_operations": self.recommended_operations, "limitations": self.limitations,
         }
 
@@ -226,9 +235,7 @@ class ImageQualityAnalyzer:
                 "p5": round(p5, 1), "p50": round(p50, 1), "p95": round(p95, 1), "dynamic_range": round(p95 - p5, 1),
                 "crushed_fraction": round(float((values < self.t.crushed_level).mean()), 3),
             }
-            if min(region.shape[:2]) >= 16:
-                standard = cv2.resize(values, (128, 128), interpolation=cv2.INTER_AREA)
-                detail = round(float(cv2.Laplacian(standard, cv2.CV_32F).var()), 1)
+            detail = face_detail(values)   # one definition, shared with the quality decision (enhancement/face_sharpness.py)
         short_edge = int(min(w, h))
         # (Blur also narrows a face's range, and a face's detail cannot tell blur from darkness: a contrast-normalised detail
         # measure was tried and overlaps too much, sharp p10 0.025 against blurred 0.02. The frame decides instead, below.)
@@ -332,6 +339,13 @@ class ImageQualityAnalyzer:
                 blur_type = "motion" if ratio <= t.motion_ratio_max else "defocus" if ratio >= t.defocus_ratio_min else "mixed"
             blur = {"status": status, "type": blur_type, "retention": round(retention, 3), "direction_ratio": round(ratio, 3)}
         report.blur = blur
+        # The main face's own blur: the frame cannot see a blurred subject in front of a sharp background, nor tell a portrait-mode
+        # background from a blurred photograph.
+        if main is not None and main.detail is not None and main.quality != "too_small":
+            face_status = "high" if main.detail < t.face_blur_high else "low" if main.detail < t.face_detail_poor else "none"
+            report.face_blur = {"status": face_status, "detail": main.detail, "judged_on": "main face"}
+        else:
+            report.face_blur = {"status": "unknown", "detail": None, "judged_on": "main face"}
 
         # resolution, compression, colour
         short_edge = min(width, height)
@@ -363,6 +377,8 @@ class ImageQualityAnalyzer:
             conditions.append("visible_noise")
         if report.blur["status"] in ("low", "high"):
             conditions.append(f"{report.blur['type']}_blur")
+        if report.face_blur.get("status") in ("low", "high"):
+            conditions.append("face_blur")
         if report.resolution["status"] == "low":
             conditions.append("low_resolution")
         if report.compression["status"] == "heavy":
@@ -383,6 +399,8 @@ class ImageQualityAnalyzer:
             operations.append("denoising")
         if report.blur["status"] == "high" and report.blur["type"] in ("motion", "mixed") \
                 and "compression_artifacts" not in conditions:
+            operations.append("motion_deblurring")
+        elif report.face_blur.get("status") == "high" and "compression_artifacts" not in conditions:
             operations.append("motion_deblurring")
         if main is not None and main.quality == "poor" and main.short_edge >= self.t.face_short_edge_too_small:
             operations.append("face_restoration")

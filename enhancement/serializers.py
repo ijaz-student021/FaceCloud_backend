@@ -149,6 +149,20 @@ class ImageEditVersionSerializer(serializers.ModelSerializer):
         return request.build_absolute_uri(path) if request else path
 
 
+class AppliedStageSerializer(serializers.Serializer):
+    stage = serializers.CharField(help_text="low_light, denoise, deblur, face_restore or upscale.")
+    engine = serializers.CharField(allow_null=True, help_text="The model that produced it, e.g. nafnet_gopro or realesrgan.")
+    variant = serializers.CharField(allow_null=True, required=False)
+    scale = serializers.IntegerField(allow_null=True, required=False, help_text="Upscale only: 2 means twice the width and height.")
+    input_size = serializers.ListField(child=serializers.IntegerField(), allow_null=True, required=False)
+    output_size = serializers.ListField(child=serializers.IntegerField(), allow_null=True, required=False)
+
+
+class SkippedStageSerializer(serializers.Serializer):
+    stage = serializers.CharField()
+    reason = serializers.CharField()
+
+
 class ImageEnhancementResultSerializer(serializers.ModelSerializer):
     download_url = serializers.SerializerMethodField()
     original_download_url = serializers.SerializerMethodField()
@@ -162,12 +176,21 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
         "What the adaptive engine did: enhanced, partially_enhanced or original_preserved (the output is the original "
         "pixels); failed when the job failed. null for results made by the staged pipeline, which does not classify."))
     enhancement_summary = serializers.SerializerMethodField(help_text="One plain sentence on the outcome, safe to show a user.")
+    applied_stages = serializers.SerializerMethodField(help_text=(
+        "The restoration and enhancement stages that changed the photograph, in order: stage (low_light, denoise, deblur, face_restore, "
+        "upscale), engine, variant, and for upscale the scale, input_size and output_size ([width, height]). Empty when nothing changed."))
+    skipped_stages = serializers.SerializerMethodField(help_text=(
+        "Restoration stages the photograph called for that did not run: [{stage, reason}]. Empty when everything needed was done."))
+    hd_unavailable_reason = serializers.SerializerMethodField(help_text=(
+        "A plain sentence when restoration was needed but could not be done (a model is switched off, not installed or its result was "
+        "not safe to use); null otherwise. A barely changed photograph always has either applied_stages or this."))
 
     class Meta:
         model = ImageEnhancementResult
         fields = [
             "id", "image", "batch_job", "requested_level", "applied_level",
             "requested_style", "status", "enhancement_outcome", "enhancement_summary",
+            "applied_stages", "skipped_stages", "hd_unavailable_reason",
             "identity_status", "identity_check_bypassed", "identity_notice",
             "output_name", "output_format", "output_width", "output_height",
             "output_file_size", "processing_duration_ms", "task_id", "applied_parameters",
@@ -197,6 +220,22 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
         parameters = obj.applied_parameters if isinstance(obj.applied_parameters, dict) else {}
         adaptive = parameters.get("adaptive")
         return str(adaptive.get("summary", "")) if isinstance(adaptive, dict) else ""
+
+    def _stages(self, obj):
+        from .restoration import describe_stages
+
+        return describe_stages(obj.applied_parameters, failed=obj.status == "failed")
+
+    @extend_schema_field(AppliedStageSerializer(many=True))
+    def get_applied_stages(self, obj):
+        return self._stages(obj)["applied_stages"]
+
+    @extend_schema_field(SkippedStageSerializer(many=True))
+    def get_skipped_stages(self, obj):
+        return self._stages(obj)["skipped_stages"]
+
+    def get_hd_unavailable_reason(self, obj) -> str | None:
+        return self._stages(obj)["hd_unavailable_reason"]
 
     def get_identity_status(self, obj) -> str | None:
         return self._identity(obj)[0]

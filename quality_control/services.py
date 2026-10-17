@@ -8,6 +8,7 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
+from enhancement.face_sharpness import primary_face_detail
 from enhancement.services import analyze_image_quality
 from uploads.models import ImagePreprocessingResult
 from validation.models import FaceValidationResult
@@ -33,10 +34,40 @@ def _read_standardized(preprocessing):
     return image
 
 
+def primary_face(face_validation):
+    """The face the photograph is judged on: the largest confidently detected one, as ``(x, y, width, height)``; ``None`` without one."""
+    faces = [
+        face for face in (getattr(face_validation, "faces", None) or [])
+        if (face.get("confidence") or 0) >= settings.QUALITY_FACE_MIN_CONFIDENCE and face.get("width") and face.get("height")
+    ]
+    if not faces:
+        return None
+    face = max(faces, key=lambda item: item.get("area_ratio") or item["width"] * item["height"])
+    return face["x"], face["y"], face["width"], face["height"]
+
+
+def with_face_sharpness(metrics, image, face_validation):
+    """``metrics`` with sharpness measured on the primary face when there is one (and the frame's own value kept alongside).
+
+    ``sharpness_basis`` says which measure ``laplacian_sharpness`` now holds, so a stored decision is never ambiguous about it.
+    """
+    metrics = dict(metrics)
+    metrics["frame_laplacian_sharpness"] = metrics["laplacian_sharpness"]
+    metrics["sharpness_basis"] = "frame"
+    box = primary_face(face_validation)
+    detail = primary_face_detail(image, box, settings.QUALITY_FACE_REGION_INSET) if box else None
+    if detail is not None:
+        metrics["laplacian_sharpness"] = detail
+        metrics["sharpness_basis"] = "face"
+        metrics["face_blur_warning"] = detail < settings.QUALITY_FACE_BLUR_WARNING
+    return metrics
+
+
 def calculate_scores(metrics):
     luminance = metrics["mean_luminance"]
     brightness = _bounded(100 - abs(luminance - settings.QUALITY_IDEAL_LUMINANCE) * 0.8)
-    sharpness = _bounded(metrics["laplacian_sharpness"] / settings.QUALITY_SHARPNESS_TARGET * 100)
+    target = settings.QUALITY_FACE_SHARPNESS_TARGET if metrics.get("sharpness_basis") == "face" else settings.QUALITY_SHARPNESS_TARGET
+    sharpness = _bounded(metrics["laplacian_sharpness"] / target * 100)
     contrast = _bounded(metrics["contrast_stddev"] / settings.QUALITY_CONTRAST_TARGET * 100)
     noise = _bounded(100 - metrics["estimated_noise"] / settings.QUALITY_MAX_NOISE * 100)
     clipping = metrics["shadow_clipping_percent"] + metrics["highlight_clipping_percent"]
@@ -55,17 +86,34 @@ def calculate_scores(metrics):
     }
 
 
+def acceptance_score(metrics, scores):
+    """The number compared with QUALITY_ACCEPT_SCORE: the overall score, without its sharpness term when the face was measured, so blur
+    alone cannot pull a photograph that has a face below the line (the sharpness score itself is still stored and shown)."""
+    if metrics.get("sharpness_basis") == "face":
+        return _bounded((scores["overall_score"] - scores["sharpness_score"] * 0.25) / 0.75)
+    return scores["overall_score"]
+
+
+def photo_has_face(face_validation):
+    """Whether a face was found (whatever the verdict on it): such a photograph is never refused or held back for blur or resolution."""
+    return face_validation is not None and (face_validation.face_count or 0) > 0
+
+
 def make_decision(metrics, scores, face_validation):
     reject = []
     review = []
     shortest = min(metrics["width"], metrics["height"])
-    if metrics["laplacian_sharpness"] < settings.QUALITY_REJECT_SHARPNESS:
-        reject.append("severe_blur")
-    elif metrics["laplacian_sharpness"] < settings.QUALITY_REVIEW_SHARPNESS:
-        review.append("borderline_blur")
+    has_face = photo_has_face(face_validation)
+    # Blur and a low resolution are what the restoration chain (deblur, face restoration, upscale to HD) exists for. With a face they
+    # never reject or review a photograph; without one the frame's own sharpness still counts, as there is nothing else to work with.
+    if not has_face:
+        if metrics["laplacian_sharpness"] < settings.QUALITY_REJECT_SHARPNESS:
+            reject.append("severe_blur")
+        elif metrics["laplacian_sharpness"] < settings.QUALITY_REVIEW_SHARPNESS:
+            review.append("borderline_blur")
     if shortest < settings.QUALITY_REJECT_MIN_EDGE:
         reject.append("resolution_too_low")
-    elif shortest < settings.QUALITY_REVIEW_MIN_EDGE:
+    elif shortest < settings.QUALITY_REVIEW_MIN_EDGE and not has_face:
         review.append("borderline_resolution")
     if metrics["mean_luminance"] < settings.QUALITY_REJECT_MIN_LUMINANCE:
         reject.append("severe_underexposure")
@@ -91,7 +139,7 @@ def make_decision(metrics, scores, face_validation):
     review = [reason for reason in dict.fromkeys(review) if reason not in reject]
     if reject:
         return "rejected", reject + review, "The image did not pass mandatory quality checks."
-    if review or scores["overall_score"] < settings.QUALITY_ACCEPT_SCORE:
+    if review or acceptance_score(metrics, scores) < settings.QUALITY_ACCEPT_SCORE:
         reasons = review or ["overall_score_below_acceptance"]
         return "needs_review", reasons, "The image requires review before enhancement."
     return "accepted", [], "The image passed quality and face checks."
@@ -111,7 +159,7 @@ def process_quality_decision(decision_id):
     started = time.perf_counter()
     try:
         image = _read_standardized(result.preprocessing_result)
-        metrics = analyze_image_quality(image)
+        metrics = with_face_sharpness(analyze_image_quality(image), image, result.face_validation)
         scores = calculate_scores(metrics)
         decision, reasons, message = make_decision(metrics, scores, result.face_validation)
         for field, value in scores.items():

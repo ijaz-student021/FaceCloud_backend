@@ -279,8 +279,25 @@ if ENHANCEMENT_RENDER_POLICY not in ("lightweight_v1", "balanced_v1", "learned_v
         f"not {ENHANCEMENT_RENDER_POLICY!r}."
     )
 
-HD_RESTORATION_ENABLED = env.bool("HD_RESTORATION_ENABLED", default=False)
-NAFNET_DEBLUR_ENABLED = env.bool("NAFNET_DEBLUR_ENABLED", default=False)
+# The restoration chain (enhancement/restoration.py): Real-ESRGAN (BSD-3-Clause, upscale to HD) and NAFNet-GoPro (MIT, deblur) are on by
+# default; each only runs where its checkpoint is installed and the photograph needs it, and a result says when it could not. CodeFormer
+# (S-Lab, non-commercial) and GFPGAN stay off by default (see CODEFORMER_ENABLED below); the production guard refuses them unless acknowledged.
+HD_RESTORATION_ENABLED = env.bool("HD_RESTORATION_ENABLED", default=True)
+NAFNET_DEBLUR_ENABLED = env.bool("NAFNET_DEBLUR_ENABLED", default=True)
+# Under the lightweight and balanced policies, a photograph whose face is blurred or whose resolution is low is sent through the
+# restoration chain (the adaptive engine) when this server can run it, and left to the lightweight pipeline otherwise, with the reason
+# recorded in the result (hd_unavailable_reason). False keeps every photograph on the policy's own pipeline.
+ENHANCEMENT_RESTORATION_ESCALATION = env.bool("ENHANCEMENT_RESTORATION_ESCALATION", default=True)
+# Thresholds of the restoration chain (read when the adaptive engine starts a run; docs/deployment/restoration-chain.md):
+# ADAPTIVE_FACE_BLUR_HIGH: a face whose detail (Laplacian variance of the face resized to 128 px; sharp faces about 119, p10 81) is below
+#   this counts as strongly blurred and is deblurred even when the frame reads sharp or as defocus.
+# ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN: a deblur chosen for a blurred face is accepted only if the face's own detail rises at least this
+#   many times.
+# ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX: the largest mean landmark displacement (as a share of the face width) an upscaled candidate may show;
+#   plain bicubic enlargement of 240 px portraits measured 0.019 to 0.037, other operations keep 0.04.
+ADAPTIVE_FACE_BLUR_HIGH = env.float("ADAPTIVE_FACE_BLUR_HIGH", default=25.0)
+ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN = env.float("ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN", default=1.25)
+ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX = env.float("ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX", default=0.06)
 NAFNET_MODEL_PATH = env(
     "NAFNET_MODEL_PATH",
     default=str(BASE_DIR / ".runtime" / "models" / "NAFNet-GoPro-width64.pth"),
@@ -647,6 +664,15 @@ QUALITY_REJECT_CONTRAST = env.float("QUALITY_REJECT_CONTRAST", default=12.0)
 QUALITY_REVIEW_CONTRAST = env.float("QUALITY_REVIEW_CONTRAST", default=20.0)
 QUALITY_REVIEW_NOISE = env.float("QUALITY_REVIEW_NOISE", default=10.0)
 QUALITY_ACCEPT_SCORE = env.float("QUALITY_ACCEPT_SCORE", default=60.0)
+# Sharpness of a photograph that has a face is measured on the face (enhancement/face_sharpness.py), not on the whole frame, so a portrait
+# with a blurred background is not penalised and blur alone never rejects or sends such a photo to review (quality_control/policy.py).
+# QUALITY_FACE_SHARPNESS_TARGET: the face detail (Laplacian variance of the face resized to 128 px) that scores 100; a sharp face measures
+# about 119 (10th percentile 81), a Gaussian blur of 1.5 px about 21. QUALITY_FACE_REGION_INSET shrinks the detector's box on every side.
+# QUALITY_FACE_BLUR_WARNING: below this face detail the quality decision records a blur warning (the restoration chain deblurs it).
+QUALITY_FACE_SHARPNESS_TARGET = env.float("QUALITY_FACE_SHARPNESS_TARGET", default=100.0)
+QUALITY_FACE_REGION_INSET = env.float("QUALITY_FACE_REGION_INSET", default=0.15)
+QUALITY_FACE_MIN_CONFIDENCE = env.float("QUALITY_FACE_MIN_CONFIDENCE", default=0.5)
+QUALITY_FACE_BLUR_WARNING = env.float("QUALITY_FACE_BLUR_WARNING", default=50.0)
 
 # Duplicate detection. Perceptual and face-region matches are review evidence,
 # not identity recognition and never create cross-user matches.

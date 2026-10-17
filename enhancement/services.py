@@ -2161,6 +2161,36 @@ def enhance_bgr(
         return AdaptiveImageEnhancementService().enhance(
             image, requested_level, style, allow_biometric_processing=allow_biometric_processing, checkpoint=checkpoint,
         )
+    restoration_check = None
+    if settings.ENHANCEMENT_RESTORATION_ESCALATION and rendering_policy.active_policy() in (
+        rendering_policy.LIGHTWEIGHT, rendering_policy.BALANCED,
+    ):
+        # A photograph whose face is blurred or whose resolution is low goes through the restoration chain (the adaptive engine) when this
+        # server can run it; otherwise the policy's own pipeline runs and the result records why restoration was not done.
+        from . import restoration
+
+        restoration_check = restoration.restoration_check(image)
+        if restoration_check["needed"] and restoration_check["available"]:
+            from .adaptive.service import AdaptiveImageEnhancementService
+
+            enhanced, applied_level, parameters = AdaptiveImageEnhancementService().enhance(
+                image, requested_level, style, allow_biometric_processing=allow_biometric_processing, checkpoint=checkpoint,
+            )
+            parameters["restoration_escalation"] = {
+                "reason": "The photograph needs restoration: " + ", ".join(restoration_check["needed"]) + ".",
+                "from_policy": rendering_policy.active_policy(), "check": restoration_check,
+            }
+            return enhanced, applied_level, parameters
+    enhanced, applied_level, parameters = _enhance_bgr_staged(
+        image, requested_level, style, allow_biometric_processing, use_zero_dce, checkpoint,
+    )
+    if restoration_check is not None and restoration_check["needed"]:
+        parameters["restoration_check"] = restoration_check
+    return enhanced, applied_level, parameters
+
+
+def _enhance_bgr_staged(image, requested_level, style, allow_biometric_processing, use_zero_dce, checkpoint):
+    """The policy's own pipeline (``enhance_bgr`` without the adaptive engine or the restoration escalation)."""
     if style == EnhancementStyle.AI_MAX:
         requested_level = EnhancementLevel.HIGH
     context = EnhancementPipelineContext(

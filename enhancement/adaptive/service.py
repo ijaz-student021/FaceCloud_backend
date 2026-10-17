@@ -49,9 +49,10 @@ PIPELINE_VERSION = "adaptive_candidate_pipeline_v1"
 ENHANCED, PARTIALLY_ENHANCED, ORIGINAL_PRESERVED = "enhanced", "partially_enhanced", "original_preserved"
 
 # Defects the engine can address (or must report as unresolved), as the analyzer names them.
-ADDRESSABLE = {"low_light", "visible_noise", "motion_blur", "mixed_blur", "defocus_blur", "low_resolution", "face_poor"}
+ADDRESSABLE = {"low_light", "visible_noise", "motion_blur", "mixed_blur", "defocus_blur", "low_resolution", "face_poor", "face_blur"}
 UNADDRESSABLE_REASONS = {
     "defocus_blur": "Defocus blur cannot be recovered reliably.",
+    "face_blur": "The face is still blurred; the deblurring model was unavailable or its result was not safe to use.",
     "face_poor": "A degraded face remains that could not be restored safely.",
     "low_resolution": "The photograph is small and could not be enlarged safely.",
     "visible_noise": "Noise remains.", "low_light": "The subject is still dark.",
