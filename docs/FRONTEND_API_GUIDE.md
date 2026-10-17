@@ -160,8 +160,8 @@ extension must match its real content, and the size and pixel limits in
 GET /api/images/batches/{batch_id}/progress/
    -> {batch_id, status, stage, progress_percentage, counts,
        estimated_completion_at, cancellation_requested, retry_count,
-       images: [{image_id, filename, stage, status, progress_percentage,
-                 failure_stage, failure_reason, ...}]}
+       images: [{image_id, filename, stage, status, display_status,
+                 progress_percentage, failure_stage, failure_reason, ...}]}
 ```
 
 - Poll every 2 to 3 seconds while the batch is active and stop when
@@ -169,6 +169,11 @@ GET /api/images/batches/{batch_id}/progress/
 - `stage` moves through: `uploaded, queued, preprocessing, face_validation,
   quality_analysis, identity_grouping, enhancement, finalizing, completed`.
 - A batch can be `partial`: some images succeeded and some did not. Show both.
+- `display_status` is the photo's final verdict word, identical to the
+  `display_status` of `GET /api/images/my/` (`rejected`, `needs_review`,
+  `accepted`, `completed`, `ready`, `quality_processing`, ...). It is also on every
+  photo in the batch responses (`POST /api/images/upload/*`,
+  `GET /api/images/batches/` and `/{id}/`), so no second request is needed.
 - `POST /api/images/batches/{id}/cancel/` stops a batch;
   `POST /api/images/batches/{id}/retry/` requeues its failed images (there is a
   retry cap, and a 400 explains when it is reached or nothing failed).
