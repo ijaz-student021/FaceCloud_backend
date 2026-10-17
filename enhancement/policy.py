@@ -19,18 +19,18 @@ from django.conf import settings
 LIGHTWEIGHT = "lightweight_v1"
 BALANCED = "balanced_v1"
 LEARNED = "learned_v1"
-POLICIES = (LIGHTWEIGHT, BALANCED, LEARNED)
+ADAPTIVE = "adaptive_v1"
+POLICIES = (LIGHTWEIGHT, BALANCED, LEARNED, ADAPTIVE)
 
 # Per-model setting -> the stage it switches, as reported to users.
 LEARNED_STAGES = {
     "ZERO_DCE_ENABLED": "zero_dce",
-    "AI_RESTORATION_ENABLED": "edsr_super_resolution",
+    "RETINEXFORMER_ENABLED": "retinexformer",
     "HD_RESTORATION_ENABLED": "hd_restoration",
     "NAFNET_DEBLUR_ENABLED": "nafnet_deblur",
-    "PURESCALE_ENABLED": "purescale",
-    "PUREVISION_ENABLED": "purevision",
+    "NAFNET_DENOISE_ENABLED": "nafnet_denoise",
     "GFPGAN_ENABLED": "gfpgan_face_restoration",
-    "COLORIZATION_ENABLED": "colorization",
+    "CODEFORMER_ENABLED": "codeformer_face_restoration",
 }
 
 # Which learned stages each policy may run (a stage also needs its own setting on). ``balanced_v1`` allows
@@ -40,18 +40,24 @@ ALLOWED_STAGES = {
     LIGHTWEIGHT: frozenset(),
     BALANCED: frozenset({"ZERO_DCE_ENABLED"}),
     LEARNED: frozenset(LEARNED_STAGES),
+    ADAPTIVE: frozenset(LEARNED_STAGES),
 }
 
 DESCRIPTIONS = {
     LIGHTWEIGHT: (
-        "OpenCV and Pillow only. No learned enhancement model runs: no Zero-DCE, EDSR, "
-        "NAFNet, Real-ESRGAN, GFPGAN, PureVision, PureScale or colourisation."
+        "OpenCV and Pillow only. No learned enhancement model runs: no Zero-DCE, "
+        "Retinexformer, NAFNet, Real-ESRGAN, GFPGAN or CodeFormer."
     ),
     BALANCED: (
         "OpenCV and Pillow, plus Zero-DCE (CPU, OpenCV DNN) when a lift is requested by an explicit level or "
         "style. Automatic mode still never lifts a dark photo. No PyTorch model runs."
     ),
-    LEARNED: "Each learned model runs when its own setting is on (earlier behaviour).",
+    LEARNED: "Each learned model (Retinexformer, Zero-DCE, NAFNet, Real-ESRGAN, GFPGAN, CodeFormer) runs when its own setting is on.",
+    ADAPTIVE: (
+        "The adaptive engine (enhancement/adaptive/): the photograph is analysed, only the operations its defects call for "
+        "run, each candidate is validated (quality, colour, artifacts, identity), and one final image is selected or the "
+        "original is kept. Uses the models whose own setting is on."
+    ),
 }
 
 
@@ -85,7 +91,7 @@ def describe():
         "allowed_stages": sorted(LEARNED_STAGES[flag] for flag in ALLOWED_STAGES[name]),
         "learned_stages": sorted(LEARNED_STAGES.values()),
         "configured_on_but_disabled_by_policy": disabled_by_policy(),
-        "heavy_restoration_available": name == LEARNED and any(
+        "heavy_restoration_available": name in (LEARNED, ADAPTIVE) and any(
             bool(getattr(settings, flag)) for flag in LEARNED_STAGES
         ),
     }

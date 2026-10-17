@@ -226,7 +226,6 @@ class GFPGANPipelineTests(SimpleTestCase):
     @override_settings(
         GFPGAN_ENABLED=True,
         GFPGAN_OUTPUT_BLEND=0.40,
-        AI_RESTORATION_ENABLED=False,
         ZERO_DCE_ENABLED=False,
         ADAPTIVE_DENOISE_ENABLED=False,
     ENHANCEMENT_RENDER_POLICY="learned_v1")
@@ -339,7 +338,6 @@ class GFPGANPipelineTests(SimpleTestCase):
 
     @override_settings(
         GFPGAN_ENABLED=True,
-        AI_RESTORATION_ENABLED=False,
         ZERO_DCE_ENABLED=False,
     ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.restore_faces")
@@ -358,7 +356,6 @@ class GFPGANPipelineTests(SimpleTestCase):
 
     @override_settings(
         GFPGAN_ENABLED=True,
-        AI_RESTORATION_ENABLED=False,
         ZERO_DCE_ENABLED=False,
     ENHANCEMENT_RENDER_POLICY="learned_v1")
     @patch("enhancement.services.restore_faces")

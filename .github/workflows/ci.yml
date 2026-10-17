@@ -48,7 +48,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-      - run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt -r requirements-test.txt
       - run: pip check
       - name: Lint (unused imports and variables, undefined names)
         run: pip install ruff && ruff check .
@@ -76,6 +76,7 @@ jobs:
       - run: pip install pip-audit bandit
       - name: Known vulnerabilities in dependencies
         run: pip-audit -r requirements.txt --progress-spinner off
+      # enhancement/archs is vendored third-party network code (licences in its file headers); it is not scanned.
       # Every application package, not a hand-kept subset: the previous list had
       # fallen behind and left moderation, organizations, collages, events and
       # thumbnails unscanned.
@@ -84,7 +85,7 @@ jobs:
           bandit -r accounts activity collages config contact downloads duplicates enhancement
           events identities moderation notifications operations organizations privacy
           quality_control reports search sharing thumbnails uploads validation scripts
-          -x "*/tests.py,*/test_*.py,*/migrations" -ll
+          -x "*/tests.py,*/test_*.py,*/migrations,enhancement/archs" -ll
 
   production-config:
     name: Production configuration starts
@@ -127,7 +128,7 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Generate throwaway secrets
         run: |
-          for name in DJANGO_SECRET_KEY IDENTITY_EMBEDDING_KEY IMAGE_ENCRYPTION_KEY TWO_FACTOR_SECRET_KEY DB_PASSWORD; do
+          for name in DJANGO_SECRET_KEY IDENTITY_EMBEDDING_KEY IMAGE_ENCRYPTION_KEY DB_PASSWORD; do
             value=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
             echo "::add-mask::$value"
             echo "$name=$value" >> "$GITHUB_ENV"

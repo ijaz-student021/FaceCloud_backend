@@ -59,7 +59,6 @@ GET  /api/auth/registrations/{registration_id}/status/    (masked status, for a 
 ```text
 POST /api/auth/login/  {identifier, password}     (identifier = username or email)
    -> 200 {access, refresh, role, dashboard, user}
-   -> 200 {two_factor_required: true, login_token}     (this account has 2FA on; see below)
 ```
 
 - `role` is `user`, `moderator` or `admin`. `dashboard` is **always the same
@@ -77,27 +76,18 @@ POST /api/auth/login/  {identifier, password}     (identifier = username or emai
 - After repeated wrong passwords the account is refused with **429** and a
   `Retry-After` header. Show the message and offer "Forgot password".
 
-**Two-factor authentication (optional per account)**
+**Forgot password**
 
 ```text
-POST /api/auth/2fa/verify/ {login_token, code}     -> 200 {access, refresh, role, dashboard, user}
+POST /api/auth/password-reset/          {email}                           -> 200 (always the same message)
+POST /api/auth/password-reset/confirm/  {uidb64, token, new_password}     -> 200, or 400 for an invalid/expired link or a weak password
 ```
 
-- When `POST /api/auth/login/` returns `two_factor_required`, show a "enter your
-  6-digit code" screen (accept a recovery code too, in the same field) and POST
-  it with the `login_token` to `/api/auth/2fa/verify/`. That response is the same
-  shape a normal login returns. `login_token` expires in a few minutes; if it
-  does, send the user back to the password screen.
-- **Managing 2FA** (needs a normal authenticated session, not `login_token`):
-  `POST /api/auth/2fa/setup/` returns `{secret, otpauth_uri}` — render `otpauth_uri`
-  as a QR code for an authenticator app (Google Authenticator, Authy, 1Password)
-  to scan, and show `secret` for manual entry as a fallback. `POST
-  /api/auth/2fa/confirm/ {code}` (one real code from the app) turns it on and
-  returns `{recovery_codes: [...]}` — **show these once and tell the user to save
-  them**; they are never retrievable again. `GET /api/auth/2fa/status/` returns
-  `{enabled}`. `POST /api/auth/2fa/disable/ {code}` and `POST
-  /api/auth/2fa/recovery-codes/ {code}` (regenerate) both need a real device code
-  or an unused recovery code — being logged in is not enough on its own.
+- The email contains `{FRONTEND_URL}/reset-password/{uidb64}/{token}`. The frontend needs a page at that route that reads the two
+  values and posts them with the new password. The link works once; a successful reset signs out every session.
+- The first call never reveals whether the address has an account.
+
+(Two-factor authentication was removed on 2026-10-16: login is always one step and there are no `/api/auth/2fa/*` endpoints.)
 
 **Tokens**
 

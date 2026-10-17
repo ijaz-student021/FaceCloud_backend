@@ -15,8 +15,7 @@ from .test_pipeline_regressions import NO_MODELS
 
 LEARNED_ADAPTERS = (
     "enhancement.services.restore_faces", "enhancement.services.deblur_with_nafnet",
-    "enhancement.services.upscale_with_realesrgan", "enhancement.services.restore_with_purevision",
-    "enhancement.services.upscale_with_purescale", "enhancement.services.colorize_with_siggraph17",
+    "enhancement.services.upscale_with_realesrgan",
 )
 
 
@@ -98,8 +97,7 @@ class WhenZeroDceRunsTests(SimpleTestCase):
     def test_balanced_never_runs_a_pytorch_model(self):
         with override_settings(
             ENHANCEMENT_RENDER_POLICY=policy.BALANCED, GFPGAN_ENABLED=True, HD_RESTORATION_ENABLED=True,
-            NAFNET_DEBLUR_ENABLED=True, PURESCALE_ENABLED=True, PUREVISION_ENABLED=True, COLORIZATION_ENABLED=True,
-        ), patch("enhancement.services.enhance_with_zero_dce", side_effect=fake_zero_dce):
+            NAFNET_DEBLUR_ENABLED=True, ), patch("enhancement.services.enhance_with_zero_dce", side_effect=fake_zero_dce):
             patches = [patch(name, side_effect=AssertionError(f"{name} must not run under balanced_v1")) for name in LEARNED_ADAPTERS]
             for each in patches:
                 each.start()

@@ -38,8 +38,8 @@ separately in `frontend-handoff.md`; nothing here claims a frontend change.
 | PAGE-006 | Register | `POST /api/auth/register/` | exists | Display name: B02 profile field |
 | PAGE-007 | Signup (unmounted) | as Register | frontend-only | `/signup` redirects to Register |
 | PAGE-009 | VerifyEmail | `verify-email/`, `verify-email/resend/`, `registrations/{id}/status/` | exists | — |
-| PAGE-004/010/031 | Login (all roles) | `auth/login/`, `auth/refresh/`, `auth/2fa/verify/` | exists | Session claim: B02 |
-| — | Reset / 2FA screens | `password-reset/`, `password-reset/confirm/`, `2fa/*` | exists | Frontend routes missing (handoff) |
+| PAGE-004/010/031 | Login (all roles) | `auth/login/`, `auth/refresh/` | exists | Session claim: B02 |
+| — | Reset screens | `password-reset/`, `password-reset/confirm/` | exists | Frontend route `/reset-password/{uid}/{token}` missing as of the earlier review (handoff). 2FA removed 2026-10-16 |
 | PAGE-005/008 | NotFound, Unauthorized | none | frontend-only | — |
 
 ## User portal
@@ -61,7 +61,7 @@ separately in `frontend-handoff.md`; nothing here claims a frontend change.
 | PAGE-045 | Notifications | list/read/all-read/unread-count/preferences | exists (already paginated) | — |
 | PAGE-037 | ActivityLogs | `GET /api/user/activity/` | exists | — |
 | PAGE-048 | Settings: profile | `user/profile/`, `user/avatar/` | extended `3c62344` | — |
-| PAGE-048 | Settings: security | `user/sessions/`, `sessions/{id}/revoke/`, change-password, logout-all, 2FA | added `1a2c1b8` | — |
+| PAGE-048 | Settings: security | `user/sessions/`, `sessions/{id}/revoke/`, change-password, logout-all | added `1a2c1b8` | — |
 | PAGE-048 | Settings: notifications | `notifications/preferences/` | exists | — |
 | PAGE-048 | Settings: privacy | `privacy/consents/`, `export/`, `facial-data/` | exists | Camera permission stays in the browser |
 | PAGE-043 | LiveEnhancement | `camera/sessions/`, snapshots, upload + enhancement | added `4586aa5` | 30-day metadata retention; no video endpoint exists |

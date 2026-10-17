@@ -15,7 +15,7 @@ Status definitions:
 
 | Area | Status |
 |---|---|
-| Authentication and account management | Complete, including link-verified pending signup and optional two-factor authentication (TOTP) |
+| Authentication and account management | Complete, including link-verified pending signup and password reset by email |
 | Role-based authorization | Complete |
 | Authentication audit events | Complete |
 | Single, multiple, and ZIP image upload | Complete |
@@ -40,7 +40,6 @@ Status definitions:
 
 - [Remaining user-dashboard features and implementation order](USER_DASHBOARD_REMAINING_FEATURES.md)
 - [Features 01–03: Authentication, accounts, authorization, and audit](features/01-authentication-and-authorization.md)
-- [Two-factor authentication (TOTP)](features/two-factor-authentication.md)
 - [Features 04–08: Image uploads, batches, secure storage, and cleanup](features/02-image-upload-and-secure-storage.md)
 - [Feature 09: Image preprocessing and standardization](features/09-image-preprocessing-and-standardization.md)
 - [Features 10–12: Image-enhancement foundation and remaining processing work](features/10-12-image-enhancement.md)
@@ -82,11 +81,9 @@ Provides the complete account lifecycle and proves the identity of API users.
 - Logout from one or all devices
 - Account deletion with password confirmation
 - Blocking of unverified, inactive, and suspended users
-- Optional two-factor authentication (TOTP): setup, confirmation, recovery codes,
-  and a two-step login (`POST /api/auth/login/` returns `two_factor_required` and
-  a short-lived `login_token` for a 2FA account instead of tokens; `POST
-  /api/auth/2fa/verify/` exchanges it plus a code for the real tokens). See
-  [two-factor-authentication.md](features/two-factor-authentication.md).
+- Password reset by email (`POST /api/auth/password-reset/`, then `/confirm/`).
+- Two-factor authentication was **removed** (2026-10-16): login is always one step. Migration `accounts/0012_remove_two_factor`
+  drops its tables; earlier audit events keep their names.
 
 ### Feature 02: Role-based authorization — Complete
 
@@ -832,20 +829,26 @@ Provides the final relational database foundation for concurrent processing and 
 - PostgreSQL test-database support
 - Preserved rollback backup
 
-### Feature 43: Private cloud storage — Partial (encryption at rest done)
+### Feature 43: Private cloud storage — Implemented, verified against an in-process S3 (not yet against a real AWS account)
 
-Stored images are already encrypted at rest on local storage (AES-256-GCM, key ids and
-rotation, conversion command): [stored-image-encryption.md](features/stored-image-encryption.md).
-Moving media to a private object store, signed URLs and quotas remain.
+Select it with `STORAGE_BACKEND=s3`: every stored file then lives in a private S3 (or S3-compatible) bucket,
+**encrypted client-side first** (AES-256-GCM, key ids and rotation as in
+[stored-image-encryption.md](features/stored-image-encryption.md)) with S3 server-side encryption on top. Setup, the
+account hardening checklist, the bucket script, the IAM policy and the acceptance check are in
+[deployment/aws-s3-private-storage.md](deployment/aws-s3-private-storage.md).
 
-Moves production assets from local media storage to private object storage.
-
-- AWS S3 or compatible private bucket
-- Secure object keys
-- Signed download URLs
-- Original, enhanced, report, and ZIP storage
-- Storage quotas and analytics
-- Lifecycle and deletion policies
+- AWS S3 or compatible private bucket: `config/s3_storage.py` (`EncryptedS3Storage`); `scripts/aws_provision_bucket.py`
+  creates it with Block Public Access, TLS-only policy, default encryption, versioning and lifecycle
+- Secure object keys: `media/users/<id>/<kind>/<uuid>.<ext>`, the original name is never in a key
+- Original, enhanced, report, and ZIP storage: all go through the default storage, so all are covered
+- Downloads: streamed through the authenticated API (ownership checked, then decrypted); no signed URL is made for
+  ciphertext. Signed, expiring URLs exist only with client-side encryption off
+- `manage.py check_storage`: refuses root credentials, checks Block Public Access, encryption, versioning and a
+  write/read/delete round trip
+- `manage.py copy_media_to_s3`: copies existing local media, verifying each file by SHA-256, never deleting the source
+- Lifecycle and deletion: versioning, 30-day expiry of old versions, 7-day abort of incomplete uploads; deleting an
+  image deletes its objects
+- **Still open:** per-user storage quotas and analytics
 
 ### Feature 44: API documentation and developer support — Complete
 

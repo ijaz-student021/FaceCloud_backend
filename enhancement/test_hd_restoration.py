@@ -11,7 +11,6 @@ from .services import enhance_bgr
 class HDRestorationPipelineTests(SimpleTestCase):
     @override_settings(
         HD_RESTORATION_ENABLED=False,
-        AI_RESTORATION_ENABLED=False,
         GFPGAN_ENABLED=False,
     )
     def test_disabled_hd_restoration_preserves_existing_pipeline(self):

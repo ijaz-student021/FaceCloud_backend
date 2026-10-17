@@ -10,8 +10,11 @@ so a deployment without it still starts and falls back cleanly.
 """
 import gc
 import logging
+import os
 import sys
 import threading
+import time
+from contextlib import contextmanager
 
 import cv2
 import numpy as np
@@ -20,8 +23,8 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 # A model's raw output is expected in [0, 1]. A tile whose output leaves this
-# band by more than the margin has diverged (NAFNet does on some near-black
-# tiles: about +-390 on a dark hair tile, on CPU and MPS alike); it is replaced
+# band by more than the margin has diverged (a restoration network can on some near-black
+# tiles: about +-390 on a dark hair tile in earlier tests, on CPU and MPS alike); it is replaced
 # by its own input, resized, rather than clamped into colour noise.
 VALID_OUTPUT_MARGIN = 0.5
 _TILE_STATS = threading.local()
@@ -32,9 +35,95 @@ def last_tile_stats():
     return dict(getattr(_TILE_STATS, "value", {"tiles": 0, "tiles_rejected": 0}))
 
 
+class InferenceDeadline(RuntimeError):
+    """The caller's time budget ran out; raised between tiles, so a model call stops at the next tile, not at the end."""
+
+
+_DEADLINE = threading.local()
+
+
+@contextmanager
+def deadline_until(monotonic_deadline):
+    """Inside the block, tiled inference stops (``InferenceDeadline``) once ``time.monotonic()`` passes ``monotonic_deadline``.
+
+    The adaptive engine uses it so its time budget bounds one slow model call, not only the gaps between operations. Nesting
+    keeps the earlier of two deadlines; ``None`` sets no deadline.
+    """
+    previous = getattr(_DEADLINE, "value", None)
+    candidates = [value for value in (previous, monotonic_deadline) if value is not None]
+    _DEADLINE.value = min(candidates) if candidates else None
+    try:
+        yield
+    finally:
+        _DEADLINE.value = previous
+
+
+def check_deadline():
+    deadline = getattr(_DEADLINE, "value", None)
+    if deadline is not None and time.monotonic() > deadline:
+        raise InferenceDeadline("The time budget was reached.")
+
+
 # One heavy inference at a time in a worker process, whichever model runs it.
 # Two models on one GPU at once is the usual way to run out of memory.
 INFERENCE_LOCK = threading.RLock()
+
+
+# Large models loaded in this process, by adapter: each adapter registers the dict it caches its models in.
+_MODEL_CACHES = []
+
+
+def register_model_cache(cache):
+    """An adapter registers the dict its loaded models live in, so residency can be managed across adapters."""
+    if all(cache is not other for other in _MODEL_CACHES):
+        _MODEL_CACHES.append(cache)
+    return cache
+
+
+def physical_memory_gib():
+    try:
+        return os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") / 2 ** 30
+    except (ValueError, OSError, AttributeError):
+        return None
+
+
+def single_model_mode():
+    """Whether only one large model should stay loaded at a time.
+
+    ``ENHANCEMENT_MODEL_RESIDENCY``: ``single`` or ``all`` force it; ``auto`` (the default) chooses single-model residency on a
+    machine with under 12 GiB of memory. The engine loads models one operation at a time, so evicting the others costs a
+    reload and saves several hundred megabytes each: on an 8 GiB laptop that is the difference between finishing and swapping
+    until the GPU stalls.
+    """
+    mode = str(getattr(settings, "ENHANCEMENT_MODEL_RESIDENCY", "auto")).lower()
+    if mode in ("single", "all"):
+        return mode == "single"
+    memory = physical_memory_gib()
+    return memory is not None and memory < 12
+
+
+def make_room(cache, keep_key=None):
+    """Before loading a model into ``cache``: in single-model mode, drop every other loaded model (and this cache's others)."""
+    if not single_model_mode():
+        return
+    released = False
+    for other in _MODEL_CACHES:
+        for key in list(other):
+            if other is cache and key == keep_key:
+                continue
+            del other[key]
+            released = True
+    if released:
+        gc.collect()
+        torch = sys.modules.get("torch")
+        if torch is not None:
+            try:
+                if hasattr(torch, "mps") and torch.backends.mps.is_available():
+                    torch.mps.empty_cache()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except RuntimeError:
+                logger.warning("Could not release cached device memory after unloading models.")
 
 
 class InferenceMemoryError(RuntimeError):
@@ -145,6 +234,7 @@ def tiled_inference(torch, image, model, device, scale, tile, overlap, output_sc
     with torch.inference_mode():
         for y in _positions(height, tile, step):
             for x in _positions(width, tile, step):
+                check_deadline()
                 patch = image[y:min(y + tile, height), x:min(x + tile, width)]
                 raw = model(tensor_from_bgr(patch, torch, device))
                 patch_height, patch_width = patch.shape[:2]
@@ -190,6 +280,9 @@ def run_with_memory_fallback(run, *, device, tile, overlap, label, error_class):
         _TILE_STATS.value = {"tiles": 0, "tiles_rejected": 0}  # never report a previous run's counts
         try:
             output = run(tile, overlap)
+        except InferenceDeadline as error:
+            release_memory(device)
+            raise error_class(f"{label} stopped: the time budget was reached.") from error
         except Exception as error:
             if isinstance(error, error_class):
                 raise

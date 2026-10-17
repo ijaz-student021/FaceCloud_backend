@@ -1,87 +1,104 @@
-# The learned models: installed, verified, and off by default
+# The model set: installed, verified, and off by default
 
-FaceCloud ships two enhancement policies. The default, **`lightweight_v1`**, uses OpenCV
-and Pillow only. The earlier learned models are **still in the backend, installed and
-checksum-verified, but disabled** by that policy. Nothing falls back to them silently,
-and each result records which policy produced it. This page is the answer to "where
-are the models?" for a review or defence.
+FaceCloud's enhancement is OpenCV and Pillow by default (`lightweight_v1`). The learned models below are
+**installed and checksum-verified but switched off** until a setting turns them on, and the output of each is
+judged by the same quality, face-fidelity and identity guards as any other candidate. Each result records which
+policy and models produced it. This page answers "where are the models, and what do they do?" for a review or
+defence.
 
-> History: on 2026-10-15 these models were briefly removed (commit `d61b96b`) and then
-> restored the same day by request (`feat/keep-disabled-models`), so that they can be shown.
-> Their sources and checksums are recorded below and in `docs/gpu/model_manifest.json`.
+## The pipeline
+
+```
+Original image
+   -> quality analysis (low light? noise? blur? low resolution? faces?)
+   -> low light      Retinexformer (fallback: Zero-DCE, then an OpenCV lift)
+   -> noise          NAFNet-SIDD   (fallback: edge-aware non-local means)
+   -> blur           NAFNet-GoPro  (motion deblurring)
+   -> resolution     Real-ESRGAN   (the only model that changes the pixel grid)
+   -> faces          CodeFormer    (alternative: GFPGAN), identity-gated
+   -> identity check SFace by default, ArcFace selectable; faces found by YuNet, RetinaFace selectable
+   -> final output (OpenCV + Pillow for everything classical)
+```
+
+Automatic mode only runs a stage when the analysis measured its defect, and never lifts a dark photo on its own
+(a dark photo may be meant to be dark; the lift is the user's choice, by level, style or slider).
 
 ## What exists
 
-| Model | What it does | File | Needs | Setting that turns it on |
-|---|---|---|---|---|
-| Zero-DCE | learned exposure curves for dark photos | `.runtime/models/zero_dce_epoch99.onnx` | OpenCV only | `ZERO_DCE_ENABLED` |
-| EDSR x2 | super-resolution of small photos | `.runtime/models/EDSR_x2.pb` | OpenCV only | `AI_RESTORATION_ENABLED` |
-| NAFNet (GoPro) | deblurring | `.runtime/models/NAFNet-GoPro-width64.pth` | PyTorch | `NAFNET_DEBLUR_ENABLED` + `HD_RESTORATION_ENABLED` |
-| Real-ESRGAN x4+ | HD upscaling | `.runtime/models/RealESRGAN_x4plus.pth` | PyTorch | `HD_RESTORATION_ENABLED` |
-| GFPGAN v1.4 | face restoration (identity-gated) | `.runtime/models/gfpgan/GFPGANv1.4.pth`, `gfpgan/weights/` (detector, parser) | PyTorch, isolated worker | `GFPGAN_ENABLED` (+ `GFPGAN_QUEUE_ENABLED`) |
-| PureVision 1x | compression-artefact removal | `.runtime/models/PureVision_1x.pth` | PyTorch | `PUREVISION_ENABLED` |
-| PureScale 2x | super-resolution | `.runtime/models/PureScale_2x.pth` | PyTorch | `PURESCALE_ENABLED` |
-| Colourisation (SIGGRAPH17) | colourises black-and-white photos | `.runtime/models/colorization_siggraph17.pth` | PyTorch | `COLORIZATION_ENABLED` |
+| Role | Model | File | Size | Setting that turns it on | Needs |
+|---|---|---|---|---|---|
+| Low light | Retinexformer (NTIRE) | `.runtime/models/Retinexformer_NTIRE.pth` | 6 MB | `RETINEXFORMER_ENABLED` | PyTorch, einops |
+| Low light (fallback) | Zero-DCE | `.runtime/models/zero_dce_epoch99.onnx` | 0.3 MB | `ZERO_DCE_ENABLED` | OpenCV only |
+| Denoise | NAFNet-SIDD width 64 | `.runtime/models/NAFNet-SIDD-width64.pth` | 464 MB | `NAFNET_DENOISE_ENABLED` | PyTorch |
+| Deblur | NAFNet-GoPro width 64 | `.runtime/models/NAFNet-GoPro-width64.pth` | 272 MB | `NAFNET_DEBLUR_ENABLED` + `HD_RESTORATION_ENABLED` | PyTorch |
+| Super-resolution | Real-ESRGAN x4plus | `.runtime/models/RealESRGAN_x4plus.pth` | 67 MB | `HD_RESTORATION_ENABLED` | PyTorch |
+| Face restoration | CodeFormer | `.runtime/models/codeformer/codeformer.pth` | 377 MB | `CODEFORMER_ENABLED` | PyTorch |
+| Face restoration (alternative) | GFPGAN v1.4 | `.runtime/models/gfpgan/GFPGANv1.4.pth` + `gfpgan/weights/` | 349 MB | `GFPGAN_ENABLED` | PyTorch, isolated worker |
+| Face detection | YuNet (default), RetinaFace ResNet-50 | `yunet_s_dynamic.onnx`, `gfpgan/weights/detection_Resnet50_Final.pth` | 0.2 / 109 MB | `FACE_DETECTOR_PROVIDER` = `yunet_v1` / `retinaface_v1` | OpenCV / facexlib (worker) |
+| Identity | SFace (default), ArcFace `w600k_r50` | `face_recognition_sface_2021dec.onnx`, `.runtime/models/arcface/w600k_r50.onnx` | 39 / 174 MB | `IDENTITY_PROVIDER` = `sface_2021dec_v1` / `arcface_w600k_r50_v1` | OpenCV only |
 
-Always used, independent of the policy: **YuNet** (face detection) and **SFace** (identity).
+Removed on 2026-10-15 (recorded, with sources and checksums, in `retired-capabilities.md`): EDSR, PureVision,
+PureScale and colourisation.
 
-Licences to mention: PureVision and PureScale are CC BY-NC-SA 4.0 (non-commercial);
-GFPGAN is used under a private permission recorded outside the repository; colourisation
-is BSD-2-Clause. The private curve model (`facecloud_curve_best_opencv.onnx`) has no
-public source and is not installed on this machine.
+`python scripts/model_manifest.py verify` checks every file against `docs/gpu/model_manifest.json`;
+`python scripts/fetch_models.py` re-downloads a missing one from its public source and keeps it only if it matches
+the pinned SHA-256 (it never changes a pin). The architectures of Retinexformer and CodeFormer are vendored in
+`enhancement/archs/` with their licence headers and load the authors' checkpoints strictly.
 
-## Three policies
+## Four policies
 
 | `ENHANCEMENT_RENDER_POLICY` | What runs | Needs |
 |---|---|---|
 | `lightweight_v1` (default) | OpenCV and Pillow only | nothing |
-| `balanced_v1` | the same, plus **Zero-DCE on the CPU, only when a lift is requested** (a chosen level or style; automatic mode still never lifts a dark photo) | the Zero-DCE file (OpenCV DNN); no PyTorch, no GPU |
-| `learned_v1` | every model whose own setting is on | PyTorch for six of the eight |
+| `balanced_v1` | the same, plus **Zero-DCE on the CPU, only when a lift is requested** | the Zero-DCE file; no PyTorch, no GPU |
+| `learned_v1` | every model whose own setting is on | PyTorch |
+| `adaptive_v1` | the **adaptive engine** ([adaptive-engine.md](adaptive-engine.md)): analyse, run only the operations the defects call for, validate every candidate (quality, colour, artifacts, identity), return one image or keep the original | PyTorch, the models whose setting is on |
 
-On the low-light benchmark `balanced_v1` has the best exposure and colour of the CPU options
-(`docs/evaluation/2026-10-15-lowlight-benchmark.md`). The project owner states that an approved licence covers Zero-DCE; that approval is not on file in this repository and was not
-checked here, so add the document (or its reference) to `docs/model-licenses/` when it can be uploaded.
+## The sliders
+
+The editor sliders have a tone half (brightness, contrast, shadows, highlights, saturation, warmth, sharpness) and a
+**model half**: low-light enhancement, noise reduction, deblur and face restoration. A model slider is 0-100 and
+blends that model's result into the photo; 0 leaves it alone, 100 is the full candidate. They run in the order above,
+before the tone controls, and each model's candidate is cached under its input's hash so moving one slider recomputes
+only what comes after it. A slider whose model is off falls back to a classical OpenCV equivalent (low light, noise,
+deblur) or is reported as not applied (face restoration). The models are therefore not decoration: they are what the
+sliders move. Details and the mapping from the dashboard's sliders: `dashboard-sliders.md`. The sliders are explicit
+requests, so they need only the model's own setting, not the rendering policy.
 
 ## Showing it (for the panel)
 
-1. **They are there and verified:** `GET /api/system/health/` (administrator) lists every
-   model with `status: disabled`, `installed: true`, `checksum_verified: true` and the
-   reason `disabled by the lightweight_v1 rendering policy`. Or from a shell:
-   `python scripts/model_manifest.py verify` (12 files OK) and
-   `python scripts/fetch_models.py --list`.
-2. **They are off by default:** every result's `applied_parameters.render_policy` says
-   `lightweight_v1`, and `learned_stages_allowed: false`.
-3. **They work when switched on:** set `ENHANCEMENT_RENDER_POLICY=learned_v1` (the
-   models whose own setting is on then run). Zero-DCE and EDSR need nothing else;
-   NAFNet, Real-ESRGAN, GFPGAN, PureVision, PureScale and colourisation need PyTorch (the
-   isolated Python 3.12 worker environment: `requirements-gfpgan.txt`, started with
-   `scripts/start_gfpgan_worker.sh`). **That environment is installed on this machine** at `.runtime/venvs/gfpgan`
-   (git-ignored; Python 3.12.13, torch 2.14.0, torchvision 0.29.0, Apple MPS available, no CUDA). Rebuild it with the
-   commands at the top of `requirements-gfpgan.txt`, including the OpenCV step (plain `opencv-python` breaks EDSR).
-   Verified 2026-10-15: `manage.py check_gfpgan --load-model` passes, and each of the eight models ran on a real photo
-   with a matching defect (`docs/evaluation/2026-10-15-learned-models-run.md`).
-4. **Same photo, both policies:** `python scripts/compare_policies.py --image photo.jpg --darken 0.28 --out compare.jpg`
-   runs the pipeline twice (one process per policy) and writes the two results side by side.
-   Measured on a portrait darkened to 28 % brightness: the default leaves it dark in automatic
-   mode (mean luminance 27 to 27, algorithm `opencv_adaptive_restoration_router_v2`); with
-   `learned_v1` Zero-DCE lifts it (27 to 57, `zero_dce_hybrid_v1`).
+1. **They are there and verified:** `GET /api/system/health/` (administrator) lists every model as `healthy`
+   or `disabled`, with `installed: true` and `checksum_verified: true`. Or: `python scripts/model_manifest.py verify`.
+2. **They work:** `python scripts/build_model_sheet.py --images <photos> --out sheet_dir` runs every model on real
+   photos against their clean originals and writes an HTML page, a contact sheet and the measured numbers
+   (`docs/evaluation/2026-10-15-model-sheet.md` has the results from the project's own photos).
+3. **They drive the sliders:** `GET /api/enhancements/editor/configuration/` says, per slider, which engine serves it
+   and whether it is available.
+4. **They are off by default:** every result's `applied_parameters.render_policy` says which policy produced it.
 
-If a file is missing or altered: `python scripts/fetch_models.py` downloads each one from its
-public source and keeps it only if it matches the pinned SHA-256 (it never changes a pin).
+To switch the models on for a demonstration, set in `.env`: `RETINEXFORMER_ENABLED=True`,
+`NAFNET_DENOISE_ENABLED=True`, `NAFNET_DEBLUR_ENABLED=True`, `HD_RESTORATION_ENABLED=True`,
+`CODEFORMER_ENABLED=True`, and `ENHANCEMENT_RENDER_POLICY=learned_v1` for the automatic pipeline.
 
-## Why they are off
+## Environments
+
+PyTorch 2.14 is installed in the main environment (`venv`, Python 3.14) and in the isolated worker environment
+(`.runtime/venvs/gfpgan`, Python 3.12). Every adapter above runs in either, except GFPGAN and the RetinaFace
+detector, which need `facexlib`/`gfpgan` and so the worker. After building the worker environment from
+`requirements-gfpgan.txt`, follow its OpenCV step: plain `opencv-python` overwrites the contrib build and breaks the
+OpenCV super-resolution module. Devices: Apple MPS or CUDA when present, otherwise CPU; an explicitly configured
+device that is missing is an error, never a silent move.
+
+## Licences
+
+Retinexformer, NAFNet and Real-ESRGAN are MIT/BSD. **CodeFormer (S-Lab License 1.0) and the pretrained ArcFace
+weights are non-commercial research licences**: fine for this academic project, not for a commercial service.
+The Zero-DCE licence is stated as approved by the project owner and is not on file here. See
+`docs/model-licenses/model-set-2026-10.md`.
+
+## Why they are off by default
 
 * Automatic mode must not decide, from pixels alone, that a dark photo should be brightened.
-* Generative face restoration cannot be shown to keep the person, so identity checks gate it.
-* Two checkpoints are non-commercial; the others add a second Python environment and queue.
-* No GPU path (CUDA) has been validated.
-* Result: faster, smaller, predictable default; the optional models remain an explicit choice.
-
-## Sources and checksums
-
-Pinned in `docs/gpu/model_manifest.json`. Public sources: Zero-DCE
-(github.com/Li-Chongyi/Zero-DCE, exported with `scripts/export_zero_dce_onnx.py`), EDSR
-(github.com/Saafke/EDSR_Tensorflow), NAFNet (megvii-research/NAFNet, GoPro docs),
-Real-ESRGAN (xinntao/Real-ESRGAN v0.1.0), GFPGAN (TencentARC/GFPGAN v1.3.0), facexlib weights
-(xinntao/facexlib v0.1.0, v0.2.2), PureVision and PureScale (limitlesslab/AI-upscaling-models),
-colourisation (richzhang/colorization).
+* Generative restoration (CodeFormer, GFPGAN) cannot be proven to keep the person, so identity checks gate it.
+* Two checkpoints are non-commercial, and the heavy ones need PyTorch (a GPU for acceptable speed).
+* Result: a faster, smaller, predictable default; the models remain an explicit choice.

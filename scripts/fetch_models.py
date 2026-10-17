@@ -1,7 +1,7 @@
 """Download the optional model checkpoints from their public sources and check each against its pinned SHA-256.
 
     python scripts/fetch_models.py                 # everything that is missing
-    python scripts/fetch_models.py --only zero_dce,edsr
+    python scripts/fetch_models.py --only zero_dce,realesrgan
     python scripts/fetch_models.py --list
 
 The checkpoints are not in Git (``docs/gpu/model_manifest.json`` records their names,
@@ -30,8 +30,17 @@ ARCHIVE = Path.home() / "FaceCloud_retired_2026-10-15"
 MODELS = {
     "zero_dce": (".runtime/models/zero_dce_epoch99.onnx", "models/zero_dce_epoch99.onnx",
                  ("local", "zero_dce_epoch99.onnx")),  # exported locally from the official Epoch99.pth; see the provenance doc
-    "edsr": (".runtime/models/EDSR_x2.pb", "models/EDSR_x2.pb",
-             ("url", "https://github.com/Saafke/EDSR_Tensorflow/raw/master/models/EDSR_x2.pb")),
+    # The official link is a Google Drive file (megvii-research/NAFNet, docs/GoPro.md); needs `gdown`.
+    "nafnet": (".runtime/models/NAFNet-GoPro-width64.pth", "models/NAFNet-GoPro-width64.pth",
+               ("drive", "1S0PVRbyTakYY9a82kujgZLbMihfNBLfC")),
+    "nafnet_sidd": (".runtime/models/NAFNet-SIDD-width64.pth", "models/NAFNet-SIDD-width64.pth",
+                    ("drive", "14Fht1QQJ2gMlk4N1ERCRuElg8JfjrWWR")),  # megvii-research/NAFNet readme, SIDD-width64
+    "retinexformer": (".runtime/models/Retinexformer_NTIRE.pth", "models/Retinexformer_NTIRE.pth",
+                      ("drive", "1K-QR-A_CPe6iAgjE6_04Q20DkkVwaVta")),  # caiyuanhao1998/Retinexformer pretrained_weights/NTIRE.pth
+    "codeformer": (".runtime/models/codeformer/codeformer.pth", "models/codeformer/codeformer.pth",
+                   ("url", "https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth")),
+    "arcface": (".runtime/models/arcface/w600k_r50.onnx", "models/arcface/w600k_r50.onnx",
+                ("zip", "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip|w600k_r50.onnx")),
     "realesrgan": (".runtime/models/RealESRGAN_x4plus.pth", "models/RealESRGAN_x4plus.pth",
                    ("url", "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth")),
     "gfpgan": (".runtime/models/gfpgan/GFPGANv1.4.pth", "models/gfpgan/GFPGANv1.4.pth",
@@ -40,15 +49,6 @@ MODELS = {
                         ("url", "https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_Resnet50_Final.pth")),
     "gfpgan_parser": ("gfpgan/weights/parsing_parsenet.pth", "gfpgan_weights/parsing_parsenet.pth",
                       ("url", "https://github.com/xinntao/facexlib/releases/download/v0.2.2/parsing_parsenet.pth")),
-    "purevision": (".runtime/models/PureVision_1x.pth", "models/PureVision_1x.pth",
-                   ("url", "https://github.com/limitlesslab/AI-upscaling-models/releases/download/PureVision/1x_PureVision.pth")),
-    "purescale": (".runtime/models/PureScale_2x.pth", "models/PureScale_2x.pth",
-                  ("url", "https://github.com/limitlesslab/AI-upscaling-models/releases/download/PureScale2/2x_SAFMN_PureScale.pth")),
-    "colorization": (".runtime/models/colorization_siggraph17.pth", "models/colorization_siggraph17.pth",
-                     ("url", "https://colorizers.s3.us-east-2.amazonaws.com/siggraph17-df00044c.pth")),
-    # The official link is a Google Drive file (megvii-research/NAFNet, docs/GoPro.md); needs `gdown`.
-    "nafnet": (".runtime/models/NAFNet-GoPro-width64.pth", "models/NAFNet-GoPro-width64.pth",
-               ("drive", "1S0PVRbyTakYY9a82kujgZLbMihfNBLfC")),
 }
 
 
@@ -77,8 +77,21 @@ def fetch(kind, source, target):
         request = urllib.request.Request(source, headers={"User-Agent": "facecloud-fetch-models"})
         with urllib.request.urlopen(request, timeout=120) as response, open(target, "wb") as out:  # nosec B310 - https only, fixed table
             shutil.copyfileobj(response, out, 1024 * 1024)
+    elif kind == "zip":
+        import zipfile
+
+        url, member = source.split("|")
+        if not url.startswith("https://"):
+            raise ValueError("only https sources are allowed")
+        with tempfile.TemporaryDirectory() as scratch:
+            archive = Path(scratch) / "archive.zip"
+            request = urllib.request.Request(url, headers={"User-Agent": "facecloud-fetch-models"})
+            with urllib.request.urlopen(request, timeout=300) as response, open(archive, "wb") as out:  # nosec B310 - https only, fixed table
+                shutil.copyfileobj(response, out, 1024 * 1024)
+            with zipfile.ZipFile(archive) as bundle, bundle.open(member) as source_file, open(target, "wb") as out:  # nosec B310
+                shutil.copyfileobj(source_file, out, 1024 * 1024)
     elif kind == "drive":
-        subprocess.run(["uvx", "gdown", source, "-O", str(target)], check=True)
+        subprocess.run(["uvx", "gdown", source, "-O", str(target)], check=True)  # nosec B603 B607 - fixed table
     else:
         raise ValueError(kind)
 

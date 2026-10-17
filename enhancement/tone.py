@@ -73,11 +73,6 @@ def render_tone(source, controls, strength=1.0):
     channel_a = lab[:, :, 1] + _AB_CENTRE
     channel_b = lab[:, :, 2] + _AB_CENTRE
 
-    if effective["denoise"]:
-        lightness, channel_a, channel_b = _denoise(
-            lightness, channel_a, channel_b, min(effective["denoise"], 100.0) / 100.0, source.shape,
-        )
-
     lightness = lightness + effective["brightness"] * 0.35
     midpoint = float(np.median(lightness))
     lightness = midpoint + (lightness - midpoint) * (1.0 + effective["contrast"] * 0.005)

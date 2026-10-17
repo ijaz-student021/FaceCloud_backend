@@ -335,7 +335,7 @@ def scenario_routing_and_full_flow(api, pictures):
         stored = handle.read()
     decoded = cv2.imdecode(np.frombuffer(body, dtype=np.uint8), cv2.IMREAD_COLOR)
     progress = api.client.get(f"/api/images/batches/{batch['id']}/progress/").json()
-    retired_keys = [key for key in ("zero_dce", "hd_restoration", "purevision", "purescale", "face_restoration", "colorization")
+    retired_keys = [key for key in ("zero_dce", "hd_restoration", "face_restoration")
                     if key in parameters]
     routed = deliveries(row.task_id)
     record(

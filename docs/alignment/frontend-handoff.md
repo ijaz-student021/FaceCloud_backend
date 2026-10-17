@@ -155,7 +155,7 @@ Retry and cancel are the existing `.../retry/` and `.../cancel/`.
 
 ### Admin user detail (B06, Users → View)
 * `GET /api/user/admin/users/{id}/` returns the account state, profile,
-  `last_login`, `two_factor_enabled`, `active_sessions`, `organizations[]`
+  `last_login`, `active_sessions`, `organizations[]`
   and `usage{upload_batches, images, enhancements}`.
 * `PATCH` is unchanged (role, suspension, `is_active`).
 
@@ -364,7 +364,7 @@ Leave the hidden `website` field out (or empty); it is a spam trap.
 |---|---|
 | ApiDocs | Link `/api/docs/` and `/api/redoc/`; `/api/v1` does not exist |
 | ApiTest | Use Swagger; the mock paths `/api/admin/users`, `/api/admin/audit-logs`, `/api/images/list` and `/api/images/upload` do not exist (real: `/api/user/admin/users/`, `/api/system/audit/`, `/api/images/my/`, `/api/images/upload/{single,multiple,zip}/`) |
-| Reset password, 2FA | `/api/auth/password-reset/`, `/password-reset/confirm/`, `/api/auth/2fa/{setup,confirm,status,disable,recovery-codes,verify}/`; frontend routes are missing |
+| Reset password | `/api/auth/password-reset/`, `/password-reset/confirm/`; the frontend route `/reset-password/{uid}/{token}` was missing at the earlier review. **2FA endpoints were removed on 2026-10-16** (and `two_factor_enabled` from the admin user detail) |
 | Settings → Notifications | `GET`/`PATCH /api/notifications/preferences/` |
 | Settings → Privacy | `/api/privacy/consents/`, `/export/`, `/facial-data/` |
 | Moderator notification centre | `/api/notifications/` (assignment, escalation, overdue and batch-failed events are produced server-side) |

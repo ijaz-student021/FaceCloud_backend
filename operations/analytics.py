@@ -90,7 +90,7 @@ def _model_usage(enhancement_results, limit=TOP_MODELS_LIMIT):
     """Count each restoration/model contributor named in ``algorithm`` strings.
 
     ``applied_parameters["algorithm"]`` is a compound string such as
-    "zero_dce_hybrid_v1+private_gfpgan_v1_4+purescale_safmn_2x"; each
+    "zero_dce_hybrid_v1+private_gfpgan_v1_4+realesrgan_x4plus"; each
     "+"-joined component is counted separately so a photo that used three
     models contributes to all three counts, not one combined label.
     """

@@ -15,8 +15,6 @@ from django.test import SimpleTestCase, override_settings
 
 from . import runtime
 from .hd_restoration import HDRestorationUnavailable, deblur_with_nafnet, upscale_with_realesrgan
-from .purescale import PureScaleUnavailable, upscale_with_purescale
-from .purevision import PureVisionUnavailable, restore_with_purevision
 
 TORCH_INSTALLED = importlib.util.find_spec("torch") is not None
 
@@ -184,29 +182,17 @@ class AdapterMemoryPathTests(SimpleTestCase):
             deblur_with_nafnet, HDRestorationUnavailable,
         )
 
-    def test_purescale(self):
-        self.exhausted(
-            "enhancement.purescale._tiled_inference", "enhancement.purescale._load_model",
-            upscale_with_purescale, PureScaleUnavailable,
-        )
-
-    def test_purevision(self):
-        self.exhausted(
-            "enhancement.purevision._tiled_inference", "enhancement.purevision._load_model",
-            restore_with_purevision, PureVisionUnavailable,
-        )
-
     def test_a_retry_at_a_smaller_tile_succeeds_and_is_recorded(self):
         doubled = cv2.resize(self.source, (192, 128), interpolation=cv2.INTER_CUBIC)
         with (
-            patch("enhancement.purescale._load_model", return_value=(object(), "cuda")),
+            patch("enhancement.hd_restoration._load_model", return_value=(object(), "cuda")),
             patch(
-                "enhancement.purescale._tiled_inference",
+                "enhancement.hd_restoration._tiled_inference",
                 side_effect=[RuntimeError("CUDA out of memory"), doubled],
             ),
             self.assertLogs("enhancement.runtime", level="WARNING"),
         ):
-            output, metadata = upscale_with_purescale(self.source)
+            output, metadata = upscale_with_realesrgan(self.source)
 
         self.assertEqual(output.shape, (128, 192, 3))
         self.assertEqual((metadata["device"], metadata["tile_size"], metadata["memory_retries"]), ("cuda", 128, 1))
@@ -269,6 +255,25 @@ class RealTorchTests(SimpleTestCase):
         self.assertEqual(tiled.shape, (300, 420, 3))
         self.assertLessEqual(int(np.abs(tiled.astype(np.int16) - whole.astype(np.int16)).max()), 1)
 
+    def test_a_passed_deadline_stops_inference_between_tiles_and_is_not_retried_as_out_of_memory(self):
+        import time
+
+        model = self.model(1)
+        with runtime.deadline_until(time.monotonic() - 1.0):
+            with self.assertRaises(runtime.InferenceDeadline):
+                runtime.tiled_inference(self.torch, self.image, model, self.device, 1, 64, 16)
+            calls = []
+
+            def run(tile, overlap):
+                calls.append(tile)
+                return runtime.tiled_inference(self.torch, self.image, model, self.device, 1, tile, overlap)
+
+            with self.assertRaisesRegex(Unavailable, "time budget"):
+                runtime.run_with_memory_fallback(run, device=self.device, tile=64, overlap=16, label="Stand-in", error_class=Unavailable)
+        self.assertEqual(len(calls), 1)   # one attempt: a deadline is not a reason to retry with smaller tiles
+        output = runtime.tiled_inference(self.torch, self.image, model, self.device, 1, 64, 16)   # no deadline outside the block
+        np.testing.assert_array_equal(output, self.image)
+
     def test_a_model_that_returns_the_wrong_size_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "unexpected tile size"):
             runtime.tiled_inference(self.torch, self.image, self.model(3), self.device, 4, 64, 16)
@@ -330,3 +335,38 @@ class DivergedTileTests(SimpleTestCase):
         )
         self.assertEqual(metadata["tiles_rejected"], 1)
         self.assertEqual(output.shape, image.shape)
+
+
+class ModelResidencyTests(SimpleTestCase):
+    """On a small machine only one large model stays loaded; on a large one every model may."""
+
+    def setUp(self):
+        self.first, self.second = {"a": object()}, {"b": object(), "c": object()}
+        saved = list(runtime._MODEL_CACHES)
+        runtime._MODEL_CACHES[:] = [self.first, self.second]
+        self.addCleanup(lambda: runtime._MODEL_CACHES.__setitem__(slice(None), saved))
+
+    @override_settings(ENHANCEMENT_MODEL_RESIDENCY="single")
+    def test_single_mode_unloads_every_other_model_but_keeps_the_one_being_used(self):
+        runtime.make_room(self.second, keep_key="b")
+        self.assertEqual((dict(self.first), sorted(self.second)), ({}, ["b"]))
+
+    @override_settings(ENHANCEMENT_MODEL_RESIDENCY="all")
+    def test_all_mode_keeps_everything_loaded(self):
+        runtime.make_room(self.second)
+        self.assertEqual((sorted(self.first), sorted(self.second)), (["a"], ["b", "c"]))
+
+    @override_settings(ENHANCEMENT_MODEL_RESIDENCY="auto")
+    def test_auto_mode_follows_the_machines_memory(self):
+        with patch.object(runtime, "physical_memory_gib", return_value=8.0):
+            self.assertTrue(runtime.single_model_mode())
+        with patch.object(runtime, "physical_memory_gib", return_value=32.0):
+            self.assertFalse(runtime.single_model_mode())
+        with patch.object(runtime, "physical_memory_gib", return_value=None):
+            self.assertFalse(runtime.single_model_mode())
+
+    def test_an_adapter_registers_its_cache_once(self):
+        cache = {}
+        runtime.register_model_cache(cache)
+        runtime.register_model_cache(cache)
+        self.assertEqual(sum(1 for other in runtime._MODEL_CACHES if other is cache), 1)

@@ -24,7 +24,7 @@ class GFPGANUnavailable(RuntimeError):
 _MODEL_LOCK = threading.RLock()
 # Shared with every other adapter: one heavy inference at a time per process.
 _INFERENCE_LOCK = runtime.INFERENCE_LOCK
-_MODEL_CACHE = {}
+_MODEL_CACHE = runtime.register_model_cache({})
 _NMS_BACKEND = "uninitialized"
 
 
@@ -274,6 +274,7 @@ def _load_restorer():
         if cached is not None:
             return cached
         torch, restorer_class = _import_runtime()
+        runtime.make_room(_MODEL_CACHE)
         try:
             restorer = restorer_class(
                 model_path=str(model_path),

@@ -13,6 +13,23 @@ class IdentityEmbeddingProvider(ABC):
     name = "abstract"
     model_checksum = ""
     dimension = 0
+    # Similarity scales differ between models, so thresholds belong to the provider. ``None`` means "use the
+    # SFace-calibrated settings" (IDENTITY_GUARD_MIN_SIMILARITY, IDENTITY_MATCH_THRESHOLD, ...).
+    guard_min_similarity = None
+    match_threshold = None
+    new_group_threshold = None
+    ambiguity_margin = None
+    embedding_model_label = "sface_embedding_similarity"
+
+    def thresholds(self):
+        """``{guard, match, new_group, margin}`` for this provider, falling back to the settings."""
+        pick = lambda own, fallback: float(fallback if own is None else own)  # noqa: E731
+        return {
+            "guard": pick(self.guard_min_similarity, settings.IDENTITY_GUARD_MIN_SIMILARITY),
+            "match": pick(self.match_threshold, settings.IDENTITY_MATCH_THRESHOLD),
+            "new_group": pick(self.new_group_threshold, settings.IDENTITY_NEW_GROUP_THRESHOLD),
+            "margin": pick(self.ambiguity_margin, settings.IDENTITY_AMBIGUITY_MARGIN),
+        }
 
     @abstractmethod
     def healthcheck(self): ...
@@ -39,6 +56,21 @@ class IdentityEmbeddingProvider(ABC):
 
     def similarity(self, first, second):
         return float(np.dot(self.validate_embedding(first), self.validate_embedding(second)))
+
+
+def thresholds_for(provider):
+    """The provider's thresholds, or the settings' when it does not define them (a stand-in provider, for instance)."""
+    keys = ("guard", "match", "new_group", "margin")
+    try:
+        values = provider.thresholds()
+        if isinstance(values, dict) and all(isinstance(values.get(key), (int, float)) for key in keys):
+            return values
+    except (AttributeError, TypeError):
+        pass
+    return {
+        "guard": float(settings.IDENTITY_GUARD_MIN_SIMILARITY), "match": float(settings.IDENTITY_MATCH_THRESHOLD),
+        "new_group": float(settings.IDENTITY_NEW_GROUP_THRESHOLD), "margin": float(settings.IDENTITY_AMBIGUITY_MARGIN),
+    }
 
 
 class DisabledIdentityProvider(IdentityEmbeddingProvider):
@@ -104,9 +136,72 @@ class SFaceOnnxProvider(IdentityEmbeddingProvider):
             raise ValidationError("SFace feature extraction failed safely.") from error
 
 
+# The five-point template ArcFace was trained on, for a 112 px aligned face.
+_ARCFACE_TEMPLATE = np.array(
+    [[38.2946, 51.6963], [73.5318, 51.5014], [56.0252, 71.7366], [41.5493, 92.3655], [70.7299, 92.2041]], dtype=np.float32,
+)
+
+
+class ArcFaceOnnxProvider(IdentityEmbeddingProvider):
+    """ArcFace (InsightFace ``w600k_r50``, 512-d) through OpenCV's DNN module; it never downloads model artifacts.
+
+    Landmarks come from the same YuNet detector SFace uses. The pretrained weights are licensed for
+    non-commercial research use only (docs/model-licenses/model-set-2026-10.md), which a license record must confirm.
+    """
+
+    name = "arcface_w600k_r50_v1"
+    dimension = 512
+    embedding_model_label = "arcface_embedding_similarity"
+
+    def __init__(self):
+        self.model_checksum = settings.ARCFACE_MODEL_SHA256.lower()
+        self.guard_min_similarity = settings.ARCFACE_GUARD_MIN_SIMILARITY
+        self.match_threshold = settings.ARCFACE_MATCH_THRESHOLD
+        self.new_group_threshold = settings.ARCFACE_NEW_GROUP_THRESHOLD
+        self.ambiguity_margin = settings.ARCFACE_AMBIGUITY_MARGIN
+        self._net = None
+
+    def healthcheck(self):
+        try:
+            verify_model_checksum(settings.ARCFACE_MODEL_PATH, self.model_checksum)
+        except OSError as error:
+            raise ValidationError("The ArcFace model is unavailable.") from error
+        if not Path(settings.ARCFACE_LICENSE_RECORD_PATH).is_file():
+            raise ValidationError("The ArcFace model license record is unavailable.")
+        if self._net is None:
+            try:
+                self._net = cv2.dnn.readNetFromONNX(settings.ARCFACE_MODEL_PATH)
+            except cv2.error as error:
+                raise ValidationError("The configured ArcFace model cannot be loaded safely.") from error
+        return True
+
+    def prepare_face(self, image, box, landmarks=None):
+        if not landmarks or len(landmarks) != 5:
+            raise ValidationError("ArcFace requires five YuNet alignment landmarks.")
+        points = np.array(
+            [[float(p["x"]), float(p["y"])] if isinstance(p, dict) else [float(p[0]), float(p[1])] for p in landmarks],
+            dtype=np.float32,
+        )
+        matrix, _inliers = cv2.estimateAffinePartial2D(points, _ARCFACE_TEMPLATE, method=cv2.LMEDS)
+        if matrix is None:
+            raise ValidationError("The validated face could not be aligned safely.")
+        return cv2.warpAffine(image, matrix, (112, 112), flags=cv2.INTER_LINEAR, borderValue=0)
+
+    def embed(self, prepared_face):
+        self.healthcheck()
+        try:
+            blob = cv2.dnn.blobFromImage(prepared_face, 1 / 127.5, (112, 112), (127.5, 127.5, 127.5), swapRB=True)
+            self._net.setInput(blob)
+            return self.validate_embedding(self._net.forward().reshape(-1))
+        except cv2.error as error:
+            raise ValidationError("ArcFace feature extraction failed safely.") from error
+
+
 def get_identity_provider():
     if settings.IDENTITY_PROVIDER == SFaceOnnxProvider.name:
         return SFaceOnnxProvider()
+    if settings.IDENTITY_PROVIDER == ArcFaceOnnxProvider.name:
+        return ArcFaceOnnxProvider()
     return DisabledIdentityProvider()
 
 

@@ -18,6 +18,9 @@ import environ
 from celery.schedules import crontab
 from django.core.exceptions import ImproperlyConfigured
 
+from config.api_docs import INFO_DESCRIPTION, TAGS as API_TAGS
+from config.celery_routes import task_routes
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -210,7 +213,6 @@ PREPROCESS_MAX_HEIGHT = int(os.environ.get("PREPROCESS_MAX_HEIGHT", "4096"))
 PREPROCESS_JPEG_QUALITY = int(os.environ.get("PREPROCESS_JPEG_QUALITY", "95"))
 PREPROCESS_TRANSPARENT_BACKGROUND = os.environ.get("PREPROCESS_TRANSPARENT_BACKGROUND", "#FFFFFF")
 
-AI_RESTORATION_ENABLED = env.bool("AI_RESTORATION_ENABLED", default=True)
 # Editor previews (enhancement/previews.py). A preview is a bounded copy rendered
 # from a cached bounded source of the enhanced image, so a slider never decodes
 # the full-resolution file. Retention is separate from originals and saved
@@ -271,31 +273,12 @@ if OPENAI_ADVISOR_TIMEOUT_SECONDS * OPENAI_ADVISOR_MAX_ATTEMPTS > OPENAI_ADVISOR
 # earlier behaviour, where each of those settings decides. Adapters and
 # checkpoints stay installed either way, so the change is reversible.
 ENHANCEMENT_RENDER_POLICY = env("ENHANCEMENT_RENDER_POLICY", default="lightweight_v1")
-if ENHANCEMENT_RENDER_POLICY not in ("lightweight_v1", "balanced_v1", "learned_v1"):
+if ENHANCEMENT_RENDER_POLICY not in ("lightweight_v1", "balanced_v1", "learned_v1", "adaptive_v1"):
     raise ImproperlyConfigured(
-        "ENHANCEMENT_RENDER_POLICY must be lightweight_v1, balanced_v1 or learned_v1, "
+        "ENHANCEMENT_RENDER_POLICY must be lightweight_v1, balanced_v1, learned_v1 or adaptive_v1, "
         f"not {ENHANCEMENT_RENDER_POLICY!r}."
     )
 
-AI_RESTORATION_EDSR_MODEL_PATH = env(
-    "AI_RESTORATION_EDSR_MODEL_PATH",
-    default=str(BASE_DIR / ".runtime" / "models" / "EDSR_x2.pb"),
-)
-# The EDSR file must match this SHA-256 (docs/gpu/model_manifest.json): any
-# other file at the path is refused at load time, not only by the offline
-# manifest check.
-AI_RESTORATION_EDSR_MODEL_SHA256 = env(
-    "AI_RESTORATION_EDSR_MODEL_SHA256",
-    default="585623221baa070279a0d1e7e113a4c3faba0f318ca7fdd9a65d9afc0763d9b4",
-)
-AI_RESTORATION_SCALE = env.int("AI_RESTORATION_SCALE", default=2)
-AI_RESTORATION_MAX_INPUT_EDGE = env.int(
-    "AI_RESTORATION_MAX_INPUT_EDGE",
-    default=480,
-)
-AI_RESTORATION_MAX_OUTPUT_PIXELS = env.int(
-    "AI_RESTORATION_MAX_OUTPUT_PIXELS", default=20_000_000
-)
 HD_RESTORATION_ENABLED = env.bool("HD_RESTORATION_ENABLED", default=False)
 NAFNET_DEBLUR_ENABLED = env.bool("NAFNET_DEBLUR_ENABLED", default=False)
 NAFNET_MODEL_PATH = env(
@@ -319,6 +302,16 @@ HD_RESTORATION_OUTPUT_SCALE = env.int("HD_RESTORATION_OUTPUT_SCALE", default=2)
 REALESRGAN_OUTPUT_BLEND = env.float("REALESRGAN_OUTPUT_BLEND", default=0.35)
 HD_RESTORATION_TILE_SIZE = env.int("HD_RESTORATION_TILE_SIZE", default=256)
 HD_RESTORATION_TILE_OVERLAP = env.int("HD_RESTORATION_TILE_OVERLAP", default=24)
+NAFNET_SIDD_MODEL_PATH = env(
+    "NAFNET_SIDD_MODEL_PATH",
+    default=str(BASE_DIR / ".runtime" / "models" / "NAFNet-SIDD-width64.pth"),
+)
+NAFNET_SIDD_MODEL_SHA256 = env(
+    "NAFNET_SIDD_MODEL_SHA256",
+    default="cd685efaae01f7c4e9951f2deab05780079c8eb1e49ed664b72f6db04dabb445",
+)
+# NAFNet-SIDD (real-noise denoising) replaces the classical non-local-means pass when switched on.
+NAFNET_DENOISE_ENABLED = env.bool("NAFNET_DENOISE_ENABLED", default=False)
 NAFNET_MAX_MEAN_CHROMA_SHIFT = env.float("NAFNET_MAX_MEAN_CHROMA_SHIFT", default=8.0)
 NAFNET_MAX_MEAN_LUMINANCE_SHIFT = env.float("NAFNET_MAX_MEAN_LUMINANCE_SHIFT", default=30.0)
 HD_RESTORATION_MAX_NATIVE_OUTPUT_PIXELS = env.int(
@@ -334,6 +327,42 @@ HD_RESTORATION_MAX_OUTPUT_PIXELS = env.int("HD_RESTORATION_MAX_OUTPUT_PIXELS", d
 # After that the stage gives up and the pipeline keeps its last safe image.
 ENHANCEMENT_OOM_MAX_RETRIES = env.int("ENHANCEMENT_OOM_MAX_RETRIES", default=2)
 ENHANCEMENT_MIN_TILE_SIZE = env.int("ENHANCEMENT_MIN_TILE_SIZE", default=64)
+# The adaptive enhancement engine (ENHANCEMENT_RENDER_POLICY=adaptive_v1; enhancement/adaptive/): bounds, and the
+# development-only debug artifacts (never on in production).
+ADAPTIVE_MAX_CANDIDATES = env.int("ADAPTIVE_MAX_CANDIDATES", default=8)
+ADAPTIVE_TIME_BUDGET_SECONDS = env.float("ADAPTIVE_TIME_BUDGET_SECONDS", default=180.0)
+ADAPTIVE_MAX_OUTPUT_EDGE = env.int("ADAPTIVE_MAX_OUTPUT_EDGE", default=4096)
+# Enlarge the whole photograph for a degraded face narrower than this many pixels. 0 (the default) never does: a small face alone is
+# not evidence that the photograph is low-resolution, and whole-photograph upscaling costs several times the compute.
+ADAPTIVE_FACE_UPSCALE_BELOW = env.int("ADAPTIVE_FACE_UPSCALE_BELOW", default=0)
+ADAPTIVE_DEBUG_ARTIFACTS = env.bool("ADAPTIVE_DEBUG_ARTIFACTS", default=False)
+# How a low-light lift gets its colour: "chromaticity" (the source's colour ratios in linear light with the network's luminance;
+# measured to keep colour closest to the clean photograph, docs/evaluation/2026-10-15-lowlight-colour.md) or "legacy" (the source's
+# CIELAB chroma scaled by the square root of the lightness gain; measured 20-40 % paler on dark inputs).
+ADAPTIVE_LOWLIGHT_COLOUR = env("ADAPTIVE_LOWLIGHT_COLOUR", default="chromaticity")
+# Production refuses to start with a model whose commercial licence is unverified (CodeFormer, GFPGAN, ArcFace, RetinaFace weights,
+# Zero-DCE under a learned policy) unless this is set deliberately. See config/production_guard.py and docs/model-licenses/.
+NONCOMMERCIAL_MODELS_ACKNOWLEDGED = env.bool("NONCOMMERCIAL_MODELS_ACKNOWLEDGED", default=False)
+ADAPTIVE_DEBUG_RETENTION_HOURS = env.float("ADAPTIVE_DEBUG_RETENTION_HOURS", default=24.0)
+# Which large models stay loaded: "single" (one at a time), "all", or "auto" (single on a machine with under 12 GiB).
+ENHANCEMENT_MODEL_RESIDENCY = env("ENHANCEMENT_MODEL_RESIDENCY", default="auto")
+# Memory the editor sliders may keep for cached model results (enhancement/model_controls.py), per process.
+EDITOR_MODEL_CACHE_MB = env.int("EDITOR_MODEL_CACHE_MB", default=256)
+# Retinexformer (ICCV 2023, MIT): the preferred low-light model when switched on; Zero-DCE is the fallback.
+RETINEXFORMER_ENABLED = env.bool("RETINEXFORMER_ENABLED", default=False)
+RETINEXFORMER_MODEL_PATH = env(
+    "RETINEXFORMER_MODEL_PATH",
+    default=str(BASE_DIR / ".runtime" / "models" / "Retinexformer_NTIRE.pth"),
+)
+RETINEXFORMER_MODEL_SHA256 = env(
+    "RETINEXFORMER_MODEL_SHA256",
+    default="ba460a6882090ff3312c11fe96b3e7dc5be8e013b8c3b3a7ef6a529cc5ff27fa",
+)
+RETINEXFORMER_DEVICE = env("RETINEXFORMER_DEVICE", default="auto")
+RETINEXFORMER_TILE_SIZE = env.int("RETINEXFORMER_TILE_SIZE", default=1024)
+# On a CPU the tile is capped at this (memory and time grow quickly with tile area there); GPUs keep RETINEXFORMER_TILE_SIZE.
+RETINEXFORMER_CPU_TILE_SIZE = env.int("RETINEXFORMER_CPU_TILE_SIZE", default=512)
+RETINEXFORMER_TILE_OVERLAP = env.int("RETINEXFORMER_TILE_OVERLAP", default=32)
 ZERO_DCE_ENABLED = env.bool("ZERO_DCE_ENABLED", default=True)
 ZERO_DCE_MODEL_PATH = env(
     "ZERO_DCE_MODEL_PATH",
@@ -352,12 +381,8 @@ ZERO_DCE_FULL_RESOLUTION_TILE_EDGE = env.int(
     "ZERO_DCE_FULL_RESOLUTION_TILE_EDGE", default=1024
 )
 # Photos this dark cannot be safely brightened within the normal
-# per-level guard limits, and their residual sensor noise is out of
-# distribution for PureVision/PureScale (trained on compression artifacts,
-# not extreme low-light grain) -- those models hallucinate texture on
-# input this noisy instead of cleaning it. Below this threshold, the
-# exposure guard is allowed a much larger luminance gain, and PureVision/
-# PureScale are skipped entirely regardless of their own enabled flags.
+# per-level guard limits. Below this threshold the exposure guard is allowed a
+# much larger luminance gain.
 EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD = env.float(
     "EXTREME_LOW_LIGHT_LUMINANCE_THRESHOLD", default=25.0
 )
@@ -497,6 +522,21 @@ GFPGAN_DEVICE = env("GFPGAN_DEVICE", default="auto")
 GFPGAN_RESTORATION_WEIGHT = env.float(
     "GFPGAN_RESTORATION_WEIGHT", default=0.30
 )
+# CodeFormer (NeurIPS 2022; S-Lab License 1.0: non-commercial use only): the preferred face restorer when
+# switched on; GFPGAN is the alternative. ``fidelity`` is CodeFormer's w: 0 = quality, 1 = fidelity to the input.
+CODEFORMER_ENABLED = env.bool("CODEFORMER_ENABLED", default=False)
+CODEFORMER_MODEL_PATH = env(
+    "CODEFORMER_MODEL_PATH",
+    default=str(BASE_DIR / ".runtime" / "models" / "codeformer" / "codeformer.pth"),
+)
+CODEFORMER_MODEL_SHA256 = env(
+    "CODEFORMER_MODEL_SHA256",
+    default="1009e537e0c2a07d4cabce6355f53cb66767cd4b4297ec7a4a64ca4b8a5684b7",
+)
+CODEFORMER_DEVICE = env("CODEFORMER_DEVICE", default="auto")
+CODEFORMER_FIDELITY = env.float("CODEFORMER_FIDELITY", default=0.7)
+CODEFORMER_MAX_FACES = env.int("CODEFORMER_MAX_FACES", default=5)
+CODEFORMER_MAX_INPUT_PIXELS = env.int("CODEFORMER_MAX_INPUT_PIXELS", default=12_000_000)
 GFPGAN_OUTPUT_BLEND = env.float("GFPGAN_OUTPUT_BLEND", default=0.25)
 GFPGAN_MIN_OUTPUT_BLEND = env.float("GFPGAN_MIN_OUTPUT_BLEND", default=0.08)
 GFPGAN_ALLOW_MILD_BLUR = env.bool("GFPGAN_ALLOW_MILD_BLUR", default=True)
@@ -504,70 +544,6 @@ GFPGAN_MAX_FACES = env.int("GFPGAN_MAX_FACES", default=5)
 GFPGAN_MAX_INPUT_PIXELS = env.int(
     "GFPGAN_MAX_INPUT_PIXELS", default=12_000_000
 )
-# PureScale and PureVision are third-party, non-commercially licensed
-# (CC BY-NC-SA 4.0) checkpoints from limitlesslab/AI-upscaling-models. They
-# stay disabled by default until visual QA and a license review clear them
-# for the intended deployment (see docs/features/purescale-purevision.md).
-PURESCALE_ENABLED = env.bool("PURESCALE_ENABLED", default=False)
-PURESCALE_MODEL_PATH = env(
-    "PURESCALE_MODEL_PATH",
-    default=str(BASE_DIR / ".runtime" / "models" / "PureScale_2x.pth"),
-)
-PURESCALE_MODEL_SHA256 = env(
-    "PURESCALE_MODEL_SHA256",
-    default="c8fb698766f502be6409cf3cee1a69d63381c6eebf3ff5de7df6ed87f6c9a5cb",
-)
-PURESCALE_DEVICE = env("PURESCALE_DEVICE", default="auto")
-PURESCALE_TILE_SIZE = env.int("PURESCALE_TILE_SIZE", default=256)
-PURESCALE_TILE_OVERLAP = env.int("PURESCALE_TILE_OVERLAP", default=24)
-PURESCALE_MAX_OUTPUT_PIXELS = env.int(
-    "PURESCALE_MAX_OUTPUT_PIXELS", default=20_000_000
-)
-
-PUREVISION_ENABLED = env.bool("PUREVISION_ENABLED", default=False)
-PUREVISION_MODEL_PATH = env(
-    "PUREVISION_MODEL_PATH",
-    default=str(BASE_DIR / ".runtime" / "models" / "PureVision_1x.pth"),
-)
-PUREVISION_MODEL_SHA256 = env(
-    "PUREVISION_MODEL_SHA256",
-    default="3c3bec2111d0f7c3926f3171f37ce28e72502b744e084c566d8960c06a6a06a3",
-)
-PUREVISION_DEVICE = env("PUREVISION_DEVICE", default="auto")
-PUREVISION_TILE_SIZE = env.int("PUREVISION_TILE_SIZE", default=256)
-PUREVISION_TILE_OVERLAP = env.int("PUREVISION_TILE_OVERLAP", default=24)
-PUREVISION_MAX_MEAN_CHROMA_SHIFT = env.float(
-    "PUREVISION_MAX_MEAN_CHROMA_SHIFT", default=8.0
-)
-PUREVISION_MAX_MEAN_LUMINANCE_SHIFT = env.float(
-    "PUREVISION_MAX_MEAN_LUMINANCE_SHIFT", default=30.0
-)
-
-# Automatic colorization (richzhang/colorization SIGGRAPH17, BSD-2-Clause).
-# Only ever predicts colour (ab) channels; the source luminance channel is
-# always preserved exactly. Disabled by default pending rollout QA, and only
-# runs automatically when the source image is detected as near-grayscale.
-COLORIZATION_ENABLED = env.bool("COLORIZATION_ENABLED", default=False)
-COLORIZATION_MODEL_PATH = env(
-    "COLORIZATION_MODEL_PATH",
-    default=str(BASE_DIR / ".runtime" / "models" / "colorization_siggraph17.pth"),
-)
-COLORIZATION_MODEL_SHA256 = env(
-    "COLORIZATION_MODEL_SHA256",
-    default="df00044c0a4d7c3edcecf6f75437ce346a66e7a42612d9b968e1a7e17dbc6f66",
-)
-COLORIZATION_DEVICE = env("COLORIZATION_DEVICE", default="auto")
-COLORIZATION_MAX_INFERENCE_EDGE = env.int("COLORIZATION_MAX_INFERENCE_EDGE", default=768)
-COLORIZATION_MAX_INPUT_PIXELS = env.int(
-    "COLORIZATION_MAX_INPUT_PIXELS", default=30_000_000
-)
-COLORIZATION_GRAYSCALE_CHROMA_THRESHOLD = env.float(
-    "COLORIZATION_GRAYSCALE_CHROMA_THRESHOLD", default=3.0
-)
-COLORIZATION_MAX_MEAN_LUMINANCE_SHIFT = env.float(
-    "COLORIZATION_MAX_MEAN_LUMINANCE_SHIFT", default=6.0
-)
-
 # Guards the optional GFPGAN face-restoration candidate: accepted only if it
 # stays structurally close to the source (see enhancement/services.py
 # _face_restoration_guard).
@@ -605,7 +581,10 @@ FACE_FIDELITY_MAX_EDGE = env.int("FACE_FIDELITY_MAX_EDGE", default=1024)
 FACE_FIDELITY_MIN_FACE_EDGE = env.int("FACE_FIDELITY_MIN_FACE_EDGE", default=40)
 PER_FACE_METRICS_ENABLED = env.bool("PER_FACE_METRICS_ENABLED", default=False)
 IDENTITY_EMBEDDING_ENABLED = env.bool("IDENTITY_EMBEDDING_ENABLED", default=False)
+# haar_v1 (default), yunet_v1, or retinaface_v1 (RetinaFace ResNet-50 via facexlib; needs the isolated PyTorch environment).
 FACE_DETECTOR_PROVIDER = env("FACE_DETECTOR_PROVIDER", default="haar_v1")
+RETINAFACE_SCORE_THRESHOLD = env.float("RETINAFACE_SCORE_THRESHOLD", default=0.8)
+RETINAFACE_DEVICE = env("RETINAFACE_DEVICE", default="auto")
 YUNET_MODEL_PATH = env(
     "YUNET_MODEL_PATH",
     default=str(BASE_DIR / ".runtime" / "models" / "yunet_s_dynamic.onnx"),
@@ -689,6 +668,15 @@ IDENTITY_MODEL_PATH = env(
 IDENTITY_MODEL_SHA256 = env("IDENTITY_MODEL_SHA256", default="")
 IDENTITY_LICENSE_RECORD_PATH = env("IDENTITY_LICENSE_RECORD_PATH", default="")
 IDENTITY_EMBEDDING_DIMENSION = env.int("IDENTITY_EMBEDDING_DIMENSION", default=128)
+# ArcFace (InsightFace w600k_r50) as an alternative provider: IDENTITY_PROVIDER=arcface_w600k_r50_v1. Its cosine scale
+# differs from SFace's, so it has its own thresholds. These are starting values, not validated on a labelled set.
+ARCFACE_MODEL_PATH = env("ARCFACE_MODEL_PATH", default=str(BASE_DIR / ".runtime" / "models" / "arcface" / "w600k_r50.onnx"))
+ARCFACE_MODEL_SHA256 = env("ARCFACE_MODEL_SHA256", default="4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43")
+ARCFACE_LICENSE_RECORD_PATH = env("ARCFACE_LICENSE_RECORD_PATH", default=str(BASE_DIR / "docs" / "model-licenses" / "model-set-2026-10.md"))
+ARCFACE_GUARD_MIN_SIMILARITY = env.float("ARCFACE_GUARD_MIN_SIMILARITY", default=0.70)
+ARCFACE_MATCH_THRESHOLD = env.float("ARCFACE_MATCH_THRESHOLD", default=0.60)
+ARCFACE_NEW_GROUP_THRESHOLD = env.float("ARCFACE_NEW_GROUP_THRESHOLD", default=0.35)
+ARCFACE_AMBIGUITY_MARGIN = env.float("ARCFACE_AMBIGUITY_MARGIN", default=0.06)
 IDENTITY_MATCH_THRESHOLD = env.float("IDENTITY_MATCH_THRESHOLD", default=0.82)
 IDENTITY_NEW_GROUP_THRESHOLD = env.float("IDENTITY_NEW_GROUP_THRESHOLD", default=0.68)
 IDENTITY_AMBIGUITY_MARGIN = env.float("IDENTITY_AMBIGUITY_MARGIN", default=0.06)
@@ -747,6 +735,49 @@ STORAGES = {
     "default": {"BACKEND": "config.storage.EncryptedFileSystemStorage"},
     "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
 }
+
+# Private object storage (Feature 43). ``filesystem`` (the default) keeps media on local disk; ``s3`` keeps every
+# stored file in a private S3 (or S3-compatible) bucket, encrypted client-side first when IMAGE_ENCRYPTION_ENABLED
+# is on (config/s3_storage.py). Credentials come from the boto3 chain (an IAM role, or an IAM user's keys): never
+# the AWS account's root keys. See docs/deployment/aws-s3-private-storage.md.
+STORAGE_BACKEND = env("STORAGE_BACKEND", default="filesystem")
+if STORAGE_BACKEND not in ("filesystem", "s3"):
+    raise ImproperlyConfigured(f"STORAGE_BACKEND must be filesystem or s3, not {STORAGE_BACKEND!r}.")
+AWS_STORAGE_BUCKET_NAME = env("AWS_STORAGE_BUCKET_NAME", default="")
+# These two names are also read by django-storages itself, so an unset value must be None, not "".
+AWS_S3_REGION_NAME = env("AWS_S3_REGION_NAME", default="") or None
+AWS_S3_ENDPOINT_URL = env("AWS_S3_ENDPOINT_URL", default="") or None  # only for an S3-compatible store (MinIO, R2, ...)
+AWS_S3_KEY_PREFIX = env("AWS_S3_KEY_PREFIX", default="media")
+AWS_S3_SERVER_SIDE_ENCRYPTION = env("AWS_S3_SERVER_SIDE_ENCRYPTION", default="AES256")  # AES256 | aws:kms | (empty)
+AWS_S3_KMS_KEY_ID = env("AWS_S3_KMS_KEY_ID", default="")
+AWS_S3_SIGNED_URL_SECONDS = env.int("AWS_S3_SIGNED_URL_SECONDS", default=300)
+if STORAGE_BACKEND == "s3":
+    if not AWS_STORAGE_BUCKET_NAME:
+        raise ImproperlyConfigured("STORAGE_BACKEND=s3 needs AWS_STORAGE_BUCKET_NAME.")
+    if AWS_S3_SERVER_SIDE_ENCRYPTION not in ("AES256", "aws:kms", ""):
+        raise ImproperlyConfigured("AWS_S3_SERVER_SIDE_ENCRYPTION must be AES256, aws:kms or empty.")
+    if AWS_S3_SERVER_SIDE_ENCRYPTION == "aws:kms" and not AWS_S3_KMS_KEY_ID:
+        raise ImproperlyConfigured("aws:kms server-side encryption needs AWS_S3_KMS_KEY_ID.")
+    _object_parameters = {}
+    if AWS_S3_SERVER_SIDE_ENCRYPTION:
+        _object_parameters["ServerSideEncryption"] = AWS_S3_SERVER_SIDE_ENCRYPTION
+        if AWS_S3_SERVER_SIDE_ENCRYPTION == "aws:kms":
+            _object_parameters["SSEKMSKeyId"] = AWS_S3_KMS_KEY_ID
+    STORAGES["default"] = {
+        "BACKEND": "config.s3_storage.EncryptedS3Storage",
+        "OPTIONS": {
+            "bucket_name": AWS_STORAGE_BUCKET_NAME,
+            "region_name": AWS_S3_REGION_NAME,
+            "endpoint_url": AWS_S3_ENDPOINT_URL,
+            "location": AWS_S3_KEY_PREFIX,
+            "default_acl": None,            # never a per-object public ACL
+            "querystring_auth": True,       # a URL, if one is ever made, is signed and expires
+            "querystring_expire": AWS_S3_SIGNED_URL_SECONDS,
+            "signature_version": "s3v4",
+            "file_overwrite": False,
+            "object_parameters": _object_parameters,
+        },
+    }
 
 # Biometric privacy controls (Feature 41). Consent is recorded either way;
 # enforcement is opt-in so existing deployments keep working, and
@@ -839,11 +870,11 @@ if CELERY_BROKER_TRANSPORT_OPTIONS["visibility_timeout"] <= CELERY_TASK_TIME_LIM
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 SYSTEM_HEALTH_TIMEOUT_SECONDS = env.float("SYSTEM_HEALTH_TIMEOUT_SECONDS", default=1.0)
 FACECLOUD_VERSION = env("FACECLOUD_VERSION", default="dev")
-if GFPGAN_QUEUE_ENABLED:
-    CELERY_TASK_ROUTES = {
-        "enhancement.process_image": {"queue": GFPGAN_QUEUE_NAME},
-        "enhancement.process_batch": {"queue": GFPGAN_QUEUE_NAME},
-    }
+# Send the model-loading tasks to their own queue (empty = the default queue, as before); see config/celery_routes.py.
+ENHANCEMENT_QUEUE_NAME = env("ENHANCEMENT_QUEUE_NAME", default="")
+_task_routes = task_routes(ENHANCEMENT_QUEUE_NAME, GFPGAN_QUEUE_ENABLED, GFPGAN_QUEUE_NAME)
+if _task_routes:
+    CELERY_TASK_ROUTES = _task_routes
 # A "processing" job that has not changed for the task time limit plus this
 # grace has lost its worker; "queued" jobs may legitimately wait much longer.
 # See operations/jobs.py.
@@ -1022,6 +1053,8 @@ REST_FRAMEWORK = {
         "accounts.authentication.FaceCloudJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
+    # OpenAPI text from config/api_docs.py (see config/schema.py).
+    "DEFAULT_SCHEMA_CLASS": "config.schema.FaceCloudAutoSchema",
     # Paginated when the request passes page or page_size; a plain array
     # otherwise, so existing clients keep working (config/pagination.py).
     "DEFAULT_PAGINATION_CLASS": "config.pagination.OptionalPageNumberPagination",
@@ -1040,7 +1073,6 @@ REST_FRAMEWORK = {
         "user": "1000/hour",
         "registration": "10/hour",
         "login": "20/hour",
-        "two_factor": "20/hour",
         "token_refresh": "60/hour",
         "verification": "10/hour",
         "verification_status": "60/hour",
@@ -1076,17 +1108,20 @@ REST_FRAMEWORK = {
         "org_bulk_moderation": "60/hour",
         "org_moderation_metrics": "120/hour",
     },
-    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "FaceCloud API",
-    "DESCRIPTION": "Authenticated facial-image upload, enhancement, validation, identity grouping, reports, and downloads.",
+    "DESCRIPTION": INFO_DESCRIPTION,
+    "TAGS": API_TAGS,
+    "SWAGGER_UI_SETTINGS": {"persistAuthorization": True, "displayRequestDuration": True, "docExpansion": "none", "filter": True},
+    "CONTACT": {"name": "FaceCloud backend"},
     "VERSION": FACECLOUD_VERSION,
     "SERVE_INCLUDE_SCHEMA": False,
     "POSTPROCESSING_HOOKS": [
         "drf_spectacular.hooks.postprocess_schema_enums",
         "config.schema_hooks.add_standard_error_responses",
+        "config.schema.add_examples",
     ],
     # Several models share field names ("status", "report_format", ...) with
     # different choice sets; name each set explicitly so the schema is stable.
@@ -1157,18 +1192,6 @@ LOGIN_LOCK_BASE_SECONDS = env.int("LOGIN_LOCK_BASE_SECONDS", default=30)
 LOGIN_LOCK_MAX_SECONDS = env.int("LOGIN_LOCK_MAX_SECONDS", default=900)
 LOGIN_FAILURE_WINDOW_SECONDS = env.int("LOGIN_FAILURE_WINDOW_SECONDS", default=900)
 
-# Two-factor authentication (accounts/totp.py, accounts/two_factor_crypto.py).
-# A blank value must not become an empty key (as with IDENTITY_EMBEDDING_KEY
-# above); production requires a dedicated 32+ character secret here, never
-# DJANGO_SECRET_KEY or the embedding/image keys -- rotating one must never lock
-# or expose another.
-TWO_FACTOR_SECRET_KEY = env("TWO_FACTOR_SECRET_KEY", default="").strip() or SECRET_KEY
-TWO_FACTOR_ISSUER = env("TWO_FACTOR_ISSUER", default="FaceCloud")
-TWO_FACTOR_RECOVERY_CODE_COUNT = env.int("TWO_FACTOR_RECOVERY_CODE_COUNT", default=10)
-# Minutes a "password verified, enter your code" challenge stays valid before
-# the user must sign in again from the start.
-TWO_FACTOR_LOGIN_CHALLENGE_MINUTES = env.int("TWO_FACTOR_LOGIN_CHALLENGE_MINUTES", default=5)
-
 PUBLIC_BACKEND_URL = os.environ.get("PUBLIC_BACKEND_URL", "http://127.0.0.1:8000")
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")  # the frontend dev server; emailed links point here
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "noreply@facecloud.local")
@@ -1192,6 +1215,30 @@ SECURE_HSTS_INCLUDE_SUBDOMAINS = os.environ.get("SECURE_HSTS_INCLUDE_SUBDOMAINS"
 SECURE_HSTS_PRELOAD = os.environ.get("SECURE_HSTS_PRELOAD", "False").lower() == "true"
 
 # Share-link tokens are credentials that appear in URL paths; keep them out of logs.
+# Logging. Application loggers write INFO and above to the console (the terminal running runserver / gunicorn / celery, or the host's
+# journal), and also to a rotating file when LOG_FILE is set. Third-party libraries stay at WARNING. Credential-bearing URL paths are
+# redacted by config/log_redaction.py whichever handler writes the record, and no log line carries pixels, file paths or photo content.
+LOG_LEVEL = env("LOG_LEVEL", default="INFO").upper()
+LOG_FILE = env("LOG_FILE", default="")
+_APP_LOGGERS = (
+    "accounts", "activity", "collages", "config", "contact", "downloads", "duplicates", "enhancement", "events", "identities", "moderation",
+    "notifications", "operations", "organizations", "privacy", "quality_control", "reports", "security", "sharing", "thumbnails", "uploads",
+    "validation",
+)
+_LOG_HANDLERS = ["console"] + (["file"] if LOG_FILE else [])
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {"standard": {"format": "%(asctime)s %(levelname)s %(name)s %(message)s"}},
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "standard"},
+        **({"file": {"class": "logging.handlers.RotatingFileHandler", "filename": LOG_FILE, "maxBytes": 5_000_000, "backupCount": 5,
+                     "formatter": "standard", "encoding": "utf-8"}} if LOG_FILE else {}),
+    },
+    "root": {"handlers": _LOG_HANDLERS, "level": "WARNING"},
+    "loggers": {name: {"handlers": _LOG_HANDLERS, "level": LOG_LEVEL, "propagate": False} for name in _APP_LOGGERS},
+}
+
 from config.log_redaction import install as install_log_redaction  # noqa: E402
 
 install_log_redaction()

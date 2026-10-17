@@ -1,0 +1,3 @@
+# Test-only dependencies (installed by CI beside requirements.txt).
+# moto runs S3 and STS in-process, so the private-storage tests need no network and no AWS account.
+moto[s3]>=5

@@ -1,15 +1,15 @@
 {
-  "generated_at": "2026-09-26T09:43:01+00:00",
+  "generated_at": "2026-10-15T12:58:41+00:00",
   "note": "File names, sizes and SHA-256 checksums only. The model files themselves are not in Git.",
   "roots": {
     "models": {
-      "colorization_siggraph17.pth": {
-        "size": 136787426,
-        "sha256": "df00044c0a4d7c3edcecf6f75437ce346a66e7a42612d9b968e1a7e17dbc6f66"
+      "arcface/w600k_r50.onnx": {
+        "size": 174383860,
+        "sha256": "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43"
       },
-      "EDSR_x2.pb": {
-        "size": 38490162,
-        "sha256": "585623221baa070279a0d1e7e113a4c3faba0f318ca7fdd9a65d9afc0763d9b4"
+      "codeformer/codeformer.pth": {
+        "size": 376637898,
+        "sha256": "1009e537e0c2a07d4cabce6355f53cb66767cd4b4297ec7a4a64ca4b8a5684b7"
       },
       "face_recognition_sface_2021dec.onnx": {
         "size": 38696353,
@@ -27,17 +27,17 @@
         "size": 271778961,
         "sha256": "329d3ab4077b8d6b7ff61de376e483714667960bf85be027bf4335cda701196f"
       },
-      "PureScale_2x.pth": {
-        "size": 22328007,
-        "sha256": "c8fb698766f502be6409cf3cee1a69d63381c6eebf3ff5de7df6ed87f6c9a5cb"
-      },
-      "PureVision_1x.pth": {
-        "size": 67120607,
-        "sha256": "3c3bec2111d0f7c3926f3171f37ce28e72502b744e084c566d8960c06a6a06a3"
+      "NAFNet-SIDD-width64.pth": {
+        "size": 464154961,
+        "sha256": "cd685efaae01f7c4e9951f2deab05780079c8eb1e49ed664b72f6db04dabb445"
       },
       "RealESRGAN_x4plus.pth": {
         "size": 67040989,
         "sha256": "4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1"
+      },
+      "Retinexformer_NTIRE.pth": {
+        "size": 6476406,
+        "sha256": "ba460a6882090ff3312c11fe96b3e7dc5be8e013b8c3b3a7ef6a529cc5ff27fa"
       },
       "yunet_s_dynamic.onnx": {
         "size": 237823,

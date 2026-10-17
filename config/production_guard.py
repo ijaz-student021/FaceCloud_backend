@@ -54,14 +54,6 @@ def secrets_rule(cfg):
             problems.append(
                 "IMAGE_ENCRYPTION_KEY must differ from DJANGO_SECRET_KEY and IDENTITY_EMBEDDING_KEY."
             )
-    two_factor = cfg.get("TWO_FACTOR_SECRET_KEY")
-    if two_factor == cfg.get("SECRET_KEY"):
-        problems.append(
-            "TWO_FACTOR_SECRET_KEY must be set to its own secret; it currently falls back to "
-            "DJANGO_SECRET_KEY, so rotating one would lock or expose the other."
-        )
-    else:
-        problems += _secret_problems("TWO_FACTOR_SECRET_KEY", two_factor, MIN_KEY_LENGTH)
     return problems
 
 
@@ -160,7 +152,32 @@ def policy_rule(cfg):
     return problems
 
 
-RULES = (secrets_rule, hosts_and_origins_rule, transport_rule, infrastructure_rule, policy_rule)
+def model_rule(cfg):
+    """Private photographs must not be written to debug artifacts, and models without a verified commercial licence need a decision."""
+    problems = []
+    if cfg.get("ADAPTIVE_DEBUG_ARTIFACTS"):
+        problems.append("ADAPTIVE_DEBUG_ARTIFACTS must be False in production: it stores copies of users' photographs and intermediate "
+                        "results outside their normal storage.")
+    restricted = []
+    if cfg.get("CODEFORMER_ENABLED"):
+        restricted.append("CodeFormer (S-Lab licence, non-commercial)")
+    if cfg.get("GFPGAN_ENABLED"):
+        restricted.append("GFPGAN (weights used under a permission that is not on file)")
+    if cfg.get("IDENTITY_PROVIDER") == "arcface_w600k_r50_v1":
+        restricted.append("ArcFace / InsightFace weights (non-commercial)")
+    if cfg.get("FACE_DETECTOR_PROVIDER") == "retinaface_v1":
+        restricted.append("RetinaFace weights (terms not verified)")
+    if cfg.get("ENHANCEMENT_RENDER_POLICY", "lightweight_v1") != "lightweight_v1" and cfg.get("ZERO_DCE_ENABLED"):
+        restricted.append("Zero-DCE (licence not on file)")
+    if restricted and not cfg.get("NONCOMMERCIAL_MODELS_ACKNOWLEDGED"):
+        problems.append(
+            "These models are enabled without a verified commercial licence: " + "; ".join(restricted) + ". Disable them, or set "
+            "NONCOMMERCIAL_MODELS_ACKNOWLEDGED=True once the licence position has been decided (docs/model-licenses/model-set-2026-10.md)."
+        )
+    return problems
+
+
+RULES = (secrets_rule, hosts_and_origins_rule, transport_rule, infrastructure_rule, policy_rule, model_rule)
 
 
 def production_problems(cfg):

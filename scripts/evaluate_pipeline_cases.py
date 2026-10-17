@@ -54,8 +54,7 @@ CASES = (
 DEFAULT_CASES = tuple(case for case in CASES if case != "original")
 # Stages that run a learned model. Everything else is classical OpenCV code.
 MODEL_STAGES = (
-    "purevision_restoration", "low_resolution_restoration", "hd_restoration",
-    "purescale_super_resolution", "face_restoration", "colorization",
+    "hd_restoration", "face_restoration",
 )
 
 

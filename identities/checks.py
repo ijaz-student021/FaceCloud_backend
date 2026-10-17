@@ -31,6 +31,15 @@ def identity_configuration_check(app_configs, **kwargs):
             errors.append(Error("Automatic SFace identity analysis requires the YuNet detector.", id="identities.E009"))
         if not Path(settings.YUNET_MODEL_PATH).is_file() or len(settings.YUNET_MODEL_SHA256) != 64:
             errors.append(Error("A checksummed local YuNet model is required.", id="identities.E010"))
+    if settings.IDENTITY_PROVIDER == "arcface_w600k_r50_v1":
+        if not Path(settings.ARCFACE_MODEL_PATH).is_file():
+            errors.append(Error("The configured ArcFace model is unavailable.", id="identities.E013"))
+        if len(settings.ARCFACE_MODEL_SHA256) != 64:
+            errors.append(Error("A SHA-256 checksum is required for the ArcFace model.", id="identities.E014"))
+        if not Path(settings.ARCFACE_LICENSE_RECORD_PATH).is_file():
+            errors.append(Error("A license record is required for ArcFace (non-commercial research weights).", id="identities.E015"))
+        if not (0 <= settings.ARCFACE_NEW_GROUP_THRESHOLD < settings.ARCFACE_MATCH_THRESHOLD <= 1):
+            errors.append(Error("ArcFace thresholds must satisfy 0 <= new-group < match <= 1.", id="identities.E016"))
     if not (0 < settings.YUNET_SCORE_THRESHOLD <= 1):
         errors.append(Error("YuNet score threshold must be in (0, 1].", id="identities.E011"))
     if not (0 < settings.YUNET_NMS_THRESHOLD <= 1):

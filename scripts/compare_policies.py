@@ -5,7 +5,7 @@
 ``--darken`` multiplies the photo's brightness first (to make a low-light test from a good photo).
 The two runs are separate processes, because the policy is a setting read at start-up:
 the learned policy (``ENHANCEMENT_RENDER_POLICY=learned_v1``) lets each model whose own setting
-is on run (Zero-DCE and EDSR need only OpenCV; the PyTorch models need their environment).
+is on run (Zero-DCE needs only OpenCV; NAFNet, Real-ESRGAN and GFPGAN need the PyTorch environment).
 Nothing is written but the output image and a few lines of text.
 """
 import argparse

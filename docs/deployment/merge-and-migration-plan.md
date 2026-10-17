@@ -41,7 +41,9 @@ rows.
 | accounts 0010_user_sessions | new `UserSession` table; auth-event choices (renumbered from 0008) | none |
 | accounts 0011_account_invitations | new `AccountInvitation` table; auth-event choices (renumbered from 0009) | none |
 
-A database that already ran these under their old names (`0007_user_profile_fields_and_avatar`, `0008_user_sessions`, `0009_account_invitations`) must not simply run `migrate`: the columns exist, so Django would try to add them again. Back it up, then either rename the three rows in `django_migrations` to the new names or recreate the database.
+`accounts/0012_remove_two_factor` (renumbered from 0010) then drops the two-factor tables.
+
+A database that already ran these under their old names (`0007_user_profile_fields_and_avatar`, `0008_user_sessions`, `0009_account_invitations`, `0010_remove_two_factor`) must not simply run `migrate`: the columns exist, so Django would try to add them again. Back it up, then either rename those rows in `django_migrations` to the new names or recreate the database.
 | moderation 0006_report_period | `date_from`, `date_to`, `period_key` (`"all"`); constraint replaced | Existing reports get `period_key="all"`. **Precondition:** at most one queued or generating report per (organization, type, format); this already held under the old constraint |
 | moderation 0007_general_activity_report | report-type choice | none |
 | organizations 0009_moderator_preview_and_reprocess_actions | audit-action choices | none |

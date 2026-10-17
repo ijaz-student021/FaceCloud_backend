@@ -44,24 +44,19 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 # would keep every one of them off.
 OFF = dict(
     ENHANCEMENT_RENDER_POLICY="learned_v1",
-    ZERO_DCE_ENABLED=False, AI_RESTORATION_ENABLED=False, HD_RESTORATION_ENABLED=False,
-    NAFNET_DEBLUR_ENABLED=False, PURESCALE_ENABLED=False, PUREVISION_ENABLED=False,
-    GFPGAN_ENABLED=False, COLORIZATION_ENABLED=False, IDENTITY_GUARD_ENABLED=False,
+    ZERO_DCE_ENABLED=False, HD_RESTORATION_ENABLED=False,
+    NAFNET_DEBLUR_ENABLED=False, GFPGAN_ENABLED=False, IDENTITY_GUARD_ENABLED=False,
 )
 # component -> (checkpoint settings, pinned-checksum setting or manifest key, stage it drives)
 COMPONENTS = {
     "zero_dce": (["ZERO_DCE_MODEL_PATH"], ["manifest:models/zero_dce_epoch99.onnx"], "exposure_enhancement"),
-    "edsr": (["AI_RESTORATION_EDSR_MODEL_PATH"], ["manifest:models/EDSR_x2.pb"], "low_resolution_restoration"),
     "nafnet": (["NAFNET_MODEL_PATH"], ["NAFNET_MODEL_SHA256"], "hd_restoration"),
     "realesrgan": (["REALESRGAN_MODEL_PATH"], ["REALESRGAN_MODEL_SHA256"], "hd_restoration"),
-    "purevision": (["PUREVISION_MODEL_PATH"], ["PUREVISION_MODEL_SHA256"], "purevision_restoration"),
-    "purescale": (["PURESCALE_MODEL_PATH"], ["PURESCALE_MODEL_SHA256"], "purescale_super_resolution"),
     "gfpgan": (
         ["GFPGAN_MODEL_PATH", "GFPGAN_DETECTION_MODEL_PATH", "GFPGAN_PARSING_MODEL_PATH"],
         ["GFPGAN_MODEL_SHA256", "GFPGAN_DETECTION_MODEL_SHA256", "GFPGAN_PARSING_MODEL_SHA256"],
         "face_restoration",
     ),
-    "colorization": (["COLORIZATION_MODEL_PATH"], ["COLORIZATION_MODEL_SHA256"], "colorization"),
     "yunet": (["YUNET_MODEL_PATH"], ["YUNET_MODEL_SHA256"], "face_fidelity"),
     "sface": (["IDENTITY_MODEL_PATH"], ["IDENTITY_MODEL_SHA256"], "identity_guard"),
 }
@@ -123,25 +118,16 @@ def suitable_input(component, portrait):
         base = working_image(portrait, 1400).astype(np.float32) / 255.0
         dark = (base ** 2.2 * 0.12) ** (1 / 2.2) * 255.0 + rng.normal(0, 2.0, base.shape)
         return np.clip(dark, 0, 255).astype(np.uint8), "portrait darkened about three stops, light grain"
-    if component == "edsr":
-        return working_image(portrait, 360), "portrait reduced to 360 px (genuinely low resolution)"
     if component == "nafnet":
         kernel = np.zeros((15, 15), np.float32)
         kernel[7, :] = 1 / 15
         return cv2.filter2D(working_image(portrait, 900), -1, kernel), "portrait at 900 px with 15 px horizontal motion blur"
-    if component in {"realesrgan", "purescale"}:
+    if component == "realesrgan":
         return working_image(portrait, 640), "portrait reduced to 640 px"
-    if component == "purevision":
-        small = working_image(portrait, 900)
-        return cv2.imdecode(cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 12])[1], cv2.IMREAD_COLOR), \
-            "portrait at 900 px, JPEG quality 12"
     if component == "gfpgan":
         small = cv2.GaussianBlur(working_image(portrait, 420), (0, 0), 1.6)
         return cv2.imdecode(cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 35])[1], cv2.IMREAD_COLOR), \
             "portrait at 420 px, blurred and compressed (a degraded face)"
-    if component == "colorization":
-        small = working_image(portrait, 1000)
-        return cv2.cvtColor(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR), "portrait at 1000 px, grayscale"
     return working_image(portrait, 1400), "portrait at 1400 px"
 
 
@@ -183,12 +169,6 @@ def direct_inference(component, image, portrait):
         from enhancement.zero_dce import enhance_with_zero_dce
         output, metadata = enhance_with_zero_dce(image)
         expected = image.shape
-    elif component == "edsr":
-        from enhancement.services import analyze_image_quality, restore_low_resolution
-        output, metadata = restore_low_resolution(image, analyze_image_quality(image))
-        if not metadata.get("applied"):
-            raise RuntimeError(metadata.get("fallback_reason") or "EDSR did not run")
-        expected = (height * 2, width * 2, 3)
     elif component == "nafnet":
         from enhancement.hd_restoration import deblur_with_nafnet
         output, metadata = deblur_with_nafnet(image)
@@ -198,24 +178,10 @@ def direct_inference(component, image, portrait):
         output, metadata = upscale_with_realesrgan(image)
         scale = int(settings.HD_RESTORATION_OUTPUT_SCALE)
         expected = (height * scale, width * scale, 3)
-    elif component == "purevision":
-        from enhancement.purevision import restore_with_purevision
-        output, metadata = restore_with_purevision(image)
-        expected = image.shape
-    elif component == "purescale":
-        from enhancement.purescale import upscale_with_purescale
-        output, metadata = upscale_with_purescale(image)
-        expected = (height * 2, width * 2, 3)
     elif component == "gfpgan":
         from enhancement.gfpgan import restore_faces
         output, metadata = restore_faces(image)
         expected = image.shape
-    elif component == "colorization":
-        from enhancement.colorization import colorize_with_siggraph17
-        output, metadata = colorize_with_siggraph17(image)
-        expected = image.shape
-        lab = cv2.cvtColor(output, cv2.COLOR_BGR2LAB).astype(np.float32)
-        record["mean_chroma_added"] = round(float(np.abs(lab[:, :, 1:] - 128).mean()), 3)
     elif component == "yunet":
         from validation.services import OpenCVYuNetFaceDetector
         detection = OpenCVYuNetFaceDetector().detect(image)
@@ -279,29 +245,18 @@ def direct_inference(component, image, portrait):
 
 def pipeline_settings(component):
     """Only this component's stage switched on."""
-    from django.conf import settings
 
     on = dict(OFF)
     if component == "zero_dce":
         on["ZERO_DCE_ENABLED"] = True
-    elif component == "edsr":
-        on["AI_RESTORATION_ENABLED"] = True
     elif component == "nafnet":
         on.update(HD_RESTORATION_ENABLED=True, NAFNET_DEBLUR_ENABLED=True,
                   # Deblur alone: an impossible upscale limit leaves NAFNet as the stage's whole result.
                   HD_RESTORATION_MAX_OUTPUT_PIXELS=1)
     elif component == "realesrgan":
         on["HD_RESTORATION_ENABLED"] = True
-    elif component == "purevision":
-        on["PUREVISION_ENABLED"] = True
-    elif component == "purescale":
-        on["PURESCALE_ENABLED"] = True
     elif component == "gfpgan":
         on.update(GFPGAN_ENABLED=True, IDENTITY_GUARD_ENABLED=True)
-    elif component == "colorization":
-        on["COLORIZATION_ENABLED"] = True
-    elif component == "yunet":
-        on["AI_RESTORATION_ENABLED"] = bool(settings.AI_RESTORATION_ENABLED)
     elif component == "sface":
         on["IDENTITY_GUARD_ENABLED"] = True
     return on
@@ -504,17 +459,13 @@ def run_combinations(portrait_path, output_dir):
     # 2. Deblur plus exactly one upscaler, with every other upscaler also switched on.
     blurred, _ = suitable_input("nafnet", portrait)
     blurred = working_image(blurred, 480)
-    output, parameters, seconds = run(blurred, {
-        "HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True, "PURESCALE_ENABLED": True, "AI_RESTORATION_ENABLED": True,
-    })
-    upscalers = [name for name, key in (("edsr", "restoration"), ("realesrgan", "hd_restoration"), ("purescale", "purescale"))
-                 if (parameters[key]["super_resolution"] if key == "hd_restoration" else parameters[key]).get("applied")]
+    output, parameters, seconds = run(blurred, {"HD_RESTORATION_ENABLED": True, "NAFNET_DEBLUR_ENABLED": True})
+    upscalers = ["realesrgan"] if parameters["hd_restoration"]["super_resolution"].get("applied") else []
     scale = output.shape[0] / blurred.shape[0]
     record(
         "deblur_plus_one_upscaler", "NAFNet then Real-ESRGAN only; output exactly 2x",
         parameters["hd_restoration"]["deblur"].get("applied") and upscalers == ["realesrgan"] and scale == 2.0,
         {"deblur": parameters["hd_restoration"]["deblur"].get("applied"), "upscalers_applied": upscalers, "scale": scale,
-         "purescale_reason": parameters["purescale"].get("fallback_reason"), "edsr_reason": parameters["restoration"].get("fallback_reason"),
          "devices": stage(parameters, "hd_restoration").get("models"), "guard_b": parameters["quality_guards"]["guard_b"]["reasons"],
          "seconds": seconds}, blurred, output,
     )
@@ -552,19 +503,7 @@ def run_combinations(portrait_path, output_dir):
          "identity_status": verification["status"], "bypass": verification["requirement_bypass"], "notice": verification["notice"][:90]},
     )
 
-    # 4. Colorization on a grayscale photo, and not on a colour one.
-    gray, _ = suitable_input("colorization", portrait)
-    output, parameters, seconds = run(gray, {"COLORIZATION_ENABLED": True})
-    colour, _parameters_colour, _ = run(working_image(portrait, 1000), {"COLORIZATION_ENABLED": True})
-    record(
-        "colorization_grayscale_only", "applied to the grayscale photo, skipped for the colour one",
-        parameters["colorization"].get("applied") and not _parameters_colour["colorization"].get("applied"),
-        {"grayscale_applied": parameters["colorization"].get("applied"), "device": parameters["colorization"].get("device"),
-         "colour_photo_applied": _parameters_colour["colorization"].get("applied"),
-         "colour_photo_reason": _parameters_colour["colorization"].get("fallback_reason"), "seconds": seconds}, gray, output,
-    )
-
-    # 5. Failure handling, with the real models.
+    # 4. Failure handling, with the real models.
     small, _ = suitable_input("realesrgan", portrait)
     small = working_image(small, 360)
     output, parameters, _seconds = run(small, {"HD_RESTORATION_ENABLED": True, "REALESRGAN_MODEL_PATH": "/nonexistent/RealESRGAN_x4plus.pth"})

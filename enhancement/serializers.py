@@ -158,12 +158,16 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
     identity_status = serializers.SerializerMethodField(help_text=IDENTITY_STATUS_HELP)
     identity_check_bypassed = serializers.SerializerMethodField(help_text=IDENTITY_BYPASSED_HELP)
     identity_notice = serializers.SerializerMethodField(help_text=IDENTITY_NOTICE_HELP)
+    enhancement_outcome = serializers.SerializerMethodField(help_text=(
+        "What the adaptive engine did: enhanced, partially_enhanced or original_preserved (the output is the original "
+        "pixels); failed when the job failed. null for results made by the staged pipeline, which does not classify."))
+    enhancement_summary = serializers.SerializerMethodField(help_text="One plain sentence on the outcome, safe to show a user.")
 
     class Meta:
         model = ImageEnhancementResult
         fields = [
             "id", "image", "batch_job", "requested_level", "applied_level",
-            "requested_style", "status",
+            "requested_style", "status", "enhancement_outcome", "enhancement_summary",
             "identity_status", "identity_check_bypassed", "identity_notice",
             "output_name", "output_format", "output_width", "output_height",
             "output_file_size", "processing_duration_ms", "task_id", "applied_parameters",
@@ -179,6 +183,20 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
     def _identity(self, obj):
         parameters = obj.applied_parameters if isinstance(obj.applied_parameters, dict) else {}
         return identity_fields(parameters.get("identity_verification"), parameters.get("identity_status"))
+
+    def get_enhancement_outcome(self, obj) -> str | None:
+        if obj.status == "failed":
+            return "failed"
+        parameters = obj.applied_parameters if isinstance(obj.applied_parameters, dict) else {}
+        adaptive = parameters.get("adaptive")
+        return adaptive.get("outcome") if isinstance(adaptive, dict) else None
+
+    def get_enhancement_summary(self, obj) -> str:
+        if obj.status == "failed":
+            return "The photograph could not be enhanced. Your original photograph is unchanged."
+        parameters = obj.applied_parameters if isinstance(obj.applied_parameters, dict) else {}
+        adaptive = parameters.get("adaptive")
+        return str(adaptive.get("summary", "")) if isinstance(adaptive, dict) else ""
 
     def get_identity_status(self, obj) -> str | None:
         return self._identity(obj)[0]
@@ -563,7 +581,7 @@ class EditPreviewSerializer(serializers.ModelSerializer):
     def get_render(self, preview) -> dict:
         metadata = preview.render_metadata or {}
         keys = ("outcome", "renderer_version", "render_policy", "validated", "safety_strength", "safety_reasons",
-                "guard_reductions", "fallback_reasons", "auto", "transparency")
+                "guard_reductions", "fallback_reasons", "auto", "transparency", "model_controls")
         return {key: metadata[key] for key in keys if key in metadata}
 
 

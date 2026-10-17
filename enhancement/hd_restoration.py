@@ -16,7 +16,7 @@ class HDRestorationUnavailable(RuntimeError):
 
 # Shared with every other adapter: one heavy inference at a time per process.
 _MODEL_LOCK = runtime.INFERENCE_LOCK
-_MODEL_CACHE = {}
+_MODEL_CACHE = runtime.register_model_cache({})
 
 
 def _runtime():
@@ -52,7 +52,15 @@ def _device(torch):
     )
 
 
-def _build_nafnet(nn, functional):
+# NAFNet variants (megvii-research/NAFNet, MIT): block counts per encoder stage, middle and decoder stage.
+NAFNET_CONFIGS = {
+    "nafnet": {"enc": (1, 1, 1, 28), "middle": 1, "dec": (1, 1, 1, 1)},        # GoPro-width64: motion deblurring
+    "nafnet_sidd": {"enc": (2, 2, 4, 8), "middle": 12, "dec": (2, 2, 2, 2)},   # SIDD-width64: real-noise denoising
+}
+
+
+def _build_nafnet(nn, functional, kind="nafnet"):
+    config = NAFNET_CONFIGS[kind]
     torch, _nn, _functional = _runtime()
 
     class LayerNorm2d(nn.Module):
@@ -112,12 +120,12 @@ def _build_nafnet(nn, functional):
             self.downs = nn.ModuleList()
             self.ups = nn.ModuleList()
             channels = width
-            for count in (1, 1, 1, 28):
+            for count in config["enc"]:
                 self.encoders.append(nn.Sequential(*[NAFBlock(channels) for _ in range(count)]))
                 self.downs.append(nn.Conv2d(channels, channels * 2, 2, 2))
                 channels *= 2
-            self.middle_blks = nn.Sequential(NAFBlock(channels))
-            for count in (1, 1, 1, 1):
+            self.middle_blks = nn.Sequential(*[NAFBlock(channels) for _ in range(config["middle"])])
+            for count in config["dec"]:
                 self.ups.append(nn.Sequential(nn.Conv2d(channels, channels * 2, 1, bias=False), nn.PixelShuffle(2)))
                 channels //= 2
                 self.decoders.append(nn.Sequential(*[NAFBlock(channels) for _ in range(count)]))
@@ -200,6 +208,9 @@ def _load_model(kind):
     if kind == "nafnet":
         path = _verified_path(settings.NAFNET_MODEL_PATH, settings.NAFNET_MODEL_SHA256, "NAFNet")
         builder = _build_nafnet
+    elif kind == "nafnet_sidd":
+        path = _verified_path(settings.NAFNET_SIDD_MODEL_PATH, settings.NAFNET_SIDD_MODEL_SHA256, "NAFNet-SIDD")
+        builder = lambda nn_, functional_: _build_nafnet(nn_, functional_, "nafnet_sidd")  # noqa: E731
     else:
         path = _verified_path(settings.REALESRGAN_MODEL_PATH, settings.REALESRGAN_MODEL_SHA256, "Real-ESRGAN")
         builder = _build_realesrgan
@@ -207,6 +218,7 @@ def _load_model(kind):
     key = (kind, str(path), str(device))
     if key in _MODEL_CACHE:
         return _MODEL_CACHE[key], device
+    runtime.make_room(_MODEL_CACHE)  # on a small machine only one large model stays loaded
     model = builder(nn, functional)
     try:
         checkpoint = torch.load(path, map_location="cpu", weights_only=True)
@@ -260,11 +272,37 @@ def deblur_with_nafnet(image):
     }
 
 
-def upscale_with_realesrgan(image):
+def denoise_with_nafnet(image):
+    """Real-noise denoising with NAFNet-SIDD-width64, held to the same fidelity limits as the deblurring model."""
+    if image is None or image.size == 0:
+        raise HDRestorationUnavailable("The NAFNet-SIDD input image is invalid.")
+    output, inference = _infer("nafnet_sidd", "NAFNet-SIDD", image, 1)
+    # Removing noise legitimately changes every pixel a little, so the fidelity limits are applied to the
+    # low-frequency colour and brightness (both sides softened), where a real drift would show.
+    source_lab = cv2.cvtColor(cv2.GaussianBlur(image, (0, 0), 2.0), cv2.COLOR_BGR2LAB).astype(np.float32)
+    output_lab = cv2.cvtColor(cv2.GaussianBlur(output, (0, 0), 2.0), cv2.COLOR_BGR2LAB).astype(np.float32)
+    chroma_shift = float(np.mean(np.abs(output_lab[:, :, 1:] - source_lab[:, :, 1:])))
+    luminance_shift = float(np.mean(np.abs(output_lab[:, :, 0] - source_lab[:, :, 0])))
+    if (
+        chroma_shift > settings.NAFNET_MAX_MEAN_CHROMA_SHIFT
+        or luminance_shift > settings.NAFNET_MAX_MEAN_LUMINANCE_SHIFT
+    ):
+        raise HDRestorationUnavailable("The NAFNet-SIDD candidate failed the image-fidelity guard.")
+    return output, {
+        "provider": "nafnet_sidd_width64",
+        "checkpoint_sha256_prefix": settings.NAFNET_SIDD_MODEL_SHA256[:12],
+        "chroma_shift": round(chroma_shift, 3),
+        "luminance_shift": round(luminance_shift, 3),
+        **inference,
+    }
+
+
+def upscale_with_realesrgan(image, output_scale=None):
+    """Upscale by ``output_scale`` (2 or 4; the HD_RESTORATION_OUTPUT_SCALE setting when not given)."""
     if image is None or image.size == 0:
         raise HDRestorationUnavailable("The Real-ESRGAN input image is invalid.")
     height, width = image.shape[:2]
-    scale = int(settings.HD_RESTORATION_OUTPUT_SCALE)
+    scale = int(output_scale or settings.HD_RESTORATION_OUTPUT_SCALE)
     if scale not in (2, 4):
         raise HDRestorationUnavailable("HD_RESTORATION_OUTPUT_SCALE must be 2 or 4.")
     # The model is 4x, but tiles are reduced to the output scale before they are

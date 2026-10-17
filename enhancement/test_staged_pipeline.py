@@ -78,39 +78,40 @@ class StageReportTests(SimpleTestCase):
         np.testing.assert_array_equal(source, untouched)
         self.assertIsNot(output, source)
 
-    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
-    @patch("enhancement.services.upscale_with_purescale")
-    def test_an_accepted_model_stage_records_its_model_device_and_tile(self, purescale):
-        purescale.side_effect = lambda image: (
+    @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "REALESRGAN_OUTPUT_BLEND": 1.0, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+    @patch("enhancement.services.upscale_with_realesrgan")
+    def test_an_accepted_model_stage_records_its_model_device_and_tile(self, upscale):
+        upscale.side_effect = lambda image: (
             cv2.resize(image, (image.shape[1] * 2, image.shape[0] * 2), interpolation=cv2.INTER_CUBIC),
-            {"provider": "purescale_safmn_2x", "checkpoint_sha256_prefix": "c8fb698766f5",
+            {"provider": "realesrgan_x4plus", "checkpoint_sha256_prefix": "4fa0d38905f7",
              "device": "cuda", "tile_size": 128, "memory_retries": 1},
         )
         _output, _level, parameters = enhance_bgr(textured(), "low")
 
-        entry = report(parameters, "purescale_super_resolution")
+        entry = report(parameters, "hd_restoration")
         self.assertEqual(entry["status"], "accepted")
         self.assertTrue(entry["changed_pixels"])
+        recorded = parameters["hd_restoration"]["super_resolution"]  # the HD stage records its model under this key
         self.assertEqual(
-            (entry["provider"], entry["device"], entry["tile_size"], entry["memory_retries"]),
-            ("purescale_safmn_2x", "cuda", 128, 1),
+            (recorded["provider"], recorded["device"], recorded["tile_size"], recorded["memory_retries"]),
+            ("realesrgan_x4plus", "cuda", 128, 1),
         )
-        self.assertEqual(entry["checkpoint_sha256_prefix"], "c8fb698766f5")
+        self.assertEqual(recorded["checkpoint_sha256_prefix"], "4fa0d38905f7")
 
-    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
-    @patch("enhancement.services.upscale_with_purescale", side_effect=RuntimeError("unexpected tensor shape"))
-    def test_an_unexpected_model_error_keeps_the_last_safe_image(self, _purescale):
+    @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "REALESRGAN_OUTPUT_BLEND": 1.0, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+    @patch("enhancement.services.upscale_with_realesrgan", side_effect=RuntimeError("unexpected tensor shape"))
+    def test_an_unexpected_model_error_keeps_the_last_safe_image(self, _upscale):
         source = textured()
         with self.assertLogs("enhancement.services", level="ERROR") as logged:
             output, _level, parameters = enhance_bgr(source, "low")
 
         self.assertEqual(output.shape, source.shape)  # no upscale happened
-        entry = report(parameters, "purescale_super_resolution")
+        entry = report(parameters, "hd_restoration")
         self.assertEqual(entry["status"], "failed")
         self.assertFalse(entry["changed_pixels"])
-        self.assertFalse(parameters["purescale"]["applied"])
-        self.assertTrue(parameters["purescale"]["failed"])
-        self.assertTrue(any("purescale super resolution stage failed safely" in w for w in parameters["warnings"]))
+        self.assertFalse(parameters["hd_restoration"]["applied"])
+        self.assertTrue(parameters["hd_restoration"]["failed"])
+        self.assertTrue(any("hd restoration stage failed safely" in w for w in parameters["warnings"]))
         self.assertIn("unexpected tensor shape", "\n".join(logged.output))
         self.assertEqual(parameters["resolution_contract"]["pixel_grid_source"], "original_pixel_grid")
 
@@ -187,17 +188,14 @@ class ProcessingPlanTests(SimpleTestCase):
 
     def test_the_plan_names_exactly_one_upscaler(self):
         small = textured()  # 96x64: low resolution
-        with override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"}):
+        with override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"}):
             with patch("enhancement.services.upscale_with_realesrgan", side_effect=RuntimeError("no model")), \
                     self.assertLogs("enhancement.services", level="ERROR"):
                 plan = enhance_bgr(small, "low")[2]["plan"]
             self.assertEqual(plan["steps"]["upscale"]["upscaler"], "realesrgan_x4plus")
-        with override_settings(**{**NO_MODELS, "AI_RESTORATION_ENABLED": True, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"}):
-            with patch("enhancement.services._load_edsr_model", side_effect=RuntimeError("no model")), \
-                    patch("enhancement.services.upscale_with_purescale", side_effect=RuntimeError("no model")), \
-                    self.assertLogs("enhancement.services", level="ERROR"):
-                plan = enhance_bgr(small, "low")[2]["plan"]
-            self.assertEqual(plan["steps"]["upscale"]["upscaler"], "opencv_dnn_edsr")
+        with override_settings(**{**NO_MODELS, "ENHANCEMENT_RENDER_POLICY": "learned_v1"}):
+            plan = enhance_bgr(small, "low")[2]["plan"]
+            self.assertIsNone(plan["steps"]["upscale"]["upscaler"])
 
 
 class IdentityStatusTests(SimpleTestCase):
@@ -443,14 +441,14 @@ class FaceFidelityTests(SimpleTestCase):
             detect.assert_not_called()
         self.assertEqual(parameters["face_fidelity"]["faces_adjusted"], 0)
 
-    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
-    @patch("enhancement.services.upscale_with_purescale")
-    def test_the_pipeline_reduces_an_upscaler_that_waxes_a_face(self, purescale):
-        purescale.side_effect = lambda image: (
+    @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "REALESRGAN_OUTPUT_BLEND": 1.0, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+    @patch("enhancement.services.upscale_with_realesrgan")
+    def test_the_pipeline_reduces_an_upscaler_that_waxes_a_face(self, upscale):
+        upscale.side_effect = lambda image: (
             cv2.GaussianBlur(
                 cv2.resize(image, (image.shape[1] * 2, image.shape[0] * 2), interpolation=cv2.INTER_CUBIC), (0, 0), 5.0,
             ),
-            {"provider": "purescale_safmn_2x"},
+            {"provider": "realesrgan_x4plus"},
         )
         source = skin(200, 200)
         with patch.object(face_fidelity, "_detect_boxes", return_value=[(0.1, 0.1, 0.8, 0.8)]):
@@ -470,20 +468,20 @@ class CheckpointTests(SimpleTestCase):
     def test_the_checkpoint_runs_before_each_expensive_stage(self):
         seen = []
         enhance_bgr(textured(), "low", checkpoint=seen.append)
-        self.assertEqual(seen[:3], ["exposure_enhancement", "adaptive_denoise", "purevision_restoration"])
+        self.assertEqual(seen[:3], ["exposure_enhancement", "adaptive_denoise", "hd_restoration"])
         self.assertIn("identity_guard", seen)
         self.assertNotIn("output_guard_a", seen)
 
-    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
-    @patch("enhancement.services.upscale_with_purescale")
-    def test_cancelling_stops_before_the_next_expensive_stage(self, purescale):
+    @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "REALESRGAN_OUTPUT_BLEND": 1.0, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+    @patch("enhancement.services.upscale_with_realesrgan")
+    def test_cancelling_stops_before_the_next_expensive_stage(self, upscale):
         def cancel_at_upscale(stage):
-            if stage == "purescale_super_resolution":
+            if stage == "hd_restoration":
                 raise EnhancementCancelled()
 
         with self.assertRaises(EnhancementCancelled):
             enhance_bgr(textured(), "low", checkpoint=cancel_at_upscale)
-        purescale.assert_not_called()
+        upscale.assert_not_called()
 
 
 class EncodedOutputTests(SimpleTestCase):

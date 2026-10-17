@@ -3,7 +3,7 @@
 Every model here is mocked: these tests prove how the pipeline routes, guards and
 records candidates, not what a real checkpoint does to a photograph.
 """
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import cv2
 import numpy as np
@@ -33,9 +33,9 @@ from .tasks import process_enhancement_batch, process_enhancement_image
 User = get_user_model()
 
 NO_MODELS = dict(
-    HD_RESTORATION_ENABLED=False, NAFNET_DEBLUR_ENABLED=False, PURESCALE_ENABLED=False,
-    PUREVISION_ENABLED=False, GFPGAN_ENABLED=False, AI_RESTORATION_ENABLED=False,
-    COLORIZATION_ENABLED=False, ZERO_DCE_ENABLED=False, IDENTITY_GUARD_ENABLED=False,
+    HD_RESTORATION_ENABLED=False, NAFNET_DEBLUR_ENABLED=False,
+    GFPGAN_ENABLED=False,
+    ZERO_DCE_ENABLED=False, IDENTITY_GUARD_ENABLED=False,
 )
 
 
@@ -94,41 +94,6 @@ class DeblurSurvivesFailedUpscaleTests(SimpleTestCase):
         np.testing.assert_array_equal(context.current_image, source)
 
 
-class SingleUpscalerTests(SimpleTestCase):
-    @override_settings(**{**NO_MODELS, "AI_RESTORATION_ENABLED": True, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
-    @patch("enhancement.services.upscale_with_purescale")
-    @patch("enhancement.services._load_edsr_model")
-    def test_purescale_does_not_stack_on_edsr(self, load_edsr, purescale):
-        edsr = Mock()
-        edsr.upsample.side_effect = lambda image: cv2.resize(
-            image, (image.shape[1] * 2, image.shape[0] * 2), interpolation=cv2.INTER_CUBIC,
-        )
-        load_edsr.return_value = edsr
-        source = textured()  # 96x64: low resolution, so EDSR is requested
-
-        output, _level, parameters = enhance_bgr(source, "low")
-
-        self.assertTrue(parameters["restoration"]["applied"])
-        self.assertEqual(output.shape[:2], (128, 192))  # 2x once, not 4x
-        purescale.assert_not_called()
-        self.assertFalse(parameters["purescale"]["applied"])
-        self.assertIn("EDSR already upscaled", parameters["purescale"]["fallback_reason"])
-        self.assertEqual(parameters["resolution_contract"]["pixel_grid_source"], "bounded_edsr_output_grid")
-
-    @override_settings(**{**NO_MODELS, "AI_RESTORATION_ENABLED": True, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
-    @patch("enhancement.services.upscale_with_purescale")
-    @patch("enhancement.services._load_edsr_model", side_effect=RuntimeError("The configured EDSR model file is unavailable."))
-    def test_purescale_still_runs_when_edsr_was_unavailable(self, _load_edsr, purescale):
-        purescale.side_effect = lambda image: (
-            cv2.resize(image, (image.shape[1] * 2, image.shape[0] * 2), interpolation=cv2.INTER_CUBIC),
-            {"provider": "purescale_safmn_2x"},
-        )
-        output, _level, parameters = enhance_bgr(textured(), "low")
-
-        self.assertFalse(parameters["restoration"]["applied"])
-        self.assertTrue(parameters["purescale"]["applied"])
-        self.assertEqual(output.shape[:2], (128, 192))
-
 
 class FinalMetricsTests(SimpleTestCase):
     @override_settings(**NO_MODELS)
@@ -139,12 +104,12 @@ class FinalMetricsTests(SimpleTestCase):
         self.assertEqual(parameters["quality_after"], analyze_image_quality(output))
         self.assertEqual(parameters["quality_after_measurement_point"], "final_output")
 
-    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
-    @patch("enhancement.services.upscale_with_purescale")
-    def test_quality_after_measures_the_upscaled_output_grid(self, purescale):
-        purescale.side_effect = lambda image: (
+    @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "REALESRGAN_OUTPUT_BLEND": 1.0, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+    @patch("enhancement.services.upscale_with_realesrgan")
+    def test_quality_after_measures_the_upscaled_output_grid(self, upscale):
+        upscale.side_effect = lambda image: (
             cv2.resize(image, (image.shape[1] * 2, image.shape[0] * 2), interpolation=cv2.INTER_CUBIC),
-            {"provider": "purescale_safmn_2x"},
+            {"provider": "realesrgan_x4plus"},
         )
         output, _level, parameters = enhance_bgr(textured(), "low", style="dynamic")
 
@@ -175,14 +140,14 @@ class GuardReferenceTests(SimpleTestCase):
         self.assertLessEqual(guard["mean_chroma_shift"], guard["limits"]["max_chroma_shift"])
         self.assertEqual(context.current_image.shape[:2], (128, 192))
 
-    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
-    @patch("enhancement.services.upscale_with_purescale")
-    def test_an_upscaler_that_brightens_is_pulled_back_in_the_pipeline(self, purescale):
+    @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "REALESRGAN_OUTPUT_BLEND": 1.0, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+    @patch("enhancement.services.upscale_with_realesrgan")
+    def test_an_upscaler_that_brightens_is_pulled_back_in_the_pipeline(self, upscale):
         def brightening_upscaler(image):
             doubled = cv2.resize(image, (image.shape[1] * 2, image.shape[0] * 2), interpolation=cv2.INTER_CUBIC)
-            return cv2.add(doubled, 60), {"provider": "purescale_safmn_2x"}
+            return cv2.add(doubled, 60), {"provider": "realesrgan_x4plus"}
 
-        purescale.side_effect = brightening_upscaler
+        upscale.side_effect = brightening_upscaler
         source = textured(base=120)
 
         output, _level, parameters = enhance_bgr(source, "low")
@@ -192,12 +157,12 @@ class GuardReferenceTests(SimpleTestCase):
         self.assertLessEqual(guard["luminance_gain"], guard["limits"]["max_luminance_gain"] + 0.5)
         self.assertLess(float(output.mean()) - float(source.mean()), 30.0)
 
-    @override_settings(**{**NO_MODELS, "PURESCALE_ENABLED": True, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
-    @patch("enhancement.services.upscale_with_purescale")
-    def test_a_faithful_upscaler_is_kept_at_full_strength(self, purescale):
-        purescale.side_effect = lambda image: (
+    @override_settings(**{**NO_MODELS, "HD_RESTORATION_ENABLED": True, "REALESRGAN_OUTPUT_BLEND": 1.0, "ENHANCEMENT_RENDER_POLICY": "learned_v1"})
+    @patch("enhancement.services.upscale_with_realesrgan")
+    def test_a_faithful_upscaler_is_kept_at_full_strength(self, upscale):
+        upscale.side_effect = lambda image: (
             cv2.resize(image, (image.shape[1] * 2, image.shape[0] * 2), interpolation=cv2.INTER_LANCZOS4),
-            {"provider": "purescale_safmn_2x"},
+            {"provider": "realesrgan_x4plus"},
         )
         _output, _level, parameters = enhance_bgr(textured(base=120), "low")
 

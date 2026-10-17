@@ -178,11 +178,12 @@ def check_models():
         "yunet": (settings.YUNET_MODEL_PATH, settings.YUNET_MODEL_SHA256, True),
         "sface": (settings.IDENTITY_MODEL_PATH, settings.IDENTITY_MODEL_SHA256, True),
         "zero_dce": (settings.ZERO_DCE_MODEL_PATH, settings.ZERO_DCE_MODEL_SHA256, learned_stage_enabled("ZERO_DCE_ENABLED")),
-        "edsr": (
-            settings.AI_RESTORATION_EDSR_MODEL_PATH, settings.AI_RESTORATION_EDSR_MODEL_SHA256,
-            learned_stage_enabled("AI_RESTORATION_ENABLED"),
-        ),
         "nafnet": (settings.NAFNET_MODEL_PATH, settings.NAFNET_MODEL_SHA256, learned_stage_enabled("NAFNET_DEBLUR_ENABLED")),
+        "nafnet_sidd": (settings.NAFNET_SIDD_MODEL_PATH, settings.NAFNET_SIDD_MODEL_SHA256, learned_stage_enabled("NAFNET_DENOISE_ENABLED")),
+        "retinexformer": (settings.RETINEXFORMER_MODEL_PATH, settings.RETINEXFORMER_MODEL_SHA256, learned_stage_enabled("RETINEXFORMER_ENABLED")),
+        "codeformer": (settings.CODEFORMER_MODEL_PATH, settings.CODEFORMER_MODEL_SHA256, learned_stage_enabled("CODEFORMER_ENABLED")),
+        "arcface": (settings.ARCFACE_MODEL_PATH, settings.ARCFACE_MODEL_SHA256, settings.IDENTITY_PROVIDER == "arcface_w600k_r50_v1"),
+        "retinaface": (settings.GFPGAN_DETECTION_MODEL_PATH, settings.GFPGAN_DETECTION_MODEL_SHA256, settings.FACE_DETECTOR_PROVIDER == "retinaface_v1"),
         "realesrgan": (
             settings.REALESRGAN_MODEL_PATH, settings.REALESRGAN_MODEL_SHA256,
             learned_stage_enabled("HD_RESTORATION_ENABLED") and bool(settings.REALESRGAN_MODEL_PATH),
@@ -190,11 +191,6 @@ def check_models():
         "gfpgan": (
             settings.GFPGAN_MODEL_PATH, settings.GFPGAN_MODEL_SHA256,
             learned_stage_enabled("GFPGAN_ENABLED") and bool(settings.GFPGAN_MODEL_PATH),
-        ),
-        "purevision": (settings.PUREVISION_MODEL_PATH, settings.PUREVISION_MODEL_SHA256, learned_stage_enabled("PUREVISION_ENABLED")),
-        "purescale": (settings.PURESCALE_MODEL_PATH, settings.PURESCALE_MODEL_SHA256, learned_stage_enabled("PURESCALE_ENABLED")),
-        "colorization": (
-            settings.COLORIZATION_MODEL_PATH, settings.COLORIZATION_MODEL_SHA256, learned_stage_enabled("COLORIZATION_ENABLED"),
         ),
     }
     models = {
