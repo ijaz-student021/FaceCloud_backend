@@ -180,7 +180,9 @@ GET /api/images/batches/{batch_id}/progress/
 - The notifications endpoints (section 8) can replace polling for "it's done"
   toasts, but progress bars still need the progress endpoint.
 
-**Listing.** `GET /api/images/my/` (paginated) is the gallery view,
+**Listing.** `GET /api/images/my/` (paginated) is the gallery view; both it and
+`GET /api/images/` accept `?batch=<id>` to show one upload's photos (another
+user's id gives an empty list, a non-number a 400),
 `GET /api/images/batches/` lists batches, `GET /api/images/{id}/` and
 `GET /api/images/{id}/download/` fetch one image. The single-image response is
 the **same shape** as a row in `my/` — including `display_status`, the quality

@@ -2,7 +2,7 @@ from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.db.models import OuterRef, Prefetch, Q, Subquery
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import generics, permissions, status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
@@ -158,12 +158,26 @@ class UploadBatchRetryView(APIView):
         return Response(batch_progress_payload(batch), status=status.HTTP_202_ACCEPTED)
 
 
+BATCH_FILTER = OpenApiParameter(
+    "batch", int, required=False, description="Only photos from this upload batch (a batch id of yours).",
+)
+
+
+@extend_schema_view(get=extend_schema(parameters=[BATCH_FILTER]))
 class ImageUploadListView(generics.ListAPIView):
+    """Every photo the caller uploaded; ``?batch=<id>`` narrows it to one upload."""
+
     serializer_class = ImageUploadSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return ImageUpload.objects.filter(owner=self.request.user).select_related("batch", "preprocessing_result")
+        queryset = ImageUpload.objects.filter(owner=self.request.user).select_related("batch", "preprocessing_result")
+        batch = self.request.query_params.get("batch")
+        if batch:
+            if not batch.isdigit():
+                raise ValidationError({"batch": "Batch must be a positive integer."})
+            queryset = queryset.filter(batch_id=int(batch))
+        return queryset
 
 
 class MyImagesPagination(PageNumberPagination):
@@ -218,6 +232,7 @@ def my_images_queryset(user):
     )
 
 
+@extend_schema_view(get=extend_schema(parameters=[BATCH_FILTER]))
 class MyImageListView(generics.ListAPIView):
     serializer_class = MyImageSerializer
     permission_classes = [permissions.IsAuthenticated]
