@@ -79,7 +79,7 @@ jobs:
       # thumbnails unscanned.
       - name: Static analysis (medium and high severity)
         run: >-
-          bandit -r accounts activity collages config downloads duplicates enhancement
+          bandit -r accounts activity collages config contact downloads duplicates enhancement
           events identities moderation notifications operations organizations privacy
           quality_control reports search sharing thumbnails uploads validation scripts
           -x "*/tests.py,*/test_*.py,*/migrations" -ll
@@ -111,6 +111,8 @@ jobs:
       EMAIL_BACKEND: django.core.mail.backends.smtp.EmailBackend
       EMAIL_HOST: smtp.mailer-service.net
       CELERY_TASK_ALWAYS_EAGER: "False"
+      # Rate limits live in a cache shared by every worker process; production refuses a per-process cache.
+      CACHE_URL: redis://127.0.0.1:6379/2
       BIOMETRIC_CONSENT_REQUIRED: "True"
       FACIAL_DATA_RETENTION_DAYS: "365"
       IMAGE_ENCRYPTION_ENABLED: "True"

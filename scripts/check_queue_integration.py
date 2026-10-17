@@ -53,7 +53,8 @@ def parse_arguments():
     parser.add_argument("--name", default=time.strftime("%Y%m%d-%H%M%S"))
     parser.add_argument("--redis-port", type=int, default=6391)
     parser.add_argument("--database", default="facecloud_queue_itest")
-    parser.add_argument("--db-host", default="/tmp")
+    # A PostgreSQL unix-socket directory (Homebrew's default), not a temporary file.
+    parser.add_argument("--db-host", default="/tmp")  # nosec B108
     parser.add_argument("--db-user", default=os.environ.get("USER", "postgres"))
     parser.add_argument("--keep", action="store_true", help="Leave the database and Redis running afterwards.")
     parser.add_argument("--scenarios", default="", help="Comma-separated subset to run (default: all).")
@@ -111,9 +112,11 @@ def log(message):
 
 
 def start_infrastructure():
+    # The name reaches psql as a variable (:'name' is quoted by psql itself), never spliced into the SQL text.
     existing = subprocess.run(
-        ["psql", "-h", ARGUMENTS.db_host, "-U", ARGUMENTS.db_user, "-d", "postgres", "-Atc",
-         f"select 1 from pg_database where datname = '{ARGUMENTS.database}'"],
+        ["psql", "-h", ARGUMENTS.db_host, "-U", ARGUMENTS.db_user, "-d", "postgres", "-At",
+         "-v", f"name={ARGUMENTS.database}"],
+        input="select 1 from pg_database where datname = :'name'",
         capture_output=True, text=True, check=True,
     ).stdout.strip()
     if existing:
