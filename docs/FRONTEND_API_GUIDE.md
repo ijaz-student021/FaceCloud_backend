@@ -530,7 +530,9 @@ nothing measurable was decided.
 `POST /api/notifications/{id}/read/`, `POST /api/notifications/mark-all-read/`,
 `DELETE /api/notifications/{id}`, and `GET/PATCH /api/notifications/preferences/`
 for the settings screen. Each notification has a `title`, `message`, `severity`,
-`resource_type`/`resource_id` and an `action_path` you can route to. Poll the
+`resource_type`/`resource_id` and an `action_path` you can route to (always a real
+frontend route: `/dashboard/jobs`, `/dashboard/images`, `/dashboard/downloads`,
+`/dashboard/groups`, or `/moderator/...`; older rows were repaired by a migration). Poll the
 unread count (every 30 to 60 seconds is plenty); there is no websocket.
 
 **Severity -> toast/colour.** `severity` is already one of `info`, `success`,

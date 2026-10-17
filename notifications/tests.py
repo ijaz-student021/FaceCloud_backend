@@ -39,7 +39,7 @@ class NotificationApiTests(APITestCase):
             message="FaceCloud received one image.",
             resource_type="batch",
             resource_id=12,
-            action_path="/dashboard/uploads",
+            action_path="/dashboard/jobs",
             metadata={
                 "batch_id": 12,
                 "status": "uploaded",
