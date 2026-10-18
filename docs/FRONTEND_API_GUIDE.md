@@ -312,6 +312,10 @@ error for it.
   reports), `matching_confidence` (this photo's best score in the folder, same
   percentage scale; `null` when unscored). A photo with two faces of the same
   person appears once. Another user's folder is a 404.
+- **Why a new folder.** A face that started its own folder carries `evidence.best_score` (how close the nearest
+  existing folder was, always below the new-folder threshold; `null` when it was the owner's first folder) and
+  `evidence.closest_group_id` on its membership. Its `similarity_score` stays `null`: the face is not compared with
+  the folder it starts. For matched and review faces `best_score` is the score against the suggested folder, as before.
 - Manage folders: `PATCH .../groups/{id}/rename/ {display_name}`,
   `POST .../groups/{id}/merge/ {source_group_id, reason}` (merges the source
   into this folder), `PATCH .../groups/{id}/profile/`,
@@ -623,6 +627,9 @@ and the original record fields (`source`, `category`, `event`, `object_type`,
 `object_id`, `identifier`, `ip_address`, `details`, `created_at`), unchanged.
 `category` filters to one of `upload, processing, moderation, download, group,
 share, admin, privacy, auth`.
+`type` filters to one of the `type` values above, **exactly as each entry reads** (done in the database,
+so paging and `has_next` stay right however old the events are; an unknown value is a 400 listing the
+choices; it combines with `category`). A type with no entries is an empty page.
 
 How stored events map to `type` / `status`:
 

@@ -106,3 +106,34 @@ def describe(category, event):
     kind = "reject" if "reject" in event else CATEGORY_DEFAULT_TYPE.get(category, "validate")
     message = event.replace("_", " ").strip().capitalize() + "."
     return kind, _fallback_status(event), message
+
+
+TYPES = ("upload", "enhance", "validate", "download", "live", "group", "reject", "login", "email", "admin")
+
+
+def events_of_type(kind, *, auth=False):
+    """A ``Q`` that selects the stored events that :func:`describe` reads as ``kind``, so a list can be filtered in the database.
+
+    ``auth=True`` is for the account trail (``AuthEvent``, which has no category column and is always category ``auth``); otherwise it is for
+    ``ActivityEvent``. The result is the same as calling ``describe`` on every row and keeping those whose type is ``kind`` (a test checks this for
+    every name in the table, every event family and unknown names), without reading the rows.
+    """
+    from django.db.models import Q
+
+    selected = Q(event__in=[name for name, (event_type, _status, _message) in EXACT.items() if event_type == kind])
+    unknown = ~Q(event__in=list(EXACT)) & ~Q(event__startswith="group_")
+    if kind == "group":
+        selected |= Q(event__startswith="group_")
+    if kind == "reject":
+        selected |= unknown & Q(event__icontains="reject")
+    plain = unknown & ~Q(event__icontains="reject")
+    if auth:
+        if CATEGORY_DEFAULT_TYPE["auth"] == kind:
+            selected |= plain
+    else:
+        from .models import ActivityEvent
+
+        categories = [value for value in ActivityEvent.Category.values if CATEGORY_DEFAULT_TYPE.get(value, "validate") == kind]
+        if categories:
+            selected |= plain & Q(category__in=categories)
+    return selected

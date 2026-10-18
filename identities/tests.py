@@ -426,3 +426,54 @@ class ProcessIdentityAnalysisCancellationTests(TestCase):
         self.assertEqual(result.status, IdentityAnalysis.Status.CANCELLED)
         self.assertEqual(provider.embed.call_count, 1)
         self.assertEqual(IdentityFace.objects.filter(analysis_id=self.analysis.pk).count(), 0)
+
+
+class NewFolderEvidenceTests(TestCase):
+    """A face that starts a new folder records how close the nearest existing folder was, so "why a new folder?" has a number."""
+
+    def setUp(self):
+        self.owner = User.objects.create_user(username="why-new", email="why-new@example.com", password="Password!123")
+        grant_face_consent(self.owner)
+        self.provider = MagicMock()
+        self.provider.name = "test"
+        self.provider.dimension = 3
+        self.provider.model_checksum = "stub"
+        self.provider.healthcheck.return_value = None
+        self.provider.prepare_face.side_effect = lambda image, box, landmarks: image
+        self.provider.validate_embedding.side_effect = lambda vector: vector
+        self.provider.similarity.side_effect = lambda a, b: float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+
+    def analyse(self, vector, name):
+        batch = UploadBatch.objects.create(owner=self.owner, upload_type="single")
+        image = ImageUpload.objects.create(owner=self.owner, batch=batch, original_name=name, status="uploaded")
+        preprocessing = ImagePreprocessingResult.objects.create(owner=self.owner, image=image, status="completed")
+        validation = FaceValidationResult.objects.create(
+            owner=self.owner, image=image, preprocessing_result=preprocessing, decision="accepted", face_count=1,
+            faces=[{"x": 0, "y": 0, "width": 10, "height": 10}],
+        )
+        analysis = IdentityAnalysis.objects.create(
+            owner=self.owner, image=image, preprocessing_result=preprocessing, face_validation=validation,
+            status="pending", provider="test", policy_version="test-v1",
+        )
+        self.provider.embed.side_effect = lambda crop: np.array(vector, dtype=np.float32)
+        with (
+            patch("identities.services.get_identity_provider", return_value=self.provider),
+            patch("identities.services._read_image", return_value=np.zeros((4, 4, 3), dtype=np.uint8)),
+        ):
+            process_identity_analysis(analysis.pk)
+        return IdentityMembership.objects.get(identity_face__analysis=analysis)
+
+    def test_the_first_face_has_nothing_to_compare_with(self):
+        first = self.analyse([1.0, 0.0, 0.0], "a.jpg")
+        self.assertEqual(first.state, IdentityMembership.State.NEW_GROUP)
+        self.assertIsNone(first.evidence["best_score"])
+        self.assertIsNone(first.evidence["closest_group_id"])
+
+    def test_a_different_person_records_the_closest_existing_folder_and_its_score(self):
+        first = self.analyse([1.0, 0.0, 0.0], "a.jpg")
+        second = self.analyse([0.2, 0.98, 0.0], "b.jpg")
+        self.assertEqual(second.state, IdentityMembership.State.NEW_GROUP)
+        self.assertNotEqual(second.identity_group_id, first.identity_group_id)
+        self.assertAlmostEqual(second.evidence["best_score"], 0.2, places=1)
+        self.assertEqual(second.evidence["closest_group_id"], first.identity_group_id)
+        self.assertIsNone(second.similarity_score)         # the face is not "similar" to the folder it started
