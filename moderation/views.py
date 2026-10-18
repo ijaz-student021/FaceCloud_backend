@@ -21,6 +21,7 @@ from uploads.services import BatchHasNoFailedImages, BatchRetryLimitReached
 
 from .models import ModeratorReport, ModeratorReview
 from .serializers import (
+    ModeratorReviewDetailSerializer,
     ModeratorAssignSerializer,
     ModeratorBulkDecisionSerializer,
     ModeratorBulkResultSerializer,
@@ -111,10 +112,15 @@ class ModeratorReviewListView(OrganizationScopedMixin, generics.ListAPIView):
 class ModeratorReviewDetailView(OrganizationScopedMixin, APIView):
     require_owner_or_moderator = True
 
-    @extend_schema(responses={200: ModeratorReviewSerializer, **ERROR_RESPONSES})
+    @extend_schema(responses={200: ModeratorReviewDetailSerializer, **ERROR_RESPONSES})
     def get(self, request, organization_id, review_id):
-        review = get_object_or_404(ModeratorReview, pk=review_id, organization_id=organization_id)
-        return Response(ModeratorReviewSerializer(review).data)
+        review = get_object_or_404(
+            ModeratorReview.objects.select_related(
+                "assigned_moderator", "decided_by", "claimed_by", "image__owner", "image__quality_decision", "image__face_validation",
+            ),
+            pk=review_id, organization_id=organization_id,
+        )
+        return Response(ModeratorReviewDetailSerializer(review, context={"request": request}).data)
 
 
 class ModeratorReviewImageView(OrganizationScopedMixin, APIView):

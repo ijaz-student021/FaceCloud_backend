@@ -610,6 +610,10 @@ nothing measurable was decided.
   (bytes), `outcome` (`accepted`, `rejected`, `needs_review`, `failed`, `cancelled` or `processing`) and `preview_url`
   (the moderator thumbnail, fetch it with the Authorization header; `null` for a file refused at upload).
   Actions: `POST .../moderator/batches/{id}/retry/`, `/cancel/` and `/reprocess/`.
+- **Image Review screen.** `GET .../moderator/reviews/{id}/` is the queue row plus an `image` object: `id`, `name`, `width`, `height`,
+  `file_size`, `uploader{id,username}`, `face_count` (`null` before the face check ran), `quality{decision, overall_score,
+  rejection_reasons, warnings}` and `preview_url` (the review-keyed thumbnail; fetch with the Authorization header). The queue list
+  does not carry `image`. The history of the review is the audit trail filtered with `?target_type=ModeratorReview&target_id={id}`.
 - **Photos only reach a team's moderators if the uploader files them there**: see "Submitting to an organization" in
   section 3 (`organization_id` on the upload requests).
 - Reports: `POST .../moderator/reports/ {report_type, format}` with

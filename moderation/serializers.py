@@ -47,6 +47,40 @@ class ModeratorReviewSerializer(serializers.ModelSerializer):
         return review.is_overdue()
 
 
+
+class ModeratorReviewDetailSerializer(ModeratorReviewSerializer):
+    """The review as the Image Review screen opens it: the queue row plus the photograph's own facts, so the screen needs no second request."""
+
+    image = serializers.SerializerMethodField(help_text=(
+        "The photograph under review: id, name, width, height, file_size, uploader, face_count, quality (decision, overall_score, "
+        "rejection_reasons, warnings) and preview_url (the review-keyed thumbnail)."
+    ))
+
+    class Meta(ModeratorReviewSerializer.Meta):
+        fields = ModeratorReviewSerializer.Meta.fields + ["image"]
+        read_only_fields = fields
+
+    def get_image(self, review) -> dict:
+        from django.urls import reverse
+
+        image = review.image
+        quality = getattr(image, "quality_decision", None)
+        validation = getattr(image, "face_validation", None)
+        request = self.context.get("request")
+        path = reverse("moderation:review-image", kwargs={"organization_id": review.organization_id, "review_id": review.pk})
+        return {
+            "id": image.pk, "name": image.original_name, "width": image.width, "height": image.height, "file_size": image.file_size,
+            "uploader": {"id": image.owner_id, "username": image.owner.username},
+            "face_count": validation.face_count if validation else None,
+            "quality": {
+                "decision": (quality.decision or None) if quality else None,
+                "overall_score": quality.overall_score if quality else None,
+                "rejection_reasons": list(quality.rejection_reasons or []) if quality else [],
+                "warnings": list(getattr(quality, "warnings", None) or []) if quality else [],
+            },
+            "preview_url": request.build_absolute_uri(path) if request is not None else path,
+        }
+
 class ModeratorDecisionSerializer(serializers.Serializer):
     action = serializers.ChoiceField(choices=["approve", "reject", "correct", "keep_in_review"])
     reason = serializers.CharField(required=False, allow_blank=True, max_length=500)
