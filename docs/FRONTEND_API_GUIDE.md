@@ -292,8 +292,14 @@ error for it.
   first). Each row: `id`, `original_name`, `thumbnail_url`, `file_size`,
   `width`, `height`, `display_status` (the same value `GET /api/images/my/`
   reports), `matching_confidence` (this photo's best score in the folder, same
-  percentage scale; `null` when unscored). A photo with two faces of the same
-  person appears once. Another user's folder is a 404.
+  percentage scale; `null` when unscored), `membership_id` and `membership_state`
+  (`confirmed`, `needs_review`, ...): the membership that puts this photo in this
+  folder, which is what the actions take: move to another folder
+  `PATCH /api/identities/memberships/{membership_id}/move/ {target_group_id}`, take it out
+  `PATCH .../memberships/{membership_id}/remove/`, make it the cover
+  `PATCH /api/identities/groups/{id}/profile/ {membership_id}`. A photo with two faces of the
+  same person appears once, with the better-matching face's membership. Another user's folder
+  is a 404.
 - Manage folders: `PATCH .../groups/{id}/rename/ {display_name}`,
   `POST .../groups/{id}/merge/ {source_group_id, reason}` (merges the source
   into this folder), `PATCH .../groups/{id}/profile/`,

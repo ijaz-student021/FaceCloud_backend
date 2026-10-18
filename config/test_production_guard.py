@@ -52,6 +52,16 @@ class GuardRuleTests(SimpleTestCase):
         joined = " | ".join(self.problems(**changes))
         self.assertIn(expected, joined, f"{changes} was not flagged: {joined or 'no problems'}")
 
+    def test_the_login_rate_may_be_raised_a_little_but_not_turned_into_a_demo_setting(self):
+        def rest(rate):
+            return {"DEFAULT_THROTTLE_RATES": {"login": rate}}
+        self.assertEqual(self.problems(REST_FRAMEWORK=rest("20/hour")), [])
+        self.assertEqual(self.problems(REST_FRAMEWORK=rest("100/hour")), [])
+        self.assertEqual(self.problems(REST_FRAMEWORK=rest("1/minute")), [])
+        self.assertFlags("login rate limit", REST_FRAMEWORK=rest("300/hour"))
+        self.assertFlags("login rate limit", REST_FRAMEWORK=rest("5/minute"))     # 300 an hour
+        self.assertFlags("login rate limit", REST_FRAMEWORK=rest("often"))
+
     def test_a_correct_production_configuration_has_no_problems(self):
         self.assertEqual(production_problems(good_config()), [])
 

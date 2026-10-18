@@ -116,19 +116,22 @@ def queued_stale_age():
     return timedelta(hours=settings.JOB_QUEUED_STALE_HOURS)
 
 
-def _stale_filters(kind, now):
+def _stale_filters(kind, now, processing_seconds=None):
     """Two (statuses, cutoff) pairs describing stale queued and processing rows."""
+    processing_age = timedelta(seconds=processing_seconds) if processing_seconds is not None else processing_stale_age()
     return (
         (kind.queued, now - queued_stale_age()),
-        (kind.processing, now - processing_stale_age()),
+        (kind.processing, now - processing_age),
     )
 
 
-def reap_stuck_jobs(now=None, dry_run=False):
+def reap_stuck_jobs(now=None, dry_run=False, processing_seconds=None):
     """Fail every job whose worker is gone; returns counts per job kind.
 
     Each update re-applies the staleness filter in one statement, so a job that
-    finishes (or is touched) while this runs is left alone.
+    finishes (or is touched) while this runs is left alone. ``processing_seconds`` replaces
+    JOB_PROCESSING_STALE_SECONDS for one run: after restarting a development server, whatever it was
+    processing is gone, and waiting the default (over an hour) is pointless.
     """
     from uploads.progress import sync_image_progress
 
@@ -138,7 +141,7 @@ def reap_stuck_jobs(now=None, dry_run=False):
         model = kind.model_class()
         reaped = 0
         image_ids = set()
-        for statuses, cutoff in _stale_filters(kind, now):
+        for statuses, cutoff in _stale_filters(kind, now, processing_seconds):
             if not statuses:
                 continue
             stale = model.objects.filter(
