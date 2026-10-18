@@ -510,7 +510,17 @@ state and put it in the URL; changing it client-side grants nothing.
   `{FRONTEND_URL}/invitations/{token}`. Build that route; the logged-in user
   (who must be signed in with the invited email) calls
   `POST /api/organizations/invitations/accept/ {token}`.
-- Audit trail: `GET .../audit/`. Organization-wide data export (async):
+- **Audit trail (Moderation Logs and Audit screens):** `GET .../audit/` (owner or moderator; a plain array, or paginated with
+  `?page=&page_size=`), newest first. Each event keeps its stored fields (`id`, `actor{id,username,email}`, `action`,
+  `target_type`, `target_id`, `previous_value`, `new_value`, `reason`, `created_at`) and adds `actor_name`, `message` (a sentence
+  without the actor, for example "Approved face.jpg."), `target_label` (the photo, upload or folder name; `null` when none or gone)
+  and `from_status` / `to_status` (the review's status before and after a decision, `null` for other events and for decisions
+  recorded before this was kept). Filters: `?action=` (for example `moderator_review_decided`), `?actor=<user id>`, `?q=` (actor
+  name or email, the reason, the action's name or sentence; up to 100 characters), `?date_from=`, `?date_to=` (a bare date includes
+  that whole day), `?target_type=` and `?target_id=`; a bad value is a 400. The history of one review is
+  `?target_type=ModeratorReview&target_id={review id}`. **There is no "user notified" field**: nobody is notified of a decision,
+  so leave that column out. The older `Audit trail` description follows.
+- Audit trail (stored fields): `GET .../audit/`. Organization-wide data export (async):
   `POST .../export/`, poll `GET .../export/{id}/`, download
   `.../export/{id}/download/`.
 
