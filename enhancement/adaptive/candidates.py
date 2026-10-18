@@ -20,12 +20,20 @@ class Candidate:
     verdict: dict | None = None
     selected: bool = False
     seconds: float = 0.0
+    size: tuple = ()                # (width, height), kept after the pixels are released
+
+    def __post_init__(self):
+        self.size = (int(self.image.shape[1]), int(self.image.shape[0]))
+
+    def release(self):
+        """Drop the pixels of a candidate that was not chosen (its record stays): a long automatic run holds a dozen of them, at HD size."""
+        self.image = None
 
     def describe(self):
         """A JSON-friendly summary, without the pixels."""
         return {
             "id": self.id, "parent": self.parent, "operation": self.operation, "variant": self.variant,
-            "dimensions": [int(self.image.shape[1]), int(self.image.shape[0])], "models": self.models,
+            "dimensions": list(self.size), "models": self.models,
             "seconds": round(self.seconds, 3), "selected": self.selected, "verdict": self.verdict,
         }
 

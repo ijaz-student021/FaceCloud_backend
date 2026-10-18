@@ -68,10 +68,21 @@ class Limits:
     face_min_detail_gain: float = 1.25      # face detail after / before
     face_deblur_min_detail_gain: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN", 1.25)))   # a deblur chosen for a blurred *face* must raise the face's own detail at least this much
     face_max_detail: float = 260.0          # above this (sharp faces: median 119, p90 175) the detail is probably invented
-    face_landmark_shift_max: float = 0.04   # of the face width, mean over the five landmarks
+    # Mean displacement of the five landmarks, as a share of the face width, between the original's face and the candidate's (the detector is
+    # run again on the candidate). Measured on real photographs: a Real-ESRGAN x2, a Lanczos x2 and a classical denoise of a noisy photograph each
+    # moved them by 0.065 to 0.077 without changing the face (the embedding stayed at 0.91 to 0.99), because the detector's own jitter is of
+    # that size; CodeFormer and GFPGAN, which can really redraw a face, stay at the stricter limit.
+    face_landmark_shift_max: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_LANDMARK_SHIFT_MAX", 0.08)))
+    face_restoration_landmark_shift_max: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_FACE_LANDMARK_SHIFT_MAX", 0.04)))
     # An upscaled candidate's landmarks are found again on an interpolated image, so a little jitter is not a changed face: plain bicubic
     # enlargement of three 240 px portraits already shifted them by 0.019, 0.026 and 0.037 (measured on real photographs).
-    face_landmark_shift_max_upscale: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX", 0.06)))
+    tone_min_contrast_gain: float = 1.0
+    tone_max_contrast_gain: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_TONE_MAX_CONTRAST_GAIN", 1.6)))
+    tone_max_edge_gain: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_TONE_MAX_EDGE_GAIN", 1.8)))
+    face_landmark_shift_max_upscale: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX", 0.10)))
+    # An enlargement must not be markedly softer than a plain bicubic one of the same photograph (a model's output blended with it can read a
+    # little smoother than a bicubic enlargement of an already tone-boosted photograph: 0.86 was measured on a clean photograph).
+    upscale_detail_gain_min: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_UPSCALE_MIN_DETAIL_RATIO", 0.8)))
     upscale_detail_gain_max: float = 3.0
 
 
@@ -201,7 +212,7 @@ class FinalImageQualityValidator:
         self.identity = identity            # an object with .check(image) -> dict, or None
         self.limits = limits or Limits()
 
-    def evaluate(self, parent, candidate, operation, parent_report, expected_scale=1, candidate_report=None):
+    def evaluate(self, parent, candidate, operation, parent_report, expected_scale=1, candidate_report=None, engine=None):
         """``{accepted, reasons, gates, metrics, improvement, change_cost}`` for one candidate."""
         limits = self.limits
         lowlight = operation == "low_light_enhancement"
@@ -248,7 +259,7 @@ class FinalImageQualityValidator:
         else:
             overshoot = overshoot_fraction(parent, candidate) if expected_scale == 1 else overshoot_fraction(
                 cv2.resize(parent, (candidate.shape[1], candidate.shape[0]), interpolation=cv2.INTER_CUBIC), candidate)
-            sharpening = operation in ("motion_deblurring", "face_restoration", "super_resolution")
+            sharpening = operation in ("motion_deblurring", "face_restoration", "super_resolution", "tone_detail")
             gate("artifacts", overshoot <= (limits.overshoot_max_sharpening if sharpening else limits.overshoot_max),
                  {"overshoot": round(overshoot, 4)}, "halo_or_ringing")
 
@@ -267,7 +278,7 @@ class FinalImageQualityValidator:
              {"before": noise_before, "after": noise_after}, "noise_increased")
 
         self._identity_gate(verdict, candidate, candidate_report, operation)
-        improvement = self._improvement(verdict, operation, parent, candidate, parent_report, candidate_report, expected_scale)
+        improvement = self._improvement(verdict, operation, parent, candidate, parent_report, candidate_report, expected_scale, engine)
         verdict["improvement"] = round(float(improvement), 4)
         mean_change = float(np.mean(np.abs(_gray(_to_size(candidate, parent.shape)).astype(np.float32) - _gray(parent).astype(np.float32)))) / 255.0
         verdict["change_cost"] = round(mean_change, 4)
@@ -281,7 +292,9 @@ class FinalImageQualityValidator:
             return
         scale = candidate_report.width / self.original_report.width if self.original_report.width else 1.0
         shift = landmark_shift(self.original_report.faces, candidate_report.faces, scale)
-        shift_max = self.limits.face_landmark_shift_max_upscale if operation == "super_resolution" else self.limits.face_landmark_shift_max
+        shift_max = {
+            "super_resolution": self.limits.face_landmark_shift_max_upscale, "face_restoration": self.limits.face_restoration_landmark_shift_max,
+        }.get(operation, self.limits.face_landmark_shift_max)
         landmarks_ok = shift is not None and shift <= shift_max
         status = {"passed": landmarks_ok, "landmark_shift": None if shift is None else round(shift, 4)}
         if not landmarks_ok:
@@ -303,7 +316,7 @@ class FinalImageQualityValidator:
         verdict["gates"]["identity"] = status
 
     # -- does it fix what it was for ---------------------------------------------------------------------------
-    def _improvement(self, verdict, operation, parent, candidate, before, after, scale):
+    def _improvement(self, verdict, operation, parent, candidate, before, after, scale, engine=None):
         limits = self.limits
 
         def gate(name, passed, detail, reason):
@@ -367,9 +380,17 @@ class FinalImageQualityValidator:
         if operation == "super_resolution":
             detail = edge_energy(candidate) / max(edge_energy(cv2.resize(parent, (candidate.shape[1], candidate.shape[0]),
                                                                            interpolation=cv2.INTER_CUBIC)), 1e-6)
-            gate("improves_defect", 1.0 <= detail <= limits.upscale_detail_gain_max, {"detail_ratio_vs_bicubic": round(detail, 3)},
+            # A conventional (Lanczos) enlargement adds no detail by design, so it only has to stay within the upper bound.
+            lower = 0.0 if engine == "lanczos" else limits.upscale_detail_gain_min
+            gate("improves_defect", lower <= detail <= limits.upscale_detail_gain_max, {"detail_ratio_vs_bicubic": round(detail, 3)},
                  "no_added_detail_or_invented_detail")
             return float(np.clip((detail - 1.0) / 1.0, 0, 1))
+        if operation == "tone_detail":
+            contrast_gain = float(np.std(_gray(candidate).astype(np.float32)) / max(float(np.std(_gray(parent).astype(np.float32))), 1e-6))
+            edge_gain = edge_energy(candidate) / max(edge_energy(parent), 1e-6)
+            gate("improves_defect", limits.tone_min_contrast_gain <= contrast_gain <= limits.tone_max_contrast_gain and edge_gain <= limits.tone_max_edge_gain,
+                 {"contrast_gain": round(contrast_gain, 3), "edge_gain": round(edge_gain, 3)}, "tone_not_improved_or_over_processed")
+            return float(np.clip((contrast_gain - 1.0) / 0.4, 0, 1))
         return 0.0
 
     # -- choosing ---------------------------------------------------------------------------------------------

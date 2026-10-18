@@ -243,6 +243,39 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}     -> 201
     restoration is not available on this server", and do not claim the photograph was improved when `applied_stages` is empty.
   Because the output can be larger than the upload, read `output_width` / `output_height` (and `applied_stages[].output_size`) rather
   than assuming the original size.
+- **Strength "Automatic" (`level: auto`, every style).** Automatic always runs the adaptive engine (unless the server has switched
+  `ENHANCEMENT_AUTO_ADAPTIVE` off, in which case `applied_parameters.auto_adaptive.fallback` says so and the plain filters are used), and
+  the output is **HD**: the smallest useful enlargement (x2, then x4) that brings the long edge to `ADAPTIVE_HD_TARGET_LONG_EDGE`
+  (default 1920), never above `ADAPTIVE_MAX_OUTPUT_EDGE` (4096). A photograph already at or above the target keeps its size. Every
+  stage's strength is a continuous function of what was measured, and the numbers are in the result. Fields on
+  `GET /api/enhancements/results/{id}/` (also in OpenAPI):
+  - `diagnosis` (object): what the photograph was measured to need: `exposure`, `noise`, `blur` (`type` is `motion` or `defocus`),
+    `face_blur`, `resolution`, `main_face`, `conditions` (for example `["low_light", "defocus_blur", "face_poor"]`) and
+    `recommended_operations`.
+  - `plan` (object): `operations[]` with, for each stage, `stage`, `status` (`accepted` / `rejected` / `skipped`), `engine`, `strength` (what was
+    applied), `planned_strength` (what the measurement asked for), `variant`, a one-sentence `reason`, `measure` (the numbers that set the
+    strength), `skipped_engines[]` and `rejection_reasons[]`; `skipped[]` (stages not run, with the reason, for example the time budget);
+    `hd` (`target_long_edge`, `source_long_edge`, `output_size`, `scale`, `reached`).
+  - `applied_stages` / `skipped_stages` / `hd_unavailable_reason`: as above, now with `scale`, `input_size` and `output_size` on the upscale.
+  - `enhancement_summary`: always a sentence, never empty. It says what was done, what was needed but unavailable, what was tried and
+    refused by the safety checks (the original is then kept), and when HD was done with a conventional filter ("no new detail was
+    added"). Show it as it is.
+  Real example (a photograph at 22% brightness; models on, Apple M1):
+  ```json
+  {"enhancement_summary": "Enhanced: brightened the dark subject, restored a degraded face, gently improved contrast and detail, enlarged it to 1920x2560 with a conventional filter (no new detail was added).",
+   "diagnosis": {"exposure": {"status": "low_light_subject", "judged_on": "face"}, "noise": {"status": "none"},
+                 "face_blur": {"status": "unknown", "reason": "The face is too dark to judge its blur."},
+                 "conditions": ["low_light", "defocus_blur", "face_poor"], "recommended_operations": ["low_light", "face_restore"]},
+   "plan": {"operations": [
+      {"stage": "low_light", "status": "accepted", "engine": "opencv_exposure", "strength": 0.64, "planned_strength": 0.915,
+       "measure": {"median": 17.0, "target_median": 110.0, "deficit": 0.845}},
+      {"stage": "face_restore", "status": "accepted", "engine": "codeformer", "strength": 0.816, "measure": {"face_detail": 31.1, "severity": 0.585}},
+      {"stage": "tone", "status": "accepted", "engine": "opencv_tone", "strength": 0.618},
+      {"stage": "upscale", "status": "accepted", "engine": "lanczos", "strength": 2, "reason": "HD: x2 takes the long edge from 1280 to 2560 px (HD target 1920)."}],
+     "skipped": [], "hd": {"target_long_edge": 1920, "output_size": [1920, 2560], "scale": 2.0, "reached": true}}}
+  ```
+  A stage a safety check refused shows `status: "rejected"` with `rejection_reasons` (for example `face_lost`); the file is then the last
+  accepted candidate, or the original when none passed. No field was renamed or removed.
 - **Blur and low resolution do not reject a photograph that has a face.** The quality decision (`GET /api/quality/images/{id}/` and
   `quality_decision` in `GET /api/images/my/`) measures sharpness on the face: `measurements.sharpness_basis` is `face` or `frame`,
   `measurements.face_blur_warning` is `true` for a blurred face (show a "will be sharpened" hint, not an error), and

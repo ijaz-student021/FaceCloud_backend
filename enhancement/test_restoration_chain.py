@@ -128,9 +128,9 @@ class ValidatorFaceAwareTests(SimpleTestCase):
         limits = Limits()
         self.assertGreater(limits.face_landmark_shift_max_upscale, limits.face_landmark_shift_max)
         original = SimpleNamespace(faces=[face(1)], width=640)
-        candidate = SimpleNamespace(faces=[face(2, dx=0.05 * 2 * 180)], width=1280)   # 5% of the (scaled) face width
+        candidate = SimpleNamespace(faces=[face(2, dx=0.09 * 2 * 180)], width=1280)   # 9% of the (scaled) face width
         validator = FinalImageQualityValidator(None, original, identity=None)
-        for operation, passes in (("super_resolution", True), ("motion_deblurring", False)):
+        for operation, passes in (("super_resolution", True), ("motion_deblurring", False), ("face_restoration", False)):
             verdict = {"reasons": [], "gates": {}}
             validator._identity_gate(verdict, None, candidate, operation)
             self.assertEqual(verdict["gates"]["identity"]["passed"], passes, operation)
@@ -142,7 +142,7 @@ class ThresholdSettingsTests(SimpleTestCase):
         from .adaptive.validator import Limits
 
         self.assertEqual((Thresholds().face_blur_high, Limits().face_deblur_min_detail_gain, Limits().face_landmark_shift_max_upscale),
-                         (25.0, 1.25, 0.06))
+                         (25.0, 1.25, 0.10))
         with override_settings(ADAPTIVE_FACE_BLUR_HIGH=40.0, ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN=2.0, ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX=0.1):
             self.assertEqual((Thresholds().face_blur_high, Limits().face_deblur_min_detail_gain, Limits().face_landmark_shift_max_upscale),
                              (40.0, 2.0, 0.1))

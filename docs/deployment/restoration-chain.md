@@ -1,5 +1,7 @@
 # Restoration chain: deblur, face restoration, upscale to HD
 
+This page covers the restoration stages (what they need and every setting) and strength **Automatic** (HD, and a plan that follows the photograph).
+
 What it is, what a server needs to run it, how to check, and every setting. Evidence for what it does is in
 `docs/evaluation/2026-10-17-restoration-chain.md`.
 
@@ -69,6 +71,9 @@ finish and keeps the original.
 | `ENHANCEMENT_RESTORATION_ESCALATION` | True | send photographs that need restoration through the chain under the lightweight policies |
 | `NAFNET_DEBLUR_ENABLED` / `HD_RESTORATION_ENABLED` | True | the two permissively licensed stages |
 | `CODEFORMER_ENABLED` / `GFPGAN_ENABLED` | False | non-commercial face restorers |
+| `ENHANCEMENT_AUTO_ADAPTIVE` | True | level `auto` runs the adaptive engine (False: the policy's pipeline) |
+| `ADAPTIVE_HD_TARGET_LONG_EDGE` | 1920 | what HD means |
+| `ADAPTIVE_HD_FALLBACK_LANCZOS` | True | enlarge conventionally when Real-ESRGAN cannot run |
 | `ADAPTIVE_FACE_BLUR_HIGH` | 25 | face detail below this is "strongly blurred" (deblur) |
 | `ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN` | 1.25 | a deblur chosen for a blurred face must raise the face's detail this many times |
 | `ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX` | 0.06 | largest landmark shift (share of face width) an upscaled candidate may show; other operations 0.04 |
@@ -78,3 +83,41 @@ finish and keeps the original.
 | `ADAPTIVE_FACE_UPSCALE_BELOW` | 0 (off) | also upscale when the face's shorter edge is below this |
 | `ADAPTIVE_TIME_BUDGET_SECONDS` | 180 | wall-clock budget per photograph |
 | `ENHANCEMENT_MAX_INPUT_PIXELS` | 24,000,000 | larger inputs are reduced first |
+
+## Strength "Automatic": HD, and a plan that follows the photograph
+
+Level `auto` (any style) runs the adaptive engine whatever `ENHANCEMENT_RENDER_POLICY` says (`ENHANCEMENT_AUTO_ADAPTIVE`, default on). Manual levels
+(`low`, `medium`, `high`) keep the policy's own pipeline. The styles only bias the strengths: `natural` as measured, `dynamic` a punchier tone and detail
+pass, `ai_max` the strongest restoration (higher blends, bolder face restoration).
+
+**What "HD" means.** The long edge reaches at least `ADAPTIVE_HD_TARGET_LONG_EDGE` (default 1920 px) by super-resolution with the smallest useful scale: x2,
+and x4 only when x2 falls short, never beyond `ADAPTIVE_MAX_OUTPUT_EDGE` (4096) and the model's own size bounds
+(`HD_RESTORATION_MAX_OUTPUT_PIXELS`, `HD_RESTORATION_MAX_NATIVE_OUTPUT_PIXELS`). A source already at or above the target keeps its size and still gets whatever
+restoration it needs. A 320 px source cannot reach 1920 px with one x4 pass; the result then reports `hd.reached: false` and the summary says so. This replaces the
+earlier "never enlarge for a small face" default (`ADAPTIVE_FACE_UPSCALE_BELOW=0`) on the automatic path; that setting still applies to an explicit adaptive run.
+
+**How the plan is made.** The analyzer measures the photograph; the router asks for an operation only when a measurement calls for it; each operation's strength is a
+continuous function of that measurement (`enhancement/adaptive/strength.py`) and is recorded with the measurement it came from:
+
+| Stage | Strength is | Measured from | Anchors (settings) |
+|---|---|---|---|
+| `low_light` | blend, 0.45 to 1.0 | how far the face's (or, with no face, the frame's) median luminance is below the target | `ADAPTIVE_LOWLIGHT_TARGET_MEDIAN` 110, `ADAPTIVE_LOWLIGHT_BLEND_MIN` 0.45 |
+| `denoise` | blend, 0.35 to 1.0 | the noise level (1.0 is "moderate", about 2.5 heavy grain) | `ADAPTIVE_DENOISE_BLEND_MIN` 0.35 |
+| `deblur` | blend, 0.5 to 1.0 | the face's own detail when the face triggered it, else the frame's blur retention | `ADAPTIVE_DEBLUR_BLEND_MIN` 0.5, `ADAPTIVE_FACE_BLUR_HIGH` 25 |
+| `face_restore` | the restorer's fidelity `w`, 0.5 (bold) to 0.9 | how little detail the face has; only for a degraded face that is large enough | `ADAPTIVE_FACE_FIDELITY_MIN` 0.5, `ADAPTIVE_FACE_FIDELITY_MAX` 0.9 |
+| `tone` | 0.25 to 0.8 | how flat the photograph is (luminance standard deviation against the target) | `ADAPTIVE_TONE_ENABLED`, `ADAPTIVE_TONE_CONTRAST_TARGET` 55, `ADAPTIVE_TONE_STRENGTH_MIN` 0.25, `ADAPTIVE_TONE_STRENGTH_MAX` 0.8 |
+| `upscale` | scale x2 or x4 | the long edge against the HD target | `ADAPTIVE_HD_TARGET_LONG_EDGE` 1920, `ADAPTIVE_MAX_OUTPUT_EDGE` 4096 |
+
+Each stage proposes the measured strength and a gentler one (70% of it, 60% for tone); the validator picks the better of those that pass. The validator's checks stay
+mandatory: chroma drift, identity, halos and ringing, noise growth, highlight clipping, consistency with the input. A candidate that fails them is not used, and the
+plan says which stage was rejected and for what reason. The tone pass (a halo-free detail boost and a mild S-curve pivoting on the photograph's own median, so
+a well-exposed photograph is still visibly improved without being re-coloured) is bounded by `ADAPTIVE_TONE_MAX_CONTRAST_GAIN` 1.6 and `ADAPTIVE_TONE_MAX_EDGE_GAIN` 1.8.
+
+**No checkpoints on this machine.** The engine still runs: low-light and denoising use their classical engines, the tone pass is classical, and HD uses a Lanczos
+enlargement when Real-ESRGAN cannot run (`ADAPTIVE_HD_FALLBACK_LANCZOS`), labelled `lanczos` with "no new detail was added" in the summary. A stage that cannot run at all
+(deblurring, face restoration) is named in the summary ("Deblurring was needed but is not available on this server."). If the engine itself cannot run, or
+`ENHANCEMENT_AUTO_ADAPTIVE=False`, the policy's lightweight pipeline runs and `applied_parameters.auto_adaptive.fallback` says why.
+
+**Time.** `ADAPTIVE_TIME_BUDGET_SECONDS` (180) bounds a run. When it is reached the best completed result is returned and the stage that was due is listed under
+`plan.skipped` with "The time budget was reached before this stage could start", and the summary says so. It is never an error and never a silent no-op.
+`ADAPTIVE_AUTO_MAX_CANDIDATES` (14) bounds how many candidates one run keeps records of; the pixels of a candidate that was not chosen are released at once.

@@ -37,6 +37,7 @@ from enhancement import policy as rendering_policy
 from enhancement.models import EnhancementLevel
 
 from . import operations as ops
+from . import plan as plan_builder
 from .analyzer import ImageQualityAnalyzer
 from .candidates import CandidatePool, PoolFull
 from .debug import DebugRecorder
@@ -67,13 +68,26 @@ class EngineConfig:
     max_output_edge: int = 4096
     face_upscale_below: int = 0
     max_engines_per_step: int = 2
+    # The automatic path (level auto): strengths come from the photograph's measurements, the photograph is taken to HD, and a gentle tone
+    # pass runs. All off by default, so the engine under an explicit level or in the tests behaves as it always did.
+    situational: bool = False
+    hd_target_long_edge: int = 0
+    tone_enabled: bool = False
+    style: str = "natural"
 
     @classmethod
-    def from_settings(cls):
-        return cls(
+    def from_settings(cls, auto=False, style="natural"):
+        config = cls(
             max_candidates=int(settings.ADAPTIVE_MAX_CANDIDATES), time_budget_seconds=float(settings.ADAPTIVE_TIME_BUDGET_SECONDS),
             max_output_edge=int(settings.ADAPTIVE_MAX_OUTPUT_EDGE), face_upscale_below=int(settings.ADAPTIVE_FACE_UPSCALE_BELOW),
         )
+        if auto:
+            config.situational = True
+            config.max_candidates = max(config.max_candidates, int(settings.ADAPTIVE_AUTO_MAX_CANDIDATES))
+            config.hd_target_long_edge = int(settings.ADAPTIVE_HD_TARGET_LONG_EDGE)
+            config.tone_enabled = bool(settings.ADAPTIVE_TONE_ENABLED)
+            config.style = str(style)
+        return config
 
 
 class IdentityChecker:
@@ -178,13 +192,16 @@ class AdaptiveImageEnhancementService:
         if operation in self.runners:
             return self.runners[operation](image, engine, variant)
         if operation == ops.LOW_LIGHT:
-            return ops.run_low_light(image, engine, variant["blend"])
+            extra = {"gamma": variant["gamma"]} if "gamma" in variant else {}
+            return ops.run_low_light(image, engine, variant["blend"], **extra)
         if operation == ops.DENOISE:
             return ops.run_denoise(image, engine, variant["blend"])
         if operation == ops.DEBLUR:
             return ops.run_deblur(image, engine, variant["blend"])
         if operation == ops.FACE:
             return ops.run_face_restoration(image, engine, variant["fidelity"])
+        if operation == ops.TONE:
+            return ops.run_tone(image, variant["strength"], self.router.strengths.style_gain)
         return ops.run_upscale(image, engine, variant["scale"])
 
     def _unavailable_errors(self):
@@ -228,6 +245,7 @@ class AdaptiveImageEnhancementService:
                     break
                 candidate.verdict = validator.evaluate(
                     current.image, candidate.image, step.operation, report, expected_scale=scale if step.operation == ops.UPSCALE else 1,
+                    engine=engine,
                 )
                 engine_produced.append(candidate)
             tried += 1
@@ -297,6 +315,9 @@ class AdaptiveImageEnhancementService:
         while True:
             if time.perf_counter() - started > self.config.time_budget_seconds or timed_out:
                 warnings.append("The time budget was reached; remaining operations were not attempted.")
+                pending = self.router.next_step(report, done).step
+                if pending is not None:   # the stage that was due next, so the result says what the budget cost
+                    skipped.append({"operation": pending.operation, "reason": "The time budget was reached before this stage could start."})
                 break
             decision = self.router.next_step(report, done)
             for item in decision.skipped:
@@ -320,7 +341,8 @@ class AdaptiveImageEnhancementService:
             done.add(step.operation)
             checkpoint(step.operation)
             record = {"operation": step.operation, "reason": step.reason, "engines": step.engines, "skipped_engines": [],
-                      "notes": [], "candidates": []}
+                      "notes": [], "candidates": [], "measure": step.measure,
+                      "planned_strength": step.variants[0].get("strength") if step.variants else None}
             if not step.engines:
                 record["status"] = "no_engine"
                 record["notes"].append("No engine for this operation is switched on.")
@@ -335,11 +357,17 @@ class AdaptiveImageEnhancementService:
             if not accepted:
                 record["status"] = "rejected" if produced else "unavailable"
                 record["rejection_reasons"] = sorted({reason for candidate in produced for reason in candidate.verdict["reasons"]})
+                for candidate in produced:
+                    candidate.release()
                 stages.append(record)
                 continue
             chosen = max(accepted, key=lambda c: (validator.preference(c.verdict), -c.verdict["change_cost"]))
+            for candidate in produced:
+                if candidate is not chosen:
+                    candidate.release()
             pool.select(chosen)
-            record.update(status="accepted", chosen=chosen.id, variant=chosen.variant)
+            record.update(status="accepted", chosen=chosen.id, variant=chosen.variant,
+                          strength=next((v.get("strength") for v in step.variants if v["name"] == chosen.variant), None))
             stages.append(record)
             recorder.image(self._debug_name(step.operation), chosen.image)
             current, report = chosen, analyzer.analyze(chosen.image)
@@ -368,7 +396,12 @@ class AdaptiveImageEnhancementService:
             len(accepted_operations), EnhancementLevel.HIGH)
         algorithm = "adaptive_v1" + "".join(f"+{self._chosen_model(pool, s)}" for s in stages if s["status"] == "accepted")
         quality_comparison = compare_image_quality(original, final)
-        summary = self._summary(outcome, stages, skipped, remaining)
+        plan = plan_builder.build_plan(stages, skipped, original.shape, final.shape, self.config.hd_target_long_edge)
+        if self.config.situational:
+            accepted_stage_names = [plan_builder.STAGE[op] for op in accepted_operations]
+            summary = plan_builder.compose_summary(outcome, plan, report0, accepted_stage_names)
+        else:
+            summary = self._summary(outcome, stages, skipped, remaining)
         parameters = {
             "algorithm": algorithm if accepted_operations else "adaptive_v1+original_preserved",
             "pipeline_version": PIPELINE_VERSION,
@@ -384,6 +417,8 @@ class AdaptiveImageEnhancementService:
                                     "actual_output_dimensions": [final.shape[1], final.shape[0]]},
             "adaptive": {
                 "outcome": outcome, "summary": summary, "operations_applied": accepted_operations,
+                "automatic": self.config.situational, "style": str(style),
+                "diagnosis": plan_builder.build_diagnosis(report0), "plan": plan,
                 "operations_skipped": skipped, "stages": stages, "unresolved_defects": remaining,
                 "conditions_seen_only_after_enhancement": introduced,
                 "quality_report": report0.as_dict(), "final_quality_report": report.as_dict(),
@@ -417,7 +452,7 @@ class AdaptiveImageEnhancementService:
     @staticmethod
     def _debug_name(operation):
         return {ops.LOW_LIGHT: "02_low_light", ops.DENOISE: "03_denoised", ops.DEBLUR: "04_deblurred",
-                ops.FACE: "05_face_restored", ops.UPSCALE: "06_upscaled"}[operation]
+                ops.FACE: "05_face_restored", ops.TONE: "05b_tone", ops.UPSCALE: "06_upscaled"}[operation]
 
     @staticmethod
     def _chosen_model(pool, stage):

@@ -64,3 +64,53 @@ Stages available on the machine that ran this: deblur=yes, face_restore=NO, upsc
 ## Restoration needed but not done
 
 * Restoration was needed but not completed: face_restore (Biometric processing is not permitted, so faces are not restored.)
+
+## Update (Phase 1B): face restoration switched on, and Strength "Automatic" measured
+
+Models ran locally on an Apple M1 (MPS): NAFNet-GoPro, GFPGAN v1.4 and CodeFormer (non-commercial licences, demo only), Real-ESRGAN x4plus,
+checkpoints fetched with `scripts/fetch_models.py` (checksums verified). One photograph (p1, 960x1280), degraded synthetically.
+
+### Chains: NAFNet only / + GFPGAN / full chain (face detail = Laplacian variance of the face at 128 px; clean photograph = 101.1)
+
+| case | chain | face detail before -> after | PSNR vs clean before -> after | seconds |
+|---|---|---|---|---|
+| mild blur | NAFNet | 14.4 -> 19.7 | 38.27 -> 37.69 | 30 |
+| mild blur | + GFPGAN | 14.4 -> 99.1 | 38.27 -> 36.71 | 56 |
+| mild blur | full (CodeFormer) | 14.4 -> 99.4 | 38.27 -> 36.71 | 52 |
+| strong blur (σ7) | NAFNet | 2.0 -> 3.7 | 32.63 -> 34.04 | 27 |
+| strong blur | + GFPGAN | 2.0 -> 87.3 | 32.63 -> 34.32 | 40 |
+| strong blur | full | 2.0 -> 85.2 | 32.63 -> 34.15 | 31 |
+| defocus | NAFNet | 8.9 -> 21.0 | 36.31 -> 38.53 | 26 |
+| defocus | + GFPGAN | 8.9 -> 92.0 | 36.31 -> 37.05 | 45 |
+| defocus | full | 8.9 -> 88.7 | 36.31 -> 37.13 | 33 |
+| motion | NAFNet (the others add nothing) | 15.0 -> 57.9 | 34.29 -> 41.89 | 25 |
+| 240 px low-res | full (Real-ESRGAN x2) | 67.9 -> 54.4 | n/a (size changes) | 5 |
+
+Honest reading: NAFNet is the right tool for motion blur (the PSNR gain is large) and helps Gaussian/defocus blur only a little (x1.3-2.4). For
+defocus and strong blur the face restorers produce most of the visible gain (face detail 85-99 against 101 for the clean photograph) while
+PSNR falls a little for mild blur (they invent plausible detail). On the 240 px copy the face-detail metric falls after enlarging; that metric
+is not valid across a change of scale (the same face has more pixels), so the upscale is judged by the validator's detail-versus-bicubic gate
+instead. Full raw output: the tables above. Timings include model loading; GFPGAN adds about 15-25 s uncontended on this machine.
+
+### A defocus-capable deblur model (Restormer, single-image defocus)
+
+Rejected: about 10 minutes for one 640 px crop on MPS, PSNR 34.14 -> 33.86 (worse), and the licence of its DPDD training data is not confirmed.
+The router therefore says why: defocus relies on face restoration (the router skip reason names it).
+
+### Strength Automatic on six fixtures (`scripts/evaluate_auto.py`, style natural, long edge 1280)
+
+| fixture | face detail before -> after | face luminance | noise level | chroma drift | size | seconds | plan |
+|---|---|---|---|---|---|---|---|
+| dim | 5.0 -> 46.2 | 17 -> 61 | 0.055 -> 0.146 | 2.25 | 960x1280 -> 1920x2560 | 61 | exposure 0.64, CodeFormer 0.82, tone 0.62, x2 Lanczos |
+| noisy | 628.9 -> 516.1 | 76 -> 80 | 2.25 -> 1.5 | 3.06 | unchanged | 55 | denoise 0.91; HD refused (face_lost, no added detail) |
+| motion blur | 15.0 -> 81.4 | 81 -> 82 | 0.068 -> 0.097 | 0.61 | 1920x2560 | 81 | NAFNet 0.85, CodeFormer 0.88, tone 0.41, Real-ESRGAN x2 |
+| defocus blur | 8.9 -> 71.1 | 80 -> 83 | 0.051 -> 0.066 | 0.57 | 1920x2560 | 82 | NAFNet 0.91, CodeFormer 0.75, tone 0.41, Real-ESRGAN x2 |
+| 240 px low-res | 67.9 -> 60.1 | 80 -> 80 | 0.25 -> 0.095 | 0.37 | 240x320 -> 960x1280 | 4 | tone 0.41, Real-ESRGAN x4 (HD 1920 not reached with one x4) |
+| clean | 101.1 -> 50.0 | 81 -> 89 | 0.166 -> 0.17 | 0.35 | 1920x2560 | 53 | tone 0.40, Real-ESRGAN x2 |
+
+Chroma drift is the mean CIELAB a/b difference against the input at the input's size (below 3 is not visible). Each plan differs because each
+measurement differs; every fixture ends with an honest, non-empty summary. Limits: the "dim" fixture uses the classical exposure engine
+(Zero-DCE fails its integrity check in this environment, Retinexformer is not enabled), so the face is lifted from luminance 17 to 61 and
+not further; the "noisy" fixture (σ26 Gaussian) is only partly denoised (level 2.25 -> 1.5) and HD is refused because enlarging would amplify the
+residual noise; face detail 'after' on enlarged faces is not comparable with 'before' (see above). Synthetic degradations of one photograph, one
+device, no human judgement.

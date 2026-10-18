@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # stage name in the API -> the adaptive engine's operation name
 OPERATION_STAGE = {
     "low_light_enhancement": "low_light", "denoising": "denoise", "motion_deblurring": "deblur",
-    "face_restoration": "face_restore", "super_resolution": "upscale",
+    "face_restoration": "face_restore", "super_resolution": "upscale", "tone_detail": "tone",
 }
 RESTORATION_OPERATIONS = ("motion_deblurring", "face_restoration", "super_resolution")
 
@@ -44,6 +44,8 @@ def torch_importable():
 
 
 def engine_status(engine, enabled_setting, path_setting, checksum_setting, licence):
+    if engine == "realesrgan" and getattr(settings, "HD_RESTORATION_MODEL", "x4plus") == "general_x4v3":
+        path_setting, checksum_setting = "REALESRGAN_COMPACT_MODEL_PATH", "REALESRGAN_COMPACT_MODEL_SHA256"   # the model HD_RESTORATION_MODEL chose
     enabled = bool(getattr(settings, enabled_setting, False))
     path = Path(str(getattr(settings, path_setting, "") or "")).expanduser()
     present = path.is_file()
@@ -101,6 +103,27 @@ def restoration_check(image, analyzer=None):
     return check
 
 
+STAGED_WORDS = {
+    "exposure_enhancement": "exposure", "adaptive_denoise": "noise", "hd_restoration": "resolution", "face_restoration": "a face",
+    "sharpen": "sharpness", "dynamic_style": "contrast and colour", "face_fidelity": "face fidelity",
+}
+
+
+def staged_summary(parameters, failed=False):
+    """One plain sentence for a result made by the staged pipeline (the adaptive engine writes its own); never empty."""
+    if failed:
+        return "The photograph could not be enhanced. Your original photograph is unchanged."
+    parameters = parameters if isinstance(parameters, dict) else {}
+    changed = [STAGED_WORDS.get(entry.get("stage"), str(entry.get("stage", "")).replace("_", " "))
+               for entry in parameters.get("stage_reports", []) if entry.get("changed_pixels")]
+    if parameters.get("plan", {}).get("no_correction_needed") or not changed:
+        text = "No correction was needed, so the photograph was left as it is."
+    else:
+        text = "Adjusted " + ", ".join(dict.fromkeys(changed)) + "."
+    reason = describe_stages(parameters)["hd_unavailable_reason"]
+    return f"{text} {reason}".strip()
+
+
 def describe_stages(parameters, failed=False):
     """What a stored result did, for the API.
 
@@ -126,7 +149,8 @@ def _from_adaptive(parameters, adaptive):
     for stage in adaptive.get("stages", []):
         name = OPERATION_STAGE.get(stage.get("operation"))
         if stage.get("status") == "accepted":
-            item = {"stage": name, "engine": (stage.get("models_run") or [None])[0], "variant": stage.get("variant")}
+            item = {"stage": name, "engine": (stage.get("models_run") or [None])[0], "variant": stage.get("variant"),
+                    "strength": stage.get("strength")}
             if name == "upscale":
                 variant = str(stage.get("variant") or "")
                 item["scale"] = int(variant[1:]) if variant.startswith("x") and variant[1:].isdigit() else None

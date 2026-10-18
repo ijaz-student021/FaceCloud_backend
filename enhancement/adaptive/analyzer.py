@@ -341,7 +341,10 @@ class ImageQualityAnalyzer:
         report.blur = blur
         # The main face's own blur: the frame cannot see a blurred subject in front of a sharp background, nor tell a portrait-mode
         # background from a blurred photograph.
-        if main is not None and main.detail is not None and main.quality != "too_small":
+        if main is not None and main.visibility == "poor":
+            # A face detail measure cannot tell blur from darkness; once the face has been lifted it is measured again.
+            report.face_blur = {"status": "unknown", "detail": main.detail, "judged_on": "main face", "reason": "The face is too dark to judge its blur."}
+        elif main is not None and main.detail is not None and main.quality != "too_small":
             face_status = "high" if main.detail < t.face_blur_high else "low" if main.detail < t.face_detail_poor else "none"
             report.face_blur = {"status": face_status, "detail": main.detail, "judged_on": "main face"}
         else:

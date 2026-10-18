@@ -293,11 +293,15 @@ ENHANCEMENT_RESTORATION_ESCALATION = env.bool("ENHANCEMENT_RESTORATION_ESCALATIO
 #   this counts as strongly blurred and is deblurred even when the frame reads sharp or as defocus.
 # ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN: a deblur chosen for a blurred face is accepted only if the face's own detail rises at least this
 #   many times.
-# ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX: the largest mean landmark displacement (as a share of the face width) an upscaled candidate may show;
-#   plain bicubic enlargement of 240 px portraits measured 0.019 to 0.037, other operations keep 0.04.
+# ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX / ADAPTIVE_LANDMARK_SHIFT_MAX / ADAPTIVE_FACE_LANDMARK_SHIFT_MAX: the largest mean landmark displacement
+#   (share of the face width) a candidate may show after the face is detected again: an enlargement 0.10, other operations 0.08, face restoration
+#   0.04. Measured on real photographs: legitimate enlargements and a classical denoise moved them 0.065 to 0.077 (the detector's own jitter).
 ADAPTIVE_FACE_BLUR_HIGH = env.float("ADAPTIVE_FACE_BLUR_HIGH", default=25.0)
 ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN = env.float("ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN", default=1.25)
-ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX = env.float("ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX", default=0.06)
+ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX = env.float("ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX", default=0.10)
+ADAPTIVE_LANDMARK_SHIFT_MAX = env.float("ADAPTIVE_LANDMARK_SHIFT_MAX", default=0.08)             # every other operation
+ADAPTIVE_FACE_LANDMARK_SHIFT_MAX = env.float("ADAPTIVE_FACE_LANDMARK_SHIFT_MAX", default=0.04)   # face restoration, which can redraw a face
+ADAPTIVE_UPSCALE_MIN_DETAIL_RATIO = env.float("ADAPTIVE_UPSCALE_MIN_DETAIL_RATIO", default=0.8)
 NAFNET_MODEL_PATH = env(
     "NAFNET_MODEL_PATH",
     default=str(BASE_DIR / ".runtime" / "models" / "NAFNet-GoPro-width64.pth"),
@@ -313,6 +317,19 @@ REALESRGAN_MODEL_PATH = env(
 REALESRGAN_MODEL_SHA256 = env(
     "REALESRGAN_MODEL_SHA256",
     default="4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1",
+)
+# Which Real-ESRGAN model enlarges: "x4plus" (the 67 MB RRDBNet, best quality, GPU class) or "general_x4v3" (SRVGGNetCompact, 4.9 MB, several times
+# faster; the choice for a CPU-only machine; docs/deployment/gpu-worker.md has the measurements).
+HD_RESTORATION_MODEL = env("HD_RESTORATION_MODEL", default="x4plus")
+if HD_RESTORATION_MODEL not in ("x4plus", "general_x4v3"):
+    raise ImproperlyConfigured("HD_RESTORATION_MODEL must be x4plus or general_x4v3.")
+REALESRGAN_COMPACT_MODEL_PATH = env(
+    "REALESRGAN_COMPACT_MODEL_PATH",
+    default=str(BASE_DIR / ".runtime" / "models" / "realesr-general-x4v3.pth"),
+)
+REALESRGAN_COMPACT_MODEL_SHA256 = env(
+    "REALESRGAN_COMPACT_MODEL_SHA256",
+    default="8dc7edb9ac80ccdc30c3a5dca6616509367f05fbc184ad95b731f05bece96292",
 )
 HD_RESTORATION_DEVICE = env("HD_RESTORATION_DEVICE", default="auto")
 HD_RESTORATION_OUTPUT_SCALE = env.int("HD_RESTORATION_OUTPUT_SCALE", default=2)
@@ -353,6 +370,35 @@ ADAPTIVE_MAX_OUTPUT_EDGE = env.int("ADAPTIVE_MAX_OUTPUT_EDGE", default=4096)
 # not evidence that the photograph is low-resolution, and whole-photograph upscaling costs several times the compute.
 ADAPTIVE_FACE_UPSCALE_BELOW = env.int("ADAPTIVE_FACE_UPSCALE_BELOW", default=0)
 ADAPTIVE_DEBUG_ARTIFACTS = env.bool("ADAPTIVE_DEBUG_ARTIFACTS", default=False)
+# --- Automatic enhancement (docs/deployment/restoration-chain.md, "Automatic is HD and situation-aware") ---
+# Strength "Automatic" (level auto, any style) runs the adaptive engine whatever ENHANCEMENT_RENDER_POLICY says. False keeps the staged
+# pipeline of the rendering policy for level auto too (the documented lightweight fallback). The engine itself degrades gracefully:
+# without checkpoints it still runs its classical engines, and the result says which models were not available.
+ENHANCEMENT_AUTO_ADAPTIVE = env.bool("ENHANCEMENT_AUTO_ADAPTIVE", default=True)
+# HD is defined as a long edge of at least this many pixels. The engine reaches it with the smallest useful super-resolution scale (x2,
+# x4 only when x2 falls short), never beyond ADAPTIVE_MAX_OUTPUT_EDGE; a source already at or above it keeps its size.
+# The automatic path proposes two variants for each of up to six operations, so its candidate limit is higher; the pixels of a
+# candidate that was not chosen are released as soon as its stage is decided, so the limit bounds the records, not the memory.
+ADAPTIVE_AUTO_MAX_CANDIDATES = env.int("ADAPTIVE_AUTO_MAX_CANDIDATES", default=14)
+ADAPTIVE_HD_TARGET_LONG_EDGE = env.int("ADAPTIVE_HD_TARGET_LONG_EDGE", default=1920)
+# When Real-ESRGAN cannot run, enlarge with a conventional (Lanczos) filter instead of not enlarging; the result names the engine and says
+# that no detail was added. False leaves the photograph at its size and says HD was not available.
+ADAPTIVE_HD_FALLBACK_LANCZOS = env.bool("ADAPTIVE_HD_FALLBACK_LANCZOS", default=True)
+# Strength of each stage on the automatic path is a continuous function of the photograph's own measurements (enhancement/adaptive/
+# strength.py); these are its anchor points. Every value is a blend between the original and the model's output unless noted.
+ADAPTIVE_LOWLIGHT_TARGET_MEDIAN = env.float("ADAPTIVE_LOWLIGHT_TARGET_MEDIAN", default=110.0)   # face (or scene) median the lift aims for
+ADAPTIVE_LOWLIGHT_BLEND_MIN = env.float("ADAPTIVE_LOWLIGHT_BLEND_MIN", default=0.45)
+ADAPTIVE_DENOISE_BLEND_MIN = env.float("ADAPTIVE_DENOISE_BLEND_MIN", default=0.35)
+ADAPTIVE_DEBLUR_BLEND_MIN = env.float("ADAPTIVE_DEBLUR_BLEND_MIN", default=0.5)
+ADAPTIVE_FACE_FIDELITY_MIN = env.float("ADAPTIVE_FACE_FIDELITY_MIN", default=0.5)    # CodeFormer/GFPGAN fidelity for the most degraded face
+ADAPTIVE_FACE_FIDELITY_MAX = env.float("ADAPTIVE_FACE_FIDELITY_MAX", default=0.9)    # ... and for a face that is only slightly soft
+ADAPTIVE_TONE_ENABLED = env.bool("ADAPTIVE_TONE_ENABLED", default=True)              # gentle local tone and detail pass on the automatic path
+ADAPTIVE_TONE_CONTRAST_TARGET = env.float("ADAPTIVE_TONE_CONTRAST_TARGET", default=55.0)   # luminance standard deviation of a well-contrasted photograph
+ADAPTIVE_TONE_STRENGTH_MIN = env.float("ADAPTIVE_TONE_STRENGTH_MIN", default=0.25)   # a clean photograph still gets this much
+ADAPTIVE_TONE_STRENGTH_MAX = env.float("ADAPTIVE_TONE_STRENGTH_MAX", default=0.8)
+# What the validator accepts of the tone pass: contrast (luminance standard deviation) may rise by at most this factor, and edge energy by at most the other.
+ADAPTIVE_TONE_MAX_CONTRAST_GAIN = env.float("ADAPTIVE_TONE_MAX_CONTRAST_GAIN", default=1.6)
+ADAPTIVE_TONE_MAX_EDGE_GAIN = env.float("ADAPTIVE_TONE_MAX_EDGE_GAIN", default=1.8)
 # How a low-light lift gets its colour: "chromaticity" (the source's colour ratios in linear light with the network's luminance;
 # measured to keep colour closest to the clean photograph, docs/evaluation/2026-10-15-lowlight-colour.md) or "legacy" (the source's
 # CIELAB chroma scaled by the square root of the lightness gain; measured 20-40 % paler on dark inputs).

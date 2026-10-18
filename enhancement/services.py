@@ -2154,6 +2154,23 @@ def enhance_bgr(
     The source array is never modified. Every stage that changes pixels proposes
     a candidate; ``stage_reports`` records whether it was accepted and why not.
     """
+    auto_fallback = None
+    if requested_level == EnhancementLevel.AUTO and settings.ENHANCEMENT_AUTO_ADAPTIVE:
+        # Strength "Automatic": the adaptive engine, whatever the rendering policy is. Every stage's strength comes from this photograph's own
+        # measurements, the photograph is taken to HD, and the styles only bias it (natural conservative, dynamic punchier, ai_max strongest).
+        from .adaptive.service import AdaptiveImageEnhancementService, EngineConfig
+
+        try:
+            enhanced, applied_level, parameters = AdaptiveImageEnhancementService(
+                config=EngineConfig.from_settings(auto=True, style=style),
+            ).enhance(image, requested_level, style, allow_biometric_processing=allow_biometric_processing, checkpoint=checkpoint)
+            parameters["auto_adaptive"] = {"used": True, "fallback": None}
+            return enhanced, applied_level, parameters
+        except PipelineInterrupted:
+            raise
+        except Exception as error:   # the documented lightweight fallback: the policy's own pipeline runs, and the result says so
+            logger.exception("The automatic adaptive path failed; the %s pipeline was used instead.", rendering_policy.active_policy())
+            auto_fallback = f"The adaptive engine could not run ({type(error).__name__}); the {rendering_policy.active_policy()} pipeline was used instead."
     if rendering_policy.active_policy() == rendering_policy.ADAPTIVE:
         # The adaptive engine (enhancement/adaptive/) analyses, routes, validates candidates and returns one image.
         from .adaptive.service import AdaptiveImageEnhancementService
@@ -2186,6 +2203,8 @@ def enhance_bgr(
     )
     if restoration_check is not None and restoration_check["needed"]:
         parameters["restoration_check"] = restoration_check
+    if auto_fallback:
+        parameters["auto_adaptive"] = {"used": False, "fallback": auto_fallback}
     return enhanced, applied_level, parameters
 
 

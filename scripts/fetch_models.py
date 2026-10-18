@@ -43,6 +43,9 @@ MODELS = {
                 ("zip", "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip|w600k_r50.onnx")),
     "realesrgan": (".runtime/models/RealESRGAN_x4plus.pth", "models/RealESRGAN_x4plus.pth",
                    ("url", "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth")),
+    # The lighter 4x upscaler (SRVGGNetCompact, 4.9 MB, BSD-3-Clause), for CPU machines: HD_RESTORATION_MODEL=general_x4v3.
+    "realesrgan_compact": (".runtime/models/realesr-general-x4v3.pth", "models/realesr-general-x4v3.pth",
+                           ("url", "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth")),
     "gfpgan": (".runtime/models/gfpgan/GFPGANv1.4.pth", "models/gfpgan/GFPGANv1.4.pth",
                ("url", "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth")),
     "gfpgan_detector": ("gfpgan/weights/detection_Resnet50_Final.pth", "gfpgan_weights/detection_Resnet50_Final.pth",

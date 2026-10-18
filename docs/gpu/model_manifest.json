@@ -31,6 +31,10 @@
         "size": 464154961,
         "sha256": "cd685efaae01f7c4e9951f2deab05780079c8eb1e49ed664b72f6db04dabb445"
       },
+      "realesr-general-x4v3.pth": {
+        "size": 4885111,
+        "sha256": "8dc7edb9ac80ccdc30c3a5dca6616509367f05fbc184ad95b731f05bece96292"
+      },
       "RealESRGAN_x4plus.pth": {
         "size": 67040989,
         "sha256": "4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1"

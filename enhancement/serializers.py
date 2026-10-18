@@ -1,3 +1,4 @@
+from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema_field, inline_serializer
 from rest_framework import serializers
 
@@ -176,6 +177,12 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
         "What the adaptive engine did: enhanced, partially_enhanced or original_preserved (the output is the original "
         "pixels); failed when the job failed. null for results made by the staged pipeline, which does not classify."))
     enhancement_summary = serializers.SerializerMethodField(help_text="One plain sentence on the outcome, safe to show a user.")
+    diagnosis = serializers.SerializerMethodField(help_text=(
+        "What was measured on this photograph (adaptive engine): exposure, noise, blur (frame and face), resolution, contrast, faces, each with the "
+        "analyzer's status word, plus the conditions found and the operations the measurements recommend. null for the staged pipeline."))
+    plan = serializers.SerializerMethodField(help_text=(
+        "What the engine did about it: operations (stage, status, engine, strength, reason, the measurement the strength came from), skipped "
+        "stages with the reason, and hd (target_long_edge, source/output long edge, output_size, scale, reached). null for the staged pipeline."))
     applied_stages = serializers.SerializerMethodField(help_text=(
         "The restoration and enhancement stages that changed the photograph, in order: stage (low_light, denoise, deblur, face_restore, "
         "upscale), engine, variant, and for upscale the scale, input_size and output_size ([width, height]). Empty when nothing changed."))
@@ -190,7 +197,7 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
         fields = [
             "id", "image", "batch_job", "requested_level", "applied_level",
             "requested_style", "status", "enhancement_outcome", "enhancement_summary",
-            "applied_stages", "skipped_stages", "hd_unavailable_reason",
+            "diagnosis", "plan", "applied_stages", "skipped_stages", "hd_unavailable_reason",
             "identity_status", "identity_check_bypassed", "identity_notice",
             "output_name", "output_format", "output_width", "output_height",
             "output_file_size", "processing_duration_ms", "task_id", "applied_parameters",
@@ -219,7 +226,21 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
             return "The photograph could not be enhanced. Your original photograph is unchanged."
         parameters = obj.applied_parameters if isinstance(obj.applied_parameters, dict) else {}
         adaptive = parameters.get("adaptive")
-        return str(adaptive.get("summary", "")) if isinstance(adaptive, dict) else ""
+        if isinstance(adaptive, dict) and adaptive.get("summary"):
+            return str(adaptive["summary"])
+        from .restoration import staged_summary
+
+        return staged_summary(parameters)
+
+    @extend_schema_field(OpenApiTypes.OBJECT)
+    def get_diagnosis(self, obj):
+        adaptive = (obj.applied_parameters or {}).get("adaptive") if isinstance(obj.applied_parameters, dict) else None
+        return adaptive.get("diagnosis") if isinstance(adaptive, dict) else None
+
+    @extend_schema_field(OpenApiTypes.OBJECT)
+    def get_plan(self, obj):
+        adaptive = (obj.applied_parameters or {}).get("adaptive") if isinstance(obj.applied_parameters, dict) else None
+        return adaptive.get("plan") if isinstance(adaptive, dict) else None
 
     def _stages(self, obj):
         from .restoration import describe_stages

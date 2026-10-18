@@ -20,6 +20,7 @@ Rules, each tied to a measured condition in the ``QualityReport``:
 from dataclasses import dataclass, field
 
 from . import operations as ops
+from . import strength
 
 
 @dataclass
@@ -28,6 +29,7 @@ class Step:
     engines: list           # engines to try, in order of preference
     variants: list          # [{"name": ..., ...}] what to propose from the first engine that runs
     reason: str
+    measure: dict = field(default_factory=dict)   # what was measured and which strength it produced (the automatic path)
 
 
 @dataclass
@@ -39,6 +41,21 @@ class Decision:
 class AdaptiveEnhancementRouter:
     def __init__(self, config):
         self.config = config
+        self._strengths = None
+
+    @property
+    def strengths(self):
+        if self._strengths is None:
+            self._strengths = strength.StrengthConfig.from_settings(getattr(self.config, "style", "natural"))
+        return self._strengths
+
+    def _blend_variants(self, blend, measure):
+        """Two candidates on the automatic path: the strength measured for this photograph, and a gentler one."""
+        gentle = round(max(blend * 0.7, 0.3), 3)
+        variants = [{"name": f"blend {blend}", "blend": blend, "strength": blend}]
+        if gentle < blend:
+            variants.append({"name": f"blend {gentle}", "blend": gentle, "strength": gentle})
+        return variants, measure
 
     def next_step(self, report, done):
         """The next operation to try given the current ``report`` and the operations already attempted."""
@@ -62,13 +79,22 @@ class AdaptiveEnhancementRouter:
                 return None, "The scene is dark but the subject is visible: left as photographed."
             if report.exposure["status"] not in ("low_light", "low_light_subject"):
                 return None, ""
-            return Step(operation, engines, [{"name": "blend 1.0", "blend": 1.0}, {"name": "blend 0.65", "blend": 0.65}],
-                        f"Exposure: {report.exposure['status']} (judged on the {report.exposure['judged_on']})."), ""
+            reason = f"Exposure: {report.exposure['status']} (judged on the {report.exposure['judged_on']})."
+            if self.config.situational:
+                variants, measure = self._blend_variants(*strength.lowlight(report, self.strengths))
+                for variant in variants:
+                    variant["gamma"] = measure["classical_gamma"]
+                return Step(operation, engines, variants, reason, measure), ""
+            return Step(operation, engines, [{"name": "blend 1.0", "blend": 1.0}, {"name": "blend 0.65", "blend": 0.65}], reason), ""
         if operation == ops.DENOISE:
             if report.noise["status"] not in ("moderate", "high"):
                 return None, ""
             variants = [{"name": "blend 1.0", "blend": 1.0}, {"name": "blend 0.65", "blend": 0.65}]
-            return Step(operation, engines, variants, f"Noise: {report.noise['status']} (estimate {report.noise['estimate']})."), ""
+            reason = f"Noise: {report.noise['status']} (estimate {report.noise['estimate']})."
+            if self.config.situational:
+                variants, measure = self._blend_variants(*strength.denoise(report, self.strengths))
+                return Step(operation, engines, variants, reason, measure), ""
+            return Step(operation, engines, variants, reason), ""
         if operation == ops.DEBLUR:
             # The main face's own blur decides first: a blurred subject in front of a sharp background reads as "no blur" for the frame,
             # and a large defocus is where the motion-deblurring model measurably helps (a small one it hurts, so only "high" counts).
@@ -78,22 +104,32 @@ class AdaptiveEnhancementRouter:
                     return None, "Heavy compression artifacts: deblurring would sharpen the blocks."
                 if not engines:
                     return None, "No deblurring model is switched on."
-                return Step(operation, engines, [{"name": "blend 1.0", "blend": 1.0}, {"name": "blend 0.6", "blend": 0.6}],
-                            f"The main face is blurred (face detail {report.face_blur['detail']})."), ""
+                reason = f"The main face is blurred (face detail {report.face_blur['detail']})."
+                if self.config.situational:
+                    variants, measure = self._blend_variants(*strength.deblur(report, self.strengths))
+                    return Step(operation, engines, variants, reason, measure), ""
+                return Step(operation, engines, [{"name": "blend 1.0", "blend": 1.0}, {"name": "blend 0.6", "blend": 0.6}], reason), ""
             if report.blur["status"] not in ("low", "high"):
                 return None, ""
             if report.blur["status"] == "low" and report.blur["type"] != "motion":
                 return None, ""  # mild blur without a clear motion signature is left alone
             if report.blur["type"] == "defocus":
-                return None, "The blur is defocus; the motion-deblurring model is not applied to it and cannot recover it."
+                # No defocus-capable deblurring model is in use: Restormer's single-image defocus model (MIT code) was measured and took about
+                # ten minutes for one 640 px crop on an Apple GPU without improving it (docs/evaluation/2026-10-17-restoration-chains.md), so a
+                # defocused *face* is handled by face restoration and the frame's own defocus is left as photographed.
+                return None, ("The blur is defocus; the motion-deblurring model is not applied to it and cannot recover it. "
+                              "A defocused face is restored by face restoration when that is switched on.")
             if report.blur["type"] == "unknown":
                 return None, "The blur type could not be determined."
             if report.compression["status"] == "heavy":
                 return None, "Heavy compression artifacts: deblurring would sharpen the blocks."
             if not engines:
                 return None, "No deblurring model is switched on."
-            return Step(operation, engines, [{"name": "blend 1.0", "blend": 1.0}, {"name": "blend 0.6", "blend": 0.6}],
-                        f"Motion blur (direction ratio {report.blur['direction_ratio']})."), ""
+            reason = f"Motion blur (direction ratio {report.blur['direction_ratio']})."
+            if self.config.situational:
+                variants, measure = self._blend_variants(*strength.deblur(report, self.strengths))
+                return Step(operation, engines, variants, reason, measure), ""
+            return Step(operation, engines, [{"name": "blend 1.0", "blend": 1.0}, {"name": "blend 0.6", "blend": 0.6}], reason), ""
         if operation == ops.FACE:
             if main is None:
                 return None, "No face was found."
@@ -103,8 +139,35 @@ class AdaptiveEnhancementRouter:
                 return None, ""
             if not engines:
                 return None, "No face-restoration model is switched on."
+            if self.config.situational:
+                fidelity, measure = strength.face_fidelity(report, self.strengths)
+                variants = [{"name": f"fidelity {fidelity}", "fidelity": fidelity, "strength": fidelity},
+                            {"name": f"fidelity {min(0.95, round(fidelity + 0.15, 3))}", "fidelity": min(0.95, round(fidelity + 0.15, 3)),
+                             "strength": min(0.95, round(fidelity + 0.15, 3))}]
+                return Step(operation, engines, variants, "The main face is degraded.", measure), ""
             return Step(operation, engines, [{"name": "fidelity 0.85", "fidelity": 0.85}, {"name": "fidelity 0.65", "fidelity": 0.65}],
                         "The main face is degraded."), ""
+        if operation == ops.TONE:
+            if not (self.config.situational and self.config.tone_enabled):
+                return None, ""
+            if report.noise.get("level", 0.0) >= 1.5:
+                return None, "The photograph is noisy; boosting detail would amplify the noise."
+            value, measure = strength.tone(report, self.strengths)
+            gentle = round(value * 0.6, 3)
+            variants = [{"name": f"strength {value}", "strength": value}]
+            if gentle < value:
+                variants.append({"name": f"strength {gentle}", "strength": gentle})
+            return Step(operation, engines, variants, "Gentle local contrast and detail, from this photograph's own contrast.", measure), ""
+        if operation == ops.UPSCALE and self.config.hd_target_long_edge:
+            longest = max(report.width, report.height)
+            scale, reached, why = strength.upscale_scale(longest, self.config.hd_target_long_edge, self.config.max_output_edge)
+            if not scale:
+                return None, ("" if reached else why)
+            if not engines:
+                return None, "No super-resolution engine is switched on."
+            return Step(operation, engines, [{"name": f"x{scale}", "scale": scale, "strength": scale}], f"HD: {why}",
+                        {"long_edge": longest, "hd_target_long_edge": self.config.hd_target_long_edge, "scale": scale,
+                         "output_long_edge": longest * scale, "reached": reached}), ""
         if operation == ops.UPSCALE:
             small_image = report.resolution["status"] == "low"
             # A small face in an otherwise adequate photograph is not a reason to enlarge (and re-render) the whole photograph:

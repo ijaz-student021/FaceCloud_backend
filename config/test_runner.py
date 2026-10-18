@@ -72,6 +72,10 @@ class FaceCloudTestRunner(DiscoverRunner):
             IMAGE_ENCRYPTION_KEY="test-only-image-encryption-key-0123456789",
             IMAGE_ENCRYPTION_KEY_ID=1,
             IMAGE_ENCRYPTION_PREVIOUS_KEYS={},
+            # Level "auto" runs the adaptive engine in production (ENHANCEMENT_AUTO_ADAPTIVE). The suite's many tests of the staged
+            # pipeline call it with the default level, so they keep the staged pipeline; the automatic path has its own tests, which
+            # switch it on with override_settings.
+            ENHANCEMENT_AUTO_ADAPTIVE=False,
         )
         self._media_override.enable()
 

@@ -203,6 +203,28 @@ def _build_realesrgan(nn, functional):
     return RRDBNet()
 
 
+def _build_realesrgan_compact(nn, functional):
+    """SRVGGNetCompact (realesr-general-x4v3): a plain 32-convolution network with PReLU, upsampling by pixel shuffle in its last layer."""
+    class SRVGGNetCompact(nn.Module):
+        def __init__(self, num_feat=64, num_conv=32, upscale=4):
+            super().__init__()
+            self.upscale = upscale
+            layers = [nn.Conv2d(3, num_feat, 3, 1, 1), nn.PReLU(num_parameters=num_feat)]
+            for _ in range(num_conv):
+                layers += [nn.Conv2d(num_feat, num_feat, 3, 1, 1), nn.PReLU(num_parameters=num_feat)]
+            layers.append(nn.Conv2d(num_feat, 3 * upscale * upscale, 3, 1, 1))
+            self.body = nn.ModuleList(layers)
+            self.upsampler = nn.PixelShuffle(upscale)
+
+        def forward(self, source):
+            out = source
+            for layer in self.body:
+                out = layer(out)
+            return self.upsampler(out) + functional.interpolate(source, scale_factor=self.upscale, mode="nearest")
+
+    return SRVGGNetCompact()
+
+
 def _load_model(kind):
     torch, nn, functional = _runtime()
     if kind == "nafnet":
@@ -211,6 +233,9 @@ def _load_model(kind):
     elif kind == "nafnet_sidd":
         path = _verified_path(settings.NAFNET_SIDD_MODEL_PATH, settings.NAFNET_SIDD_MODEL_SHA256, "NAFNet-SIDD")
         builder = lambda nn_, functional_: _build_nafnet(nn_, functional_, "nafnet_sidd")  # noqa: E731
+    elif kind == "realesrgan_compact":
+        path = _verified_path(settings.REALESRGAN_COMPACT_MODEL_PATH, settings.REALESRGAN_COMPACT_MODEL_SHA256, "Real-ESRGAN general-x4v3")
+        builder = _build_realesrgan_compact
     else:
         path = _verified_path(settings.REALESRGAN_MODEL_PATH, settings.REALESRGAN_MODEL_SHA256, "Real-ESRGAN")
         builder = _build_realesrgan
@@ -313,11 +338,12 @@ def upscale_with_realesrgan(image, output_scale=None):
         raise HDRestorationUnavailable("The HD output exceeds the configured safety limit.")
     if scale == 4 and output_pixels > settings.HD_RESTORATION_MAX_NATIVE_OUTPUT_PIXELS:
         raise HDRestorationUnavailable("The native 4x output exceeds the configured safety limit.")
-    output, inference = _infer("realesrgan", "Real-ESRGAN", image, 4, output_scale=scale)
+    compact = settings.HD_RESTORATION_MODEL == "general_x4v3"
+    output, inference = _infer("realesrgan_compact" if compact else "realesrgan", "Real-ESRGAN", image, 4, output_scale=scale)
     return output, {
-        "provider": "realesrgan_x4plus",
+        "provider": "realesrgan_general_x4v3" if compact else "realesrgan_x4plus",
         "native_scale": 4,
         "output_scale": scale,
-        "checkpoint_sha256_prefix": settings.REALESRGAN_MODEL_SHA256[:12],
+        "checkpoint_sha256_prefix": (settings.REALESRGAN_COMPACT_MODEL_SHA256 if compact else settings.REALESRGAN_MODEL_SHA256)[:12],
         **inference,
     }
