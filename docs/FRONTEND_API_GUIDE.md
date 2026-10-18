@@ -610,6 +610,12 @@ nothing measurable was decided.
   (bytes), `outcome` (`accepted`, `rejected`, `needs_review`, `failed`, `cancelled` or `processing`) and `preview_url`
   (the moderator thumbnail, fetch it with the Authorization header; `null` for a file refused at upload).
   Actions: `POST .../moderator/batches/{id}/retry/`, `/cancel/` and `/reprocess/`.
+- **Rejected Images screen.** `GET .../moderator/images/?decision=rejected` (also `needs_review`, `accepted`; `?q=` photo name or
+  uploader, `?batch=<id>`; a plain array, or `?page=&page_size=`), newest first, only photos submitted to this organization (never a
+  personal workspace). Each row: `id`, `original_name`, `batch_id`, `uploader{id,username}`, `created_at`, `width`, `height`,
+  `file_size`, `decision` (`rejected` includes files refused at upload), `rejection_reasons` (reason codes; for a refused file its
+  one sentence), `overall_score`, `preview_url` (`null` for a refused file) and `review_id` (the newest review of that photo here, for
+  the "Manual Review" button: open `GET .../moderator/reviews/{review_id}/`; `null` when no review exists).
 - **Image Review screen.** `GET .../moderator/reviews/{id}/` is the queue row plus an `image` object: `id`, `name`, `width`, `height`,
   `file_size`, `uploader{id,username}`, `face_count` (`null` before the face check ran), `quality{decision, overall_score,
   rejection_reasons, warnings}` and `preview_url` (the review-keyed thumbnail; fetch with the Authorization header). The queue list

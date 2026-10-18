@@ -21,6 +21,7 @@ from uploads.services import BatchHasNoFailedImages, BatchRetryLimitReached
 
 from .models import ModeratorReport, ModeratorReview
 from .serializers import (
+    ModeratorImageSerializer,
     ModeratorReviewDetailSerializer,
     ModeratorAssignSerializer,
     ModeratorBulkDecisionSerializer,
@@ -677,6 +678,59 @@ def organization_images(organization):
     if organization.is_personal:
         return ImageUpload.objects.none()
     return ImageUpload.objects.filter(batch__organization=organization)
+
+
+class ModeratorImageListView(OrganizationScopedMixin, generics.ListAPIView):
+    """The photographs submitted to this organization (owner or moderator): Rejected Images, and any other filter of them.
+
+    Never a personal workspace. ``?decision=rejected|needs_review|accepted`` (``rejected`` includes files refused at upload), ``?q=`` (photo name or
+    uploader), ``?batch=<id>``; newest first; a plain array unless ``page`` is sent.
+    """
+
+    require_owner_or_moderator = True
+    serializer_class = ModeratorImageSerializer
+
+    @extend_schema(parameters=[
+        OpenApiParameter("decision", str, enum=["rejected", "needs_review", "accepted"], description="Only photos with this outcome."),
+        OpenApiParameter("q", str, description="Part of the photo's name or the uploader's username."),
+        OpenApiParameter("batch", int, description="Only photos of this upload batch."),
+    ])
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
+    def get_serializer_context(self):
+        return {**super().get_serializer_context(), "organization": self.organization}
+
+    def get_queryset(self):
+        from django.db.models import Prefetch
+
+        params = self.request.query_params
+        queryset = (
+            organization_images(self.organization)
+            .select_related("owner", "quality_decision")
+            .prefetch_related(Prefetch(
+                "moderator_reviews", queryset=ModeratorReview.objects.filter(organization=self.organization).order_by("-created_at"),
+                to_attr="org_reviews",
+            ))
+            .order_by("-created_at", "-pk")
+        )
+        decision = params.get("decision")
+        if decision:
+            if decision == "rejected":
+                queryset = queryset.filter(Q(status="rejected") | Q(quality_decision__decision="rejected"))
+            elif decision in ("needs_review", "accepted"):
+                queryset = queryset.exclude(status="rejected").filter(quality_decision__decision=decision)
+            else:
+                raise ValidationError({"decision": ["Choose rejected, needs_review or accepted."]})
+        text = (params.get("q") or "").strip()
+        if text:
+            queryset = queryset.filter(Q(original_name__icontains=text) | Q(owner__username__icontains=text))
+        batch = params.get("batch")
+        if batch:
+            if not batch.isdigit():
+                raise ValidationError({"batch": ["Send a batch id."]})
+            queryset = queryset.filter(batch_id=int(batch))
+        return queryset
 
 
 class ModeratorImagePreviewView(OrganizationScopedMixin, APIView):

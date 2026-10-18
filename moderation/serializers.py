@@ -234,3 +234,56 @@ class ModeratorPerformanceSerializer(serializers.Serializer):
     sla_hours = serializers.IntegerField()
     moderators = ModeratorPerformanceRowSerializer(many=True)
     totals = ModeratorPerformanceTotalsSerializer()
+
+
+class ModeratorImageSerializer(serializers.Serializer):
+    """One photograph submitted to the organization, as the Rejected Images screen draws it."""
+
+    id = serializers.IntegerField()
+    original_name = serializers.CharField()
+    batch_id = serializers.IntegerField()
+    uploader = serializers.SerializerMethodField()
+    created_at = serializers.DateTimeField()
+    width = serializers.IntegerField(allow_null=True)
+    height = serializers.IntegerField(allow_null=True)
+    file_size = serializers.IntegerField()
+    decision = serializers.SerializerMethodField(help_text="rejected (refused at upload or by the quality decision), needs_review, accepted, or null while undecided.")
+    rejection_reasons = serializers.SerializerMethodField(help_text="Reason codes from the quality decision; for a file refused at upload, its one-sentence reason.")
+    overall_score = serializers.SerializerMethodField()
+    preview_url = serializers.SerializerMethodField(help_text="Thumbnail (the moderator image preview); null for a file refused at upload.")
+    review_id = serializers.SerializerMethodField(help_text="The newest review of this photo in this organization, when there is one.")
+
+    def get_uploader(self, image) -> dict:
+        return {"id": image.owner_id, "username": image.owner.username}
+
+    def _quality(self, image):
+        return getattr(image, "quality_decision", None)
+
+    def get_decision(self, image) -> str | None:
+        if image.status == "rejected":
+            return "rejected"
+        quality = self._quality(image)
+        return (quality.decision or None) if quality else None
+
+    def get_rejection_reasons(self, image) -> list:
+        if image.status == "rejected":
+            return [image.rejection_reason] if image.rejection_reason else []
+        quality = self._quality(image)
+        return list(quality.rejection_reasons or []) if quality else []
+
+    def get_overall_score(self, image) -> float | None:
+        quality = self._quality(image)
+        return quality.overall_score if quality else None
+
+    def get_preview_url(self, image) -> str | None:
+        from django.urls import reverse
+
+        if image.status == "rejected":
+            return None
+        path = reverse("moderation:image-preview", kwargs={"organization_id": self.context["organization"].pk, "image_id": image.pk})
+        request = self.context.get("request")
+        return request.build_absolute_uri(path) if request is not None else path
+
+    def get_review_id(self, image) -> int | None:
+        reviews = getattr(image, "org_reviews", None)
+        return reviews[0].pk if reviews else None
