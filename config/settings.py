@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 import os
+import re
 from datetime import timedelta
 from pathlib import Path
 
@@ -1136,6 +1137,17 @@ REST_FRAMEWORK = {
         "org_moderation_metrics": "120/hour",
     },
 }
+
+# Any request rate can be changed from the environment without a code change, for example ``THROTTLE_RATE_LOGIN=300/hour`` in the ``.env`` of a
+# demo where many people sign in from one network (the default 20/hour is per address). The name is the scope in upper case. Production refuses
+# a login rate above 100/hour (config/production_guard.py).
+_THROTTLE_RATE_FORMAT = re.compile(r"^[1-9][0-9]*/(second|minute|hour|day)$")
+for _scope in list(REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]):
+    _override = os.environ.get(f"THROTTLE_RATE_{_scope.upper()}", "").strip()
+    if _override:
+        if not _THROTTLE_RATE_FORMAT.match(_override):
+            raise ImproperlyConfigured(f"THROTTLE_RATE_{_scope.upper()} must look like 300/hour (second, minute, hour or day), not {_override!r}.")
+        REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"][_scope] = _override
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "FaceCloud API",

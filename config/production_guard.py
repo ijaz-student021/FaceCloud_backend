@@ -35,6 +35,18 @@ def _secret_problems(name, value, minimum):
     return []
 
 
+MAX_LOGIN_PER_HOUR = 100
+_PERIOD_SECONDS = {"second": 1, "minute": 60, "hour": 3600, "day": 86400}
+
+
+def _per_hour(rate):
+    """``"300/hour"`` -> 300.0; ``"5/minute"`` -> 300.0; ``None`` when the text is not a rate."""
+    count, _, period = str(rate).partition("/")
+    if not count.isdigit() or period not in _PERIOD_SECONDS:
+        return None
+    return int(count) * 3600 / _PERIOD_SECONDS[period]
+
+
 def secrets_rule(cfg):
     problems = _secret_problems("DJANGO_SECRET_KEY", cfg.get("SECRET_KEY"), MIN_SECRET_LENGTH)
     embedding = cfg.get("IDENTITY_EMBEDDING_KEY")
@@ -149,6 +161,12 @@ def policy_rule(cfg):
     threshold = int(cfg.get("LOGIN_LOCK_THRESHOLD") or 0)
     if not 3 <= threshold <= 20:
         problems.append("LOGIN_LOCK_THRESHOLD must be between 3 and 20.")
+    login_rate = ((cfg.get("REST_FRAMEWORK") or {}).get("DEFAULT_THROTTLE_RATES") or {}).get("login")
+    per_hour = _per_hour(login_rate) if login_rate else None
+    if login_rate and (per_hour is None or per_hour > MAX_LOGIN_PER_HOUR):
+        problems.append(
+            f"The login rate limit ({login_rate}) must not exceed {MAX_LOGIN_PER_HOUR}/hour in production; THROTTLE_RATE_LOGIN is for demos."
+        )
     return problems
 
 

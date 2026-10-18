@@ -163,13 +163,42 @@ class GroupImagesTests(FolderFixtures, TestCase):
         item = body["results"][0]
         self.assertEqual(
             set(item),
-            {"id", "original_name", "thumbnail_url", "file_size", "width", "height", "display_status", "matching_confidence"},
+            {"id", "original_name", "thumbnail_url", "file_size", "width", "height", "display_status", "matching_confidence",
+             "membership_id", "membership_state"},
         )
         self.assertEqual(item["id"], image.pk)
         self.assertEqual(item["original_name"], "face.jpg")
         self.assertTrue(item["thumbnail_url"].endswith(f"/api/images/{image.pk}/thumbnail/"))
         self.assertEqual((item["file_size"], item["width"], item["height"]), (4321, 640, 480))
         self.assertEqual(item["matching_confidence"], 93.0)
+
+    def test_each_photo_carries_the_membership_that_move_remove_and_cover_actions_take(self):
+        image, membership = self.add_photo(self.group, state=State.NEEDS_REVIEW)
+        item = self.client.get(self.url).json()["results"][0]
+        self.assertEqual((item["id"], item["membership_id"], item["membership_state"]), (image.pk, membership.pk, "needs_review"))
+
+    def test_with_two_faces_of_one_photo_in_the_folder_the_better_match_is_named(self):
+        image, first = self.add_photo(self.group, score=0.7)
+        second_face = IdentityFace.objects.create(
+            owner=self.owner, image=image, analysis=first.identity_face.analysis, face_index=1,
+            protected_embedding=protect_embedding([1.0, 0.0, 0.0]), embedding_dimension=3, provider="test",
+        )
+        better = IdentityMembership.objects.create(
+            owner=self.owner, identity_face=second_face, identity_group=self.group, state=State.CONFIRMED, similarity_score=0.95,
+        )
+        body = self.client.get(self.url).json()
+        self.assertEqual(body["count"], 1)                                  # one row per photo
+        self.assertEqual((body["results"][0]["membership_id"], body["results"][0]["matching_confidence"]), (better.pk, 95.0))
+
+    def test_the_id_works_with_the_actions_that_need_it(self):
+        _, membership = self.add_photo(self.group)
+        other_group = self.make_group(self.owner, "Person 002")
+        item = self.client.get(self.url).json()["results"][0]
+        moved = self.client.patch(
+            reverse("identities:membership-move", args=[item["membership_id"]]), {"target_group_id": other_group.pk}, format="json",
+        )
+        self.assertEqual(moved.status_code, 200, moved.content)
+        self.assertEqual(IdentityMembership.objects.get(pk=membership.pk).identity_group_id, other_group.pk)
 
     def test_display_status_is_the_value_the_images_list_reports(self):
         image, _ = self.add_photo(self.group)
