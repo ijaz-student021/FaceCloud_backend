@@ -150,11 +150,15 @@ class IdentityGroupImagesView(generics.ListAPIView):
         members = IdentityMembership.objects.filter(
             owner=self.request.user, identity_group=group, identity_face__image=OuterRef("pk"),
         ).exclude(state__in=[IdentityMembership.State.REJECTED, IdentityMembership.State.REMOVED])
-        best = members.order_by(F("similarity_score").desc(nulls_last=True)).values("similarity_score")[:1]
+        best = members.order_by(F("similarity_score").desc(nulls_last=True), "pk")
         return (
             my_images_queryset(self.request.user)
             .filter(Exists(members))
-            .annotate(group_similarity=Subquery(best))
+            .annotate(
+                group_similarity=Subquery(best.values("similarity_score")[:1]),
+                group_membership_id=Subquery(best.values("pk")[:1]),
+                group_membership_state=Subquery(best.values("state")[:1]),
+            )
             .order_by("-created_at", "-pk")
         )
 
