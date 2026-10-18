@@ -63,6 +63,9 @@ def _refresh_group(group):
     group.save(update_fields=["member_count", "protected_centroid", "updated_at"])
 
 
+refresh_group = _refresh_group      # the public name for code outside this module (deleting a photograph recounts its folders)
+
+
 def _choose_group(owner, provider, vector):
     groups = IdentityGroup.objects.filter(owner=owner, state=IdentityGroup.State.ACTIVE, provider=provider.name, embedding_dimension=provider.dimension).exclude(protected_centroid=b"").order_by("-updated_at")[:settings.IDENTITY_MAX_CANDIDATE_GROUPS]
     scored = sorted(((provider.similarity(vector, reveal_embedding(group.protected_centroid, group.embedding_dimension)), group) for group in groups), key=lambda item: item[0], reverse=True)

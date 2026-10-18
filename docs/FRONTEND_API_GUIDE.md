@@ -181,6 +181,15 @@ decision and its reasons — so one screen's type works for both. Downloads are 
 endpoints, so fetch them with the Authorization header (not a bare `<img src>`;
 use fetch with a blob, or a short-lived approach agreed with the backend).
 
+**Deleting photos.** `DELETE /api/images/{id}/` (204) deletes one; `POST /api/images/bulk-delete/ {image_ids: [..]}`
+(1 to 200 ids) deletes several and answers `{deleted_ids, not_found_ids, folders_updated, packages_expired, exports_expired}`:
+ids that are not yours or do not exist are listed in `not_found_ids` and nothing is done for them. A delete also
+removes the photo's files, thumbnails, enhanced copies and the share links to those copies; it **recounts every
+person folder the photo was in** (`member_count`, and the folder no longer matches faces against it); and it
+**expires the ready ZIP of the same upload and the ready folder exports of those folders**, because they hold a copy
+(their secure links then answer 410; the owner can build new ones). A folder left empty stays until its owner
+deletes it, and its `cover_images` is empty. Deleting an upload batch (`DELETE /api/images/batches/{id}/`) does the same.
+
 **Thumbnails.** Never draw a gallery from `download_url`: originals can be
 hundreds of megabytes. Each image in the list carries `thumbnail_url`, which
 serves a small JPEG (`GET /api/images/{id}/thumbnail/`, optional `?size=256`

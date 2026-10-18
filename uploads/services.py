@@ -176,9 +176,11 @@ def create_zip_batch(owner, uploaded_zip):
 
 @transaction.atomic
 def delete_batch(batch):
-    for image in list(batch.images.all()):
-        image.delete()
-    batch.delete()
+    from .deletion import delete_images
+
+    with transaction.atomic():
+        delete_images(batch.images.all())
+        batch.delete()
 
 
 def safe_output_stem(value, fallback):
