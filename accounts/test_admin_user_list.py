@@ -1,6 +1,7 @@
 """GET /api/user/admin/users/: search, role and status filters, and the number of photos each account uploaded."""
 from django.contrib.auth import get_user_model
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -74,3 +75,37 @@ class AdminUserListTests(APITestCase):
     def test_only_an_administrator_may_list(self):
         self.client.force_authenticate(self.sara)
         self.assertEqual(self.client.get(self.url).status_code, status.HTTP_403_FORBIDDEN)
+
+
+class LastSignInTests(APITestCase):
+    """`last_login` was null for everyone because the custom sign-in serializer skipped SimpleJWT's update."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("lastin", "lastin@example.com", PASSWORD, is_email_verified=True)
+
+    def sign_in(self, password=PASSWORD):
+        return self.client.post(reverse("login"), {"identifier": "lastin", "password": password}, format="json")
+
+    def test_a_successful_sign_in_stamps_last_login(self):
+        self.assertIsNone(User.objects.get(pk=self.user.pk).last_login)
+        self.assertEqual(self.sign_in().status_code, status.HTTP_200_OK)
+        stamped = User.objects.get(pk=self.user.pk).last_login
+        self.assertIsNotNone(stamped)
+        self.assertLess((timezone.now() - stamped).total_seconds(), 30)
+
+    def test_a_failed_sign_in_does_not(self):
+        self.assertEqual(self.sign_in("wrong-password").status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIsNone(User.objects.get(pk=self.user.pk).last_login)
+
+    def test_a_token_refresh_does_not_count_as_signing_in(self):
+        tokens = self.sign_in().json()
+        first = User.objects.get(pk=self.user.pk).last_login
+        self.client.post(reverse("refresh"), {"refresh": tokens["refresh"]}, format="json")
+        self.assertEqual(User.objects.get(pk=self.user.pk).last_login, first)
+
+    def test_the_administrator_list_shows_it(self):
+        self.sign_in()
+        admin = User.objects.create_superuser("boss2", "boss2@example.com", PASSWORD)
+        self.client.force_authenticate(admin)
+        rows = {row["username"]: row for row in self.client.get(reverse("admin-user-list")).json()}
+        self.assertIsNotNone(rows["lastin"]["last_login"])
