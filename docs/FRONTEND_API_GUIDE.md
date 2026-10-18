@@ -164,7 +164,8 @@ GET /api/images/batches/{batch_id}/progress/
   `accepted`, `completed`, `ready`, `quality_processing`, ...). It is also on every
   photo in the batch responses (`POST /api/images/upload/*`,
   `GET /api/images/batches/` and `/{id}/`), so no second request is needed.
-- `POST /api/images/batches/{id}/cancel/` stops a batch;
+- `POST /api/images/batches/{id}/cancel/` stops a batch that is still working (on a batch that
+  already finished it changes nothing and returns its real state);
   `POST /api/images/batches/{id}/retry/` requeues its failed images (there is a
   retry cap, and a 400 explains when it is reached or nothing failed).
 - The notifications endpoints (section 8) can replace polling for "it's done"
@@ -190,8 +191,10 @@ is served from the cache. The 1024 size is made the first time it is asked for.
 It is a normal protected endpoint: fetch it with the Authorization header and
 use a blob URL, exactly like a download. Use 256 for tiles and 1024
 for a lightbox, then `download_url` only for the real file. The response carries
-`Cache-Control: private, max-age=3600`. Rejected images have no thumbnail
-(`thumbnail_url` is `null`).
+`Cache-Control: private, max-age=3600`. A file refused at upload (wrong type,
+corrupt, unreadable) has no thumbnail (`thumbnail_url` is `null`); a photograph
+that was stored but rejected by the quality or face checks does have one, so a
+rejected photo can still be shown in the list with its reason.
 
 **Quality, faces, duplicates.** Each image has read endpoints:
 `/api/quality/images/{image_id}/`, `/api/validation/images/{image_id}/`,
@@ -249,6 +252,12 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}     -> 201
   `rejection_reasons` no longer contains `severe_blur`, `borderline_blur` or `borderline_resolution` for such a photograph. A photograph
   is still rejected as `resolution_too_low` when its shorter edge is under 240 px, and a photograph with no face and a severely blurred
   frame is still rejected.
+- **Rejected photos are never enhanced.** `POST /api/enhancements/images/{id}/` answers 400
+  ("This photo was rejected by the checks, so it is not enhanced.") for a photo refused at upload or
+  rejected by its quality decision or face validation, and `POST /api/enhancements/batches/{id}/`
+  silently leaves such photos out of the job (`total_images` counts only the ones enhanced; 400 when
+  none is left). Photos that `need_review` can still be enhanced on request. The rule and its table
+  are in `enhancement/eligibility.py`.
 - **429 on start** means the user already has the maximum number of active
   enhancement jobs. The message states the limit; retry after some finish.
 - Compare before/after: `GET /api/enhancements/results/{id}/comparison/`.

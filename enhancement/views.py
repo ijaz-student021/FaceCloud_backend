@@ -52,6 +52,7 @@ from .controls import contract as editor_contract
 from .editor_source import source_version, transparency_policy
 from .previews import StaleSource, create_preview
 from .batch_jobs import start_batch_enhancement
+from .eligibility import rejection_of
 from .services import create_enhancement_result, ensure_enhancement_capacity
 from .watermark import WatermarkError, render_watermarked
 from .tasks import (
@@ -125,6 +126,9 @@ class ImageEnhanceView(APIView):
         )
         payload = EnhancementRequestSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
+        refusal = rejection_of(image)
+        if refusal:
+            raise ValidationError(refusal)
         ensure_enhancement_capacity(request.user, batch=False)
         try:
             result = create_enhancement_result(
