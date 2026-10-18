@@ -40,6 +40,18 @@ def _all_request_files(request):
     return [uploaded for field in request.FILES for uploaded in request.FILES.getlist(field)]
 
 
+ORGANIZATION_FIELD = {"type": "integer", "description": (
+    "Optional. File this upload under one of your organizations (you must be an active member) so its moderators can review it. "
+    "Without it the upload stays in your own workspace, as before."
+)}
+
+
+def _upload_organization(request):
+    from organizations.services import resolve_upload_organization
+
+    return resolve_upload_organization(request.user, request.data.get("organization_id"))
+
+
 def _images_with_status():
     return Prefetch("images", queryset=with_status_relations(ImageUpload.objects.select_related("preprocessing_result")))
 
@@ -57,7 +69,7 @@ class SingleImageUploadView(APIView):
 
     @extend_schema(
         request={"multipart/form-data": {"type": "object", "properties": {
-            "file": {"type": "string", "format": "binary"},
+            "file": {"type": "string", "format": "binary"}, "organization_id": ORGANIZATION_FIELD,
         }}},
         responses={201: UploadBatchSerializer},
     )
@@ -65,7 +77,7 @@ class SingleImageUploadView(APIView):
         files = _all_request_files(request)
         if len(files) != 1:
             raise ValidationError({"file": "Select exactly one image for single-image upload."})
-        batch = create_image_batch(request.user, "single", files)
+        batch = create_image_batch(request.user, "single", files, organization=_upload_organization(request))
         return _batch_response(request, batch)
 
 
@@ -76,7 +88,7 @@ class MultipleImageUploadView(APIView):
 
     @extend_schema(
         request={"multipart/form-data": {"type": "object", "properties": {
-            "files": {"type": "array", "items": {"type": "string", "format": "binary"}},
+            "files": {"type": "array", "items": {"type": "string", "format": "binary"}}, "organization_id": ORGANIZATION_FIELD,
         }}},
         responses={201: UploadBatchSerializer},
     )
@@ -86,7 +98,7 @@ class MultipleImageUploadView(APIView):
             raise ValidationError({"files": "Select at least two images for multiple-image upload."})
         if len(files) != len(_all_request_files(request)):
             raise ValidationError({"files": "Submit all images using the repeated 'files' field."})
-        batch = create_image_batch(request.user, "multiple", files)
+        batch = create_image_batch(request.user, "multiple", files, organization=_upload_organization(request))
         batch = enqueue_batch_preprocessing(batch)
         return _batch_response(request, batch)
 
@@ -98,7 +110,7 @@ class ZipImageUploadView(APIView):
 
     @extend_schema(
         request={"multipart/form-data": {"type": "object", "properties": {
-            "file": {"type": "string", "format": "binary"},
+            "file": {"type": "string", "format": "binary"}, "organization_id": ORGANIZATION_FIELD,
         }}},
         responses={201: UploadBatchSerializer},
     )
@@ -107,7 +119,7 @@ class ZipImageUploadView(APIView):
         if len(files) != 1:
             raise ValidationError({"file": "Select exactly one ZIP archive."})
         uploaded_zip = files[0]
-        batch = create_zip_batch(request.user, uploaded_zip)
+        batch = create_zip_batch(request.user, uploaded_zip, organization=_upload_organization(request))
         batch = enqueue_batch_preprocessing(batch)
         return _batch_response(request, batch)
 

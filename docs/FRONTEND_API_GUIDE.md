@@ -137,6 +137,14 @@ POST /api/images/upload/zip/       multipart, field: file
                     processing_status, images: [...], ...}
 ```
 
+**Submitting to an organization.** All three upload requests take an optional `organization_id` (a form field next to the
+file). Without it the upload stays in the person's own workspace, exactly as before. With the id of an organization the
+person is an active member of (see `GET /api/organizations/`: the ones with `is_personal: false`), the upload is filed
+under it, and **that organization's moderators can then see and review it**. Anyone who is not an active member gets a
+400 `{"organization_id": ["You are not an active member of that organization."]}` and nothing is stored; a value that is not
+a number is a 400 too. The upload page should offer "Submit to: My workspace / <team name>" only to people who belong
+to a team, and say that the team's moderators will see the photos. The owner always still sees their own uploads.
+
 Every upload creates a **batch** (a single image is a batch of one). Files that
 fail validation are rejected individually; check `rejected_files` and each
 image's status rather than assuming all succeeded. Accepted formats are JPG/JPEG,

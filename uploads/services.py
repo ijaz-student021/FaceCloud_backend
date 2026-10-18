@@ -75,7 +75,7 @@ def _finalize_batch(batch):
 
 
 @transaction.atomic
-def create_image_batch(owner, upload_type, files):
+def create_image_batch(owner, upload_type, files, organization=None):
     if not files:
         raise ValidationError("At least one image file is required.")
     from django.conf import settings
@@ -83,7 +83,7 @@ def create_image_batch(owner, upload_type, files):
         raise ValidationError(f"A batch cannot contain more than {settings.MAX_UPLOAD_BATCH_FILES} images.")
     from organizations.services import get_default_organization
     batch = UploadBatch.objects.create(
-        owner=owner, upload_type=upload_type, organization=get_default_organization(owner),
+        owner=owner, upload_type=upload_type, organization=organization or get_default_organization(owner),
     )
     from notifications.events import notify_upload_received
     transaction.on_commit(
@@ -131,14 +131,14 @@ def create_image_batch(owner, upload_type, files):
 
 
 @transaction.atomic
-def create_zip_batch(owner, uploaded_zip):
+def create_zip_batch(owner, uploaded_zip, organization=None):
     members = validate_zip_archive(uploaded_zip)
     from organizations.services import get_default_organization
     batch = UploadBatch.objects.create(
         owner=owner,
         upload_type="zip",
         original_archive_name=safe_original_name(uploaded_zip.name),
-        organization=get_default_organization(owner),
+        organization=organization or get_default_organization(owner),
     )
     from notifications.events import notify_upload_received
 
