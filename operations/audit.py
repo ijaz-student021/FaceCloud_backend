@@ -17,6 +17,7 @@ from django.utils import timezone
 
 from accounts.models import AuthEvent
 from activity.models import ActivityEvent
+from activity.presentation import describe
 
 User = get_user_model()
 
@@ -29,6 +30,55 @@ class InvalidAuditFilter(ValueError):
     """Raised for a filter value the caller must fix; carries a user-facing message."""
 
 
+# The timeline's sentences are written to the person they happened to ("Your password was changed."); an administrator reads about someone else.
+ADMIN_WORDING = {
+    "registered": "Account created.",
+    "email_verified": "Email address verified.",
+    "login": "Signed in.",
+    "login_failed": "A sign-in attempt failed.",
+    "login_locked": "Sign-in was temporarily locked after repeated failures.",
+    "logout": "Signed out.",
+    "logout_all": "Signed out of every device.",
+    "password_changed": "Password changed.",
+    "password_reset": "Password reset.",
+    "profile_updated": "Profile updated.",
+    "role_changed": "Role changed by an administrator.",
+    "suspended": "Account suspended.",
+    "reactivated": "Account reactivated.",
+    "account_deleted": "Account deleted.",
+    "admin_created_account": "Account created by an administrator.",
+    "consent_granted": "Face-recognition consent given.",
+    "consent_withdrawn": "Face-recognition consent withdrawn.",
+    "facial_data_erased": "Facial data erased.",
+    "data_exported": "Personal data export created.",
+}
+CATEGORY_LABELS = {"auth": "Accounts", **{value: label for value, label in ActivityEvent.Category.choices}}
+
+
+def decorate_rows(rows):
+    """Add what the audit screen shows to each row, without changing or removing any existing key.
+
+    ``actor`` (``null`` when the account no longer exists and no identifier was recorded), ``actor_name``, ``actor_role``, ``type`` and
+    ``status`` (read the same way as the user timeline), ``message`` (a sentence about what happened, in the third person), ``resource``
+    (what it happened to) and ``ip_address`` (only sign-in events record one; ``null`` for the rest).
+    """
+    users = {user.pk: user for user in User.objects.filter(pk__in={row["user_id"] for row in rows if row["user_id"]})}
+    for row in rows:
+        user = users.get(row["user_id"])
+        kind, event_status, message = describe(row["category"], row["event"])
+        row["actor"] = {"id": user.pk, "username": user.username, "role": user.role} if user else None
+        row["actor_name"] = user.username if user else (row["identifier"] or None)
+        row["actor_role"] = user.role if user else None
+        row["type"] = kind
+        row["status"] = event_status
+        row["message"] = ADMIN_WORDING.get(row["event"], message)
+        row["resource"] = (
+            f"{row['object_type']} {row['object_id']}".strip() if row["object_type"] else CATEGORY_LABELS.get(row["category"], row["category"])
+        )
+        row.setdefault("ip_address", None)
+    return rows
+
+
 def _auth_row(event):
     return {
         "source": "auth",
@@ -37,6 +87,7 @@ def _auth_row(event):
         "category": "auth",
         "event": event.event,
         "identifier": event.identifier,
+        "ip_address": event.ip_address,
         "object_type": "",
         "object_id": "",
         "details": event.details,
@@ -112,7 +163,7 @@ def build_audit_feed(*, user=None, category=None, source=None, page=1, page_size
 
     merged = sorted(auth_rows + activity_rows, key=lambda row: row["created_at"], reverse=True)
     start = (page - 1) * page_size
-    page_rows = merged[start:start + page_size]
+    page_rows = decorate_rows(merged[start:start + page_size])
     has_next = len(merged) > start + page_size or len(auth_rows) == fetch or len(activity_rows) == fetch
 
     return {

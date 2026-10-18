@@ -132,3 +132,55 @@ class SecurityAlertTests(TestCase):
         self.assertEqual(purge_old_events(), 1)
         alert.refresh_from_db()
         self.assertEqual(len(alert.evidence), 1)
+
+
+class SecurityAlertReadingTests(TestCase):
+    """Each alert says what kind it is, how risky, in one sentence, and which address it is about."""
+
+    def setUp(self):
+        self.admin = User.objects.create_user(username="read-admin", email="read-admin@example.com",
+                                              password=PASSWORD, is_email_verified=True, role="admin")
+        self.client = APIClient()
+        self.client.force_authenticate(self.admin)
+
+    def alert(self, **overrides):
+        values = dict(rule="failed_login_address", subject="ip:198.51.100.4", severity="warning", event_count=12, threshold=10,
+                      window_minutes=15, first_seen_at=timezone.now(), last_seen_at=timezone.now(), evidence=[])
+        values.update(overrides)
+        return SecurityAlert.objects.create(**values)
+
+    def row(self):
+        response = self.client.get("/api/system/security/alerts/")
+        self.assertEqual(response.status_code, 200, response.content)
+        return response.json()["results"][0]
+
+    def test_a_failed_login_burst_reads_as_a_sentence_with_its_numbers(self):
+        self.alert()
+        row = self.row()
+        self.assertEqual((row["type"], row["risk"], row["ip_address"]), ("failed_login", "medium", "198.51.100.4"))
+        self.assertEqual(row["message"], "12 failed sign-ins from address 198.51.100.4 in 15 minutes (alert at 10).")
+
+    def test_three_times_over_the_threshold_is_high_risk(self):
+        self.alert(severity="high", event_count=31)
+        self.assertEqual(self.row()["risk"], "high")
+
+    def test_each_rule_maps_to_one_screen_type(self):
+        for rule, expected in (("failed_login_account", "failed_login"), ("authorization_failures", "authorization_failure"),
+                               ("rate_limit_violations", "rate_limit")):
+            SecurityAlert.objects.all().delete()
+            self.alert(rule=rule, subject="user:7")
+            self.assertEqual(self.row()["type"], expected, rule)
+
+    def test_an_alert_about_a_user_takes_its_address_from_the_evidence_or_has_none(self):
+        self.alert(rule="authorization_failures", subject="user:7", evidence=[{"id": 1, "source": "security", "ip_address": "203.0.113.9"}])
+        self.assertEqual(self.row()["ip_address"], "203.0.113.9")
+        SecurityAlert.objects.all().delete()
+        self.alert(rule="authorization_failures", subject="user:7", evidence=[])
+        self.assertIsNone(self.row()["ip_address"])
+        self.assertIn("user 7", self.row()["message"])
+
+    def test_the_old_fields_are_still_there(self):
+        self.alert()
+        for key in ("id", "rule", "subject", "severity", "status", "event_count", "threshold", "window_minutes",
+                    "first_seen_at", "last_seen_at", "acknowledged_by", "acknowledged_at", "acknowledgement_note", "created_at"):
+            self.assertIn(key, self.row())

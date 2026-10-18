@@ -317,14 +317,19 @@ class DeleteAccountSerializer(serializers.Serializer):
 
 class AdminUserSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(read_only=True)
+    uploads_count = serializers.SerializerMethodField(help_text="Photos this account has uploaded (the list computes it for every row at once).")
 
     class Meta:
         model = User
         fields = [
             "id", "username", "email", "full_name", "role", "is_email_verified", "is_suspended",
-            "suspension_reason", "is_active", "date_joined",
+            "suspension_reason", "is_active", "date_joined", "last_login", "uploads_count",
         ]
-        read_only_fields = ["id", "username", "email", "full_name", "is_email_verified", "date_joined"]
+        read_only_fields = ["id", "username", "email", "full_name", "is_email_verified", "date_joined", "last_login", "uploads_count"]
+
+    def get_uploads_count(self, user) -> int:
+        annotated = getattr(user, "uploads_count", None)
+        return annotated if annotated is not None else user.image_uploads.count()
 
     def validate(self, attrs):
         if attrs.get("is_suspended") is False:

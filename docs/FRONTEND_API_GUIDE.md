@@ -683,10 +683,73 @@ by that label. Rate limit: 600 requests per hour per user.
 
 `/api/system/health/`, `/queue/`, `/analytics/`, `/audit/`, `/moderation/`,
 `/batches/failed/`, `POST /api/system/batches/{id}/retry/`, `/jobs/failed/`,
-`GET /api/user/admin/users/` (a plain array), `POST /api/user/admin/users/` (create an account) and
+`GET /api/user/admin/users/` (a plain array unless `page` is sent), `POST /api/user/admin/users/` (create an account) and
 `PATCH /api/user/admin/users/{id}/`,
 `GET /api/privacy/audit/`. A non-admin gets 403; use the `role` from login to
 hide these routes, but never rely on that for security.
+
+**Which endpoint feeds which admin screen** (the full table, with what each screen still cannot show, is `docs/alignment/admin-dashboard.md`):
+
+| Screen | Endpoint |
+|---|---|
+| Overview, Statistics, Upload Statistics, Rejections | `GET /api/system/analytics/` (`?date_from=&date_to=&owner=`; the new numbers are under `overview`) |
+| System Health, System Monitoring | `GET /api/system/health/` (`services`, `process`) and `GET /api/system/queue/` |
+| Audit Logs | `GET /api/system/audit/` (`?page=&page_size=&user=&category=&source=`) |
+| Security | `GET /api/system/security/alerts/`, `GET .../alerts/{id}/`, `POST .../alerts/{id}/acknowledge/ {note}`, `GET .../rules/` |
+| Image Monitoring | `GET /api/system/images/`, `.../{id}/`, `.../{id}/preview/` |
+| Users, Moderators | `GET/POST /api/user/admin/users/`, `PATCH /api/user/admin/users/{id}/` |
+
+**Analytics `overview`** (additive; every existing key is unchanged). All counts are for the chosen window (default 30 days) unless said otherwise:
+
+```json
+{"uploads": {"total": 9, "recent": {"today": 9, "this_week": 9, "this_month": 9},
+             "by_type": {"single": 1, "multiple": 5, "zip": 3}, "average_file_size_bytes": 172507,
+             "per_day_by_type": [{"date": "2026-10-18", "single": 1, "multiple": 5, "zip": 3}]},
+ "rejections": {"total": 0, "rate_percent": 0.0, "per_day": [{"date": "2026-10-18", "count": 0}]},
+ "enhancement_success_per_week": [{"week": "2026-W42", "completed": 1, "failed": 0, "success_percent": 100.0, "failed_percent": 0.0}],
+ "live_sessions": {"total": 0, "per_day": [{"date": "2026-10-18", "count": 0}]},
+ "storage": {"originals_and_outputs_bytes": 2173276, "zip_packages_bytes": 0, "camera_snapshots_bytes": 0,
+             "capacity_bytes": 494384795648, "used_percent": 0.0,
+             "growth_by_month": [{"month": "2026-10", "added_bytes": 2173276, "total_bytes": 2173276}]},
+ "change_vs_previous_period": {"uploads_percent": null, "enhancements_percent": null, "rejections_percent": null, "live_sessions_percent": null}}
+```
+
+* `rejections.total` counts a photograph once if it was refused at upload or rejected by its quality decision; `rate_percent` is that share of the
+  photographs received (`null` when none). `uploads.recent` always ends now, whatever range was asked for.
+* `change_vs_previous_period` compares the window with the equally long window just before it, and is `null` when that one is empty: show "-",
+  never "0%".
+* `capacity_bytes` is the size of the disk the files are on, and is `null` on object storage (S3 has no fixed capacity): hide the gauge then.
+  `camera_snapshots_bytes` is already inside `originals_and_outputs_bytes`.
+* The older `success_rate_percent` is the share of *quality decisions* that were accepted, not the share of enhancements that worked; the weekly
+  enhancement success is `enhancement_success_per_week`. `totals.images.accepted` counts photographs not refused at upload.
+
+**Audit rows** keep every old key and add: `actor` (`{id, username, role}`, `null` when the account is gone), `actor_name` (the username, or the
+typed identifier for a failed sign-in by someone unknown), `actor_role`, `type` / `status` (read like the user timeline: `login`, `upload`, ...;
+`success` / `warning` / `error` / `info`), `message` (a sentence about what happened, in the third person), `resource` (what it happened to) and
+`ip_address` (recorded for sign-in events only, otherwise `null`):
+
+```json
+{"source": "auth", "event": "login", "actor": {"id": 2, "username": "adm", "role": "admin"}, "actor_name": "adm", "actor_role": "admin",
+ "type": "login", "status": "success", "message": "Signed in.", "resource": "Accounts", "ip_address": "127.0.0.1", "created_at": "2026-10-18T17:59:27Z"}
+```
+
+**Security alerts** keep every old key and add `type` (`failed_login`, `authorization_failure`, `rate_limit`), `risk` (`medium` when the threshold is
+crossed, `high` at three times the threshold; there is no `low` or `critical`), `message` and `ip_address` (`null` when the alert is about a user and no
+address was recorded). Acknowledging needs a `note`:
+
+```json
+{"id": 2, "rule": "failed_login_address", "type": "failed_login", "risk": "medium", "status": "open", "ip_address": "127.0.0.1",
+ "message": "15 failed sign-ins from address 127.0.0.1 in 15 minutes (alert at 10).", "event_count": 15, "threshold": 10}
+```
+
+**System health** adds `services` (one row per check: `key`, `name`, `status` = `operational` / `degraded` / `down`, `latency_ms`, `checked_at`,
+`detail`, and for `celery` `queue_size` and `workers`, for `storage` `available_bytes`) and `process` (`started_at`, `uptime_seconds` of the API
+process that answered). There are **no** CPU, memory or uptime-percentage figures, because nothing measures them: leave those columns out.
+`queue_size` is `null` when the job counts could not be read.
+
+**Account list** (`GET /api/user/admin/users/`) rows add `uploads_count` and `last_login` (`null` if never). `?q=` searches username, email and name,
+`?role=user|moderator|admin` and `?status=active|suspended|inactive` filter (anything else is a 400 with the allowed values). Without `page` the
+answer is still a plain array; with `?page=&page_size=` it is the usual paginated envelope.
 
 **Creating an account (Add User / Create moderator forms)**
 
