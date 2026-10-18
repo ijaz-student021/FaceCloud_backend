@@ -1,6 +1,7 @@
 from io import StringIO
 
 from django.core.management import call_command
+from django.db import connection
 from django.test import TestCase
 
 from uploads.models import UploadBatch
@@ -20,7 +21,9 @@ class DatabaseInfoTests(TestCase):
         user = User.objects.create_user(username="db-user", email="db-user@example.com", password="x")
         UploadBatch.objects.create(owner=user, upload_type="single")
         text = self.run_command()
-        self.assertIn("Engine:   sqlite3", text)
+        engine = connection.settings_dict["ENGINE"].rsplit(".", 1)[-1]      # sqlite3 on a laptop, postgresql in CI
+        self.assertIn(f"Engine:   {engine}", text)
+        self.assertIn(f"Database: {connection.settings_dict['NAME']}", text)
         self.assertIn("Migrations: all applied", text)
         self.assertIn("1 users, 0 photos, 1 upload batches", text)
 
