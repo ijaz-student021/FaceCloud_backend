@@ -1,6 +1,7 @@
 import re
 
 from django.contrib.auth import get_user_model, password_validation
+from django.contrib.auth.models import update_last_login
 from django.contrib.auth.tokens import default_token_generator
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q
@@ -10,6 +11,7 @@ from django.utils.http import urlsafe_base64_decode
 from rest_framework import serializers
 from rest_framework.exceptions import Throttled
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from . import lockout
@@ -148,6 +150,9 @@ class FaceCloudTokenObtainPairSerializer(serializers.Serializer):
             record_auth_event("login_failed", request, user, identifier, {"reason": "account_suspended"})
             raise serializers.ValidationError({"detail": "This account is suspended."})
         record_auth_event("login", request, user, identifier)
+        if api_settings.UPDATE_LAST_LOGIN:
+            # SimpleJWT does this in its own serializer, which this one replaces; without it `last_login` stayed null for everyone.
+            update_last_login(None, user)
         return issue_login_tokens(user, request)
 
 

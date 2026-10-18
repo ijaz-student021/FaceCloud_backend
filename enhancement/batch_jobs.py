@@ -18,6 +18,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import APIException, ValidationError
 
+from .eligibility import not_rejected
 from .models import EnhancementBatchJob, EnhancementStatus, ImageEnhancementResult
 from .services import create_enhancement_result
 
@@ -48,8 +49,9 @@ class BatchEnhancementFailed(APIException):
 
 
 def eligible_images(batch):
+    """The batch's photographs that are ready and were not rejected by the checks (see ``enhancement.eligibility``)."""
     return list(
-        batch.images.filter(status="uploaded", preprocessing_result__status="completed")
+        not_rejected(batch.images.filter(status="uploaded", preprocessing_result__status="completed"))
         .select_related("preprocessing_result", "owner").order_by("pk")
     )
 

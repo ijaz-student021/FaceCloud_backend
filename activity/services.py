@@ -1,7 +1,9 @@
 from itertools import islice
 
 from .models import ActivityEvent
-from .presentation import describe
+from django.db.models import Q
+
+from .presentation import describe, events_of_type
 
 
 def record_activity_event(
@@ -85,7 +87,7 @@ def _merge_sorted(*sorted_iterables):
             heads[best_index] = (None, best_index)
 
 
-def get_user_timeline(user, category=None, page=1, page_size=20, fetch_cap=500):
+def get_user_timeline(user, category=None, page=1, page_size=20, fetch_cap=500, kind=None):
     """Return a merged, paginated activity timeline for one user.
 
     Combines ActivityEvent (uploads, processing, moderation, downloads,
@@ -105,6 +107,8 @@ def get_user_timeline(user, category=None, page=1, page_size=20, fetch_cap=500):
     activity_qs = ActivityEvent.objects.filter(user=user)
     if category and category != "auth":
         activity_qs = activity_qs.filter(category=category)
+    if kind:
+        activity_qs = activity_qs.filter(events_of_type(kind))
     activity_events = (
         []
         if category == "auth"
@@ -120,7 +124,7 @@ def get_user_timeline(user, category=None, page=1, page_size=20, fetch_cap=500):
         else [
             _normalize_auth_event(event)
             for event in islice(
-                AuthEvent.objects.filter(user=user).iterator(),
+                AuthEvent.objects.filter(user=user).filter(events_of_type(kind, auth=True) if kind else Q()).iterator(),
                 min(needed, fetch_cap),
             )
         ]

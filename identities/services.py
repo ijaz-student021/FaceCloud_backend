@@ -63,9 +63,23 @@ def _refresh_group(group):
     group.save(update_fields=["member_count", "protected_centroid", "updated_at"])
 
 
-def _choose_group(owner, provider, vector):
+refresh_group = _refresh_group      # the public name for code outside this module (deleting a photograph recounts its folders)
+
+
+def _scored_groups(owner, provider, vector):
+    """``[(similarity, group)]`` for the owner's candidate folders, best first."""
     groups = IdentityGroup.objects.filter(owner=owner, state=IdentityGroup.State.ACTIVE, provider=provider.name, embedding_dimension=provider.dimension).exclude(protected_centroid=b"").order_by("-updated_at")[:settings.IDENTITY_MAX_CANDIDATE_GROUPS]
-    scored = sorted(((provider.similarity(vector, reveal_embedding(group.protected_centroid, group.embedding_dimension)), group) for group in groups), key=lambda item: item[0], reverse=True)
+    return sorted(((provider.similarity(vector, reveal_embedding(group.protected_centroid, group.embedding_dimension)), group) for group in groups), key=lambda item: item[0], reverse=True)
+
+
+def _closest_folder(owner, provider, vector):
+    """``(score, group id)`` of the existing folder a face resembles most, or ``(None, None)`` when the owner has none."""
+    scored = _scored_groups(owner, provider, vector)
+    return (scored[0][0], scored[0][1].pk) if scored else (None, None)
+
+
+def _choose_group(owner, provider, vector):
+    scored = _scored_groups(owner, provider, vector)
     limits = thresholds_for(provider)
     if not scored or scored[0][0] < limits["new_group"]:
         return "new", None, None, None
@@ -219,7 +233,11 @@ def process_identity_analysis(analysis_id):
             for index, face_data, vector in prepared:
                 face = IdentityFace.objects.create(owner=locked.owner, image=locked.image, analysis=locked, face_index=index, bounding_box=face_data.get("standardized_box") or face_data, landmarks=face_data.get("landmarks") or [], protected_embedding=protect_embedding(vector), embedding_dimension=provider.dimension, provider=provider.name, model_checksum=provider.model_checksum, quality={key: face_data[key] for key in ("confidence", "sharpness", "brightness") if key in face_data})
                 decision, group, best, second = _choose_group(locked.owner, provider, vector)
+                closest_score = closest_group_id = None
                 if decision == "new":
+                    # Why a new folder: how close the nearest existing one was (below the new-folder threshold). Kept in evidence only; the
+                    # membership's own similarity_score stays empty because the face is not being compared with the folder it starts.
+                    closest_score, closest_group_id = _closest_folder(locked.owner, provider, vector)
                     group = IdentityGroup.objects.create(owner=locked.owner, organization=get_default_organization(locked.owner), display_name=_next_group_name(locked.owner), embedding_dimension=provider.dimension, provider=provider.name, model_checksum=provider.model_checksum, policy_version=settings.IDENTITY_POLICY_VERSION)
                     state = IdentityMembership.State.NEW_GROUP
                     method = "new_group_boundary_v1"
@@ -232,7 +250,7 @@ def process_identity_analysis(analysis_id):
                     state = IdentityMembership.State.NEEDS_REVIEW
                     method = "ambiguous_centroid_cosine_v1"
                     review += 1
-                membership = IdentityMembership.objects.create(owner=locked.owner, identity_face=face, identity_group=group, similarity_score=best, matching_distance=(1 - best if best is not None else None), state=state, decision_method=method, evidence={"best_score": best, "second_best_score": second, "threshold": settings.IDENTITY_MATCH_THRESHOLD, "ambiguity_margin": settings.IDENTITY_AMBIGUITY_MARGIN})
+                membership = IdentityMembership.objects.create(owner=locked.owner, identity_face=face, identity_group=group, similarity_score=best, matching_distance=(1 - best if best is not None else None), state=state, decision_method=method, evidence={"best_score": best if best is not None else closest_score, "second_best_score": second, "closest_group_id": closest_group_id, "threshold": settings.IDENTITY_MATCH_THRESHOLD, "ambiguity_margin": settings.IDENTITY_AMBIGUITY_MARGIN})
                 if state == IdentityMembership.State.NEEDS_REVIEW:
                     from moderation.services import create_review_for_identity_membership
                     create_review_for_identity_membership(membership)

@@ -176,9 +176,11 @@ def create_zip_batch(owner, uploaded_zip):
 
 @transaction.atomic
 def delete_batch(batch):
-    for image in list(batch.images.all()):
-        image.delete()
-    batch.delete()
+    from .deletion import delete_images
+
+    with transaction.atomic():
+        delete_images(batch.images.all())
+        batch.delete()
 
 
 def safe_output_stem(value, fallback):
@@ -413,8 +415,14 @@ def enqueue_batch_preprocessing(batch):
     return batch
 
 
+FINISHED_PROCESSING_STATUSES = ("completed", "partial", "failed", "cancelled")
+
+
 def cancel_batch(batch):
     """Mark ``batch`` (and every non-terminal image in it) cancelled.
+
+    A batch that has already finished (``completed``, ``partial``, ``failed`` or ``cancelled``) is returned unchanged: cancelling it again is
+    harmless, and it keeps its real outcome.
 
     Extracted from the owner-facing cancel endpoint so the org-scoped
     moderator cancel endpoint (T-007) can call the exact same, already-used
@@ -422,6 +430,9 @@ def cancel_batch(batch):
     """
     with transaction.atomic():
         locked = UploadBatch.objects.select_for_update().get(pk=batch.pk)
+        if locked.processing_status in FINISHED_PROCESSING_STATUSES:
+            # Nothing is running, so there is nothing to cancel: relabelling a finished batch "cancelled" would contradict its photos.
+            return locked
         locked.cancellation_requested = True
         locked.processing_status = "cancelled"
         locked.save(update_fields=["cancellation_requested", "processing_status", "updated_at"])

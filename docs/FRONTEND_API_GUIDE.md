@@ -164,7 +164,8 @@ GET /api/images/batches/{batch_id}/progress/
   `accepted`, `completed`, `ready`, `quality_processing`, ...). It is also on every
   photo in the batch responses (`POST /api/images/upload/*`,
   `GET /api/images/batches/` and `/{id}/`), so no second request is needed.
-- `POST /api/images/batches/{id}/cancel/` stops a batch;
+- `POST /api/images/batches/{id}/cancel/` stops a batch that is still working (on a batch that
+  already finished it changes nothing and returns its real state);
   `POST /api/images/batches/{id}/retry/` requeues its failed images (there is a
   retry cap, and a 400 explains when it is reached or nothing failed).
 - The notifications endpoints (section 8) can replace polling for "it's done"
@@ -180,6 +181,15 @@ decision and its reasons — so one screen's type works for both. Downloads are 
 endpoints, so fetch them with the Authorization header (not a bare `<img src>`;
 use fetch with a blob, or a short-lived approach agreed with the backend).
 
+**Deleting photos.** `DELETE /api/images/{id}/` (204) deletes one; `POST /api/images/bulk-delete/ {image_ids: [..]}`
+(1 to 200 ids) deletes several and answers `{deleted_ids, not_found_ids, folders_updated, packages_expired, exports_expired}`:
+ids that are not yours or do not exist are listed in `not_found_ids` and nothing is done for them. A delete also
+removes the photo's files, thumbnails, enhanced copies and the share links to those copies; it **recounts every
+person folder the photo was in** (`member_count`, and the folder no longer matches faces against it); and it
+**expires the ready ZIP of the same upload and the ready folder exports of those folders**, because they hold a copy
+(their secure links then answer 410; the owner can build new ones). A folder left empty stays until its owner
+deletes it, and its `cover_images` is empty. Deleting an upload batch (`DELETE /api/images/batches/{id}/`) does the same.
+
 **Thumbnails.** Never draw a gallery from `download_url`: originals can be
 hundreds of megabytes. Each image in the list carries `thumbnail_url`, which
 serves a small JPEG (`GET /api/images/{id}/thumbnail/`, optional `?size=256`
@@ -190,8 +200,10 @@ is served from the cache. The 1024 size is made the first time it is asked for.
 It is a normal protected endpoint: fetch it with the Authorization header and
 use a blob URL, exactly like a download. Use 256 for tiles and 1024
 for a lightbox, then `download_url` only for the real file. The response carries
-`Cache-Control: private, max-age=3600`. Rejected images have no thumbnail
-(`thumbnail_url` is `null`).
+`Cache-Control: private, max-age=3600`. A file refused at upload (wrong type,
+corrupt, unreadable) has no thumbnail (`thumbnail_url` is `null`); a photograph
+that was stored but rejected by the quality or face checks does have one, so a
+rejected photo can still be shown in the list with its reason.
 
 **Quality, faces, duplicates.** Each image has read endpoints:
 `/api/quality/images/{image_id}/`, `/api/validation/images/{image_id}/`,
@@ -249,6 +261,12 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}     -> 201
   `rejection_reasons` no longer contains `severe_blur`, `borderline_blur` or `borderline_resolution` for such a photograph. A photograph
   is still rejected as `resolution_too_low` when its shorter edge is under 240 px, and a photograph with no face and a severely blurred
   frame is still rejected.
+- **Rejected photos are never enhanced.** `POST /api/enhancements/images/{id}/` answers 400
+  ("This photo was rejected by the checks, so it is not enhanced.") for a photo refused at upload or
+  rejected by its quality decision or face validation, and `POST /api/enhancements/batches/{id}/`
+  silently leaves such photos out of the job (`total_images` counts only the ones enhanced; 400 when
+  none is left). Photos that `need_review` can still be enhanced on request. The rule and its table
+  are in `enhancement/eligibility.py`.
 - **429 on start** means the user already has the maximum number of active
   enhancement jobs. The message states the limit; retry after some finish.
 - Compare before/after: `GET /api/enhancements/results/{id}/comparison/`.
@@ -300,6 +318,10 @@ error for it.
   `PATCH /api/identities/groups/{id}/profile/ {membership_id}`. A photo with two faces of the
   same person appears once, with the better-matching face's membership. Another user's folder
   is a 404.
+- **Why a new folder.** A face that started its own folder carries `evidence.best_score` (how close the nearest
+  existing folder was, always below the new-folder threshold; `null` when it was the owner's first folder) and
+  `evidence.closest_group_id` on its membership. Its `similarity_score` stays `null`: the face is not compared with
+  the folder it starts. For matched and review faces `best_score` is the score against the suggested folder, as before.
 - Manage folders: `PATCH .../groups/{id}/rename/ {display_name}`,
   `POST .../groups/{id}/merge/ {source_group_id, reason}` (merges the source
   into this folder), `PATCH .../groups/{id}/profile/`,
@@ -611,6 +633,9 @@ and the original record fields (`source`, `category`, `event`, `object_type`,
 `object_id`, `identifier`, `ip_address`, `details`, `created_at`), unchanged.
 `category` filters to one of `upload, processing, moderation, download, group,
 share, admin, privacy, auth`.
+`type` filters to one of the `type` values above, **exactly as each entry reads** (done in the database,
+so paging and `has_next` stay right however old the events are; an unknown value is a 400 listing the
+choices; it combines with `category`). A type with no entries is an empty page.
 
 How stored events map to `type` / `status`:
 

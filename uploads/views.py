@@ -14,6 +14,7 @@ from rest_framework.pagination import PageNumberPagination
 from enhancement.models import ImageEnhancementResult
 from identities.models import IdentityFace, IdentityMembership
 
+from .deletion import delete_images
 from .display_status import with_status_relations
 from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
 from .progress import batch_progress_payload
@@ -181,6 +182,9 @@ class ImageUploadListView(generics.ListAPIView):
         return queryset
 
 
+BULK_DELETE_LIMIT = 200
+
+
 class MyImagesPagination(PageNumberPagination):
     page_size = 24
     page_size_query_param = "page_size"
@@ -341,6 +345,45 @@ class ImageUploadDetailView(generics.RetrieveDestroyAPIView):
 
     def get_queryset(self):
         return my_images_queryset(self.request.user)
+
+    def perform_destroy(self, instance):
+        delete_images([instance])
+
+
+class BulkDeleteRequestSerializer(serializers.Serializer):
+    image_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), min_length=1, max_length=BULK_DELETE_LIMIT, allow_empty=False,
+        help_text=f"Up to {BULK_DELETE_LIMIT} photo ids.",
+    )
+
+
+class BulkDeleteResultSerializer(serializers.Serializer):
+    deleted_ids = serializers.ListField(child=serializers.IntegerField())
+    not_found_ids = serializers.ListField(child=serializers.IntegerField(), help_text="Ids that are not yours or do not exist: nothing was done for them.")
+    folders_updated = serializers.IntegerField(help_text="Person folders whose count and matching were recomputed.")
+    packages_expired = serializers.IntegerField(help_text="Ready ZIPs of the affected uploads that were expired because they held a copy.")
+    exports_expired = serializers.IntegerField(help_text="Ready person-folder exports that were expired for the same reason.")
+
+
+class ImageBulkDeleteView(APIView):
+    """Delete several of your photographs at once; the effects are those of deleting each (see ``uploads/deletion.py``)."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "image_delete"
+
+    @extend_schema(request=BulkDeleteRequestSerializer, responses={200: BulkDeleteResultSerializer, 400: OpenApiTypes.OBJECT})
+    def post(self, request):
+        payload = BulkDeleteRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        wanted = list(dict.fromkeys(payload.validated_data["image_ids"]))
+        images = list(ImageUpload.objects.filter(owner=request.user, pk__in=wanted))
+        found = {image.pk for image in images}
+        summary = delete_images(images)
+        return Response({
+            "deleted_ids": [pk for pk in wanted if pk in found],
+            "not_found_ids": [pk for pk in wanted if pk not in found],
+            **{key: value for key, value in summary.items() if key != "deleted"},
+        })
 
 
 class ImageDownloadView(APIView):

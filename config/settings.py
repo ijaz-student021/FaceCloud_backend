@@ -1110,6 +1110,7 @@ REST_FRAMEWORK = {
         "password_reset": "10/hour",
         "password_change": "10/hour",
         "image_upload": "100/hour",
+        "image_delete": "300/hour",
         "zip_upload": "20/hour",
         "image_preprocess": "100/hour",
         "report_generation": "60/hour",

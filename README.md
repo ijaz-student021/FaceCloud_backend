@@ -195,6 +195,15 @@ in its own terminal:
 .\scripts\run_beat.ps1
 ```
 
+On macOS or Linux run the same processes by hand (the scripts above are for Windows):
+
+```bash
+celery -A config worker -l info --pool=solo      # on macOS the default prefork pool fails every task with "not enough values to unpack"
+celery -A config beat -l info                    # exactly one; it runs the stuck-job recovery every 5 minutes
+```
+
+Run both from the clone whose `.env` you use, so they read the same database ([docs/deployment/one-database.md](docs/deployment/one-database.md)).
+
 What runs, and how stuck jobs are recovered, is described in
 [docs/features/20-background-job-operations.md](docs/features/20-background-job-operations.md).
 The end-to-end manual flow is in
