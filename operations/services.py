@@ -225,6 +225,36 @@ CHECKS = {
 
 REQUIRED_CHECKS = {"database", "redis", "storage"}
 
+PROCESS_STARTED_AT = timezone.now()
+PROCESS_STARTED_MONOTONIC = time.monotonic()
+
+# How a check reads on the administrator's System Health screen: a name, and the word for its state.
+SERVICE_NAMES = {
+    "api": "API", "database": "Database", "redis": "Cache and message broker", "celery": "Background workers",
+    "storage": "File storage", "email": "Email", "models": "AI models",
+}
+SERVICE_STATES = {HEALTHY: "operational", DEGRADED: "degraded", UNAVAILABLE: "down"}
+
+
+def _services(checks, jobs, checked_at):
+    """One row per check for the System Health screen: ``key``, ``name``, ``status`` (operational / degraded / down), the latency and, for the
+    workers, how much work is waiting. Nothing here is measured that the checks did not already measure (no CPU or memory figures)."""
+    waiting = None if jobs.get("pending") is None else jobs["pending"] + jobs["active"]
+    rows = []
+    for key, result in checks.items():
+        row = {
+            "key": key, "name": SERVICE_NAMES.get(key, key), "status": SERVICE_STATES.get(result["status"], result["status"]),
+            "latency_ms": result.get("latency_ms"), "checked_at": checked_at,
+            "detail": result.get("code") or result.get("reason") or "",
+        }
+        if key == "celery":
+            row["queue_size"] = waiting
+            row["workers"] = result.get("workers")
+        if key == "storage":
+            row["available_bytes"] = result.get("available_bytes")
+        rows.append(row)
+    return rows
+
 
 def build_system_health():
     started = time.perf_counter()
@@ -253,12 +283,18 @@ def build_system_health():
         if overall == HEALTHY:
             overall = DEGRADED
 
+    checked_at = timezone.now().isoformat()
     return {
         "status": overall,
         "version": settings.FACECLOUD_VERSION,
-        "checked_at": timezone.now().isoformat(),
+        "checked_at": checked_at,
         "response_time_ms": _elapsed_ms(started),
         "checks": checks,
         "jobs": jobs,
+        "services": _services(checks, jobs, checked_at),
+        "process": {
+            "started_at": PROCESS_STARTED_AT.isoformat(),
+            "uptime_seconds": int(time.monotonic() - PROCESS_STARTED_MONOTONIC),
+        },
     }
 
