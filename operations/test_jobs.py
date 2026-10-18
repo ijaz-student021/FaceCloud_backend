@@ -64,6 +64,28 @@ class StuckJobReaperTests(TestCase):
         self.assertIsNotNone(result.finished_at)
         self.assertEqual(summary["by_kind"], {"enhancement": 1})
 
+    def test_a_shorter_allowance_can_be_given_for_one_run_after_a_restart(self):
+        result = self.make_result("processing", timedelta(minutes=10))
+        self.assertEqual(reap_stuck_jobs()["total"], 0)                          # not stale by the configured hour
+        self.assertEqual(reap_stuck_jobs(dry_run=True, processing_seconds=120)["total"], 1)
+        result.refresh_from_db()
+        self.assertEqual(result.status, "processing")                            # a dry run changes nothing
+        self.assertEqual(reap_stuck_jobs(processing_seconds=120)["total"], 1)
+        result.refresh_from_db()
+        self.assertEqual((result.status, result.failure_reason), ("failed", STALE_REASON))
+
+    def test_the_command_takes_the_same_allowance(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        result = self.make_result("processing", timedelta(minutes=10))
+        out = StringIO()
+        call_command("reap_stuck_jobs", "--older-than-seconds", "120", stdout=out)
+        self.assertIn("Stuck jobs failed: 1", out.getvalue())
+        result.refresh_from_db()
+        self.assertEqual(result.status, "failed")
+
     def test_recent_processing_job_is_left_alone(self):
         result = self.make_result("processing", timedelta(minutes=30))
 

@@ -81,7 +81,7 @@ tools refuse them.
 
 | Symptom | Likely cause | Check / action |
 |---|---|---|
-| Job stays `processing` | worker died | `python manage.py reap_stuck_jobs`; claims lapse after `ENHANCEMENT_CLAIM_LEASE_SECONDS`; the user can retry |
+| Job stays `processing` | worker died | `python manage.py reap_stuck_jobs` (on a development machine after a restart: `--older-than-seconds 120`, because the default waits over an hour and only `celery beat` runs it on a schedule); claims lapse after `ENHANCEMENT_CLAIM_LEASE_SECONDS`; the user can retry |
 | Job stays `queued` | no worker on its queue | `celery -A config inspect active_queues`; is `ENHANCEMENT_QUEUE_NAME` the same on API and worker? |
 | Worker exits with 137 / vanishes | kernel out-of-memory | lower `ENHANCEMENT_MAX_INPUT_PIXELS`, `--concurrency=1`, tile sizes; more RAM |
 | Many `original_preserved` with "ran out of time" | CPU too slow for the resolution | measure, cap the pixels, raise `ADAPTIVE_TIME_BUDGET_SECONDS`, or add a GPU worker |
