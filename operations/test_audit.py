@@ -153,3 +153,49 @@ class AdminAuditEndpointTests(TestCase):
         self.client.force_authenticate(self.admin)
         response = self.client.get(self.url, {"source": "nowhere"})
         self.assertEqual(response.status_code, 400)
+
+
+class AuditRowReadingTests(TestCase):
+    """Each row says who did it, with what role, from where, what happened, and how it went."""
+
+    def setUp(self):
+        self.moderator = User.objects.create_user(
+            username="mod-one", email="mod-one@example.com", password="ForestRiver!4821", is_email_verified=True, role="moderator",
+        )
+
+    def test_a_sign_in_row_names_the_actor_role_address_and_outcome(self):
+        AuthEvent.objects.create(user=self.moderator, event="login", identifier="mod-one", ip_address="203.0.113.7")
+        row = build_audit_feed()["results"][0]
+        self.assertEqual(row["actor"], {"id": self.moderator.pk, "username": "mod-one", "role": "moderator"})
+        self.assertEqual((row["actor_name"], row["actor_role"], row["ip_address"]), ("mod-one", "moderator", "203.0.113.7"))
+        self.assertEqual((row["type"], row["status"], row["message"], row["resource"]), ("login", "success", "Signed in.", "Accounts"))
+
+    def test_the_sentence_is_about_the_person_not_to_them(self):
+        AuthEvent.objects.create(user=self.moderator, event="password_changed", identifier="mod-one")
+        self.assertEqual(build_audit_feed()["results"][0]["message"], "Password changed.")
+
+    def test_a_failed_sign_in_for_an_unknown_account_still_names_who_tried(self):
+        AuthEvent.objects.create(user=None, event="login_failed", identifier="ghost@example.com", ip_address="198.51.100.9")
+        row = build_audit_feed()["results"][0]
+        self.assertIsNone(row["actor"])
+        self.assertEqual((row["actor_name"], row["actor_role"], row["status"]), ("ghost@example.com", None, "error"))
+
+    def test_an_activity_row_has_no_address_and_names_what_it_was_about(self):
+        ActivityEvent.objects.create(
+            user=self.moderator, category=ActivityEvent.Category.UPLOAD, event="upload_received", object_type="batch", object_id="12",
+        )
+        row = build_audit_feed()["results"][0]
+        self.assertIsNone(row["ip_address"])
+        self.assertEqual((row["resource"], row["type"], row["message"]), ("batch 12", "upload", "Upload received."))
+
+    def test_existing_keys_are_untouched(self):
+        AuthEvent.objects.create(user=self.moderator, event="login", identifier="mod-one")
+        row = build_audit_feed()["results"][0]
+        for key in ("source", "id", "user_id", "category", "event", "identifier", "object_type", "object_id", "details", "created_at"):
+            self.assertIn(key, row)
+
+    def test_a_page_of_rows_costs_one_user_query(self):
+        for _ in range(5):
+            AuthEvent.objects.create(user=self.moderator, event="login", identifier="mod-one")
+        with self.assertNumQueries(3):                 # auth events, activity events, the actors
+            build_audit_feed(page_size=50)
