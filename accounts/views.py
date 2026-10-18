@@ -6,7 +6,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import make_password
 from django.contrib.auth.tokens import default_token_generator
 from django.db import IntegrityError, transaction
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.utils import timezone
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
@@ -842,6 +842,38 @@ class AdminUserListView(generics.ListCreateAPIView):
 
     def get_serializer_class(self):
         return AdminUserCreateSerializer if self.request.method == "POST" else AdminUserSerializer
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("q", OpenApiTypes.STR, description="Part of the username, email or full name."),
+            OpenApiParameter("role", OpenApiTypes.STR, description="user, moderator or admin."),
+            OpenApiParameter("status", OpenApiTypes.STR, description="active, suspended or inactive."),
+        ],
+    )
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
+    def get_queryset(self):
+        queryset = User.objects.annotate(uploads_count=Count("image_uploads", distinct=True)).order_by("-date_joined", "-id")
+        params = self.request.query_params
+        search = (params.get("q") or "").strip()
+        if search:
+            queryset = queryset.filter(
+                Q(username__icontains=search) | Q(email__icontains=search) | Q(first_name__icontains=search) | Q(last_name__icontains=search),
+            )
+        role = params.get("role")
+        if role:
+            roles = [value for value, _label in User.ROLE_CHOICES]
+            if role not in roles:
+                raise serializers.ValidationError({"role": [f"Choose one of: {', '.join(roles)}."]})
+            queryset = queryset.filter(role=role)
+        state = params.get("status")
+        if state:
+            filters = {"active": Q(is_active=True, is_suspended=False), "suspended": Q(is_suspended=True), "inactive": Q(is_active=False)}
+            if state not in filters:
+                raise serializers.ValidationError({"status": [f"Choose one of: {', '.join(filters)}."]})
+            queryset = queryset.filter(filters[state])
+        return queryset
 
     def create(self, request, *args, **kwargs):
         serializer = AdminUserCreateSerializer(data=request.data)

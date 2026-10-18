@@ -100,6 +100,84 @@ class AnalyticsChartsSerializer(serializers.Serializer):
     enhancements_per_day = AnalyticsDaySerializer(many=True)
 
 
+class OverviewRecentSerializer(serializers.Serializer):
+    today = serializers.IntegerField(help_text="Photos received in the last 24 hours.")
+    this_week = serializers.IntegerField(help_text="Photos received in the last 7 days.")
+    this_month = serializers.IntegerField(help_text="Photos received in the last 30 days.")
+
+
+class OverviewUploadTypeSerializer(serializers.Serializer):
+    single = serializers.IntegerField()
+    multiple = serializers.IntegerField()
+    zip = serializers.IntegerField()
+
+
+class OverviewUploadDaySerializer(OverviewUploadTypeSerializer):
+    date = serializers.DateField()
+
+
+class OverviewUploadsSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    recent = OverviewRecentSerializer(help_text="Fixed windows ending now, whatever date range was asked for.")
+    by_type = OverviewUploadTypeSerializer(help_text="Photos in the window by how they arrived.")
+    average_file_size_bytes = serializers.IntegerField(allow_null=True)
+    per_day_by_type = OverviewUploadDaySerializer(many=True)
+
+
+class OverviewRejectionsSerializer(serializers.Serializer):
+    total = serializers.IntegerField(help_text="Refused at upload or rejected by the quality decision, each photo once.")
+    rate_percent = serializers.FloatField(allow_null=True, help_text="Share of the photos received in the window; null when none.")
+    per_day = AnalyticsDaySerializer(many=True)
+
+
+class OverviewEnhancementWeekSerializer(serializers.Serializer):
+    week = serializers.CharField(help_text="ISO week, for example 2026-W42.")
+    completed = serializers.IntegerField()
+    failed = serializers.IntegerField()
+    success_percent = serializers.FloatField(allow_null=True)
+    failed_percent = serializers.FloatField(allow_null=True)
+
+
+class OverviewLiveSessionsSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    per_day = AnalyticsDaySerializer(many=True)
+
+
+class OverviewStorageMonthSerializer(serializers.Serializer):
+    month = serializers.CharField(help_text="YYYY-MM.")
+    added_bytes = serializers.IntegerField()
+    total_bytes = serializers.IntegerField(help_text="Cumulative at the end of that month.")
+
+
+class OverviewStorageSerializer(serializers.Serializer):
+    originals_and_outputs_bytes = serializers.IntegerField()
+    zip_packages_bytes = serializers.IntegerField()
+    camera_snapshots_bytes = serializers.IntegerField(help_text="Already counted inside originals_and_outputs_bytes.")
+    capacity_bytes = serializers.IntegerField(allow_null=True, help_text="Size of the disk (filesystem storage); null on object storage.")
+    used_percent = serializers.FloatField(allow_null=True)
+    growth_by_month = OverviewStorageMonthSerializer(many=True)
+
+
+class OverviewChangeSerializer(serializers.Serializer):
+    uploads_percent = serializers.FloatField(allow_null=True)
+    enhancements_percent = serializers.FloatField(allow_null=True)
+    rejections_percent = serializers.FloatField(allow_null=True)
+    live_sessions_percent = serializers.FloatField(allow_null=True)
+
+
+class AnalyticsOverviewSerializer(serializers.Serializer):
+    """What the administrator's Overview, Statistics, Upload Statistics and Rejections screens show beyond the core totals."""
+
+    uploads = OverviewUploadsSerializer()
+    rejections = OverviewRejectionsSerializer()
+    enhancement_success_per_week = OverviewEnhancementWeekSerializer(many=True)
+    live_sessions = OverviewLiveSessionsSerializer()
+    storage = OverviewStorageSerializer()
+    change_vs_previous_period = OverviewChangeSerializer(
+        help_text="Percent change against the equally long window just before; null when that window is empty.",
+    )
+
+
 class AdminAnalyticsSerializer(serializers.Serializer):
     range = AnalyticsRangeSerializer()
     filters_applied = AnalyticsFiltersSerializer()
@@ -114,4 +192,5 @@ class AdminAnalyticsSerializer(serializers.Serializer):
     )
     storage_bytes = AnalyticsStorageSerializer()
     charts = AnalyticsChartsSerializer()
+    overview = AnalyticsOverviewSerializer()
     generated_at = serializers.DateTimeField()
