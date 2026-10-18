@@ -1,7 +1,8 @@
 from django.conf import settings
-from django.db.models import F
+from django.db.models import Avg, Count, F, Q
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
+from django.urls import reverse
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
@@ -355,15 +356,70 @@ class ModeratorDashboardView(OrganizationScopedMixin, APIView):
         return Response(ModeratorDashboardSerializer(dashboard_summary(self.organization)).data)
 
 
+OUTCOMES = ("accepted", "rejected", "needs_review", "failed")
+FINISHED_BATCH_STATUSES = ("completed", "partial", "failed", "cancelled")
+
+
+def batch_name(batch):
+    """What the screens call a batch: its label, else the ZIP's file name, else ``Upload <id>`` (the same wording as search and "Your uploads")."""
+    return batch.display_name or batch.original_archive_name or f"Upload {batch.pk}"
+
+
+def annotate_batch_stats(queryset):
+    """Per-batch outcome counts and mean progress in the same query, so a list of batches costs one query."""
+    return queryset.annotate(
+        stat_progress=Avg("image_progress__progress_percentage"),
+        **{f"stat_{name}": Count("image_progress", filter=Q(image_progress__status=name), distinct=True) for name in OUTCOMES},
+    )
+
+
+def batch_stats(batch):
+    """``(progress_percentage, counts)`` from the annotations when the batch has them, else counted now."""
+    if hasattr(batch, "stat_progress"):
+        progress = batch.stat_progress
+        counts = {name: getattr(batch, f"stat_{name}") for name in OUTCOMES}
+    else:
+        from django.db.models import Avg as _Avg
+
+        rows = batch.image_progress.all()
+        progress = rows.aggregate(value=_Avg("progress_percentage"))["value"]
+        by_status = dict(rows.values_list("status").annotate(n=Count("id")).order_by())
+        counts = {name: by_status.get(name, 0) for name in OUTCOMES}
+    if progress is None:
+        progress = 100.0 if batch.processing_status in FINISHED_BATCH_STATUSES else 0.0
+    return round(float(progress), 1), counts
+
+
+class ModeratorBatchListSerializer(AdminFailedBatchSerializer):
+    """A batch as the Batches screen draws it: the shared fields plus a name, a progress figure and a count per outcome."""
+
+    name = serializers.SerializerMethodField(help_text="The label, else the ZIP's file name, else 'Upload <id>'.")
+    progress_percentage = serializers.SerializerMethodField(help_text="Mean progress of the batch's photos, 0 to 100.")
+    counts = serializers.SerializerMethodField(help_text="Photos per outcome: accepted, rejected, needs_review, failed.")
+
+    class Meta(AdminFailedBatchSerializer.Meta):
+        fields = AdminFailedBatchSerializer.Meta.fields + ["name", "progress_percentage", "counts"]
+        read_only_fields = fields
+
+    def get_name(self, batch) -> str:
+        return batch_name(batch)
+
+    def get_progress_percentage(self, batch) -> float:
+        return batch_stats(batch)[0]
+
+    def get_counts(self, batch) -> dict:
+        return batch_stats(batch)[1]
+
+
 class ModeratorBatchListView(OrganizationScopedMixin, generics.ListAPIView):
     require_owner_or_moderator = True
-    serializer_class = AdminFailedBatchSerializer
+    serializer_class = ModeratorBatchListSerializer
 
     def get_queryset(self):
-        queryset = (
+        queryset = annotate_batch_stats(
             UploadBatch.objects.filter(organization_id=self.kwargs["organization_id"])
-            .select_related("owner").order_by("-updated_at")
-        )
+            .select_related("owner")
+        ).order_by("-updated_at")
         status_filter = self.request.query_params.get("processing_status")
         if status_filter:
             queryset = queryset.filter(processing_status=status_filter)
@@ -531,11 +587,14 @@ class ModeratorBatchImageSerializer(serializers.Serializer):
     retry_count = serializers.IntegerField()
     quality_decision = serializers.CharField(allow_null=True)
     enhancement_status = serializers.CharField(allow_null=True)
+    file_size = serializers.IntegerField(help_text="Bytes of the uploaded file.")
+    outcome = serializers.CharField(help_text="accepted, rejected, needs_review, failed, cancelled or processing.")
+    preview_url = serializers.CharField(allow_null=True, help_text="Thumbnail of the photo (the moderator image preview); null for a file refused at upload.")
 
 
-class ModeratorBatchSummarySerializer(AdminFailedBatchSerializer):
-    class Meta(AdminFailedBatchSerializer.Meta):
-        fields = AdminFailedBatchSerializer.Meta.fields + ["rejected_files"]
+class ModeratorBatchSummarySerializer(ModeratorBatchListSerializer):
+    class Meta(ModeratorBatchListSerializer.Meta):
+        fields = ModeratorBatchListSerializer.Meta.fields + ["rejected_files"]
         read_only_fields = fields
 
 
@@ -593,6 +652,11 @@ class ModeratorBatchDetailView(OrganizationScopedMixin, APIView):
                 "retry_count": progress.retry_count if progress else 0,
                 "quality_decision": (decision.decision or None) if decision else None,
                 "enhancement_status": enhancements[0].status if enhancements else None,
+                "file_size": image.file_size,
+                "outcome": progress.status if progress and progress.status in (*OUTCOMES, "cancelled") else "processing",
+                "preview_url": None if image.status == "rejected" else request.build_absolute_uri(
+                    reverse("moderation:image-preview", kwargs={"organization_id": self.organization.pk, "image_id": image.pk})
+                ),
             })
         counts = Counter(row["progress_status"] or "no_progress_record" for row in rows)
         return Response(ModeratorBatchDetailSerializer({

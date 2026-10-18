@@ -589,8 +589,19 @@ so show per-row outcomes rather than one success or error.
 when the review arrived, not from when it was assigned. A review with no
 deadline counts as neither on time nor late, so `on_time_rate` is `null` when
 nothing measurable was decided.
-- Batch actions: `GET .../moderator/batches/?processing_status=`,
-  `POST .../moderator/batches/{id}/retry/` and `/cancel/`.
+- **Batches screen.** `GET .../moderator/batches/?processing_status=` is a plain array, newest activity first. Each row:
+  `id`, `owner_username`, `upload_type` (`single` / `multiple` / `zip`), `name` (the label, else the ZIP's file name, else
+  `Upload <id>`), `processing_status`, `current_stage`, `progress_percentage` (mean of its photos, 0 to 100),
+  `counts` (`accepted`, `rejected`, `needs_review`, `failed`: photos per outcome), `total_files`, `accepted_files`,
+  `processed_files`, `processing_failed_files`, `retry_count`, `created_at`, and the rest as before. Example:
+  `{"id": 2, "owner_username": "mem1", "upload_type": "zip", "name": "staff_portraits.zip", "processing_status": "partial",
+  "progress_percentage": 90.0, "counts": {"accepted": 2, "rejected": 1, "needs_review": 1, "failed": 1}, "total_files": 5, ...}`.
+  `GET .../moderator/batches/{id}/` has the same fields under `batch` and, for each photo in `images[]`, `file_size`
+  (bytes), `outcome` (`accepted`, `rejected`, `needs_review`, `failed`, `cancelled` or `processing`) and `preview_url`
+  (the moderator thumbnail, fetch it with the Authorization header; `null` for a file refused at upload).
+  Actions: `POST .../moderator/batches/{id}/retry/`, `/cancel/` and `/reprocess/`.
+- **Photos only reach a team's moderators if the uploader files them there**: see "Submitting to an organization" in
+  section 3 (`organization_id` on the upload requests).
 - Reports: `POST .../moderator/reports/ {report_type, format}` with
   `report_type` one of `review_summary`, `moderator_activity`, `rejection_reasons`,
   `quality_scores`, `batches` or `duplicate_decisions` (and `format` `json`, `csv` or
