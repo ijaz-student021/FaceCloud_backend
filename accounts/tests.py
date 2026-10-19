@@ -287,6 +287,11 @@ class AuthenticationTests(APITestCase):
 
     def test_login_returns_dashboard_from_trusted_role(self):
         moderator = self.create_user("moderator", "moderator@example.com", role="moderator")
+        from organizations.models import OrganizationMembership
+        from organizations.services import create_organization
+
+        organization = create_organization(name="Dashboard Co", owner=self.create_user("dash-owner", "dash-owner@example.com"))
+        OrganizationMembership.objects.create(organization=organization, user=moderator, role="moderator", status="active")
         admin = self.create_user("adminuser", "admin@example.com", role="admin")
         moderator_response = self.client.post(
             reverse("login"),
@@ -474,9 +479,12 @@ class AuthenticationTests(APITestCase):
         self.assertEqual(denied.status_code, status.HTTP_403_FORBIDDEN)
         admin = self.create_user("admin", "admin@example.com", role="admin")
         self.authenticate(admin)
+        from organizations.services import create_organization
+
+        organization = create_organization(name="Roles Co", owner=self.create_user("roles-owner", "roles-owner@example.com"))
         allowed = self.client.patch(
             reverse("admin-user-update", kwargs={"pk": target.pk}),
-            {"role": "moderator", "is_suspended": True, "suspension_reason": "Policy violation"},
+            {"role": "moderator", "organization_id": organization.pk, "is_suspended": True, "suspension_reason": "Policy violation"},
             format="json",
         )
         self.assertEqual(allowed.status_code, status.HTTP_200_OK)

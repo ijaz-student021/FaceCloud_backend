@@ -14,7 +14,7 @@ from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.html import escape
 from django.utils.http import urlsafe_base64_encode
-from rest_framework.exceptions import APIException
+from rest_framework.exceptions import APIException, PermissionDenied
 from rest_framework.throttling import BaseThrottle
 
 from .models import AuthEvent
@@ -199,23 +199,43 @@ def derive_username(email):
     return candidate
 
 
+def moderator_memberships(user):
+    """The person's active moderator or owner memberships in active, non-personal organizations (the places a moderator can work)."""
+    from organizations.models import Organization, OrganizationMembership
+
+    return OrganizationMembership.objects.filter(
+        user=user, status=OrganizationMembership.Status.ACTIVE,
+        role__in=(OrganizationMembership.Role.MODERATOR, OrganizationMembership.Role.OWNER),
+        organization__status=Organization.Status.ACTIVE, organization__is_personal=False,
+    )
+
+
+def has_moderator_organization(user):
+    return moderator_memberships(user).exists()
+
+
+class ModeratorWithoutOrganization(PermissionDenied):
+    """A moderator account that belongs to no organization may not sign in: a moderator works for exactly one, and sees only what is theirs."""
+
+    default_code = "no_organization"
+
+    def __init__(self):
+        super().__init__(detail={"detail": "Your moderator account is not assigned to an organization yet.", "code": "no_organization"})
+
+
 def dashboard_for_user(user):
     """The portal this person should land in, which is also the ``role`` the login response reports.
 
-    ``admin``: a superuser or ``User.role == "admin"``. ``moderator``: ``User.role == "moderator"`` or an *active* membership with
-    role moderator in an *active* organization. Everyone else, including an organization's owner, is ``user``. This only chooses the
-    portal; ``User.role`` and the permission classes that read it are unchanged.
+    ``admin``: a superuser or ``User.role == "admin"``. ``moderator``: an *active moderator membership* in an *active, non-personal*
+    organization (a stored ``User.role == "moderator"`` with no such membership is not a moderator: it cannot sign in, see
+    ``ModeratorWithoutOrganization``). Everyone else, including an organization's owner, is ``user``. This only chooses the portal;
+    ``User.role`` and the permission classes that read it are unchanged.
     """
     if user.is_superuser or user.role == "admin":
         return "admin"
-    if user.role == "moderator":
-        return "moderator"
-    from organizations.models import Organization, OrganizationMembership
+    from organizations.models import OrganizationMembership
 
-    if OrganizationMembership.objects.filter(
-        user=user, role=OrganizationMembership.Role.MODERATOR, status=OrganizationMembership.Status.ACTIVE,
-        organization__status=Organization.Status.ACTIVE,
-    ).exists():
+    if moderator_memberships(user).filter(role=OrganizationMembership.Role.MODERATOR).exists():
         return "moderator"
     return "user"
 
