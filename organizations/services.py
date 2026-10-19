@@ -189,7 +189,9 @@ def organizations_with_head_counts():
 
 
 @transaction.atomic
-def update_organization(*, organization, actor, name=None, plan=None, status=None, moderator_data_scope=None, reason="", request=None):
+def update_organization(
+    *, organization, actor, name=None, plan=None, status=None, moderator_data_scope=None, brand_name=None, brand_accent=None, reason="", request=None,
+):
     """Rename an organization, change its plan or what its moderators see, suspend or reactivate it: one transaction, one audit event per kind of change.
 
     The caller decides who may change what (the administrator: all of it; the owner: ``name`` and ``moderator_data_scope`` only). Only what
@@ -208,6 +210,10 @@ def update_organization(*, organization, actor, name=None, plan=None, status=Non
         details["plan"] = (locked.plan, plan)
     if moderator_data_scope is not None and moderator_data_scope != locked.moderator_data_scope:
         details["moderator_data_scope"] = (locked.moderator_data_scope, moderator_data_scope)
+    if brand_name is not None and brand_name != locked.brand_name:              # "" clears; None means "not sent"
+        details["brand_name"] = (locked.brand_name, brand_name)
+    if brand_accent is not None and brand_accent != locked.brand_accent:
+        details["brand_accent"] = (locked.brand_accent, brand_accent)
     changed_status = status is not None and status != locked.status
     previous_status = locked.status
     for field, (_, new) in details.items():
