@@ -137,11 +137,40 @@ class OrganizationInvitationPreviewSerializer(serializers.Serializer):
 
 class OrganizationAuditEventSerializer(serializers.ModelSerializer):
     actor = MemberUserSerializer(read_only=True)
+    actor_name = serializers.SerializerMethodField()
+    message = serializers.SerializerMethodField(help_text="A sentence about what happened, without the actor (show actor_name beside it).")
+    target_label = serializers.SerializerMethodField(help_text="The photo, upload or person folder the event was about; null when there is none or it is gone.")
+    from_status = serializers.SerializerMethodField(help_text="The review's status before a decision; null for events that record none.")
+    to_status = serializers.SerializerMethodField(help_text="The status after a decision; null for events that record none.")
 
     class Meta:
         model = OrganizationAuditEvent
         fields = [
-            "id", "actor", "action", "target_type", "target_id",
-            "previous_value", "new_value", "reason", "created_at",
+            "id", "actor", "actor_name", "action", "message", "target_type", "target_id", "target_label",
+            "from_status", "to_status", "previous_value", "new_value", "reason", "created_at",
         ]
         read_only_fields = fields
+
+    def _described(self, event):
+        from .audit_reading import describe_event, labels_for
+
+        cache = self.context.setdefault("_described", {})
+        if event.pk not in cache:
+            labels = self.context.get("labels")
+            cache[event.pk] = describe_event(event, labels if labels is not None else labels_for([event]))
+        return cache[event.pk]
+
+    def get_actor_name(self, event) -> str | None:
+        return event.actor.username if event.actor else None
+
+    def get_message(self, event) -> str:
+        return self._described(event)[0]
+
+    def get_target_label(self, event) -> str | None:
+        return self._described(event)[1]
+
+    def get_from_status(self, event) -> str | None:
+        return self._described(event)[2]
+
+    def get_to_status(self, event) -> str | None:
+        return self._described(event)[3]

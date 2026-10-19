@@ -102,6 +102,27 @@ def get_default_organization(user):
     return membership.organization if membership else None
 
 
+def resolve_upload_organization(user, organization_id=None):
+    """The organization an upload is filed under.
+
+    Without ``organization_id`` the default (the person's own workspace, see ``get_default_organization``), so nothing changes for anyone who does not
+    choose. With one, the person must be an active member of it: submitting photographs to an organization is how its moderators come to see them, and it
+    is the uploader's explicit choice. Raises a field error on ``organization_id`` otherwise.
+    """
+    from rest_framework.exceptions import ValidationError
+
+    if organization_id in (None, ""):
+        return get_default_organization(user)
+    try:
+        organization_id = int(organization_id)
+    except (TypeError, ValueError):
+        raise ValidationError({"organization_id": ["Send the number of one of your organizations."]}) from None
+    membership = get_active_membership(user, organization_id)
+    if membership is None:
+        raise ValidationError({"organization_id": ["You are not an active member of that organization."]})
+    return membership.organization
+
+
 def get_active_membership(user, organization_id):
     if not organization_id:
         return None
