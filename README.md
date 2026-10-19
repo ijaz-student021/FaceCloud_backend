@@ -333,7 +333,11 @@ configuration examples and code should be published.
 
 With `DJANGO_DEBUG=False` the application **refuses to start** unless the
 configuration is production-safe, and lists every problem at once
-([`config/production_guard.py`](config/production_guard.py)). It requires:
+([`config/production_guard.py`](config/production_guard.py)). The step-by-step server setup (PostgreSQL, Redis, gunicorn behind Nginx
+with HTTPS, Celery worker and beat, backups, log rotation, cutover checklist and rollback) is
+[`docs/deployment/VPS_RUNBOOK.md`](docs/deployment/VPS_RUNBOOK.md), with the environment file's names in
+[`docs/deployment/vps.env.example`](docs/deployment/vps.env.example). The guard also requires the SMTP account name and password, the Redis
+addresses and the media directory to be written down rather than left at their development defaults. It requires:
 
 1. **Secrets.** A random `DJANGO_SECRET_KEY` (50+ characters), and separate
    random `IDENTITY_EMBEDDING_KEY` and `IMAGE_ENCRYPTION_KEY` (32+ characters
