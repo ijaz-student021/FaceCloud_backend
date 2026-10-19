@@ -27,6 +27,10 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from organizations.services import create_personal_organization
 
 from . import lockout
+from .throttles import (
+    FailedSignInPerAccountThrottle, FailedSignInPerAddressThrottle, TokenRefreshPerAddressThrottle, TokenRefreshPerTokenThrottle,
+    record_failed_sign_in,
+)
 from .models import PendingRegistration
 from .dashboard import build_user_dashboard
 from .permissions import IsAdminRole
@@ -254,13 +258,30 @@ class RegisterView(APIView):
     )
 )
 class FaceCloudTokenObtainPairView(TokenObtainPairView):
+    """Sign in. Limited by *failed* attempts per (address, account name) and per address (``accounts/throttles.py``), plus the per-account backoff,
+    so a room full of people on one address is never locked out by each other, while guessing one account's password is."""
+
     serializer_class = FaceCloudTokenObtainPairSerializer
-    throttle_scope = "login"
+    throttle_classes = [FailedSignInPerAccountThrottle, FailedSignInPerAddressThrottle]
+
+    def get_throttles(self):
+        # The same instances for the check before the view and the count after it.
+        if not hasattr(self, "_sign_in_throttles"):
+            self._sign_in_throttles = super().get_throttles()
+        return self._sign_in_throttles
+
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        if response.status_code == status.HTTP_400_BAD_REQUEST:          # wrong password, unknown account, unverified, suspended...
+            record_failed_sign_in(request, self.get_throttles())
+        return response
 
 
 class FaceCloudTokenRefreshView(TokenRefreshView):
+    """Refresh an access token. Limited per (address, refresh token), so many people refreshing from one address each have their own allowance."""
+
     serializer_class = FaceCloudTokenRefreshSerializer
-    throttle_scope = "token_refresh"
+    throttle_classes = [TokenRefreshPerTokenThrottle, TokenRefreshPerAddressThrottle]
 
 
 class VerifyEmailView(APIView):

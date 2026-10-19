@@ -36,6 +36,7 @@ def _secret_problems(name, value, minimum):
 
 
 MAX_LOGIN_PER_HOUR = 100
+MAX_LOGIN_IP_PER_HOUR = 1000
 _PERIOD_SECONDS = {"second": 1, "minute": 60, "hour": 3600, "day": 86400}
 
 
@@ -161,12 +162,15 @@ def policy_rule(cfg):
     threshold = int(cfg.get("LOGIN_LOCK_THRESHOLD") or 0)
     if not 3 <= threshold <= 20:
         problems.append("LOGIN_LOCK_THRESHOLD must be between 3 and 20.")
-    login_rate = ((cfg.get("REST_FRAMEWORK") or {}).get("DEFAULT_THROTTLE_RATES") or {}).get("login")
-    per_hour = _per_hour(login_rate) if login_rate else None
-    if login_rate and (per_hour is None or per_hour > MAX_LOGIN_PER_HOUR):
-        problems.append(
-            f"The login rate limit ({login_rate}) must not exceed {MAX_LOGIN_PER_HOUR}/hour in production; THROTTLE_RATE_LOGIN is for demos."
-        )
+    rates = (cfg.get("REST_FRAMEWORK") or {}).get("DEFAULT_THROTTLE_RATES") or {}
+    for scope, ceiling in (("login", MAX_LOGIN_PER_HOUR), ("login_ip", MAX_LOGIN_IP_PER_HOUR)):
+        rate = rates.get(scope)
+        per_hour = _per_hour(rate) if rate else None
+        if rate and (per_hour is None or per_hour > ceiling):
+            problems.append(
+                f"The {scope} rate limit ({rate}) must not exceed {ceiling}/hour in production (it counts failed sign-ins only); "
+                f"THROTTLE_RATE_{scope.upper()} is for demos."
+            )
     return problems
 
 
