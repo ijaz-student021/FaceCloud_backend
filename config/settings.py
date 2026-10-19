@@ -949,6 +949,29 @@ COLLAGE_TTL_HOURS = env.int("COLLAGE_TTL_HOURS", default=72)
 # Feature 48: hours between two photos that starts a new event in the timeline.
 EVENT_GAP_HOURS = env.float("EVENT_GAP_HOURS", default=6.0)
 ORG_INVITATION_TTL_HOURS = env.int("ORG_INVITATION_TTL_HOURS", default=72)
+
+
+def _plan_limit(plan, kind, default):
+    """What ``plan`` allows of ``kind`` (``moderators`` or ``members``); ``None`` is unlimited. Override from the environment, for example
+    ``ORG_PLAN_FREE_MODERATORS=2`` or ``ORG_PLAN_TEAM_MEMBERS=unlimited``."""
+    name = f"ORG_PLAN_{plan.upper()}_{kind.upper()}"
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in ("unlimited", "none"):
+        return None
+    if not raw.isdigit():
+        raise ImproperlyConfigured(f"{name} must be a whole number or 'unlimited', not {raw!r}.")
+    return int(raw)
+
+
+# How many moderators and plain members an organization may have, by plan (organizations/services.py enforces it wherever people are added; the owner is
+# not counted). No billing: the plan is a label the administrator sets. Organizations already above a limit keep everyone and simply cannot add more.
+ORGANIZATION_PLAN_LIMITS = {
+    "free": {"moderators": _plan_limit("free", "moderators", 1), "members": _plan_limit("free", "members", 10)},
+    "team": {"moderators": _plan_limit("team", "moderators", 5), "members": _plan_limit("team", "members", 100)},
+    "enterprise": {"moderators": _plan_limit("enterprise", "moderators", None), "members": _plan_limit("enterprise", "members", None)},
+}
 # Administrator invitations to create an account (accounts/invitations.py).
 ACCOUNT_INVITATION_TTL_HOURS = env.int("ACCOUNT_INVITATION_TTL_HOURS", default=72)
 
@@ -1139,6 +1162,7 @@ REST_FRAMEWORK = {
         "share_public": "120/hour",
         "org_invite": "30/hour",
         "org_export": "10/hour",
+        "org_branding": "30/hour",
         "org_batch_action": "60/hour",
         "org_report": "20/hour",
         "org_bulk_moderation": "60/hour",

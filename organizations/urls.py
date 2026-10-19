@@ -7,9 +7,11 @@ app_name = "organizations"
 urlpatterns = [
     path("", views.OrganizationListView.as_view(), name="organization-list"),
     path("admin/", views.AdminOrganizationListCreateView.as_view(), name="organization-admin-list-create"),
+    path("admin/<int:organization_id>/", views.AdminOrganizationDetailView.as_view(), name="organization-admin-detail"),
     path("invitations/accept/", views.OrganizationInvitationAcceptView.as_view(), name="organization-invitation-accept"),
     path("invitations/<str:token>/", views.OrganizationInvitationPreviewView.as_view(), name="organization-invitation-preview"),
     path("<int:organization_id>/", views.OrganizationDetailView.as_view(), name="organization-detail"),
+    path("<int:organization_id>/logo/", views.OrganizationLogoView.as_view(), name="organization-logo"),
     path("<int:organization_id>/members/", views.OrganizationMemberListView.as_view(), name="organization-member-list"),
     path(
         "<int:organization_id>/members/<int:membership_id>/",

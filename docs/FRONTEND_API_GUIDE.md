@@ -54,11 +54,26 @@ POST /api/auth/verify-email/resend/ {registration_id}     (new link, the old one
 GET  /api/auth/registrations/{registration_id}/status/    (masked status, for a "check your email" screen)
 ```
 
+**Registering from an organization invitation (one step).** The invitation link is `{FRONTEND_URL}/invitations/{token}`. If the person has no account, let them register on
+that page and add `invitation_token` (the token from the link) to the same `POST /api/auth/register/` body:
+
+```text
+POST /api/auth/register/   {full_name, email, password, password_confirm?, username?, invitation_token}
+   -> 201 {access, refresh, user, role, dashboard, organization_roles}     (the same shape as login)
+```
+
+The invitation was sent to that mailbox, so the address counts as verified: the account is created verified, the invitation is accepted and the person is signed in, all in one
+transaction (a moderator invitation lands in the moderator portal: `dashboard: "moderator"`). `email` must be the invited address (case does not matter); use the
+invitation preview (section 7) to show it read-only. A token that is unknown, used, cancelled, expired, for a suspended organization, **or for another email address** answers the same
+`404 {"detail": "This invitation is invalid, used or expired."}` as the preview and creates nothing: show that sentence only. Otherwise the usual rules hold: password rules
+(400), the address already has an account (400 on `email`: ask them to sign in, then accept the invitation), the registration rate limit (429), and `403` `plan_limit_reached` when the
+organization has no seat left (nothing is created and the invitation stays usable). Without `invitation_token` nothing changes (202 and the verification email).
+
 **Login**
 
 ```text
 POST /api/auth/login/  {identifier, password}     (identifier = username or email)
-   -> 200 {access, refresh, role, dashboard, user}
+   -> 200 {access, refresh, role, dashboard, user, organization_roles}   (organization_roles: section 7b)
 ```
 
 - **Too many failed attempts.** Sign-in is limited by *failed* attempts only, so people sharing one address (a classroom) do not
@@ -548,8 +563,9 @@ state and put it in the URL; changing it client-side grants nothing.
   wording ("approved", "rejected", "corrected": a decision's `message` is "Approved face.jpg.", so `q=approved` finds exactly the approvals),
   and the **name of the photo, upload or person folder** the event was about ("face.jpg", "staff_q3.zip")), `?date_from=`, `?date_to=` (a bare date includes
   that whole day), `?target_type=` and `?target_id=`; a bad value is a 400. The history of one review is
-  `?target_type=ModeratorReview&target_id={review id}`. **There is no "user notified" field**: nobody is notified of a decision,
-  so leave that column out. The older `Audit trail` description follows.
+  `?target_type=ModeratorReview&target_id={review id}`. A "user notified" column is
+  the event `member_notified_of_review` ("Told the member about the decision on face.jpg.") on the same review: the member is told about an approve, reject or correct decision
+  (section 8), and that is recorded here. The older `Audit trail` description follows.
 - Audit trail (stored fields): `GET .../audit/`. Organization-wide data export (async):
   `POST .../export/`, poll `GET .../export/{id}/`, download
   `.../export/{id}/download/`.
@@ -693,7 +709,7 @@ FaceCloud is **multi-tenant**: each customer is an *organization*. Three kinds o
 
 | Who | Belongs to | Sees |
 |---|---|---|
-| **Platform administrator** (FaceCloud staff, `role: admin`) | no organization | the whole platform: `/api/system/*`, `/api/user/admin/*`, `GET/POST /api/organizations/admin/` |
+| **Platform administrator** (FaceCloud staff, `role: admin`) | no organization | the whole platform: `/api/system/*`, `/api/user/admin/*`, `/api/organizations/admin/` (list, create, read, rename, plan, suspend) |
 | **Organization owner** | their organization (membership role `owner`) | everything in their organization; manages it (members, moderators, invitations, export) |
 | **Moderator** | **one** organization (membership role `moderator`) | only what belongs to that organization (see below) |
 | **Member / user** | their personal workspace, and optionally organizations they were invited to | their own photos; photos filed under an organization (`organization_id` on upload) are visible to that organization's moderators |
@@ -737,7 +753,69 @@ only to the owner and the moderators who may see that member).
 * The organization-wide export (`GET/POST /api/organizations/{id}/export/...`) covers everyone's data, so on `own_members` it is for the **owner only** (403 for a
   moderator) and `capabilities.export_organization` is `false` for that moderator: hide the button.
 * When the moderator who invited someone is removed or demoted, those members become visible to every moderator immediately and that moderator's open reviews go back to the queue.
-* The setting is changed by the owner or the platform administrator (the endpoints arrive with the owner console and the administrator's organization management).
+* The setting is changed by the owner (`PATCH /api/organizations/{id}/`) or the platform administrator (`PATCH /api/organizations/admin/{id}/`), see below.
+
+**The owner console** (what an organization's owner needs):
+
+* **Which organizations does this person own?** The login response (and the response that accepting an account invitation returns, which also signs the person in) has `organization_roles`:
+  `[{organization_id, name, role, status}]`, the shared organizations (never the personal workspace) the person is an *active* member of, oldest first; `role` is `owner`,
+  `moderator` or `member`, `status` is the organization's (`active` or `suspended`). An empty list means none. It is read once at sign-in: after the person accepts an
+  invitation or is promoted, re-read `GET /api/organizations/` (every row has `membership.role`, `is_personal`, `status` and `capabilities`).
+* `GET /api/organizations/{id}/` adds, **for the owner and the moderators only**, `owner` (`{id, username}` or `null`), `member_count` (every active membership, owner and
+  moderators included) and `moderator_count`; a plain member does not get those three keys. `moderator_data_scope` and `plan` are on every row. `capabilities.edit_organization` is
+  `true` only for an owner of a shared organization: show the edit form for that.
+* `PATCH /api/organizations/{id}/ {name?, moderator_data_scope?, brand_name?, brand_accent?, reason?}` (owner only, 403 for a moderator or member; branding below): `name` 1 to 150 characters, `moderator_data_scope`
+  `own_members` or `organization` (takes effect on the next request). The answer is the updated detail above. Sending `plan` or `status` is **403** ("The plan and the status are
+  changed by the FaceCloud administrator"), even alongside other fields; a personal workspace and a suspended organization also answer 403. Audited as `organization_updated`
+  with the old and new values (the owner and moderators read it in the audit trail).
+* The owner already could, and still can, through the existing endpoints: deactivate (`PATCH members/{id}/ {status: "suspended"}`), reactivate (`{status: "active"}`), remove
+  (`DELETE members/{id}/`), promote or demote (`{role: "moderator" | "owner" | "member"}`), invite moderators (`POST invitations/ {role: "moderator"}`; a moderator may only invite
+  members), and request the organization export (`POST export/`, even when moderators see only their own members). The last owner cannot be removed, demoted or deactivated (409).
+
+**Branding** (owner only to change, every member sees it). Three things, on every organization row (`GET /api/organizations/` and `GET /api/organizations/{id}/`, so on the switcher too):
+`brand_name` (text shown to members instead of `name`; `""` when not set, so show `brand_name || name`), `brand_accent` (`#rrggbb`, or `""`) and `logo_url` (or `null`).
+
+* `PATCH /api/organizations/{id}/ {brand_name?, brand_accent?}` (the owner's PATCH above; a blank value clears it). `brand_name`: trimmed, at most 100 characters, no line breaks or control characters (400).
+  `brand_accent`: `#rgb` or `#rrggbb` in any case, stored as lower-case `#rrggbb` (400 otherwise: "Use a colour like #1a73e8."). The administrator cannot set branding. Audited in the same `organization_updated` event.
+* **Logo**: `PUT /api/organizations/{id}/logo/` (multipart, field `logo`; owner only). PNG or JPEG only, **at most 1 MB** (400 `{"logo": ["The logo must be at most 1 MB."]}`; 400 for another format,
+  for a file that is not an image, or for one with too many pixels). It is decoded and **re-encoded as a PNG of at most 512 px** (transparency kept, metadata and anything hidden in the file dropped), replacing the old
+  one, which is deleted. The answer is the organization (with the new `logo_url`). `DELETE .../logo/` removes it (owner only; nothing to remove is not an error). Both are audited
+  (`organization_logo_changed`, `organization_logo_removed`) and limited to 30 an hour (429).
+* **Showing it**: `logo_url` is `/api/organizations/{id}/logo/?v=<milliseconds>`; `v` changes whenever the logo is replaced, so the browser cache is never stale. The file is **never public**: `GET` it **with the
+  Authorization header** (an `<img src>` cannot send it: fetch it as a blob and use an object URL). Members of the organization get the PNG (`Cache-Control: private, max-age=3600`); anyone else 404, no sign-in 401; 404 when
+  there is no logo (check `logo_url` first); 403 while the organization is suspended. `capabilities.edit_organization` says whether to show the edit form and the upload button.
+
+**Plans, limits and usage.** `plan` (`free`, `team`, `enterprise`) decides how many **moderators** and plain **members** an organization may have (the owner takes no seat). Defaults: free 1 moderator
+and 10 members, team 5 and 100, enterprise unlimited; set in `settings.ORGANIZATION_PLAN_LIMITS` (environment `ORG_PLAN_<PLAN>_<MODERATORS|MEMBERS>`, a number or `unlimited`). There is no billing:
+the administrator sets the plan.
+
+* **Where it is shown.** `limits` (`{moderators, members}`, `null` = unlimited) and `usage` (`{moderators, members}`) are on `GET /api/organizations/{id}/` (owner and moderators; not a plain
+  member) and on every row of `GET /api/organizations/admin/` (and the administrator's detail / PATCH / POST answers). `usage` counts **seats**: the active people of that kind **plus the invitations
+  still waiting** (they hold a seat, so an invitation is never sent that could not be accepted; cancelling or letting one expire frees it). `member_count` / `moderator_count` stay "active people".
+  Disable "Invite" when `usage` has reached `limits`.
+* **When it is refused.** `403 {"detail": "Your plan allows 1 moderator.", "code": "plan_limit_reached", "kind": "moderators" | "members", "limit": 1}` (`limit` is a number; "Your plan allows 10 members." for
+  several) on: inviting (`POST /api/organizations/{id}/invitations/`), bringing an expired invitation back (`.../resend/`), accepting an invitation (checked again), changing a role
+  (`PATCH members/{id}/`: promoting a member to moderator, demoting a moderator to member) or reactivating a deactivated member, and the administrator's ways in: creating a moderator account
+  (`POST /api/user/admin/users/`), changing a user's role to moderator, and an account invitation for a moderator (`POST /api/user/admin/invitations/`, and accepting it). The Django admin form shows the
+  same sentence. Nothing is created when it is refused. Making someone an owner, and anything for a plain user account, takes no seat. Show the sentence; offer to contact the administrator.
+* An organization that is already above a limit (it existed before the limits) **keeps everyone** and simply cannot add more until it is under.
+* Order of refusals: a duplicate (409) or the last-owner rule (409) answers before the plan limit.
+
+**The platform administrator manages organizations** (`role: admin` only; everyone else 403):
+
+* `GET /api/organizations/admin/` (list) and `GET /api/organizations/admin/{id}/`: each row keeps its old fields and adds `owner` (`{id, username}`: the oldest *active* owner,
+  or `null`), `member_count` (every **active** membership, the owner and the moderators included) and `moderator_count` (active moderators). Invited, suspended and removed
+  memberships are not counted. `POST /api/organizations/admin/` answers with the same shape.
+* `PATCH /api/organizations/admin/{id}/ {name?, plan?, status?, moderator_data_scope?, reason?}`: send any of `name` (1 to 150 characters), `plan` (`free`, `team`, `enterprise`), `status`
+  (`active` or `suspended`) and `moderator_data_scope`; at least one of them. `reason` (up to 500 characters) is stored in the audit trail only. The answer is the updated row. Every change
+  is written to the organization's audit trail (`organization_updated` with the old and new `name`/`plan`, `organization_suspended`, `organization_reactivated`), which the owner can
+  read there. A **personal workspace** cannot be suspended (400 on `status`): suspend the account instead.
+* **A suspended organization.** Nothing is deleted. While `status` is `suspended`, every organization endpoint (`/api/organizations/{id}/...`, including the moderator and export
+  ones) answers its **members, moderators and owner** `403 {"detail": "This organization is suspended.", "code": "organization_suspended"}`; someone who is not a member still gets
+  404. Uploading with `organization_id` of a suspended organization is the same 403 and nothing is stored; an invitation to it cannot be previewed (the usual 404) or accepted
+  (403); a moderator whose **only** organization is suspended is refused at sign-in with the same sentence and code. The person's **personal workspace is unaffected**: uploads without
+  `organization_id` still go there. `GET /api/organizations/` still lists the organization, with `status: "suspended"` and every `capabilities` value `false`, so show a banner and hide
+  the buttons. Reactivating (`status: "active"`) restores everything at once.
 
 ## 8. Notifications
 

@@ -32,6 +32,9 @@ SENTENCES = {
     Action.IDENTITY_GROUPS_MERGED_BY_MODERATOR: "Merged person folders into {label}.",
     Action.ORGANIZATION_DATA_EXPORTED: "Exported the organization's data.",
     Action.MEMBER_NOTIFIED_OF_REVIEW: "Told the member about the decision on {label}.",
+    Action.ORGANIZATION_UPDATED: "Changed the organization's details.",
+    Action.ORGANIZATION_SUSPENDED: "Suspended the organization.",
+    Action.ORGANIZATION_REACTIVATED: "Reactivated the organization.",
 }
 DECISION_WORDS = {
     "approve": "Approved", "reject": "Rejected", "correct": "Corrected", "escalate": "Escalated", "hold": "Held", "keep": "Kept",

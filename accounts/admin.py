@@ -4,6 +4,7 @@ from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.forms import UserChangeForm, UserCreationForm
 
 from organizations.models import Organization, OrganizationMembership
+from organizations.services import PlanLimitReached, assert_seat_available
 
 from .models import AuthEvent, PendingRegistration, User
 from .services import has_moderator_organization
@@ -26,6 +27,11 @@ class ModeratorOrganizationMixin:
                     "moderator_organization",
                     "A moderator works for an organization: choose one (or create the organization first).",
                 )
+            elif chosen is not None:
+                try:
+                    assert_seat_available(chosen, OrganizationMembership.Role.MODERATOR, excluding_user=self.instance if self.instance.pk else None)
+                except PlanLimitReached as error:
+                    self.add_error("moderator_organization", error.detail["detail"])
         return cleaned
 
     def save(self, commit=True):

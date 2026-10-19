@@ -210,6 +210,22 @@ def moderator_memberships(user):
     )
 
 
+def organization_roles(user):
+    """``[{organization_id, name, role, status}]``: the shared (non-personal) organizations the person is an active member of, so the frontend can
+    tell which ones they own or moderate. ``status`` is the organization's (a suspended one is listed so the page can say so). Oldest first."""
+    from organizations.models import OrganizationMembership
+
+    memberships = (
+        OrganizationMembership.objects.select_related("organization")
+        .filter(user=user, status=OrganizationMembership.Status.ACTIVE, organization__is_personal=False)
+        .order_by("created_at", "pk")
+    )
+    return [
+        {"organization_id": m.organization_id, "name": m.organization.name, "role": m.role, "status": m.organization.status}
+        for m in memberships
+    ]
+
+
 def has_moderator_organization(user):
     return moderator_memberships(user).exists()
 
@@ -219,8 +235,21 @@ class ModeratorWithoutOrganization(PermissionDenied):
 
     default_code = "no_organization"
 
-    def __init__(self):
+    def __init__(self, user=None):
+        if user is not None and _only_suspended_moderator_organizations(user):
+            super().__init__(detail={"detail": "This organization is suspended.", "code": "organization_suspended"})
+            return
         super().__init__(detail={"detail": "Your moderator account is not assigned to an organization yet.", "code": "no_organization"})
+
+
+def _only_suspended_moderator_organizations(user):
+    """True when the reason a moderator has no place to work is that every organization they belong to is suspended."""
+    from organizations.models import Organization, OrganizationMembership
+
+    return OrganizationMembership.objects.filter(
+        user=user, status=OrganizationMembership.Status.ACTIVE, role=OrganizationMembership.Role.MODERATOR,
+        organization__status=Organization.Status.SUSPENDED, organization__is_personal=False,
+    ).exists()
 
 
 def dashboard_for_user(user):
@@ -262,6 +291,7 @@ def issue_login_tokens(user, request=None):
         # The frontend keeps ``role`` as its session role and routes on ``dashboard``: they are the same value.
         "role": portal,
         "dashboard": portal,
+        "organization_roles": organization_roles(user),
     }
 
 
@@ -296,6 +326,57 @@ def resolve_moderator_organization(organization_id=None):
     return candidates[0]
 
 
+INVALID_INVITATION = "This invitation is invalid, used or expired."
+
+
+def invitation_for_registration(token, email):
+    """The pending organization invitation ``token`` opens for someone registering with ``email``.
+
+    Anything else (unknown, used, cancelled or expired token, an organization that is suspended, or an invitation for another address) raises the
+    same 404 sentence as the invitation preview: the holder of a token may learn only whether it is good for them.
+    """
+    from organizations.services import preview_invitation
+    from rest_framework.exceptions import NotFound
+
+    invitation = preview_invitation((token or "").strip())
+    if invitation is None or invitation.email.strip().lower() != (email or "").strip().lower():
+        raise NotFound(INVALID_INVITATION)
+    return invitation
+
+
+@transaction.atomic
+def register_from_invitation(*, token, full_name, email, password, username=None, request=None):
+    """Create a verified account for the invited address and accept the invitation, in one transaction.
+
+    The invitation link went to this mailbox, so the address counts as verified. If any step fails (no seat left in the plan, the invitation was used
+    a moment ago, the username is taken) nothing is created. Returns the new user.
+    """
+    from organizations.services import accept_invitation, create_personal_organization
+
+    from .models import PendingRegistration
+
+    User = get_user_model()
+    first_name, last_name = split_full_name(full_name)
+    username = username or derive_username(email)
+    # Someone else's unfinished registration may hold this username: that is the ordinary registration's conflict, with its sentence.
+    if PendingRegistration.objects.filter(username__iexact=username, status__in=PendingRegistration.ACTIVE_STATUSES).exclude(email__iexact=email).exists():
+        from rest_framework.exceptions import ValidationError
+
+        raise ValidationError({"detail": "An active registration already uses this username or email address."})
+    # This person's own unfinished registration for the same address is replaced by this one (its link would only meet "claimed").
+    PendingRegistration.objects.filter(email__iexact=email, status__in=PendingRegistration.ACTIVE_STATUSES).update(
+        status=PendingRegistration.STATUS_CANCELLED, password_hash="", token_hash="")
+    user = User.objects.create_user(
+        username=username, email=email, password=password, first_name=first_name, last_name=last_name, role="user", is_email_verified=True,
+    )
+    create_personal_organization(user)
+    membership = accept_invitation(token=(token or "").strip(), user=user, request=request)
+    details = {"via": "organization_invitation", "organization_id": membership.organization_id, "role": membership.role}
+    record_auth_event("registered", request, user, user.email, details)
+    record_auth_event("email_verified", request, user, user.email, details)
+    return user
+
+
 @transaction.atomic
 def create_account_as_admin(*, administrator, username, email, password, role, organization=None, full_name="", request=None):
     """Create an already-verified account for someone, in one transaction.
@@ -306,7 +387,10 @@ def create_account_as_admin(*, administrator, username, email, password, role, o
     administrator and the new account.
     """
     from organizations.models import OrganizationMembership
+    from organizations.services import assert_seat_available
 
+    if role == "moderator":
+        assert_seat_available(organization, OrganizationMembership.Role.MODERATOR)         # PlanLimitReached (403) before anything is created
     User = get_user_model()
     first_name, last_name = split_full_name(full_name)
     user = User.objects.create_user(

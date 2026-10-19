@@ -23,12 +23,17 @@ CAPABILITY_NAMES = (
     "manage_batches",        # moderator/batches/* (list, retry, cancel)
     "create_reports",        # moderator/reports/*
     "export_organization",   # export/*
+    "edit_organization",     # PATCH the organization itself: its name and what its moderators see
 )
 
 
 def membership_capabilities(membership):
     """``{name: bool}`` for an active membership; all False for anything else."""
-    active = membership is not None and membership.status == OrganizationMembership.Status.ACTIVE
+    # Nothing is possible inside a suspended organization (OrganizationScopedMixin answers 403), so none of it is offered.
+    active = (
+        membership is not None and membership.status == OrganizationMembership.Status.ACTIVE
+        and membership.organization.status == membership.organization.Status.ACTIVE
+    )
     role = membership.role if active else None
     staff = role in MANAGER_ROLES                      # require_owner_or_moderator views
     owner = role == Role.OWNER
@@ -50,6 +55,7 @@ def membership_capabilities(membership):
         "manage_batches": staff,
         "create_reports": staff,
         "export_organization": staff and not scoped_moderator,
+        "edit_organization": owner and not membership.organization.is_personal,      # OrganizationDetailView.patch
     }
 
 

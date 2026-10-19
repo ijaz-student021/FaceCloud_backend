@@ -4,6 +4,7 @@ from rest_framework import serializers
 
 from .capabilities import membership_capabilities, membership_summary
 from .models import Organization, OrganizationAuditEvent, OrganizationInvitation, OrganizationMembership
+from .services import plan_limits, seats_in_use
 
 User = get_user_model()
 
@@ -19,6 +20,118 @@ class OrganizationSerializer(serializers.ModelSerializer):
         model = Organization
         fields = ["id", "name", "slug", "status", "plan", "is_personal", "moderator_data_scope", "created_at", "updated_at"]
         read_only_fields = fields
+
+
+class OrganizationOwnerSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    username = serializers.CharField()
+
+
+class PlanLimitsSerializer(serializers.Serializer):
+    moderators = serializers.IntegerField(allow_null=True, help_text="null means unlimited.")
+    members = serializers.IntegerField(allow_null=True, help_text="null means unlimited.")
+
+
+class PlanUsageSerializer(serializers.Serializer):
+    moderators = serializers.IntegerField()
+    members = serializers.IntegerField()
+
+
+class PlanFiguresMixin(serializers.Serializer):
+    """``limits`` (what the plan allows; null = unlimited) and ``usage`` (the seats taken: active people plus invitations still waiting, which hold a seat).
+
+    Read from the ``moderator_seats`` / ``member_seats`` annotations of ``organizations_with_head_counts()`` (one query for a page), or counted when absent.
+    """
+
+    limits = serializers.SerializerMethodField()
+    usage = serializers.SerializerMethodField()
+
+    @extend_schema_field(PlanLimitsSerializer)
+    def get_limits(self, organization):
+        return plan_limits(organization)
+
+    @extend_schema_field(PlanUsageSerializer)
+    def get_usage(self, organization):
+        seats = {"moderators": getattr(organization, "moderator_seats", None), "members": getattr(organization, "member_seats", None)}
+        return {kind: count if count is not None else seats_in_use(organization, kind) for kind, count in seats.items()}
+
+
+class AdminOrganizationSerializer(PlanFiguresMixin, OrganizationSerializer):
+    """What the administrator sees of every organization: the organization plus who owns it and how many people are in it.
+
+    ``member_count`` counts every active membership (the owner and the moderators included); ``moderator_count`` the active moderators.
+    ``owner`` is the organization's oldest active owner, or null when it has none. The view annotates the queryset so a page of
+    organizations costs one query, not one per row.
+    """
+
+    member_count = serializers.IntegerField(read_only=True)
+    moderator_count = serializers.IntegerField(read_only=True)
+    owner = serializers.SerializerMethodField()
+
+    class Meta(OrganizationSerializer.Meta):
+        fields = OrganizationSerializer.Meta.fields + ["owner", "member_count", "moderator_count", "limits", "usage"]
+        read_only_fields = fields
+
+    @extend_schema_field(OrganizationOwnerSerializer(allow_null=True))
+    def get_owner(self, organization):
+        owner_id = getattr(organization, "owner_user_id", None)
+        if owner_id is None:
+            return None
+        return {"id": owner_id, "username": organization.owner_username}
+
+
+class AdminOrganizationUpdateSerializer(serializers.Serializer):
+    """PATCH body for the administrator: any of name, plan, status, moderator_data_scope; ``reason`` is kept in the audit trail only."""
+
+    name = serializers.CharField(max_length=150, required=False)
+    plan = serializers.ChoiceField(choices=Organization.Plan.choices, required=False)
+    status = serializers.ChoiceField(choices=Organization.Status.choices, required=False)
+    moderator_data_scope = serializers.ChoiceField(choices=Organization.ModeratorDataScope.choices, required=False)
+    reason = serializers.CharField(max_length=500, required=False, allow_blank=True)
+    CHANGES = ("name", "plan", "status", "moderator_data_scope")
+
+    def validate_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("The name cannot be empty.")
+        return value
+
+    def validate(self, attrs):
+        if not any(key in attrs for key in self.CHANGES):
+            raise serializers.ValidationError({"detail": "Send at least one of name, plan, status or moderator_data_scope."})
+        return attrs
+
+
+class OwnerOrganizationUpdateSerializer(serializers.Serializer):
+    """PATCH body for the organization's owner: ``name``, ``moderator_data_scope`` and the branding (``brand_name``, ``brand_accent``).
+
+    The plan and the status are the administrator's (the view answers 403 if they are sent); the branding is the owner's alone. A blank brand name or
+    accent clears it. The logo is uploaded separately (``PUT /api/organizations/{id}/logo/``).
+    """
+
+    name = serializers.CharField(max_length=150, required=False)
+    moderator_data_scope = serializers.ChoiceField(choices=Organization.ModeratorDataScope.choices, required=False)
+    brand_name = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False, help_text="Shown to members instead of the name; blank clears it. At most 100 characters.")
+    brand_accent = serializers.CharField(required=False, allow_blank=True, help_text="A colour like #1a73e8 (or #1ae); stored as #rrggbb. Blank clears it.")
+    reason = serializers.CharField(max_length=500, required=False, allow_blank=True)
+    CHANGES = ("name", "moderator_data_scope", "brand_name", "brand_accent")
+
+    validate_name = AdminOrganizationUpdateSerializer.validate_name
+
+    def validate_brand_name(self, value):
+        from .branding import clean_brand_name
+
+        return clean_brand_name(value)
+
+    def validate_brand_accent(self, value):
+        from .branding import clean_accent
+
+        return clean_accent(value)
+
+    def validate(self, attrs):
+        if not any(key in attrs for key in self.CHANGES):
+            raise serializers.ValidationError({"detail": "Send at least one of name, moderator_data_scope, brand_name or brand_accent."})
+        return attrs
 
 
 class MembershipSummarySerializer(serializers.Serializer):
@@ -41,6 +154,7 @@ class CapabilitiesSerializer(serializers.Serializer):
     manage_batches = serializers.BooleanField()
     create_reports = serializers.BooleanField()
     export_organization = serializers.BooleanField()
+    edit_organization = serializers.BooleanField()
 
 
 class OrganizationWithMembershipSerializer(OrganizationSerializer):
@@ -51,10 +165,19 @@ class OrganizationWithMembershipSerializer(OrganizationSerializer):
 
     membership = serializers.SerializerMethodField()
     capabilities = serializers.SerializerMethodField()
+    logo_url = serializers.SerializerMethodField(
+        help_text="Authenticated URL of the organization's logo (it changes when the logo is replaced), or null. Fetch it with the Authorization header.",
+    )
 
     class Meta(OrganizationSerializer.Meta):
-        fields = OrganizationSerializer.Meta.fields + ["membership", "capabilities"]
+        fields = OrganizationSerializer.Meta.fields + ["brand_name", "brand_accent", "logo_url", "membership", "capabilities"]
         read_only_fields = fields
+
+    def get_logo_url(self, organization) -> str | None:
+        if not organization.logo:
+            return None
+        version = int(organization.logo_updated_at.timestamp() * 1000) if organization.logo_updated_at else 0           # milliseconds: two replacements in one second differ
+        return f"/api/organizations/{organization.pk}/logo/?v={version}"
 
     def _membership(self, organization):
         return self.context.get("memberships", {}).get(organization.pk)
@@ -66,6 +189,36 @@ class OrganizationWithMembershipSerializer(OrganizationSerializer):
     @extend_schema_field(CapabilitiesSerializer)
     def get_capabilities(self, organization):
         return membership_capabilities(self._membership(organization))
+
+
+class OrganizationDetailSerializer(PlanFiguresMixin, OrganizationWithMembershipSerializer):
+    """One organization as its own people see it. The owner and the moderators also get who owns it and how many people are in it; a plain member does not.
+
+    ``member_count`` counts every active membership (the owner and the moderators included), ``moderator_count`` the active moderators, ``owner`` is the
+    oldest active owner or null. The instance comes from ``organizations_with_head_counts()`` (one query).
+    """
+
+    owner = serializers.SerializerMethodField()
+    member_count = serializers.IntegerField(read_only=True, required=False)
+    moderator_count = serializers.IntegerField(read_only=True, required=False)
+    STAFF_ONLY = ("owner", "member_count", "moderator_count", "limits", "usage")
+
+    class Meta(OrganizationWithMembershipSerializer.Meta):
+        fields = OrganizationWithMembershipSerializer.Meta.fields + ["owner", "member_count", "moderator_count", "limits", "usage"]
+        read_only_fields = fields
+
+    @extend_schema_field(OrganizationOwnerSerializer(allow_null=True))
+    def get_owner(self, organization):
+        owner_id = getattr(organization, "owner_user_id", None)
+        return None if owner_id is None else {"id": owner_id, "username": organization.owner_username}
+
+    def to_representation(self, organization):
+        data = super().to_representation(organization)
+        membership = self._membership(organization)
+        if membership is None or membership.role not in (OrganizationMembership.Role.OWNER, OrganizationMembership.Role.MODERATOR):
+            for key in self.STAFF_ONLY:
+                data.pop(key, None)
+        return data
 
 
 class OrganizationCreateSerializer(serializers.ModelSerializer):

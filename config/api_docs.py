@@ -249,10 +249,16 @@ CATALOGUE = {
 
     # ---- organizations -------------------------------------------------------------------------------------------------
     "organizations_list": ("List my organizations", "Organizations the caller has an active membership in, each with the caller's role."),
-    "organizations_retrieve": ("Get an organization", ""),
+    "organizations_retrieve": ("Get an organization", "For its owner and moderators also `owner`, `member_count` and `moderator_count`; a plain member gets the organization and their own membership only."),
+    "organizations_logo_retrieve": ("Get the organization's logo", "A PNG, served with the sign-in to the organization's active members only (anyone else gets 404). `logo_url` on the organization row is this address plus a version that changes when the logo is replaced. 404 when there is no logo."),
+    "organizations_logo_update": ("Upload the organization's logo (owner)", "Multipart field `logo`: PNG or JPEG, at most 1 MB. Decoded and re-encoded as a PNG of at most 512 px, so metadata and anything hidden in the file are dropped. Replaces the old logo. Answers with the organization. Audited."),
+    "organizations_logo_destroy": ("Remove the organization's logo (owner)", "Answers with the organization. Audited."),
+    "organizations_partial_update": ("Change an organization (owner)", "The organization's owner can change `name` and `moderator_data_scope` (what its moderators see). The plan and the status belong to the FaceCloud administrator: sending either answers 403. Audited."),
     "organizations_audit_list": ("Organization audit log", ""),
     "organizations_admin_list": ("List all organizations (administrators)", "FaceCloud-administrator-only."),
     "organizations_admin_create": ("Create an organization (administrators)", "FaceCloud-administrator-only."),
+    "organizations_admin_retrieve": ("Get one organization (administrators)", "FaceCloud-administrator-only. The organization with its owner and head counts."),
+    "organizations_admin_partial_update": ("Rename, change the plan, suspend or reactivate an organization (administrators)", "FaceCloud-administrator-only. Any of name, plan, status (active or suspended); an optional reason is kept in the audit trail. While suspended, the organization's own endpoints answer 403 for its members, moderators and owner and uploads to it are refused; nothing is deleted, so reactivating restores everything. A personal workspace cannot be suspended."),
     "organizations_members_list": ("List members", ""),
     "organizations_members_partial_update": ("Change a member's role or status", ""),
     "organizations_members_destroy": ("Remove a member", "Removes organization access only; it does not delete the member's account."),
