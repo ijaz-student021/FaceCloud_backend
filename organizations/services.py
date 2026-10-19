@@ -14,6 +14,7 @@ from datetime import timedelta
 from django.conf import settings
 from django.core.mail import send_mail
 from django.db import transaction
+from django.db.models import Count, OuterRef, Q, Subquery
 from django.utils import timezone
 from django.utils.text import slugify
 from rest_framework import status
@@ -100,13 +101,29 @@ def create_personal_organization(user):
     )
 
 
-@transaction.atomic
-def update_organization_as_administrator(*, organization, actor, name=None, plan=None, status=None, reason="", request=None):
-    """Rename an organization, change its plan, suspend or reactivate it: one transaction, one audit event per kind of change.
+def organizations_with_head_counts():
+    """Every organization with ``member_count`` (active memberships), ``moderator_count``, ``owner_user_id`` and ``owner_username`` (the oldest active owner),
+    in one query: what the administrator's list and an organization's own detail show."""
+    owner = OrganizationMembership.objects.filter(
+        organization=OuterRef("pk"), role=OrganizationMembership.Role.OWNER, status=OrganizationMembership.Status.ACTIVE,
+    ).order_by("created_at", "pk")
+    active = Q(memberships__status=OrganizationMembership.Status.ACTIVE)
+    return Organization.objects.annotate(
+        member_count=Count("memberships", filter=active),
+        moderator_count=Count("memberships", filter=active & Q(memberships__role=OrganizationMembership.Role.MODERATOR)),
+        owner_user_id=Subquery(owner.values("user_id")[:1]),
+        owner_username=Subquery(owner.values("user__username")[:1]),
+    )
 
-    Only what actually changes is written and audited. Suspending keeps every record as it is (members, photographs, reviews); reactivating
-    therefore restores everything. A personal workspace cannot be suspended: that would lock a person out of their own photographs, and the
-    way to stop a person is to suspend the account.
+
+@transaction.atomic
+def update_organization(*, organization, actor, name=None, plan=None, status=None, moderator_data_scope=None, reason="", request=None):
+    """Rename an organization, change its plan or what its moderators see, suspend or reactivate it: one transaction, one audit event per kind of change.
+
+    The caller decides who may change what (the administrator: all of it; the owner: ``name`` and ``moderator_data_scope`` only). Only what
+    actually changes is written and audited. Suspending keeps every record as it is (members, photographs, reviews); reactivating therefore
+    restores everything. A personal workspace cannot be suspended: that would lock a person out of their own photographs, and the way to stop a
+    person is to suspend the account.
     """
     locked = Organization.objects.select_for_update().get(pk=organization.pk)
     if status == Organization.Status.SUSPENDED and locked.is_personal:
@@ -117,6 +134,8 @@ def update_organization_as_administrator(*, organization, actor, name=None, plan
         details["name"] = (locked.name, name)
     if plan is not None and plan != locked.plan:
         details["plan"] = (locked.plan, plan)
+    if moderator_data_scope is not None and moderator_data_scope != locked.moderator_data_scope:
+        details["moderator_data_scope"] = (locked.moderator_data_scope, moderator_data_scope)
     changed_status = status is not None and status != locked.status
     previous_status = locked.status
     for field, (_, new) in details.items():

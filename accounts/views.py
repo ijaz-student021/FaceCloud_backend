@@ -88,6 +88,12 @@ LoginResponseSerializer = inline_serializer("LoginResponse", {
         help_text="Which dashboard the frontend should route to: user, moderator or admin. A moderator of an organization gets moderator.",
     ),
     "user": UserSerializer(),
+    "organization_roles": inline_serializer("OrganizationRole", {
+        "organization_id": serializers.IntegerField(),
+        "name": serializers.CharField(),
+        "role": serializers.CharField(help_text="owner, moderator or member."),
+        "status": serializers.CharField(help_text="The organization's status: active or suspended."),
+    }, many=True),
 })
 
 

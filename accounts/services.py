@@ -210,6 +210,22 @@ def moderator_memberships(user):
     )
 
 
+def organization_roles(user):
+    """``[{organization_id, name, role, status}]``: the shared (non-personal) organizations the person is an active member of, so the frontend can
+    tell which ones they own or moderate. ``status`` is the organization's (a suspended one is listed so the page can say so). Oldest first."""
+    from organizations.models import OrganizationMembership
+
+    memberships = (
+        OrganizationMembership.objects.select_related("organization")
+        .filter(user=user, status=OrganizationMembership.Status.ACTIVE, organization__is_personal=False)
+        .order_by("created_at", "pk")
+    )
+    return [
+        {"organization_id": m.organization_id, "name": m.organization.name, "role": m.role, "status": m.organization.status}
+        for m in memberships
+    ]
+
+
 def has_moderator_organization(user):
     return moderator_memberships(user).exists()
 
@@ -275,6 +291,7 @@ def issue_login_tokens(user, request=None):
         # The frontend keeps ``role`` as its session role and routes on ``dashboard``: they are the same value.
         "role": portal,
         "dashboard": portal,
+        "organization_roles": organization_roles(user),
     }
 
 

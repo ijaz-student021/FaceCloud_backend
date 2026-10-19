@@ -23,6 +23,7 @@ CAPABILITY_NAMES = (
     "manage_batches",        # moderator/batches/* (list, retry, cancel)
     "create_reports",        # moderator/reports/*
     "export_organization",   # export/*
+    "edit_organization",     # PATCH the organization itself: its name and what its moderators see
 )
 
 
@@ -54,6 +55,7 @@ def membership_capabilities(membership):
         "manage_batches": staff,
         "create_reports": staff,
         "export_organization": staff and not scoped_moderator,
+        "edit_organization": owner and not membership.organization.is_personal,      # OrganizationDetailView.patch
     }
 
 

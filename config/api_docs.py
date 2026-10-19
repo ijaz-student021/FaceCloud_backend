@@ -249,7 +249,8 @@ CATALOGUE = {
 
     # ---- organizations -------------------------------------------------------------------------------------------------
     "organizations_list": ("List my organizations", "Organizations the caller has an active membership in, each with the caller's role."),
-    "organizations_retrieve": ("Get an organization", ""),
+    "organizations_retrieve": ("Get an organization", "For its owner and moderators also `owner`, `member_count` and `moderator_count`; a plain member gets the organization and their own membership only."),
+    "organizations_partial_update": ("Change an organization (owner)", "The organization's owner can change `name` and `moderator_data_scope` (what its moderators see). The plan and the status belong to the FaceCloud administrator: sending either answers 403. Audited."),
     "organizations_audit_list": ("Organization audit log", ""),
     "organizations_admin_list": ("List all organizations (administrators)", "FaceCloud-administrator-only."),
     "organizations_admin_create": ("Create an organization (administrators)", "FaceCloud-administrator-only."),

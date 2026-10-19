@@ -58,7 +58,7 @@ GET  /api/auth/registrations/{registration_id}/status/    (masked status, for a 
 
 ```text
 POST /api/auth/login/  {identifier, password}     (identifier = username or email)
-   -> 200 {access, refresh, role, dashboard, user}
+   -> 200 {access, refresh, role, dashboard, user, organization_roles}   (organization_roles: section 7b)
 ```
 
 - **Too many failed attempts.** Sign-in is limited by *failed* attempts only, so people sharing one address (a classroom) do not
@@ -726,15 +726,32 @@ only to the owner and the moderators who may see that member).
 * The organization-wide export (`GET/POST /api/organizations/{id}/export/...`) covers everyone's data, so on `own_members` it is for the **owner only** (403 for a
   moderator) and `capabilities.export_organization` is `false` for that moderator: hide the button.
 * When the moderator who invited someone is removed or demoted, those members become visible to every moderator immediately and that moderator's open reviews go back to the queue.
-* The setting is changed by the owner or the platform administrator (the owner's endpoint arrives with the owner console; the administrator's organization management below does not change it yet).
+* The setting is changed by the owner (`PATCH /api/organizations/{id}/`) or the platform administrator (`PATCH /api/organizations/admin/{id}/`), see below.
+
+**The owner console** (what an organization's owner needs):
+
+* **Which organizations does this person own?** The login response (and the response that accepting an account invitation returns, which also signs the person in) has `organization_roles`:
+  `[{organization_id, name, role, status}]`, the shared organizations (never the personal workspace) the person is an *active* member of, oldest first; `role` is `owner`,
+  `moderator` or `member`, `status` is the organization's (`active` or `suspended`). An empty list means none. It is read once at sign-in: after the person accepts an
+  invitation or is promoted, re-read `GET /api/organizations/` (every row has `membership.role`, `is_personal`, `status` and `capabilities`).
+* `GET /api/organizations/{id}/` adds, **for the owner and the moderators only**, `owner` (`{id, username}` or `null`), `member_count` (every active membership, owner and
+  moderators included) and `moderator_count`; a plain member does not get those three keys. `moderator_data_scope` and `plan` are on every row. `capabilities.edit_organization` is
+  `true` only for an owner of a shared organization: show the edit form for that.
+* `PATCH /api/organizations/{id}/ {name?, moderator_data_scope?, reason?}` (owner only, 403 for a moderator or member): `name` 1 to 150 characters, `moderator_data_scope`
+  `own_members` or `organization` (takes effect on the next request). The answer is the updated detail above. Sending `plan` or `status` is **403** ("The plan and the status are
+  changed by the FaceCloud administrator"), even alongside other fields; a personal workspace and a suspended organization also answer 403. Audited as `organization_updated`
+  with the old and new values (the owner and moderators read it in the audit trail).
+* The owner already could, and still can, through the existing endpoints: deactivate (`PATCH members/{id}/ {status: "suspended"}`), reactivate (`{status: "active"}`), remove
+  (`DELETE members/{id}/`), promote or demote (`{role: "moderator" | "owner" | "member"}`), invite moderators (`POST invitations/ {role: "moderator"}`; a moderator may only invite
+  members), and request the organization export (`POST export/`, even when moderators see only their own members). The last owner cannot be removed, demoted or deactivated (409).
 
 **The platform administrator manages organizations** (`role: admin` only; everyone else 403):
 
 * `GET /api/organizations/admin/` (list) and `GET /api/organizations/admin/{id}/`: each row keeps its old fields and adds `owner` (`{id, username}`: the oldest *active* owner,
   or `null`), `member_count` (every **active** membership, the owner and the moderators included) and `moderator_count` (active moderators). Invited, suspended and removed
   memberships are not counted. `POST /api/organizations/admin/` answers with the same shape.
-* `PATCH /api/organizations/admin/{id}/ {name?, plan?, status?, reason?}`: send any of `name` (1 to 150 characters), `plan` (`free`, `team`, `enterprise`) and `status`
-  (`active` or `suspended`); at least one of the three. `reason` (up to 500 characters) is stored in the audit trail only. The answer is the updated row. Every change
+* `PATCH /api/organizations/admin/{id}/ {name?, plan?, status?, moderator_data_scope?, reason?}`: send any of `name` (1 to 150 characters), `plan` (`free`, `team`, `enterprise`), `status`
+  (`active` or `suspended`) and `moderator_data_scope`; at least one of them. `reason` (up to 500 characters) is stored in the audit trail only. The answer is the updated row. Every change
   is written to the organization's audit trail (`organization_updated` with the old and new `name`/`plan`, `organization_suspended`, `organization_reactivated`), which the owner can
   read there. A **personal workspace** cannot be suspended (400 on `status`): suspend the account instead.
 * **A suspended organization.** Nothing is deleted. While `status` is `suspended`, every organization endpoint (`/api/organizations/{id}/...`, including the moderator and export
