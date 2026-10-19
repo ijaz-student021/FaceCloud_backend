@@ -294,6 +294,15 @@ def build_report_payload(report):
     counts = {}
     for record in records:
         counts[record["status"]] = counts.get(record["status"], 0) + 1
+    # The batch keeps its own totals after photographs are deleted (deleting photographs does not touch them), so the totals come from the batch and the
+    # photographs that no longer exist are counted as such: the numbers always add up and "Total images" is never 0 next to accepted uploads.
+    total_images = max(batch.total_files, batch.accepted_files + batch.rejected_files, len(records))
+    deleted_images = total_images - len(records)
+    if deleted_images:
+        counts["deleted"] = deleted_images
+    enhanced_images = (
+        sum(1 for record in records if record["enhancement"]["status"] == "completed") if records else None   # unknown once every photograph is gone
+    )
     return {
         "schema_version": report.schema_version,
         "report_type": "batch",
@@ -305,12 +314,15 @@ def build_report_payload(report):
             "created_at": batch.created_at.isoformat(),
         },
         "summary": {
-            "total_images": len(records),
+            "total_images": total_images,
             "accepted_uploads": batch.accepted_files,
             "rejected_uploads": batch.rejected_files,
             "processing_status": batch.processing_status,
             "status_counts": counts,
             "total_input_size": batch.total_size,
+            "images_deleted": deleted_images > 0,
+            "images_remaining": len(records),
+            "enhanced_images": enhanced_images,
         },
         "images": records,
     }
