@@ -87,6 +87,44 @@ class AuditScreenFieldsTests(ModerationFixtureMixin, TestCase):
         self.assertTrue(self.rows(q="decided"))                                    # the action's name
         self.assertEqual(self.rows(q="zzz-nothing"), [])
 
+    def test_search_finds_a_decision_by_its_wording(self):
+        approved = self.decide("approve")
+        rejected = self.decide("reject")
+        by_word = lambda word: {r["target_id"] for r in self.rows(q=word, action="moderator_review_decided")}      # noqa: E731
+        self.assertEqual(by_word("approved"), {approved.pk})
+        self.assertEqual(by_word("Rejected"), {rejected.pk})
+        self.assertEqual(by_word("appro"), {approved.pk})                          # part of the word
+        self.assertEqual(by_word("decided"), {approved.pk, rejected.pk})           # the action's own name
+
+    def test_search_finds_the_sentence_of_other_actions(self):
+        review = self.decide("approve")
+        record_audit_event(self.organization, self.moderator, OrganizationAuditEvent.Action.MODERATOR_REVIEW_ESCALATED,
+                           target_type="ModeratorReview", target_id=review.pk)
+        self.assertEqual({r["action"] for r in self.rows(q="escalated")}, {"moderator_review_escalated"})
+        self.assertEqual({r["action"] for r in self.rows(q="took the review")}, set())          # not recorded in this test
+        self.assertIn("moderator_review_escalated", {r["action"] for r in self.rows(q="the review of")})
+
+    def test_search_does_not_treat_the_placeholders_of_a_sentence_as_text(self):
+        self.decide("approve")
+        self.assertEqual(self.rows(q="{label}"), [])
+        self.assertEqual(self.rows(q="{decision}"), [])
+
+    def test_search_finds_events_by_the_name_of_the_photo_upload_or_folder(self):
+        review = self.decide("approve")
+        batch = UploadBatch.objects.create(owner=self.member, organization=self.organization, upload_type="zip", original_archive_name="staff_q3.zip")
+        record_audit_event(self.organization, self.moderator, OrganizationAuditEvent.Action.BATCH_RETRIED_BY_MODERATOR,
+                           target_type="UploadBatch", target_id=batch.pk)
+        self.assertEqual({r["target_id"] for r in self.rows(q="face.jpg")}, {review.pk})
+        self.assertEqual({r["action"] for r in self.rows(q="staff_q3")}, {"batch_retried_by_moderator"})
+        self.assertEqual(self.rows(q="not-a-name-anywhere"), [])
+
+    def test_a_photo_name_search_never_finds_another_organizations_events(self):
+        other = create_organization(name="Elsewhere Audit Co", owner=self.make_user("elsewhere-audit-owner"))
+        other_review, _ = self.make_quality_review(self.make_user("elsewhere-member"), other)
+        record_audit_event(other, self.owner, OrganizationAuditEvent.Action.MODERATOR_REVIEW_CLAIMED,
+                           target_type="ModeratorReview", target_id=other_review.pk)
+        self.assertEqual(self.rows(q="face.jpg"), [])
+
     def test_bad_filter_values_are_a_400_naming_the_problem(self):
         for query in ({"action": "nope"}, {"actor": "x"}, {"target_id": "x"}, {"date_from": "yesterday"}, {"q": "x" * 101}):
             response = self.client.get(self.url, query)
