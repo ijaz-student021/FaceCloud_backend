@@ -1,7 +1,8 @@
+from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
-from rest_framework import generics, permissions, status
+from rest_framework import generics, permissions, serializers, status
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
@@ -9,6 +10,7 @@ from rest_framework.views import APIView
 
 from accounts.permissions import IsAdminRole
 
+from .branding import remove_logo, set_logo
 from .models import Organization, OrganizationInvitation, OrganizationMembership
 from .permissions import OrganizationScopedMixin
 from .scope import visible_audit_events
@@ -119,34 +121,83 @@ class AdminOrganizationDetailView(APIView):
         return Response(AdminOrganizationSerializer(organizations_with_head_counts().get(pk=organization.pk)).data)
 
 
-class OrganizationDetailView(OrganizationScopedMixin, APIView):
-    """One organization: for its owner and moderators also who owns it and how many people are in it. The owner can change its name and what its moderators see."""
+def organization_detail_data(request, organization_id):
+    """The detail of an organization as the caller sees it (fresh from the database, so a change just made shows)."""
+    membership = get_active_membership(request.user, organization_id)                       # fresh: capabilities read the organization's current setting
+    organization = organizations_with_head_counts().get(pk=organization_id)
+    return OrganizationDetailSerializer(organization, context={"request": request, "memberships": {organization.pk: membership}}).data
 
-    def _detail(self, request, organization_id):
-        membership = get_active_membership(request.user, organization_id)                       # fresh: capabilities read the organization's current setting
-        organization = organizations_with_head_counts().get(pk=organization_id)
-        return OrganizationDetailSerializer(organization, context={"request": request, "memberships": {organization.pk: membership}}).data
+
+def require_owner_of_shared_organization(view):
+    """The owner's settings (details, branding) are for an owner of a shared organization; anyone else in it gets 403."""
+    if view.active_membership.role != OrganizationMembership.Role.OWNER:
+        raise PermissionDenied("Only an organization owner can change these settings.")
+    if view.organization.is_personal:
+        raise PermissionDenied("A personal workspace has no settings to change.")
+
+
+class OrganizationDetailView(OrganizationScopedMixin, APIView):
+    """One organization: for its owner and moderators also who owns it and how many people are in it. The owner can change its name, what its moderators see and its branding."""
 
     @extend_schema(responses={200: OrganizationDetailSerializer, **ERROR_RESPONSES})
     def get(self, request, organization_id):
-        return Response(self._detail(request, organization_id))
+        return Response(organization_detail_data(request, organization_id))
 
     @extend_schema(request=OwnerOrganizationUpdateSerializer, responses={200: OrganizationDetailSerializer, **ERROR_RESPONSES})
     def patch(self, request, organization_id):
-        if self.active_membership.role != OrganizationMembership.Role.OWNER:
-            raise PermissionDenied("Only an organization owner can change these settings.")
-        if self.organization.is_personal:
-            raise PermissionDenied("A personal workspace has no settings to change.")
+        require_owner_of_shared_organization(self)
         if any(key in request.data for key in ("plan", "status")):
             raise PermissionDenied("The plan and the status are changed by the FaceCloud administrator.")
         serializer = OwnerOrganizationUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         update_organization(
-            organization=self.organization, actor=request.user, name=data.get("name"),
-            moderator_data_scope=data.get("moderator_data_scope"), reason=data.get("reason", ""), request=request,
+            organization=self.organization, actor=request.user, name=data.get("name"), moderator_data_scope=data.get("moderator_data_scope"),
+            brand_name=data.get("brand_name"), brand_accent=data.get("brand_accent"), reason=data.get("reason", ""), request=request,
         )
-        return Response(self._detail(request, organization_id))
+        return Response(organization_detail_data(request, organization_id))
+
+
+class OrganizationLogoUploadSerializer(serializers.Serializer):
+    logo = serializers.FileField(help_text="PNG or JPEG, at most 1 MB. Stored as a PNG of at most 512 px.")
+
+
+class OrganizationLogoView(OrganizationScopedMixin, APIView):
+    """The organization's logo: any member can fetch it, only the owner can replace or remove it.
+
+    The file is never public: it is served here, with the sign-in, to the organization's active members (anyone else gets 404). Replacing or removing it
+    is limited to 30 a hour.
+    """
+
+    @property
+    def throttle_scope(self):
+        return "org_branding" if self.request.method in ("PUT", "DELETE") else None
+
+    @extend_schema(responses={(200, "image/png"): OpenApiTypes.BINARY, **ERROR_RESPONSES})
+    def get(self, request, organization_id):
+        if not self.organization.logo:
+            raise Http404("This organization has no logo.")
+        response = FileResponse(self.organization.logo.open("rb"), content_type="image/png")
+        response["Cache-Control"] = "private, max-age=3600"
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
+
+    @extend_schema(
+        request={"multipart/form-data": OrganizationLogoUploadSerializer},
+        responses={200: OrganizationDetailSerializer, **ERROR_RESPONSES},
+    )
+    def put(self, request, organization_id):
+        require_owner_of_shared_organization(self)
+        payload = OrganizationLogoUploadSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        set_logo(self.organization, payload.validated_data["logo"], request.user, request)
+        return Response(organization_detail_data(request, organization_id))
+
+    @extend_schema(request=None, responses={200: OrganizationDetailSerializer, **ERROR_RESPONSES})
+    def delete(self, request, organization_id):
+        require_owner_of_shared_organization(self)
+        remove_logo(self.organization, request.user, request)
+        return Response(organization_detail_data(request, organization_id))
 
 
 class OrganizationMemberListView(OrganizationScopedMixin, generics.ListAPIView):

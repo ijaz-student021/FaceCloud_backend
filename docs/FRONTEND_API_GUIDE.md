@@ -753,13 +753,26 @@ only to the owner and the moderators who may see that member).
 * `GET /api/organizations/{id}/` adds, **for the owner and the moderators only**, `owner` (`{id, username}` or `null`), `member_count` (every active membership, owner and
   moderators included) and `moderator_count`; a plain member does not get those three keys. `moderator_data_scope` and `plan` are on every row. `capabilities.edit_organization` is
   `true` only for an owner of a shared organization: show the edit form for that.
-* `PATCH /api/organizations/{id}/ {name?, moderator_data_scope?, reason?}` (owner only, 403 for a moderator or member): `name` 1 to 150 characters, `moderator_data_scope`
+* `PATCH /api/organizations/{id}/ {name?, moderator_data_scope?, brand_name?, brand_accent?, reason?}` (owner only, 403 for a moderator or member; branding below): `name` 1 to 150 characters, `moderator_data_scope`
   `own_members` or `organization` (takes effect on the next request). The answer is the updated detail above. Sending `plan` or `status` is **403** ("The plan and the status are
   changed by the FaceCloud administrator"), even alongside other fields; a personal workspace and a suspended organization also answer 403. Audited as `organization_updated`
   with the old and new values (the owner and moderators read it in the audit trail).
 * The owner already could, and still can, through the existing endpoints: deactivate (`PATCH members/{id}/ {status: "suspended"}`), reactivate (`{status: "active"}`), remove
   (`DELETE members/{id}/`), promote or demote (`{role: "moderator" | "owner" | "member"}`), invite moderators (`POST invitations/ {role: "moderator"}`; a moderator may only invite
   members), and request the organization export (`POST export/`, even when moderators see only their own members). The last owner cannot be removed, demoted or deactivated (409).
+
+**Branding** (owner only to change, every member sees it). Three things, on every organization row (`GET /api/organizations/` and `GET /api/organizations/{id}/`, so on the switcher too):
+`brand_name` (text shown to members instead of `name`; `""` when not set, so show `brand_name || name`), `brand_accent` (`#rrggbb`, or `""`) and `logo_url` (or `null`).
+
+* `PATCH /api/organizations/{id}/ {brand_name?, brand_accent?}` (the owner's PATCH above; a blank value clears it). `brand_name`: trimmed, at most 100 characters, no line breaks or control characters (400).
+  `brand_accent`: `#rgb` or `#rrggbb` in any case, stored as lower-case `#rrggbb` (400 otherwise: "Use a colour like #1a73e8."). The administrator cannot set branding. Audited in the same `organization_updated` event.
+* **Logo**: `PUT /api/organizations/{id}/logo/` (multipart, field `logo`; owner only). PNG or JPEG only, **at most 1 MB** (400 `{"logo": ["The logo must be at most 1 MB."]}`; 400 for another format,
+  for a file that is not an image, or for one with too many pixels). It is decoded and **re-encoded as a PNG of at most 512 px** (transparency kept, metadata and anything hidden in the file dropped), replacing the old
+  one, which is deleted. The answer is the organization (with the new `logo_url`). `DELETE .../logo/` removes it (owner only; nothing to remove is not an error). Both are audited
+  (`organization_logo_changed`, `organization_logo_removed`) and limited to 30 an hour (429).
+* **Showing it**: `logo_url` is `/api/organizations/{id}/logo/?v=<milliseconds>`; `v` changes whenever the logo is replaced, so the browser cache is never stale. The file is **never public**: `GET` it **with the
+  Authorization header** (an `<img src>` cannot send it: fetch it as a blob and use an object URL). Members of the organization get the PNG (`Cache-Control: private, max-age=3600`); anyone else 404, no sign-in 401; 404 when
+  there is no logo (check `logo_url` first); 403 while the organization is suspended. `capabilities.edit_organization` says whether to show the edit form and the upload button.
 
 **Plans, limits and usage.** `plan` (`free`, `team`, `enterprise`) decides how many **moderators** and plain **members** an organization may have (the owner takes no seat). Defaults: free 1 moderator
 and 10 members, team 5 and 100, enterprise unlimited; set in `settings.ORGANIZATION_PLAN_LIMITS` (environment `ORG_PLAN_<PLAN>_<MODERATORS|MEMBERS>`, a number or `unlimited`). There is no billing:
