@@ -1,3 +1,5 @@
+from django.conf import settings
+from django.db.models import Prefetch
 from django.shortcuts import get_object_or_404
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
@@ -8,7 +10,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.permissions import IsAdminRole
-from uploads.models import UploadBatch
+from uploads.models import BatchImageProgress, UploadBatch
 from uploads.progress import batch_progress_payload
 from uploads.services import BatchHasNoFailedImages, BatchRetryLimitReached, retry_batch
 
@@ -16,7 +18,7 @@ from .analytics import InvalidAnalyticsFilter, build_admin_analytics
 from .audit import InvalidAuditFilter, build_audit_feed
 from .jobs import InvalidJobKind, list_failed_jobs, queue_status
 from .moderation_overview import InvalidModerationOverviewFilter, build_admin_moderation_overview
-from .serializers import AdminAnalyticsSerializer, AdminFailedBatchSerializer
+from .serializers import AdminAnalyticsSerializer, AdminFailedBatchDetailSerializer
 from .services import UNAVAILABLE, build_system_health
 
 
@@ -81,14 +83,17 @@ class AdminListPagination(PageNumberPagination):
 class FailedBatchListView(generics.ListAPIView):
     """Platform-wide failed/stuck upload batches, for administrators (Feature 33)."""
 
-    serializer_class = AdminFailedBatchSerializer
+    serializer_class = AdminFailedBatchDetailSerializer
     permission_classes = [permissions.IsAuthenticated, IsAdminRole]
     pagination_class = AdminListPagination
 
     def get_queryset(self):
         return (
             UploadBatch.objects.filter(processing_status="failed")
-            .select_related("owner")
+            .select_related("owner", "organization")
+            .prefetch_related(Prefetch(
+                "image_progress", queryset=BatchImageProgress.objects.filter(status="failed").order_by("image_id"), to_attr="failed_progress",
+            ))
             .order_by("-updated_at")
         )
 
@@ -106,7 +111,13 @@ class AdminBatchRetryView(APIView):
             batch = retry_batch(batch)
         except (BatchHasNoFailedImages, BatchRetryLimitReached) as error:
             raise ValidationError({"detail": [str(error)]}) from error
-        return Response(batch_progress_payload(batch), status=status.HTTP_202_ACCEPTED)
+        payload = batch_progress_payload(batch)
+        # The new state under the same names the failed-batch list uses, so the row can be updated in place.
+        payload.update(
+            processing_status=batch.processing_status, max_retries=settings.BATCH_PROGRESS_MAX_RETRIES,
+            retries_left=max(0, settings.BATCH_PROGRESS_MAX_RETRIES - batch.retry_count),
+        )
+        return Response(payload, status=status.HTTP_202_ACCEPTED)
 
 
 class FailedJobListView(APIView):

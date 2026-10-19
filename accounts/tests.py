@@ -424,6 +424,39 @@ class AuthenticationTests(APITestCase):
         self.assertTrue(user.check_password("AnotherStrong!8392"))
         self.assertEqual(self.client.get(reverse("profile")).status_code, status.HTTP_401_UNAUTHORIZED)
 
+    def test_change_password_refuses_the_password_already_in_use_and_signs_nobody_out(self):
+        user = self.create_user()
+        self.authenticate(user)
+        version = user.token_version
+
+        response = self.client.post(
+            reverse("change-password"), {"current_password": self.password, "new_password": self.password}, format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data, {"new_password": ["Choose a password you have not just used."]})
+        user.refresh_from_db()
+        self.assertEqual(user.token_version, version)                            # no device was signed out
+        self.assertTrue(user.check_password(self.password))
+        self.assertEqual(self.client.get(reverse("profile")).status_code, status.HTTP_200_OK)
+
+    def test_a_new_password_that_only_differs_in_case_is_a_different_password(self):
+        user = self.create_user()
+        self.authenticate(user)
+        response = self.client.post(
+            reverse("change-password"), {"current_password": self.password, "new_password": self.password.swapcase()}, format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+
+    def test_the_new_password_field_never_tells_whether_it_equals_the_real_password_to_someone_who_does_not_know_it(self):
+        user = self.create_user()
+        self.authenticate(user)
+        response = self.client.post(
+            reverse("change-password"), {"current_password": "NotTheRealOne!1234", "new_password": self.password}, format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data, {"current_password": ["Current password is incorrect."]})
+
     def test_password_reset_is_non_enumerating_and_resets_password(self):
         user = self.create_user()
         request_response = self.client.post(reverse("password-reset"), {"email": user.email}, format="json")

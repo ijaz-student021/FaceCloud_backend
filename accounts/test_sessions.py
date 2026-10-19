@@ -110,6 +110,18 @@ class SessionTests(TestCase):
         fresh, _ = self.login(CHROME_MAC, password="WinterHarbour!5937")
         self.assertEqual(len(self.sessions(fresh)), 1)  # only the sign-in made after the change
 
+    def test_refusing_the_same_password_leaves_every_device_signed_in(self):
+        laptop, _ = self.login(CHROME_MAC)
+        phone, _ = self.login(FIREFOX_WIN)
+
+        refused = phone.post("/api/user/change-password/", {"current_password": PASSWORD, "new_password": PASSWORD}, format="json")
+
+        self.assertEqual(refused.status_code, 400)
+        self.assertEqual(refused.json(), {"new_password": ["Choose a password you have not just used."]})
+        self.assertEqual(laptop.get("/api/user/profile/").status_code, 200)
+        self.assertEqual(phone.get("/api/user/profile/").status_code, 200)
+        self.assertEqual(len(self.sessions(laptop)), 2)
+
     def test_a_user_cannot_see_or_revoke_someone_elses_session(self):
         User.objects.create_user(username="other", email="other@example.com", password=PASSWORD,
                                  is_email_verified=True)

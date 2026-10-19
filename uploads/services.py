@@ -447,6 +447,19 @@ def cancel_batch(batch):
     return locked
 
 
+def retry_obstacle(batch, failed_count):
+    """Why ``batch`` cannot be retried right now, as the error ``retry_batch`` raises for it; ``None`` when a retry would go ahead.
+
+    The one place that decides it, so what a screen shows ("Retry" available or not) and what the retry does can never disagree.
+    """
+    if not failed_count:
+        return BatchHasNoFailedImages()
+    maximum = getattr(settings, "BATCH_PROGRESS_MAX_RETRIES", 3)
+    if batch.retry_count >= maximum:
+        return BatchRetryLimitReached(f"The maximum of {maximum} batch retries has been reached.")
+    return None
+
+
 def retry_batch(batch):
     """Requeue every failed image in ``batch`` from wherever it failed.
 
@@ -464,11 +477,9 @@ def retry_batch(batch):
     failed = list(
         BatchImageProgress.objects.filter(batch=batch, status="failed").select_related("image")
     )
-    if not failed:
-        raise BatchHasNoFailedImages()
-    maximum = getattr(settings, "BATCH_PROGRESS_MAX_RETRIES", 3)
-    if batch.retry_count >= maximum:
-        raise BatchRetryLimitReached(f"The maximum of {maximum} batch retries has been reached.")
+    obstacle = retry_obstacle(batch, len(failed))
+    if obstacle is not None:
+        raise obstacle
 
     batch.cancellation_requested = False
     batch.retry_count += 1

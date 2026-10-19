@@ -294,6 +294,13 @@ class ChangePasswordSerializer(serializers.Serializer):
         password_validation.validate_password(value, self.context["request"].user)
         return value
 
+    def validate(self, attrs):
+        # Compared with what was typed as the current password, which is only reached once that has been checked as correct: asking "is this the
+        # current password?" of the new-password field would let a stolen session test guesses without knowing it.
+        if attrs["new_password"] == attrs["current_password"]:
+            raise serializers.ValidationError({"new_password": ["Choose a password you have not just used."]})
+        return attrs
+
 
 class PasswordResetRequestSerializer(serializers.Serializer):
     email = serializers.EmailField()
