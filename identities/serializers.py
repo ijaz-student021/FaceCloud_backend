@@ -15,10 +15,11 @@ class IdentityAnalyzeRequestSerializer(serializers.Serializer):
 class IdentityAnalysisSerializer(serializers.ModelSerializer):
     class Meta:
         model = IdentityAnalysis
-        fields = ("id", "image", "status", "face_count", "assigned_count", "review_count", "provider", "policy_version", "failure_reason", "processing_duration_ms", "started_at", "finished_at", "created_at", "updated_at")
+        fields = ("id", "image", "status", "face_count", "assigned_count", "review_count", "provider", "policy_version", "failure_reason", "evidence", "processing_duration_ms", "started_at", "finished_at", "created_at", "updated_at")
 
 
 INACTIVE_MEMBERSHIP_STATES = (IdentityMembership.State.REJECTED, IdentityMembership.State.REMOVED)
+CONFIRMED_STATES = (IdentityMembership.State.AUTO_MATCHED, IdentityMembership.State.NEW_GROUP, IdentityMembership.State.CONFIRMED)
 COVER_IMAGE_LIMIT = 4
 
 
@@ -41,13 +42,23 @@ class IdentityGroupSerializer(serializers.ModelSerializer):
     preview_image = serializers.SerializerMethodField()
     cover_images = serializers.SerializerMethodField()
     matching_confidence = serializers.SerializerMethodField()
+    confirmed_count = serializers.SerializerMethodField(help_text=(
+        "Faces placed in this folder (the same count as member_count): matched automatically, a new folder's first face, or confirmed by the owner."))
+    suggested_count = serializers.SerializerMethodField(help_text=(
+        "Faces that look like this person but are waiting for a decision (needs_review). They are listed with the folder's photos but are not part of member_count."))
 
     class Meta:
         model = IdentityGroup
         fields = (
-            "id", "display_name", "state", "member_count", "preview_image",
+            "id", "display_name", "state", "member_count", "confirmed_count", "suggested_count", "preview_image",
             "cover_images", "matching_confidence", "created_at", "updated_at",
         )
+
+    def get_confirmed_count(self, obj) -> int:
+        return sum(1 for member in active_memberships_of(obj) if member.state in CONFIRMED_STATES)
+
+    def get_suggested_count(self, obj) -> int:
+        return sum(1 for member in active_memberships_of(obj) if member.state == IdentityMembership.State.NEEDS_REVIEW)
 
     def get_preview_image(self, obj) -> int | None:
         members = active_memberships_of(obj)

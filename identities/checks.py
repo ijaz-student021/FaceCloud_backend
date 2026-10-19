@@ -14,6 +14,10 @@ def identity_configuration_check(app_configs, **kwargs):
         errors.append(Error("Identity thresholds must satisfy 0 <= new-group < match <= 1.", id="identities.E001"))
     if not (0 <= margin < 1):
         errors.append(Error("Identity ambiguity margin must be in [0, 1).", id="identities.E002"))
+    if not (0 <= settings.SFACE_NEW_GROUP_THRESHOLD < settings.SFACE_MATCH_THRESHOLD <= 1):
+        errors.append(Error("SFace thresholds must satisfy 0 <= new-group < match <= 1.", id="identities.E017"))
+    if not (0 <= settings.SFACE_AMBIGUITY_MARGIN < 1):
+        errors.append(Error("The SFace ambiguity margin must be in [0, 1).", id="identities.E018"))
     if settings.IDENTITY_EMBEDDING_DIMENSION <= 0:
         errors.append(Error("Identity embedding dimension must be positive.", id="identities.E003"))
     if settings.IDENTITY_MAX_CANDIDATE_GROUPS <= 0:
