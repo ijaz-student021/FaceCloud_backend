@@ -151,7 +151,7 @@ class FaceCloudTokenObtainPairSerializer(serializers.Serializer):
             raise serializers.ValidationError({"detail": "This account is suspended."})
         if user.role == "moderator" and not has_moderator_organization(user):
             record_auth_event("login_failed", request, user, identifier, {"reason": "no_organization"})
-            raise ModeratorWithoutOrganization()
+            raise ModeratorWithoutOrganization(user)
         record_auth_event("login", request, user, identifier)
         if api_settings.UPDATE_LAST_LOGIN:
             # SimpleJWT does this in its own serializer, which this one replaces; without it `last_login` stayed null for everyone.
@@ -170,7 +170,7 @@ class FaceCloudTokenRefreshSerializer(TokenRefreshSerializer):
         if user.is_suspended:
             raise serializers.ValidationError({"detail": "This account is suspended."})
         if user.role == "moderator" and not has_moderator_organization(user):
-            raise ModeratorWithoutOrganization()
+            raise ModeratorWithoutOrganization(user)
         if token.get("token_version", 0) != user.token_version:
             raise serializers.ValidationError({"detail": "This token has been revoked."})
         if not token_session_is_active(token, user):

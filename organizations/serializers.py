@@ -21,6 +21,55 @@ class OrganizationSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class OrganizationOwnerSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    username = serializers.CharField()
+
+
+class AdminOrganizationSerializer(OrganizationSerializer):
+    """What the administrator sees of every organization: the organization plus who owns it and how many people are in it.
+
+    ``member_count`` counts every active membership (the owner and the moderators included); ``moderator_count`` the active moderators.
+    ``owner`` is the organization's oldest active owner, or null when it has none. The view annotates the queryset so a page of
+    organizations costs one query, not one per row.
+    """
+
+    member_count = serializers.IntegerField(read_only=True)
+    moderator_count = serializers.IntegerField(read_only=True)
+    owner = serializers.SerializerMethodField()
+
+    class Meta(OrganizationSerializer.Meta):
+        fields = OrganizationSerializer.Meta.fields + ["owner", "member_count", "moderator_count"]
+        read_only_fields = fields
+
+    @extend_schema_field(OrganizationOwnerSerializer(allow_null=True))
+    def get_owner(self, organization):
+        owner_id = getattr(organization, "owner_user_id", None)
+        if owner_id is None:
+            return None
+        return {"id": owner_id, "username": organization.owner_username}
+
+
+class AdminOrganizationUpdateSerializer(serializers.Serializer):
+    """PATCH body for the administrator: any of name, plan, status; ``reason`` is kept in the audit trail only."""
+
+    name = serializers.CharField(max_length=150, required=False)
+    plan = serializers.ChoiceField(choices=Organization.Plan.choices, required=False)
+    status = serializers.ChoiceField(choices=Organization.Status.choices, required=False)
+    reason = serializers.CharField(max_length=500, required=False, allow_blank=True)
+
+    def validate_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("The name cannot be empty.")
+        return value
+
+    def validate(self, attrs):
+        if not any(key in attrs for key in ("name", "plan", "status")):
+            raise serializers.ValidationError({"detail": "Send at least one of name, plan or status."})
+        return attrs
+
+
 class MembershipSummarySerializer(serializers.Serializer):
     id = serializers.IntegerField()
     role = serializers.ChoiceField(choices=OrganizationMembership.Role.choices)

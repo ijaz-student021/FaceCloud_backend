@@ -219,8 +219,21 @@ class ModeratorWithoutOrganization(PermissionDenied):
 
     default_code = "no_organization"
 
-    def __init__(self):
+    def __init__(self, user=None):
+        if user is not None and _only_suspended_moderator_organizations(user):
+            super().__init__(detail={"detail": "This organization is suspended.", "code": "organization_suspended"})
+            return
         super().__init__(detail={"detail": "Your moderator account is not assigned to an organization yet.", "code": "no_organization"})
+
+
+def _only_suspended_moderator_organizations(user):
+    """True when the reason a moderator has no place to work is that every organization they belong to is suspended."""
+    from organizations.models import Organization, OrganizationMembership
+
+    return OrganizationMembership.objects.filter(
+        user=user, status=OrganizationMembership.Status.ACTIVE, role=OrganizationMembership.Role.MODERATOR,
+        organization__status=Organization.Status.SUSPENDED, organization__is_personal=False,
+    ).exists()
 
 
 def dashboard_for_user(user):
