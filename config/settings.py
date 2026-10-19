@@ -1101,8 +1101,12 @@ REST_FRAMEWORK = {
         "anon": "100/hour",
         "user": "1000/hour",
         "registration": "10/hour",
+        # Sign-in counts FAILED attempts only: per address and account name together (login), and per address across all names (login_ip).
         "login": "20/hour",
+        "login_ip": "300/hour",
+        # Token refresh counts per address and refresh token (token_refresh), with a ceiling per address (token_refresh_ip).
         "token_refresh": "60/hour",
+        "token_refresh_ip": "1200/hour",
         "verification": "10/hour",
         "verification_status": "60/hour",
         "contact": "5/hour",

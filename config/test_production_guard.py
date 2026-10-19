@@ -72,6 +72,13 @@ class GuardRuleTests(SimpleTestCase):
         self.assertFlags("login rate limit", REST_FRAMEWORK=rest("5/minute"))     # 300 an hour
         self.assertFlags("login rate limit", REST_FRAMEWORK=rest("often"))
 
+    def test_the_per_address_failed_sign_in_ceiling_has_its_own_cap(self):
+        def rest(rate):
+            return {"DEFAULT_THROTTLE_RATES": {"login": "20/hour", "login_ip": rate}}
+        self.assertEqual(self.problems(REST_FRAMEWORK=rest("300/hour")), [])
+        self.assertEqual(self.problems(REST_FRAMEWORK=rest("1000/hour")), [])
+        self.assertFlags("login_ip rate limit", REST_FRAMEWORK=rest("5000/hour"))
+
     def test_smtp_needs_credentials_unless_it_is_a_local_relay(self):
         self.assertFlags("EMAIL_HOST_USER must be set", EMAIL_HOST_USER="")
         self.assertFlags("EMAIL_HOST_PASSWORD must be set", EMAIL_HOST_PASSWORD="")
