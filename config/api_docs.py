@@ -261,6 +261,7 @@ CATALOGUE = {
     "organizations_invitations_destroy": ("Cancel an invitation", ""),
     "organizations_invitations_resend_create": ("Resend an invitation", ""),
     "organizations_invitations_accept_create": ("Accept an organization invitation", ""),
+    "organizations_invitations_retrieve": ("Preview an organization invitation", "Public, no sign-in needed. Takes the token from the invitation link and answers with the organization's name, the invited email, the role and when it expires, so the page can say who invited the person before they sign in. An unknown, used, cancelled or expired token all answer the same 404."),
     "organizations_export_list": ("List organization exports", "Organization-wide data exports."),
     "organizations_export_create": ("Start an organization export", "Returns the existing in-flight export instead of creating a second."),
     "organizations_export_retrieve": ("Get an organization export", ""),

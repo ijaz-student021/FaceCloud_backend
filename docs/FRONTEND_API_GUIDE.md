@@ -499,9 +499,14 @@ state and put it in the URL; changing it client-side grants nothing.
   `DELETE .../invitations/{id}/`. "Remove" only removes organization access, not
   the person's account.
 - **Accepting an invitation:** the emailed link is
-  `{FRONTEND_URL}/invitations/{token}`. Build that route; the logged-in user
-  (who must be signed in with the invited email) calls
-  `POST /api/organizations/invitations/accept/ {token}`.
+  `{FRONTEND_URL}/invitations/{token}`. Build that route. **First show who is inviting**, without signing in:
+  `GET /api/organizations/invitations/{token}/` (public; send no Authorization header) answers
+  `{"organization_name": "Preview Co", "email": "guest@example.com", "role": "moderator", "expires_at": "2026-10-21T19:47:53Z"}`
+  (`role` is `member` or `moderator`). An unknown, used, cancelled or expired token all answer the same
+  `404 {"detail": "This invitation is invalid, used or expired."}`: show that sentence and no other hint. The answer
+  is `Cache-Control: no-store` and rate limited (scope `invitation`, 30/hour per address). Then the person signs in
+  (or registers) with **that email**, and the logged-in user calls
+  `POST /api/organizations/invitations/accept/ {token}` (unchanged).
 - Audit trail: `GET .../audit/`. Organization-wide data export (async):
   `POST .../export/`, poll `GET .../export/{id}/`, download
   `.../export/{id}/download/`.
