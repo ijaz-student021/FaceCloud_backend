@@ -814,6 +814,11 @@ hide these routes, but never rely on that for security.
 * The older `success_rate_percent` is the share of *quality decisions* that were accepted, not the share of enhancements that worked; the weekly
   enhancement success is `enhancement_success_per_week`. `totals.images.accepted` counts photographs not refused at upload.
 
+**Audit search.** `GET /api/system/audit/?q=` keeps only rows whose actor's name (username, or the identifier typed at a failed
+sign-in), event (its stored name, or the sentence the screen shows: "signed in" finds `login`) or category (its name or label, for example
+"accounts") contains the text, case-insensitively, up to 100 characters (longer is a 400). It combines with `?category=`, `?source=`, `?user=`
+and paging, and `has_next` counts matches only. `filters_applied.q` echoes it (`null` without). A search with no match is an empty page.
+
 **Audit rows** keep every old key and add: `actor` (`{id, username, role}`, `null` when the account is gone), `actor_name` (the username, or the
 typed identifier for a failed sign-in by someone unknown), `actor_role`, `type` / `status` (read like the user timeline: `login`, `upload`, ...;
 `success` / `warning` / `error` / `info`), `message` (a sentence about what happened, in the third person), `resource` (what it happened to) and
