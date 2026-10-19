@@ -150,6 +150,7 @@ class OrganizationAuditEvent(models.Model):
         MODERATOR_BULK_DECISION = "moderator_bulk_decision", "Moderator bulk decision"
         MODERATOR_IMAGE_PREVIEWED = "moderator_image_previewed", "Image previewed by moderator"
         BATCH_REPROCESSED_BY_MODERATOR = "batch_reprocessed_by_moderator", "Batch reprocessed by moderator"
+        MEMBER_NOTIFIED_OF_REVIEW = "member_notified_of_review", "Member told about a review decision"
 
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="audit_events",

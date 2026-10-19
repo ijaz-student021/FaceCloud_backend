@@ -30,6 +30,9 @@ EVENT_POLICY = {
     # A missed review deadline is worth an email: the whole point is that
     # nobody noticed it in the queue.
     UserNotification.EventType.MODERATOR_REVIEW_OVERDUE: ("moderator_review_updates", True),
+    # What a moderator decided about the member's own photograph: switched by the same two preferences as the automatic verdicts.
+    UserNotification.EventType.PHOTO_REVIEW_APPROVED: ("photo_accepted", True),
+    UserNotification.EventType.PHOTO_REVIEW_REJECTED: ("photo_rejected", True),
 }
 
 

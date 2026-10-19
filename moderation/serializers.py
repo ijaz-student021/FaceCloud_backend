@@ -51,13 +51,14 @@ class ModeratorReviewSerializer(serializers.ModelSerializer):
 class ModeratorReviewDetailSerializer(ModeratorReviewSerializer):
     """The review as the Image Review screen opens it: the queue row plus the photograph's own facts, so the screen needs no second request."""
 
+    message_to_member = serializers.CharField(read_only=True, help_text="What the member was told, in the moderator's words (empty: the standard sentence was used).")
     image = serializers.SerializerMethodField(help_text=(
         "The photograph under review: id, name, width, height, file_size, uploader, face_count, quality (decision, overall_score, "
         "rejection_reasons, warnings) and preview_url (the review-keyed thumbnail)."
     ))
 
     class Meta(ModeratorReviewSerializer.Meta):
-        fields = ModeratorReviewSerializer.Meta.fields + ["image"]
+        fields = ModeratorReviewSerializer.Meta.fields + ["message_to_member", "image"]
         read_only_fields = fields
 
     def get_image(self, review) -> dict:
@@ -85,6 +86,11 @@ class ModeratorDecisionSerializer(serializers.Serializer):
     action = serializers.ChoiceField(choices=["approve", "reject", "correct", "keep_in_review"])
     reason = serializers.CharField(required=False, allow_blank=True, max_length=500)
     notes = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+    message_to_member = serializers.CharField(
+        required=False, allow_blank=True, max_length=500,
+        help_text="Shown to the member who uploaded the photograph (the ONLY free text they see about this decision: the reason and notes stay internal). "
+                  "Empty: a standard sentence for the reason is used. Approve, reject and correct tell the member; keep_in_review does not.",
+    )
     group_id = serializers.IntegerField(
         required=False, min_value=1,
         help_text="Identity reviews only: the person folder to assign on a 'correct' decision. "
@@ -201,6 +207,10 @@ class ModeratorBulkDecisionSerializer(serializers.Serializer):
     action = serializers.ChoiceField(choices=["approve", "reject", "escalate"])
     reason = serializers.CharField(required=False, allow_blank=True, max_length=500)
     notes = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+    message_to_member = serializers.CharField(
+        required=False, allow_blank=True, max_length=500,
+        help_text="The same message for every photograph decided (each member is told once, about their own photograph). Not used for escalate.",
+    )
 
 
 class ModeratorBulkFailureSerializer(serializers.Serializer):
