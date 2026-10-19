@@ -302,3 +302,38 @@ class ModeratorImageSerializer(serializers.Serializer):
     def get_review_id(self, image) -> int | None:
         reviews = getattr(image, "org_reviews", None)
         return reviews[0].pk if reviews else None
+
+
+class ModeratorFolderCoverSerializer(serializers.Serializer):
+    id = serializers.IntegerField(help_text="The photograph's id.")
+    preview_url = serializers.CharField(help_text="Moderator thumbnail; fetch it with the Authorization header.")
+
+
+class ModeratorFolderOwnerSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    username = serializers.CharField()
+
+
+class ModeratorFolderSerializer(serializers.Serializer):
+    """A person folder holding photographs submitted to the organization."""
+
+    id = serializers.IntegerField()
+    display_name = serializers.CharField()
+    owner = ModeratorFolderOwnerSerializer()
+    member_count = serializers.IntegerField(help_text="Photographs in the folder in all.")
+    photos_in_organization = serializers.IntegerField(help_text="Of those, the ones submitted to this organization.")
+    matching_confidence = serializers.FloatField(allow_null=True, help_text="Average member similarity as a percentage; null when none is scored.")
+    cover_images = ModeratorFolderCoverSerializer(many=True)
+    updated_at = serializers.DateTimeField()
+
+
+class ModeratorMergeSuggestionSerializer(serializers.Serializer):
+    similarity = serializers.FloatField(help_text="How alike the two folders' average faces are, as a percentage.")
+    source = ModeratorFolderSerializer(help_text="The folder to merge away.")
+    target = ModeratorFolderSerializer(help_text="The folder to keep.")
+
+
+class ModeratorFolderMergeSerializer(serializers.Serializer):
+    source_group_id = serializers.IntegerField(min_value=1)
+    target_group_id = serializers.IntegerField(min_value=1)
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=500)

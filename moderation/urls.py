@@ -54,6 +54,18 @@ urlpatterns = [
         views.ModeratorBatchListView.as_view(), name="batch-list",
     ),
     path(
+        "<int:organization_id>/moderator/identity-groups/",
+        views.ModeratorIdentityGroupListView.as_view(), name="identity-group-list",
+    ),
+    path(
+        "<int:organization_id>/moderator/identity-groups/suggested-merges/",
+        views.ModeratorMergeSuggestionsView.as_view(), name="identity-group-suggestions",
+    ),
+    path(
+        "<int:organization_id>/moderator/identity-groups/merge/",
+        views.ModeratorFolderMergeView.as_view(), name="identity-group-merge",
+    ),
+    path(
         "<int:organization_id>/moderator/images/",
         views.ModeratorImageListView.as_view(), name="image-list",
     ),

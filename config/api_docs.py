@@ -287,6 +287,9 @@ CATALOGUE = {
     "organizations_moderator_reviews_decision_create": ("Decide a review", "Approve or reject."),
     "organizations_moderator_reviews_bulk_decision_create": ("Decide several reviews", "Each review is decided individually, so a row that is already decided does not block the others."),
     "organizations_moderator_reviews_escalate_create": ("Escalate a review", ""),
+    "organizations_moderator_identity_groups_list": ("List the organization's person folders", "The person folders that hold photographs submitted to this organization, with the owner, counts, average match and up to three preview covers. Never a personal workspace."),
+    "organizations_moderator_identity_groups_suggested_merges_list": ("Suggest person folders to merge", "Pairs of one member's folders whose average faces are alike (at most 20, most alike first). Nothing is stored."),
+    "organizations_moderator_identity_groups_merge_create": ("Merge two person folders", "Merges one of the organization's folders into another folder of the same member, and records it in the organization's audit trail."),
     "organizations_moderator_reviews_merge_identity_groups_create": ("Merge the identity groups behind a flagged duplicate", ""),
 
     # ---- system (administrators) ---------------------------------------------------------------------------------------

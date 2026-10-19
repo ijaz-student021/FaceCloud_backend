@@ -21,7 +21,10 @@ from uploads.services import BatchHasNoFailedImages, BatchRetryLimitReached
 
 from .models import ModeratorReport, ModeratorReview
 from .serializers import (
+    ModeratorFolderMergeSerializer,
+    ModeratorFolderSerializer,
     ModeratorImageSerializer,
+    ModeratorMergeSuggestionSerializer,
     ModeratorReviewDetailSerializer,
     ModeratorAssignSerializer,
     ModeratorBulkDecisionSerializer,
@@ -731,6 +734,65 @@ class ModeratorImageListView(OrganizationScopedMixin, generics.ListAPIView):
                 raise ValidationError({"batch": ["Send a batch id."]})
             queryset = queryset.filter(batch_id=int(batch))
         return queryset
+
+
+class ModeratorIdentityGroupListView(OrganizationScopedMixin, generics.ListAPIView):
+    """The person folders that hold photographs submitted to this organization (owner or moderator), most recently changed first."""
+
+    require_owner_or_moderator = True
+    serializer_class = ModeratorFolderSerializer
+
+    @extend_schema(parameters=[
+        OpenApiParameter("q", str, description="Part of the folder's name or its owner's username."),
+        OpenApiParameter("owner", int, description="Only this member's folders."),
+    ], responses={200: ModeratorFolderSerializer(many=True), **ERROR_RESPONSES})
+    def get(self, request, *args, **kwargs):
+        from . import identity_groups
+
+        params = request.query_params
+        folders = identity_groups.organization_folders(self.organization)
+        text = (params.get("q") or "").strip()
+        if text:
+            folders = folders.filter(Q(display_name__icontains=text) | Q(owner__username__icontains=text))
+        owner = params.get("owner")
+        if owner:
+            if not owner.isdigit():
+                raise ValidationError({"owner": ["Send a user id."]})
+            folders = folders.filter(owner_id=int(owner))
+        page = self.paginate_queryset(folders)
+        rows = identity_groups.describe_folders(page if page is not None else folders, self.organization, request)
+        return self.get_paginated_response(rows) if page is not None else Response(rows)
+
+
+class ModeratorMergeSuggestionsView(OrganizationScopedMixin, APIView):
+    """Pairs of one member's folders that look like the same person, most alike first (at most 20; nothing is stored)."""
+
+    require_owner_or_moderator = True
+
+    @extend_schema(responses={200: ModeratorMergeSuggestionSerializer(many=True), **ERROR_RESPONSES})
+    def get(self, request, organization_id):
+        from . import identity_groups
+
+        return Response(identity_groups.suggested_merges(self.organization, request))
+
+
+class ModeratorFolderMergeView(OrganizationScopedMixin, APIView):
+    """Merge one of the organization's person folders into another folder of the same member (audited)."""
+
+    require_owner_or_moderator = True
+    throttle_scope = "org_bulk_moderation"
+
+    @extend_schema(request=ModeratorFolderMergeSerializer, responses={200: OpenApiTypes.OBJECT, **ERROR_RESPONSES})
+    def post(self, request, organization_id):
+        from . import identity_groups
+
+        payload = ModeratorFolderMergeSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        source, target = identity_groups.merge_folders(
+            organization=self.organization, actor=request.user, request=request, **payload.validated_data,
+        )
+        return Response({"source": {"id": source.pk, "state": source.state}, "target": {"id": target.pk, "member_count": target.member_count,
+                                                                                         "display_name": target.display_name}})
 
 
 class ModeratorImagePreviewView(OrganizationScopedMixin, APIView):

@@ -610,6 +610,17 @@ nothing measurable was decided.
   (bytes), `outcome` (`accepted`, `rejected`, `needs_review`, `failed`, `cancelled` or `processing`) and `preview_url`
   (the moderator thumbnail, fetch it with the Authorization header; `null` for a file refused at upload).
   Actions: `POST .../moderator/batches/{id}/retry/`, `/cancel/` and `/reprocess/`.
+- **Identity Review screen.** Only person folders that hold photographs **submitted to this organization** are listed, and a moderator
+  can only merge two folders of the **same member**. `GET .../moderator/identity-groups/?q=&owner=` (a plain array, or paged) returns
+  `[{"id": 7, "display_name": "Person 001", "owner": {"id": 3, "username": "mem1"}, "member_count": 4, "photos_in_organization": 3,
+  "matching_confidence": 91.5, "cover_images": [{"id": 14, "preview_url": ".../moderator/images/14/preview/"}], "updated_at": "..."}]`
+  (up to three covers; fetch the previews with the Authorization header). `GET .../moderator/identity-groups/suggested-merges/` returns
+  at most 20 pairs, most alike first: `[{"similarity": 99.6, "source": <folder>, "target": <folder>}]` where `source` is the folder to
+  merge away (fewer photos, newer on a tie) and `target` the one to keep; the threshold is `MODERATOR_MERGE_SUGGESTION_MIN_SIMILARITY`
+  (default 0.75). `POST .../moderator/identity-groups/merge/ {source_group_id, target_group_id, reason?}` merges and is audited as
+  `identity_groups_merged_by_moderator`; 400 when a folder is not this organization's or the two belong to different members.
+  Suggestions are recomputed each time: **"Dismiss" is a browser-side choice** (nothing is stored). To move one photo to another folder,
+  decide an identity review item with `select_group` (the existing review decision); there is no free-form move for a moderator.
 - **Rejected Images screen.** `GET .../moderator/images/?decision=rejected` (also `needs_review`, `accepted`; `?q=` photo name or
   uploader, `?batch=<id>`; a plain array, or `?page=&page_size=`), newest first, only photos submitted to this organization (never a
   personal workspace). Each row: `id`, `original_name`, `batch_id`, `uploader{id,username}`, `created_at`, `width`, `height`,
