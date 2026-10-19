@@ -1051,7 +1051,7 @@ contain the same face -- "search by a photo" rather than by text.
   existing `identities` app -- no new app or model, since nothing is stored.
   Detects the largest confident face in the query photo, embeds it, and
   compares it against the searching user's own ACTIVE identity groups' centroids
-  using the exact same similarity function and `IDENTITY_MATCH_THRESHOLD` as
+  using the exact same similarity function and the provider's match threshold (`SFACE_MATCH_THRESHOLD`) as
   `_choose_group` -- not a new algorithm or a new threshold, so "found a match"
   means the same thing here as everywhere else in `identities/`. Returns every
   group at or above the threshold (best first; usually zero or one, more only

@@ -2,8 +2,8 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from .models import IdentityChange, IdentityGroup, IdentityMembership
-from .services import _confirmed_states, _refresh_group
+from ..models import IdentityChange, IdentityGroup, IdentityMembership
+from ..services import _confirmed_states, _refresh_group
 
 
 def _record(owner, actor, action, *, group=None, membership=None, before=None, after=None, reason=""):

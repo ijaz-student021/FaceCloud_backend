@@ -336,7 +336,12 @@ error for it.
   Show a consent screen before the first upload and disable the People page
   until consent exists.
 - `GET /api/identities/groups/` and `/{id}/` list and show folders
-  (`display_name`, `member_count`, `preview_image`). **Embeddings and centroids
+  (`display_name`, `member_count`, `confirmed_count`, `suggested_count`, `preview_image`). `confirmed_count` is the faces placed in the folder (the same number
+  as `member_count`); `suggested_count` is the faces that look like this person but wait for a decision (`membership_state: "needs_review"` on a photo of
+  `GET .../groups/{id}/images/`): they are listed with the folder's photos but are **not** in `member_count`, so show "5 photos, 3 confirmed, 2 suggested"
+  from these two numbers instead of counting tiles. A photograph the checks **reject** is never in a folder: it is taken out when it is rejected and a folder left
+  empty is archived (state `archived`, the id still resolves; a folder the person named is kept). `GET /api/identities/images/{image_id}/` (the photo's identity analysis) adds `evidence`: the faces
+  the detector found that were not grouped (`skipped_faces`, with `reason` `face_too_small` or `detector_score_below_floor`) and the limits used. **Embeddings and centroids
   are never returned**; do not expect them. Each folder also has
   `cover_images` (up to four distinct photos, `[{id, thumbnail_url}]`, empty for
   an empty folder) and `matching_confidence` (the average of its members'
@@ -678,8 +683,9 @@ nothing measurable was decided.
   "matching_confidence": 91.5, "cover_images": [{"id": 14, "preview_url": ".../moderator/images/14/preview/"}], "updated_at": "..."}]`
   (up to three covers; fetch the previews with the Authorization header). `GET .../moderator/identity-groups/suggested-merges/` returns
   at most 20 pairs, most alike first: `[{"similarity": 99.6, "source": <folder>, "target": <folder>}]` where `source` is the folder to
-  merge away (fewer photos, newer on a tie) and `target` the one to keep; the threshold is `MODERATOR_MERGE_SUGGESTION_MIN_SIMILARITY`
-  (default 0.75). `POST .../moderator/identity-groups/merge/ {source_group_id, target_group_id, reason?}` merges and is audited as
+  merge away (fewer photos, newer on a tie) and `target` the one to keep; the threshold is the identity model's own (`SFACE_MERGE_SUGGESTION_MIN_SIMILARITY`, 0.40: it
+  suggests about 93 % of one person's split folders and fewer than 1 in 10,000 pairs of different people's, measured on a public benchmark), or
+  `MODERATOR_MERGE_SUGGESTION_MIN_SIMILARITY` when that is set. `POST .../moderator/identity-groups/merge/ {source_group_id, target_group_id, reason?}` merges and is audited as
   `identity_groups_merged_by_moderator`; 400 when a folder is not this organization's or the two belong to different members.
   Suggestions are recomputed each time: **"Dismiss" is a browser-side choice** (nothing is stored). To move one photo to another folder,
   decide an identity review item with `select_group` (the existing review decision); there is no free-form move for a moderator.
