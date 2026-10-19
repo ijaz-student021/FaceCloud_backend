@@ -34,6 +34,16 @@ def good_config():
         "DATABASES": {"default": {"ENGINE": "django.db.backends.postgresql", "PASSWORD": random_secret(24)}},
         "EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
         "EMAIL_HOST": "smtp.mailer-service.net",
+        "EMAIL_HOST_USER": "mailer-account",
+        "EMAIL_HOST_PASSWORD": random_secret(24),
+        "CELERY_BROKER_URL": "redis://127.0.0.1:6379/0",
+        "CELERY_RESULT_BACKEND": "redis://127.0.0.1:6379/1",
+        "STORAGE_BACKEND": "filesystem",
+        "BASE_DIR": "/srv/facecloud/app",
+        "MEDIA_ROOT": "/srv/facecloud/media",
+        "CSRF_TRUSTED_ORIGINS": ["https://api.facecloud-app.net"],
+        "ENV_EXPLICIT": {name: True for name in (
+            "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND", "MEDIA_ROOT", "CACHE_URL", "DB_NAME", "DB_USER", "DB_HOST", "EMAIL_HOST")},
         "CELERY_TASK_ALWAYS_EAGER": False,
         "CACHES": {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache",
                                "LOCATION": "redis://cache.internal:6379/2"}},
@@ -68,6 +78,36 @@ class GuardRuleTests(SimpleTestCase):
         self.assertEqual(self.problems(REST_FRAMEWORK=rest("300/hour")), [])
         self.assertEqual(self.problems(REST_FRAMEWORK=rest("1000/hour")), [])
         self.assertFlags("login_ip rate limit", REST_FRAMEWORK=rest("5000/hour"))
+
+    def test_smtp_needs_credentials_unless_it_is_a_local_relay(self):
+        self.assertFlags("EMAIL_HOST_USER must be set", EMAIL_HOST_USER="")
+        self.assertFlags("EMAIL_HOST_PASSWORD must be set", EMAIL_HOST_PASSWORD="")
+        self.assertFlags("EMAIL_HOST_PASSWORD must be set", EMAIL_HOST_PASSWORD="replace-with-the-smtp-password")
+        self.assertEqual(self.problems(EMAIL_HOST="localhost", EMAIL_HOST_USER="", EMAIL_HOST_PASSWORD=""), [])
+
+    def test_the_redis_addresses_must_be_chosen_and_be_redis(self):
+        explicit = good_config()["ENV_EXPLICIT"]
+        for name in ("CELERY_BROKER_URL", "CELERY_RESULT_BACKEND"):
+            self.assertFlags(f"{name} must be set", ENV_EXPLICIT={**explicit, name: False})
+            self.assertFlags(f"{name} must be a redis://", **{name: "amqp://guest@localhost//"})
+            self.assertFlags(f"{name} must be a redis://", **{name: ""})
+        self.assertEqual(self.problems(CELERY_BROKER_URL="rediss://cache.internal:6380/0"), [])
+        self.assertFlags("CACHE_URL must be a redis://", CACHE_URL="memcached://x")
+
+    def test_the_database_names_must_be_chosen(self):
+        explicit = good_config()["ENV_EXPLICIT"]
+        for name in ("DB_NAME", "DB_USER", "DB_HOST"):
+            self.assertFlags(f"{name} must be set", ENV_EXPLICIT={**explicit, name: False})
+
+    def test_media_must_be_a_chosen_directory(self):
+        explicit = good_config()["ENV_EXPLICIT"]
+        self.assertFlags("MEDIA_ROOT must be set", ENV_EXPLICIT={**explicit, "MEDIA_ROOT": False})
+        self.assertEqual(self.problems(STORAGE_BACKEND="s3", MEDIA_ROOT="/srv/facecloud/app/media", ENV_EXPLICIT={**explicit, "MEDIA_ROOT": False}), [])
+
+    def test_csrf_trusted_origins_are_real_https_origins(self):
+        self.assertFlags("CSRF_TRUSTED_ORIGINS entry", CSRF_TRUSTED_ORIGINS=["http://api.facecloud-app.net"])
+        self.assertFlags("CSRF_TRUSTED_ORIGINS entry", CSRF_TRUSTED_ORIGINS=["https://*.facecloud-app.net"])
+        self.assertEqual(self.problems(CSRF_TRUSTED_ORIGINS=[]), [])
 
     def test_a_correct_production_configuration_has_no_problems(self):
         self.assertEqual(production_problems(good_config()), [])
@@ -220,9 +260,11 @@ class StartupRefusalTests(SimpleTestCase):
         self.assertIn("DJANGO_SECRET_KEY", result.stderr)
         self.assertGreaterEqual(result.stderr.count("\n  - "), 3)
 
-    def test_a_correct_production_environment_starts(self):
+    @staticmethod
+    def production_env():
+        """A complete, correct production environment (throwaway secrets)."""
         secret = random_secret()
-        env = {
+        return {
             "DJANGO_DEBUG": "False",
             "DJANGO_SECRET_KEY": secret,
             "DJANGO_ALLOWED_HOSTS": "api.facecloud-app.net",
@@ -241,7 +283,10 @@ class StartupRefusalTests(SimpleTestCase):
             "DB_HOST": "127.0.0.1", "DB_PORT": "5432",
             "EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
             "EMAIL_HOST": "smtp.mailer-service.net",
+            "EMAIL_HOST_USER": "mailer-account", "EMAIL_HOST_PASSWORD": random_secret(24),
             "CELERY_TASK_ALWAYS_EAGER": "False",
+            "CELERY_BROKER_URL": "redis://127.0.0.1:6379/0", "CELERY_RESULT_BACKEND": "redis://127.0.0.1:6379/1",
+            "MEDIA_ROOT": "/tmp/facecloud-guard-test-media",
             "CACHE_URL": "redis://127.0.0.1:6379/2",
             "IDENTITY_EMBEDDING_KEY": random_secret(48),
             "IMAGE_ENCRYPTION_ENABLED": "True",
@@ -250,9 +295,36 @@ class StartupRefusalTests(SimpleTestCase):
             "FACIAL_DATA_RETENTION_DAYS": "365",
         }
 
-        result = self.run_check(env)
+    def test_a_correct_production_environment_starts(self):
+        result = self.run_check(self.production_env())
 
         self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+
+    def test_every_required_variable_is_refused_when_it_is_missing(self):
+        """Blank each required name in a correct environment, one at a time: production must refuse to start and name the problem."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        required = {
+            "DJANGO_SECRET_KEY": "DJANGO_SECRET_KEY", "IDENTITY_EMBEDDING_KEY": "IDENTITY_EMBEDDING_KEY", "IMAGE_ENCRYPTION_KEY": "IMAGE_ENCRYPTION_KEY",
+            "DB_PASSWORD": "DB_PASSWORD", "DB_NAME": "DB_NAME", "DB_USER": "DB_USER", "DB_HOST": "DB_HOST",
+            "EMAIL_HOST": "EMAIL_HOST", "EMAIL_HOST_USER": "EMAIL_HOST_USER", "EMAIL_HOST_PASSWORD": "EMAIL_HOST_PASSWORD",
+            "CELERY_BROKER_URL": "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND": "CELERY_RESULT_BACKEND", "CACHE_URL": "CACHE_URL",
+            "DJANGO_ALLOWED_HOSTS": "DJANGO_ALLOWED_HOSTS", "PUBLIC_BACKEND_URL": "PUBLIC_BACKEND_URL", "FRONTEND_URL": "FRONTEND_URL",
+            "CORS_ALLOWED_ORIGINS": "CORS_ALLOWED_ORIGINS", "MEDIA_ROOT": "MEDIA_ROOT",
+        }
+
+        def start_without(name):
+            env = self.production_env()
+            env[name] = ""                       # present but empty: the same as missing, and it overrides a value the test process itself inherited
+            result = self.run_check(env)
+            return name, result.returncode, result.stderr
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            outcomes = list(pool.map(start_without, required))
+        for name, code, stderr in outcomes:
+            with self.subTest(missing=name):
+                self.assertNotEqual(code, 0, f"production started without {name}")
+                self.assertIn(required[name], stderr)
 
     def test_the_repository_env_example_is_refused_until_its_placeholders_are_replaced(self):
         example = Path(settings.BASE_DIR) / ".env.example"
