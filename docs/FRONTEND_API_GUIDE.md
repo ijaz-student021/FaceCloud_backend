@@ -54,6 +54,21 @@ POST /api/auth/verify-email/resend/ {registration_id}     (new link, the old one
 GET  /api/auth/registrations/{registration_id}/status/    (masked status, for a "check your email" screen)
 ```
 
+**Registering from an organization invitation (one step).** The invitation link is `{FRONTEND_URL}/invitations/{token}`. If the person has no account, let them register on
+that page and add `invitation_token` (the token from the link) to the same `POST /api/auth/register/` body:
+
+```text
+POST /api/auth/register/   {full_name, email, password, password_confirm?, username?, invitation_token}
+   -> 201 {access, refresh, user, role, dashboard, organization_roles}     (the same shape as login)
+```
+
+The invitation was sent to that mailbox, so the address counts as verified: the account is created verified, the invitation is accepted and the person is signed in, all in one
+transaction (a moderator invitation lands in the moderator portal: `dashboard: "moderator"`). `email` must be the invited address (case does not matter); use the
+invitation preview (section 7) to show it read-only. A token that is unknown, used, cancelled, expired, for a suspended organization, **or for another email address** answers the same
+`404 {"detail": "This invitation is invalid, used or expired."}` as the preview and creates nothing: show that sentence only. Otherwise the usual rules hold: password rules
+(400), the address already has an account (400 on `email`: ask them to sign in, then accept the invitation), the registration rate limit (429), and `403` `plan_limit_reached` when the
+organization has no seat left (nothing is created and the invitation stays usable). Without `invitation_token` nothing changes (202 and the verification email).
+
 **Login**
 
 ```text
@@ -537,8 +552,9 @@ state and put it in the URL; changing it client-side grants nothing.
   wording ("approved", "rejected", "corrected": a decision's `message` is "Approved face.jpg.", so `q=approved` finds exactly the approvals),
   and the **name of the photo, upload or person folder** the event was about ("face.jpg", "staff_q3.zip")), `?date_from=`, `?date_to=` (a bare date includes
   that whole day), `?target_type=` and `?target_id=`; a bad value is a 400. The history of one review is
-  `?target_type=ModeratorReview&target_id={review id}`. **There is no "user notified" field**: nobody is notified of a decision,
-  so leave that column out. The older `Audit trail` description follows.
+  `?target_type=ModeratorReview&target_id={review id}`. A "user notified" column is
+  the event `member_notified_of_review` ("Told the member about the decision on face.jpg.") on the same review: the member is told about an approve, reject or correct decision
+  (section 8), and that is recorded here. The older `Audit trail` description follows.
 - Audit trail (stored fields): `GET .../audit/`. Organization-wide data export (async):
   `POST .../export/`, poll `GET .../export/{id}/`, download
   `.../export/{id}/download/`.
