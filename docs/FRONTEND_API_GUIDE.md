@@ -316,6 +316,10 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}     -> 201
 `GET /api/enhancements/edits/{id}/`. Edits are immutable versions:
 `POST .../edits/{id}/activate/` picks the current one and
 `GET .../edits/{id}/download/` fetches it. The original is never overwritten.
+While you poll (every 1.5 s is fine), the edit says how far it is: `stage` is `queued` (waiting for a worker), `reading`, `enhancing` or `finishing`, and
+`progress_percent` is a coarse 0 to 100 that never goes backwards (0 queued, about 5 reading, 15 to 80 enhancing, 85 to 95 finishing, 100 completed). Both are
+`null` once the edit has `failed` or been `cancelled`, and `stage` is `null` when it has `completed`. Use them for a progress bar; keep deciding "done" by `status`.
+`quality_metadata.timings_ms` (milliseconds per stage, with `total`), `image_pixels` and `guard_attempts` (`{count, ms}`) say where a save spent its time.
 Show client-side previews while the user drags sliders and submit the final
 values for the full-resolution server render.
 

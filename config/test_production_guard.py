@@ -415,3 +415,56 @@ class CeleryRoutesTests(SimpleTestCase):
         self.assertEqual(routed["enhancement.process_image"], {"queue": "gfpgan"})
         self.assertEqual(routed["enhancement.process_batch"], {"queue": "gfpgan"})
         self.assertEqual(routed["enhancement.process_gallery_edit"], {"queue": "inference"})
+
+
+class GalleryEditQueueTests(SimpleTestCase):
+    """``ENHANCEMENT_EDIT_QUEUE_NAME``: "Save as new version" gets its own queue so it never waits behind a batch enhancement."""
+
+    EDIT = "enhancement.process_gallery_edit"
+
+    def route(self, **kwargs):
+        from celery import current_app
+        from celery.app.routes import MapRoute, Router
+
+        from config.celery_routes import task_routes
+
+        router = Router(routes=[MapRoute(task_routes(**kwargs))], queues=current_app.amqp.queues, create_missing=True, app=current_app)
+        return lambda name: router.route({}, name)["queue"].name
+
+    def test_without_the_setting_edits_go_where_they_always_went(self):
+        from config.celery_routes import task_routes
+
+        self.assertEqual(task_routes(), {})
+        self.assertEqual(task_routes("inference")[self.EDIT], {"queue": "inference"})
+        queue_of = self.route(enhancement_queue="inference")
+        self.assertEqual(queue_of(self.EDIT), "inference")
+        self.assertEqual(self.route()(self.EDIT), "celery")
+
+    def test_the_edit_queue_takes_only_the_edit_task_and_wins_over_the_inference_queue(self):
+        from config.celery_routes import task_routes
+
+        self.assertEqual(task_routes(edit_queue="edits"), {self.EDIT: {"queue": "edits"}})
+        queue_of = self.route(enhancement_queue="inference", edit_queue="edits")
+        self.assertEqual(queue_of(self.EDIT), "edits")
+        for heavy in ("enhancement.process_image", "enhancement.process_batch", "enhancement.run_model_comparison"):
+            self.assertEqual(queue_of(heavy), "inference", heavy)
+        self.assertEqual(queue_of("reports.generate"), "celery")
+
+    def test_the_gfpgan_queue_still_keeps_the_two_enhancement_tasks(self):
+        queue_of = self.route(enhancement_queue="inference", gfpgan_enabled=True, gfpgan_queue="gfpgan", edit_queue="edits")
+        self.assertEqual(queue_of("enhancement.process_image"), "gfpgan")
+        self.assertEqual(queue_of("enhancement.process_batch"), "gfpgan")
+        self.assertEqual(queue_of(self.EDIT), "edits")
+
+    def test_the_environment_setting_reaches_the_project_routes(self):
+        import importlib
+        import os
+        from unittest import mock
+
+        import config.settings as base_settings
+
+        self.addCleanup(importlib.reload, base_settings)
+        self.assertEqual(base_settings.ENHANCEMENT_EDIT_QUEUE_NAME, "")                                   # the default: nothing changes
+        with mock.patch.dict(os.environ, {"ENHANCEMENT_EDIT_QUEUE_NAME": "edits", "ENHANCEMENT_QUEUE_NAME": ""}):
+            reloaded = importlib.reload(base_settings)
+            self.assertEqual(reloaded.CELERY_TASK_ROUTES, {self.EDIT: {"queue": "edits"}})

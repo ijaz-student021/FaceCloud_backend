@@ -128,18 +128,39 @@ def identity_fields(summary, legacy_status=None):
 
 class ImageEditVersionSerializer(serializers.ModelSerializer):
     download_url = serializers.SerializerMethodField()
+    stage = serializers.SerializerMethodField(help_text=(
+        "While the edit is active: queued (waiting for a worker), reading, enhancing or finishing. null once it has completed, failed or been cancelled."))
+    progress_percent = serializers.SerializerMethodField(help_text=(
+        "A coarse 0 to 100 for the polling client: 0 while queued, then moving through reading, enhancing and finishing; 100 when completed; "
+        "null when the edit failed or was cancelled. It never goes backwards."))
 
     class Meta:
         model = ImageEditVersion
         fields = [
             "id", "enhancement_result", "mode", "requested_adjustments",
-            "applied_adjustments", "status", "output_name", "output_format",
+            "applied_adjustments", "status", "stage", "progress_percent", "output_name", "output_format",
             "output_width", "output_height", "output_file_size",
             "processing_duration_ms", "task_id", "quality_metadata",
             "failure_reason", "is_current", "download_url", "started_at",
             "finished_at", "created_at", "updated_at", "source_version", "from_preview",
             "advisor_recommendation",
         ]
+
+    def get_stage(self, obj) -> str | None:
+        if obj.status in (EnhancementStatus.PENDING, EnhancementStatus.QUEUED):
+            return "queued"
+        if obj.status == EnhancementStatus.PROCESSING:
+            return obj.progress_stage or "reading"
+        return None
+
+    def get_progress_percent(self, obj) -> int | None:
+        if obj.status in (EnhancementStatus.PENDING, EnhancementStatus.QUEUED):
+            return 0
+        if obj.status == EnhancementStatus.PROCESSING:
+            return obj.progress_percent
+        if obj.status == EnhancementStatus.COMPLETED:
+            return 100
+        return None
 
     def get_download_url(self, obj) -> str | None:
         if obj.status != EnhancementStatus.COMPLETED or not obj.edited_file:
