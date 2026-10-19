@@ -706,10 +706,21 @@ ARCFACE_GUARD_MIN_SIMILARITY = env.float("ARCFACE_GUARD_MIN_SIMILARITY", default
 ARCFACE_MATCH_THRESHOLD = env.float("ARCFACE_MATCH_THRESHOLD", default=0.60)
 ARCFACE_NEW_GROUP_THRESHOLD = env.float("ARCFACE_NEW_GROUP_THRESHOLD", default=0.35)
 ARCFACE_AMBIGUITY_MARGIN = env.float("ARCFACE_AMBIGUITY_MARGIN", default=0.06)
+# SFace (the default provider) has its own limits, measured with ``manage.py evaluate_identity_thresholds`` (docs/evaluation/2026-10-19-sface-thresholds.md).
+# A face is compared with each folder's average face (cosine): below SFACE_NEW_GROUP_THRESHOLD it is clearly not that person and opens a new folder;
+# from SFACE_MATCH_THRESHOLD up, and at least SFACE_AMBIGUITY_MARGIN ahead of the runner-up, it joins the folder; in between it waits for review.
+# SFACE_GUARD_MIN_SIMILARITY is the enhancement identity guard (the same photograph before and after), not a grouping limit.
+SFACE_GUARD_MIN_SIMILARITY = env.float("SFACE_GUARD_MIN_SIMILARITY", default=0.80)
+SFACE_MATCH_THRESHOLD = env.float("SFACE_MATCH_THRESHOLD", default=0.45)
+SFACE_NEW_GROUP_THRESHOLD = env.float("SFACE_NEW_GROUP_THRESHOLD", default=0.30)
+SFACE_AMBIGUITY_MARGIN = env.float("SFACE_AMBIGUITY_MARGIN", default=0.06)
+SFACE_MERGE_SUGGESTION_MIN_SIMILARITY = env.float("SFACE_MERGE_SUGGESTION_MIN_SIMILARITY", default=0.40)
+# The generic limits: what a provider that defines none of its own falls back to (a stand-in provider, for instance).
 IDENTITY_MATCH_THRESHOLD = env.float("IDENTITY_MATCH_THRESHOLD", default=0.82)
 IDENTITY_NEW_GROUP_THRESHOLD = env.float("IDENTITY_NEW_GROUP_THRESHOLD", default=0.68)
 # The Identity Review screen suggests merging two of one member's person folders when their average faces are at least this alike (cosine, 0-1).
-MODERATOR_MERGE_SUGGESTION_MIN_SIMILARITY = env.float("MODERATOR_MERGE_SUGGESTION_MIN_SIMILARITY", default=0.75)
+# Unset (the default): the identity provider's own figure (SFACE_MERGE_SUGGESTION_MIN_SIMILARITY, or ARCFACE's match threshold); a number overrides it.
+MODERATOR_MERGE_SUGGESTION_MIN_SIMILARITY = env.float("MODERATOR_MERGE_SUGGESTION_MIN_SIMILARITY", default=None)
 IDENTITY_AMBIGUITY_MARGIN = env.float("IDENTITY_AMBIGUITY_MARGIN", default=0.06)
 IDENTITY_MAX_CANDIDATE_GROUPS = env.int("IDENTITY_MAX_CANDIDATE_GROUPS", default=1000)
 IDENTITY_POLICY_VERSION = env("IDENTITY_POLICY_VERSION", default="identity_policy_v1")

@@ -78,9 +78,16 @@ def _closest_folder(owner, provider, vector):
     return (scored[0][0], scored[0][1].pk) if scored else (None, None)
 
 
-def _choose_group(owner, provider, vector):
-    scored = _scored_groups(owner, provider, vector)
-    limits = thresholds_for(provider)
+def decide_group(scored, limits):
+    """The rule that places a face, on its own so that grouping, the evaluation command and the re-grouping command all use the same one.
+
+    ``scored`` is ``[(similarity, folder)]`` best first, ``limits`` the provider's ``{new_group, match, margin}``. Returns
+    ``(decision, folder, best_score, second_score)``:
+
+    * ``"new"``: no folder, or the best is below ``new_group``: the face is clearly not like any existing one, so it opens a folder;
+    * ``"match"``: the best is at least ``match`` and ``margin`` ahead of the runner-up: it joins that folder;
+    * ``"review"``: anything in between (alike, but not sure enough): it waits for a person to decide, suggested for the best folder.
+    """
     if not scored or scored[0][0] < limits["new_group"]:
         return "new", None, None, None
     best_score, best_group = scored[0]
@@ -88,6 +95,106 @@ def _choose_group(owner, provider, vector):
     if best_score >= limits["match"] and (second_score is None or best_score - second_score >= limits["margin"]):
         return "match", best_group, best_score, second_score
     return "review", best_group, best_score, second_score
+
+
+def _choose_group(owner, provider, vector):
+    return decide_group(_scored_groups(owner, provider, vector), thresholds_for(provider))
+
+
+def face_grouping_check(face, face_count):
+    """Whether a detected face is good enough to be grouped, and if not, why: ``(ok, evidence)``.
+
+    The same bar the face check sets for "accepted": the detector's own score floor (the stricter of ``YUNET_SCORE_THRESHOLD`` and
+    ``QUALITY_FACE_MIN_CONFIDENCE``) and a usable size (``validation.services._face_is_usable``, with the group allowance when the photograph has
+    several faces). A tiny, unsure detection on food or an object therefore never opens a person folder.
+    """
+    from validation.services import MIN_FACE_AREA_RATIO, MIN_GROUP_FACE_AREA_RATIO, _face_is_usable
+
+    confidence = face.get("confidence")
+    floor = max(float(settings.YUNET_SCORE_THRESHOLD), float(settings.QUALITY_FACE_MIN_CONFIDENCE))
+    ratio = MIN_GROUP_FACE_AREA_RATIO if face_count > 1 else MIN_FACE_AREA_RATIO
+    detail = {
+        "confidence": None if confidence is None else round(float(confidence), 3), "score_floor": floor,
+        "area_ratio": face.get("area_ratio"), "min_area_ratio": ratio,
+    }
+    # The face check records both for every face it finds; a face record without them (older data, a stand-in) is judged on what it has.
+    if confidence is not None and float(confidence) < floor:
+        return False, {**detail, "reason": "detector_score_below_floor"}
+    if all(key in face for key in ("area_ratio", "width", "height")) and not _face_is_usable(face, ratio):
+        return False, {**detail, "reason": "face_too_small"}
+    return True, detail
+
+
+def photo_is_rejected(image):
+    """Whether the checks rejected this photograph (refused at upload, by the face check or by the quality decision): it belongs in no person folder."""
+    from enhancement.eligibility import rejection_of
+
+    return rejection_of(image) is not None
+
+
+def folder_is_renamed(group):
+    """Whether the owner named this folder themselves (a rename is recorded, or the name is no longer the automatic ``Person 001``)."""
+    import re
+
+    from .models import IdentityChange
+
+    if not re.fullmatch(r"Person \d{3,}", group.display_name):
+        return True
+    return IdentityChange.objects.filter(group=group, action=IdentityChange.Action.RENAMED).exists()
+
+
+def _folder_is_empty(group):
+    return not group.memberships.filter(state__in=[*_confirmed_states(), IdentityMembership.State.NEEDS_REVIEW]).exists()
+
+
+@transaction.atomic
+def remove_photo_from_folders(image, *, reason="The photo was rejected by the checks."):
+    """Take a photograph out of every person folder: its memberships become REMOVED, the folders are refreshed and a folder left empty is archived.
+
+    A folder the owner named themselves is only refreshed (it is theirs to delete). Each change is written to the folder's history and to the owner's
+    activity log, and the folder keeps its id, so a link to it still resolves. Returns ``{"memberships": n, "archived": [folder ids]}``.
+    """
+    from activity.services import record_activity_event
+
+    from .models import IdentityChange
+
+    memberships = list(
+        IdentityMembership.objects.select_for_update(of=("self",))
+        .filter(identity_face__image=image).exclude(state__in=[IdentityMembership.State.REMOVED, IdentityMembership.State.REJECTED])
+        .select_related("identity_group")
+    )
+    groups = {}
+    for membership in memberships:
+        group = membership.identity_group
+        before = membership.state
+        if group is not None and group.profile_membership_id == membership.pk:
+            group.profile_membership = None
+            group.save(update_fields=["profile_membership", "updated_at"])
+        membership.state = IdentityMembership.State.REMOVED
+        membership.save(update_fields=["state", "updated_at"])
+        if group is not None:
+            groups[group.pk] = group
+        IdentityChange.objects.create(
+            owner=membership.owner, actor=None, group=group, membership=membership, action=IdentityChange.Action.REMOVED,
+            before={"state": before}, after={"state": membership.state}, reason=reason[:240],
+        )
+    archived = []
+    for group in groups.values():
+        _refresh_group(group)
+        if group.state == IdentityGroup.State.ACTIVE and _folder_is_empty(group) and not folder_is_renamed(group):
+            group.state = IdentityGroup.State.ARCHIVED
+            group.save(update_fields=["state", "updated_at"])
+            archived.append(group.pk)
+            IdentityChange.objects.create(
+                owner=group.owner, actor=None, group=group, action=IdentityChange.Action.ARCHIVED,
+                before={"state": IdentityGroup.State.ACTIVE}, after={"state": group.state}, reason="The folder was left empty.",
+            )
+    if memberships:
+        record_activity_event(
+            image.owner, "group", "photo_removed_from_folders", object_type="ImageUpload", object_id=image.pk,
+            details={"memberships": len(memberships), "archived_folders": archived, "reason": reason},
+        )
+    return {"memberships": len(memberships), "archived": archived}
 
 
 def group_member_photos(group):
@@ -196,6 +303,14 @@ def process_identity_analysis(analysis_id):
             analysis.finished_at = timezone.now()
             analysis.save(update_fields=["status", "failure_reason", "finished_at", "updated_at"])
             return analysis
+        if photo_is_rejected(analysis.image):
+            # The quality check can finish after this analysis was queued. A rejected photo is not grouped, and one that already was is taken out.
+            analysis.status = IdentityAnalysis.Status.CANCELLED
+            analysis.failure_reason = "The photo was rejected by the checks, so it is not grouped into a person folder."
+            analysis.finished_at = timezone.now()
+            analysis.save(update_fields=["status", "failure_reason", "finished_at", "updated_at"])
+            remove_photo_from_folders(analysis.image)
+            return analysis
         analysis.status = IdentityAnalysis.Status.PROCESSING
         analysis.started_at = analysis.started_at or timezone.now()
         analysis.failure_reason = ""
@@ -205,8 +320,13 @@ def process_identity_analysis(analysis_id):
         provider = get_identity_provider()
         provider.healthcheck()
         image = _read_image(analysis.preprocessing_result)
-        prepared = []
-        for index, face in enumerate(analysis.face_validation.faces):
+        prepared, skipped = [], []
+        detected = list(analysis.face_validation.faces)
+        for index, face in enumerate(detected):
+            grouped, why = face_grouping_check(face, len(detected))
+            if not grouped:
+                skipped.append({"face_index": index, **why})           # too small or too unsure to be a person: no folder
+                continue
             if _batch_cancellation_requested(analysis.image.batch_id):
                 IdentityAnalysis.objects.filter(pk=analysis_id).update(
                     status=IdentityAnalysis.Status.CANCELLED,
@@ -227,6 +347,7 @@ def process_identity_analysis(analysis_id):
             locked = IdentityAnalysis.objects.select_for_update().get(pk=analysis.pk)
             if locked.task_id != analysis.task_id:
                 return locked
+            limits = thresholds_for(provider)
             old_group_ids = list(locked.faces.values_list("memberships__identity_group_id", flat=True))
             locked.faces.all().delete()
             assigned = review = 0
@@ -250,7 +371,7 @@ def process_identity_analysis(analysis_id):
                     state = IdentityMembership.State.NEEDS_REVIEW
                     method = "ambiguous_centroid_cosine_v1"
                     review += 1
-                membership = IdentityMembership.objects.create(owner=locked.owner, identity_face=face, identity_group=group, similarity_score=best, matching_distance=(1 - best if best is not None else None), state=state, decision_method=method, evidence={"best_score": best if best is not None else closest_score, "second_best_score": second, "closest_group_id": closest_group_id, "threshold": settings.IDENTITY_MATCH_THRESHOLD, "ambiguity_margin": settings.IDENTITY_AMBIGUITY_MARGIN})
+                membership = IdentityMembership.objects.create(owner=locked.owner, identity_face=face, identity_group=group, similarity_score=best, matching_distance=(1 - best if best is not None else None), state=state, decision_method=method, evidence={"best_score": best if best is not None else closest_score, "second_best_score": second, "closest_group_id": closest_group_id, "threshold": limits["match"], "new_group_threshold": limits["new_group"], "ambiguity_margin": limits["margin"]})
                 if state == IdentityMembership.State.NEEDS_REVIEW:
                     from moderation.services import create_review_for_identity_membership
                     create_review_for_identity_membership(membership)
@@ -259,6 +380,7 @@ def process_identity_analysis(analysis_id):
             for group in IdentityGroup.objects.filter(pk__in=[pk for pk in old_group_ids if pk]):
                 _refresh_group(group)
             locked.face_count = len(prepared)
+            locked.evidence = {"faces_detected": len(detected), "faces_grouped": len(prepared), "skipped_faces": skipped, "limits": limits}
             locked.assigned_count = assigned
             locked.review_count = review
             locked.status = IdentityAnalysis.Status.NEEDS_REVIEW if review else IdentityAnalysis.Status.COMPLETED
@@ -281,6 +403,8 @@ def create_or_reset_identity_analysis(image, force=False):
         raise ValidationError("Preprocessing and face validation must complete first.") from error
     if preprocessing.status != "completed" or validation.decision not in (FaceValidationResult.Decision.ACCEPTED, FaceValidationResult.Decision.NEEDS_REVIEW):
         raise ValidationError("The image is not eligible for identity analysis.")
+    if photo_is_rejected(image):                # refused at upload or rejected by the quality decision: never grouped
+        raise ValidationError("A photo the checks rejected is not grouped into a person folder.")
     analysis, created = IdentityAnalysis.objects.get_or_create(image=image, defaults={"owner": image.owner, "preprocessing_result": preprocessing, "face_validation": validation, "provider": settings.IDENTITY_PROVIDER, "model_checksum": settings.IDENTITY_MODEL_SHA256, "policy_version": settings.IDENTITY_POLICY_VERSION})
     if not created and analysis.status in (IdentityAnalysis.Status.COMPLETED, IdentityAnalysis.Status.NEEDS_REVIEW) and not force:
         return analysis, False

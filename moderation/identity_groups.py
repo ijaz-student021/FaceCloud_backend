@@ -7,12 +7,12 @@ see the folders through the same preview URLs as the rest of the console.
 from itertools import combinations
 
 import numpy as np
-from django.conf import settings
 from django.db.models import Count, Exists, OuterRef, Q
 from django.urls import reverse
 from rest_framework.exceptions import ValidationError
 
 from identities.models import IdentityGroup, IdentityMembership
+from identities.providers import merge_suggestion_minimum
 from identities.storage import reveal_embedding
 from organizations.models import OrganizationAuditEvent
 from organizations.services import record_audit_event
@@ -93,7 +93,7 @@ def suggested_merges(organization, request=None, scope=None):
     Same owner, same identity model, and at least ``MODERATOR_MERGE_SUGGESTION_MIN_SIMILARITY``. ``source`` is the folder to merge away (the one with fewer
     photographs, the newer on a tie) and ``target`` the one to keep. Nothing is stored: a suggestion is recomputed on request.
     """
-    minimum = settings.MODERATOR_MERGE_SUGGESTION_MIN_SIMILARITY
+    minimum = merge_suggestion_minimum()
     by_owner = {}
     for folder in organization_folders(organization, scope):
         by_owner.setdefault(folder.owner_id, []).append(folder)

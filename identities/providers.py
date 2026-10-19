@@ -19,6 +19,8 @@ class IdentityEmbeddingProvider(ABC):
     match_threshold = None
     new_group_threshold = None
     ambiguity_margin = None
+    # The similarity at which two of one person's folders are suggested for merging; ``None`` = this provider's match threshold.
+    merge_suggestion_similarity = None
     embedding_model_label = "sface_embedding_similarity"
 
     def thresholds(self):
@@ -73,6 +75,20 @@ def thresholds_for(provider):
     }
 
 
+def merge_suggestion_minimum(provider=None):
+    """How alike two of one person's folders must be for the Identity Review screen to suggest merging them.
+
+    ``MODERATOR_MERGE_SUGGESTION_MIN_SIMILARITY`` when it is set; otherwise the provider's own figure, so the suggestion is on the same scale as the
+    grouping itself (a 0.75 chosen for one model means nothing for another).
+    """
+    explicit = settings.MODERATOR_MERGE_SUGGESTION_MIN_SIMILARITY
+    if explicit is not None:
+        return float(explicit)
+    provider = provider or get_identity_provider()
+    own = getattr(provider, "merge_suggestion_similarity", None)
+    return float(own if own is not None else thresholds_for(provider)["match"])
+
+
 class DisabledIdentityProvider(IdentityEmbeddingProvider):
     name = "disabled"
     dimension = settings.IDENTITY_EMBEDDING_DIMENSION
@@ -92,6 +108,14 @@ class SFaceOnnxProvider(IdentityEmbeddingProvider):
     def __init__(self):
         self.dimension = settings.IDENTITY_EMBEDDING_DIMENSION
         self.model_checksum = settings.IDENTITY_MODEL_SHA256.lower()
+        # SFace's own limits (measured, see settings.SFACE_*), not the generic ones; a subclass that sets its own keeps them.
+        for attribute, name in (
+            ("guard_min_similarity", "SFACE_GUARD_MIN_SIMILARITY"), ("match_threshold", "SFACE_MATCH_THRESHOLD"),
+            ("new_group_threshold", "SFACE_NEW_GROUP_THRESHOLD"), ("ambiguity_margin", "SFACE_AMBIGUITY_MARGIN"),
+            ("merge_suggestion_similarity", "SFACE_MERGE_SUGGESTION_MIN_SIMILARITY"),
+        ):
+            if getattr(self, attribute) is None:
+                setattr(self, attribute, getattr(settings, name))
         self._recognizer = None
 
     def healthcheck(self):

@@ -36,11 +36,11 @@ class ProviderSelectionTests(SimpleTestCase):
     def test_the_default_remains_disabled_until_a_provider_is_chosen(self):
         self.assertIsInstance(get_identity_provider(), DisabledIdentityProvider)
 
-    def test_sface_keeps_the_settings_based_thresholds_and_arcface_has_its_own(self):
+    def test_sface_and_arcface_each_have_their_own_thresholds(self):
         sface = SFaceOnnxProvider().thresholds()
-        self.assertEqual(sface, {
-            "guard": float(settings.IDENTITY_GUARD_MIN_SIMILARITY), "match": float(settings.IDENTITY_MATCH_THRESHOLD),
-            "new_group": float(settings.IDENTITY_NEW_GROUP_THRESHOLD), "margin": float(settings.IDENTITY_AMBIGUITY_MARGIN),
+        self.assertEqual(sface, {         # SFace's own, measured (settings.SFACE_*); the generic IDENTITY_* ones are only a fallback
+            "guard": float(settings.SFACE_GUARD_MIN_SIMILARITY), "match": float(settings.SFACE_MATCH_THRESHOLD),
+            "new_group": float(settings.SFACE_NEW_GROUP_THRESHOLD), "margin": float(settings.SFACE_AMBIGUITY_MARGIN),
         })
         arcface = ArcFaceOnnxProvider().thresholds()
         self.assertEqual(arcface["guard"], settings.ARCFACE_GUARD_MIN_SIMILARITY)
