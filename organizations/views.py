@@ -1,7 +1,8 @@
 from django.shortcuts import get_object_or_404
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import extend_schema
-from rest_framework import generics, status
+from drf_spectacular.utils import OpenApiParameter, extend_schema
+from rest_framework import generics, permissions, status
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
@@ -16,6 +17,7 @@ from .serializers import (
     OrganizationAuditEventSerializer,
     OrganizationCreateSerializer,
     OrganizationInvitationAcceptSerializer,
+    OrganizationInvitationPreviewSerializer,
     OrganizationInvitationCreateSerializer,
     OrganizationInvitationSerializer,
     OrganizationMembershipSerializer,
@@ -27,6 +29,7 @@ from .services import (
     cancel_invitation,
     create_organization,
     invite_member,
+    preview_invitation,
     remove_member,
     resend_invitation,
     update_member,
@@ -217,6 +220,31 @@ class OrganizationInvitationCancelView(OrganizationScopedMixin, APIView):
         return Response(OrganizationInvitationSerializer(invitation).data)
 
 
+class OrganizationInvitationPreviewView(APIView):
+    """Public: which organization an invitation is from, to which email and role, and when it expires.
+
+    The link in the invitation email is ``{FRONTEND_URL}/invitations/{token}``; the page behind it calls this before asking the person to sign
+    in. An unknown, used, cancelled or expired token all answer the same 404, so nothing is learned from a wrong guess.
+    """
+
+    authentication_classes = []                 # a stale sign-in on the browser must not turn a good token into a 401
+    permission_classes = [permissions.AllowAny]
+    throttle_scope = "invitation"
+
+    @extend_schema(
+        responses={200: OrganizationInvitationPreviewSerializer, 404: OpenApiTypes.OBJECT},
+        summary="Preview an organization invitation",
+        auth=[],
+    )
+    def get(self, request, token):
+        invitation = preview_invitation(token)
+        if invitation is None:
+            return Response({"detail": "This invitation is invalid, used or expired."}, status=status.HTTP_404_NOT_FOUND)
+        response = Response(OrganizationInvitationPreviewSerializer(invitation).data)
+        response["Cache-Control"] = "no-store"
+        return response
+
+
 class OrganizationInvitationAcceptView(APIView):
     @extend_schema(
         request=OrganizationInvitationAcceptSerializer,
@@ -233,8 +261,37 @@ class OrganizationInvitationAcceptView(APIView):
 
 
 class OrganizationAuditListView(OrganizationScopedMixin, generics.ListAPIView):
+    """The organization's audit trail, newest first; ``?action=``, ``?actor=``, ``?q=``, ``?date_from=``, ``?date_to=``, ``?target_type=``, ``?target_id=``."""
+
     require_owner_or_moderator = True
     serializer_class = OrganizationAuditEventSerializer
 
+    @extend_schema(parameters=[
+        OpenApiParameter("action", OpenApiTypes.STR, description="One audit action, for example moderator_review_decided."),
+        OpenApiParameter("actor", OpenApiTypes.INT, description="A user id."),
+        OpenApiParameter("q", OpenApiTypes.STR, description="Text in the actor's name or email, the action (its name or sentence) or the reason; up to 100 characters."),
+        OpenApiParameter("date_from", OpenApiTypes.DATE, description="ISO-8601."),
+        OpenApiParameter("date_to", OpenApiTypes.DATE, description="ISO-8601; a bare date includes that whole day."),
+        OpenApiParameter("target_type", OpenApiTypes.STR, description="For example ModeratorReview, UploadBatch, IdentityGroup."),
+        OpenApiParameter("target_id", OpenApiTypes.INT),
+    ])
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
     def get_queryset(self):
-        return self.organization.audit_events.select_related("actor")
+        from .audit_reading import filter_events
+
+        queryset = self.organization.audit_events.select_related("actor")
+        try:
+            return filter_events(queryset, self.request.query_params)
+        except ValueError as error:
+            raise ValidationError({"detail": [str(error)]}) from error
+
+    def list(self, request, *args, **kwargs):
+        from .audit_reading import labels_for
+
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        events = list(page if page is not None else queryset)
+        serializer = self.get_serializer(events, many=True, context={**self.get_serializer_context(), "labels": labels_for(events)})
+        return self.get_paginated_response(serializer.data) if page is not None else Response(serializer.data)

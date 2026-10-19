@@ -214,3 +214,44 @@ class ReportExpiryTests(ModerationFixtureMixin, TestCase):
         self.report.refresh_from_db()
         self.assertEqual(self.report.status, ModeratorReport.Status.EXPIRED)
         self.assertFalse(self.report.report_file)
+
+
+class ReportHistoryFieldsTests(ModerationFixtureMixin, TestCase):
+    """The Reports history shows who asked for each report and where to download it."""
+
+    def setUp(self):
+        self.owner = self.make_user("history-owner")
+        self.organization = create_organization(name="History Co", owner=self.owner)
+        self.moderator = self.make_user("history-mod")
+        OrganizationMembership.objects.create(organization=self.organization, user=self.moderator,
+                                              role=OrganizationMembership.Role.MODERATOR)
+        self.client = self.authenticated_client(self.moderator)
+        self.url = reverse("moderation:report-list-create", kwargs={"organization_id": self.organization.pk})
+
+    def test_a_ready_report_names_its_requester_and_has_a_download_url(self):
+        created = self.client.post(self.url, {"report_type": "review_summary", "format": "csv"}, format="json")
+        self.assertEqual(created.status_code, 201, created.content)
+        self.assertIsNone(created.json()["download_url"])                     # queued: nothing to download yet
+        process_moderator_report(created.json()["id"])
+        listed = self.client.get(self.url).json()
+        row = listed[0] if isinstance(listed, list) else listed["results"][0]
+        self.assertEqual(row["requested_by_name"], "history-mod")
+        self.assertEqual(row["status"], "ready")
+        self.assertTrue(row["download_url"].endswith(f"/api/organizations/{self.organization.pk}/moderator/reports/{row['id']}/download/"))
+        self.assertEqual(self.client.get(row["download_url"]).status_code, 200)          # the URL really serves the file
+        for old in ("id", "organization", "requested_by", "report_type", "format", "status", "date_from", "date_to", "file_size", "generated_at", "expires_at"):
+            self.assertIn(old, row)
+
+    def test_a_report_that_is_not_ready_has_no_download_url_and_a_deleted_requester_reads_null(self):
+        from .models import ModeratorReport
+
+        report = ModeratorReport.objects.create(organization=self.organization, requested_by=None, report_type="batches", format="json",
+                                                status=ModeratorReport.Status.QUEUED)
+        body = self.client.get(reverse("moderation:report-detail", kwargs={"organization_id": self.organization.pk, "report_id": report.pk})).json()
+        self.assertEqual((body["requested_by_name"], body["download_url"]), (None, None))
+
+    def test_a_list_of_reports_costs_a_fixed_number_of_queries(self):
+        for report_type in ("review_summary", "batches", "rejection_reasons"):
+            self.client.post(self.url, {"report_type": report_type, "format": "json"}, format="json")
+        with self.assertNumQueries(3):                          # user, membership, and the reports with their requester
+            self.client.get(self.url)

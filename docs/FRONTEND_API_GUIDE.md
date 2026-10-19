@@ -144,6 +144,14 @@ POST /api/images/upload/zip/       multipart, field: file
                     processing_status, images: [...], ...}
 ```
 
+**Submitting to an organization.** All three upload requests take an optional `organization_id` (a form field next to the
+file). Without it the upload stays in the person's own workspace, exactly as before. With the id of an organization the
+person is an active member of (see `GET /api/organizations/`: the ones with `is_personal: false`), the upload is filed
+under it, and **that organization's moderators can then see and review it**. Anyone who is not an active member gets a
+400 `{"organization_id": ["You are not an active member of that organization."]}` and nothing is stored; a value that is not
+a number is a 400 too. The upload page should offer "Submit to: My workspace / <team name>" only to people who belong
+to a team, and say that the team's moderators will see the photos. The owner always still sees their own uploads.
+
 Every upload creates a **batch** (a single image is a batch of one). Files that
 fail validation are rejected individually; check `rejected_files` and each
 image's status rather than assuming all succeeded. Accepted formats are JPG/JPEG,
@@ -506,10 +514,25 @@ state and put it in the URL; changing it client-side grants nothing.
   `DELETE .../invitations/{id}/`. "Remove" only removes organization access, not
   the person's account.
 - **Accepting an invitation:** the emailed link is
-  `{FRONTEND_URL}/invitations/{token}`. Build that route; the logged-in user
-  (who must be signed in with the invited email) calls
-  `POST /api/organizations/invitations/accept/ {token}`.
-- Audit trail: `GET .../audit/`. Organization-wide data export (async):
+  `{FRONTEND_URL}/invitations/{token}`. Build that route. **First show who is inviting**, without signing in:
+  `GET /api/organizations/invitations/{token}/` (public; send no Authorization header) answers
+  `{"organization_name": "Preview Co", "email": "guest@example.com", "role": "moderator", "expires_at": "2026-10-21T19:47:53Z"}`
+  (`role` is `member` or `moderator`). An unknown, used, cancelled or expired token all answer the same
+  `404 {"detail": "This invitation is invalid, used or expired."}`: show that sentence and no other hint. The answer
+  is `Cache-Control: no-store` and rate limited (scope `invitation`, 30/hour per address). Then the person signs in
+  (or registers) with **that email**, and the logged-in user calls
+  `POST /api/organizations/invitations/accept/ {token}` (unchanged).
+- **Audit trail (Moderation Logs and Audit screens):** `GET .../audit/` (owner or moderator; a plain array, or paginated with
+  `?page=&page_size=`), newest first. Each event keeps its stored fields (`id`, `actor{id,username,email}`, `action`,
+  `target_type`, `target_id`, `previous_value`, `new_value`, `reason`, `created_at`) and adds `actor_name`, `message` (a sentence
+  without the actor, for example "Approved face.jpg."), `target_label` (the photo, upload or folder name; `null` when none or gone)
+  and `from_status` / `to_status` (the review's status before and after a decision, `null` for other events and for decisions
+  recorded before this was kept). Filters: `?action=` (for example `moderator_review_decided`), `?actor=<user id>`, `?q=` (actor
+  name or email, the reason, the action's name or sentence; up to 100 characters), `?date_from=`, `?date_to=` (a bare date includes
+  that whole day), `?target_type=` and `?target_id=`; a bad value is a 400. The history of one review is
+  `?target_type=ModeratorReview&target_id={review id}`. **There is no "user notified" field**: nobody is notified of a decision,
+  so leave that column out. The older `Audit trail` description follows.
+- Audit trail (stored fields): `GET .../audit/`. Organization-wide data export (async):
   `POST .../export/`, poll `GET .../export/{id}/`, download
   `.../export/{id}/download/`.
 
@@ -588,8 +611,45 @@ so show per-row outcomes rather than one success or error.
 when the review arrived, not from when it was assigned. A review with no
 deadline counts as neither on time nor late, so `on_time_rate` is `null` when
 nothing measurable was decided.
-- Batch actions: `GET .../moderator/batches/?processing_status=`,
-  `POST .../moderator/batches/{id}/retry/` and `/cancel/`.
+- **Batches screen.** `GET .../moderator/batches/?processing_status=` is a plain array, newest activity first. Each row:
+  `id`, `owner_username`, `upload_type` (`single` / `multiple` / `zip`), `name` (the label, else the ZIP's file name, else
+  `Upload <id>`), `processing_status`, `current_stage`, `progress_percentage` (mean of its photos, 0 to 100),
+  `counts` (`accepted`, `rejected`, `needs_review`, `failed`: photos per outcome), `total_files`, `accepted_files`,
+  `processed_files`, `processing_failed_files`, `retry_count`, `created_at`, and the rest as before. Example:
+  `{"id": 2, "owner_username": "mem1", "upload_type": "zip", "name": "staff_portraits.zip", "processing_status": "partial",
+  "progress_percentage": 90.0, "counts": {"accepted": 2, "rejected": 1, "needs_review": 1, "failed": 1}, "total_files": 5, ...}`.
+  `GET .../moderator/batches/{id}/` has the same fields under `batch` and, for each photo in `images[]`, `file_size`
+  (bytes), `outcome` (`accepted`, `rejected`, `needs_review`, `failed`, `cancelled` or `processing`) and `preview_url`
+  (the moderator thumbnail, fetch it with the Authorization header; `null` for a file refused at upload).
+  Actions: `POST .../moderator/batches/{id}/retry/`, `/cancel/` and `/reprocess/`.
+- **Identity Review screen.** Only person folders that hold photographs **submitted to this organization** are listed, and a moderator
+  can only merge two folders of the **same member**. `GET .../moderator/identity-groups/?q=&owner=` (a plain array, or paged) returns
+  `[{"id": 7, "display_name": "Person 001", "owner": {"id": 3, "username": "mem1"}, "member_count": 4, "photos_in_organization": 3,
+  "matching_confidence": 91.5, "cover_images": [{"id": 14, "preview_url": ".../moderator/images/14/preview/"}], "updated_at": "..."}]`
+  (up to three covers; fetch the previews with the Authorization header). `GET .../moderator/identity-groups/suggested-merges/` returns
+  at most 20 pairs, most alike first: `[{"similarity": 99.6, "source": <folder>, "target": <folder>}]` where `source` is the folder to
+  merge away (fewer photos, newer on a tie) and `target` the one to keep; the threshold is `MODERATOR_MERGE_SUGGESTION_MIN_SIMILARITY`
+  (default 0.75). `POST .../moderator/identity-groups/merge/ {source_group_id, target_group_id, reason?}` merges and is audited as
+  `identity_groups_merged_by_moderator`; 400 when a folder is not this organization's or the two belong to different members.
+  Suggestions are recomputed each time: **"Dismiss" is a browser-side choice** (nothing is stored). To move one photo to another folder,
+  decide an identity review item with `select_group` (the existing review decision); there is no free-form move for a moderator.
+- **Rejected Images screen.** `GET .../moderator/images/?decision=rejected` (also `needs_review`, `accepted`; `?q=` photo name or
+  uploader, `?batch=<id>`; a plain array, or `?page=&page_size=`), newest first, only photos submitted to this organization (never a
+  personal workspace). Each row: `id`, `original_name`, `batch_id`, `uploader{id,username}`, `created_at`, `width`, `height`,
+  `file_size`, `decision` (`rejected` includes files refused at upload), `rejection_reasons` (reason codes; for a refused file its
+  one sentence), `overall_score`, `preview_url` (`null` for a refused file) and `review_id` (the newest review of that photo here, for
+  the "Manual Review" button: open `GET .../moderator/reviews/{review_id}/`; `null` when no review exists).
+- **Image Review screen.** `GET .../moderator/reviews/{id}/` is the queue row plus an `image` object: `id`, `name`, `width`, `height`,
+  `file_size`, `uploader{id,username}`, `face_count` (`null` before the face check ran), `quality{decision, overall_score,
+  rejection_reasons, warnings}` and `preview_url` (the review-keyed thumbnail; fetch with the Authorization header). The queue list
+  does not carry `image`. The history of the review is the audit trail filtered with `?target_type=ModeratorReview&target_id={id}`.
+- **Photos only reach a team's moderators if the uploader files them there**: see "Submitting to an organization" in
+  section 3 (`organization_id` on the upload requests).
+- **Reports & Exports screen.** Each report in `GET .../moderator/reports/` (and the create / detail responses) keeps its fields and
+  adds `requested_by_name` (the username; `null` if that account is gone) and `download_url` (an absolute URL to fetch the file with
+  the Authorization header; `null` until `status` is `ready`). The history table's "Generated by" is `requested_by_name`; its date
+  range is `date_from` / `date_to` (`null` means no window); its type reads from `report_type` (`review_summary`,
+  `moderator_activity`, `rejection_reasons`, `quality_scores`, `batches`, `duplicate_decisions`, `general_activity`).
 - Reports: `POST .../moderator/reports/ {report_type, format}` with
   `report_type` one of `review_summary`, `moderator_activity`, `rejection_reasons`,
   `quality_scores`, `batches` or `duplicate_decisions` (and `format` `json`, `csv` or
@@ -760,6 +820,11 @@ hide these routes, but never rely on that for security.
   `camera_snapshots_bytes` is already inside `originals_and_outputs_bytes`.
 * The older `success_rate_percent` is the share of *quality decisions* that were accepted, not the share of enhancements that worked; the weekly
   enhancement success is `enhancement_success_per_week`. `totals.images.accepted` counts photographs not refused at upload.
+
+**Audit search.** `GET /api/system/audit/?q=` keeps only rows whose actor's name (username, or the identifier typed at a failed
+sign-in), event (its stored name, or the sentence the screen shows: "signed in" finds `login`) or category (its name or label, for example
+"accounts") contains the text, case-insensitively, up to 100 characters (longer is a 400). It combines with `?category=`, `?source=`, `?user=`
+and paging, and `has_next` counts matches only. `filters_applied.q` echoes it (`null` without). A search with no match is an empty page.
 
 **Audit rows** keep every old key and add: `actor` (`{id, username, role}`, `null` when the account is gone), `actor_name` (the username, or the
 typed identifier for a failed sign-in by someone unknown), `actor_role`, `type` / `status` (read like the user timeline: `login`, `upload`, ...;

@@ -47,6 +47,40 @@ class ModeratorReviewSerializer(serializers.ModelSerializer):
         return review.is_overdue()
 
 
+
+class ModeratorReviewDetailSerializer(ModeratorReviewSerializer):
+    """The review as the Image Review screen opens it: the queue row plus the photograph's own facts, so the screen needs no second request."""
+
+    image = serializers.SerializerMethodField(help_text=(
+        "The photograph under review: id, name, width, height, file_size, uploader, face_count, quality (decision, overall_score, "
+        "rejection_reasons, warnings) and preview_url (the review-keyed thumbnail)."
+    ))
+
+    class Meta(ModeratorReviewSerializer.Meta):
+        fields = ModeratorReviewSerializer.Meta.fields + ["image"]
+        read_only_fields = fields
+
+    def get_image(self, review) -> dict:
+        from django.urls import reverse
+
+        image = review.image
+        quality = getattr(image, "quality_decision", None)
+        validation = getattr(image, "face_validation", None)
+        request = self.context.get("request")
+        path = reverse("moderation:review-image", kwargs={"organization_id": review.organization_id, "review_id": review.pk})
+        return {
+            "id": image.pk, "name": image.original_name, "width": image.width, "height": image.height, "file_size": image.file_size,
+            "uploader": {"id": image.owner_id, "username": image.owner.username},
+            "face_count": validation.face_count if validation else None,
+            "quality": {
+                "decision": (quality.decision or None) if quality else None,
+                "overall_score": quality.overall_score if quality else None,
+                "rejection_reasons": list(quality.rejection_reasons or []) if quality else [],
+                "warnings": list(getattr(quality, "warnings", None) or []) if quality else [],
+            },
+            "preview_url": request.build_absolute_uri(path) if request is not None else path,
+        }
+
 class ModeratorDecisionSerializer(serializers.Serializer):
     action = serializers.ChoiceField(choices=["approve", "reject", "correct", "keep_in_review"])
     reason = serializers.CharField(required=False, allow_blank=True, max_length=500)
@@ -67,14 +101,29 @@ class ModeratorAssignSerializer(serializers.Serializer):
 
 
 class ModeratorReportSerializer(serializers.ModelSerializer):
+    requested_by_name = serializers.SerializerMethodField(help_text="The username of whoever asked for it; null when that account is gone.")
+    download_url = serializers.SerializerMethodField(help_text="Where to fetch the file (with the Authorization header); null until the report is ready.")
+
     class Meta:
         model = ModeratorReport
         fields = [
-            "id", "organization", "requested_by", "report_type", "format", "status",
-            "date_from", "date_to",
+            "id", "organization", "requested_by", "requested_by_name", "report_type", "format", "status",
+            "date_from", "date_to", "download_url",
             "file_size", "failure_reason", "generated_at", "expires_at", "created_at",
         ]
         read_only_fields = fields
+
+    def get_requested_by_name(self, report) -> str | None:
+        return report.requested_by.username if report.requested_by else None
+
+    def get_download_url(self, report) -> str | None:
+        from django.urls import reverse
+
+        if report.status != ModeratorReport.Status.READY:
+            return None
+        path = reverse("moderation:report-download", kwargs={"organization_id": report.organization_id, "report_id": report.pk})
+        request = self.context.get("request")
+        return request.build_absolute_uri(path) if request is not None else path
 
 
 MAX_REPORT_PERIOD_DAYS = 366
@@ -200,3 +249,91 @@ class ModeratorPerformanceSerializer(serializers.Serializer):
     sla_hours = serializers.IntegerField()
     moderators = ModeratorPerformanceRowSerializer(many=True)
     totals = ModeratorPerformanceTotalsSerializer()
+
+
+class ModeratorImageSerializer(serializers.Serializer):
+    """One photograph submitted to the organization, as the Rejected Images screen draws it."""
+
+    id = serializers.IntegerField()
+    original_name = serializers.CharField()
+    batch_id = serializers.IntegerField()
+    uploader = serializers.SerializerMethodField()
+    created_at = serializers.DateTimeField()
+    width = serializers.IntegerField(allow_null=True)
+    height = serializers.IntegerField(allow_null=True)
+    file_size = serializers.IntegerField()
+    decision = serializers.SerializerMethodField(help_text="rejected (refused at upload or by the quality decision), needs_review, accepted, or null while undecided.")
+    rejection_reasons = serializers.SerializerMethodField(help_text="Reason codes from the quality decision; for a file refused at upload, its one-sentence reason.")
+    overall_score = serializers.SerializerMethodField()
+    preview_url = serializers.SerializerMethodField(help_text="Thumbnail (the moderator image preview); null for a file refused at upload.")
+    review_id = serializers.SerializerMethodField(help_text="The newest review of this photo in this organization, when there is one.")
+
+    def get_uploader(self, image) -> dict:
+        return {"id": image.owner_id, "username": image.owner.username}
+
+    def _quality(self, image):
+        return getattr(image, "quality_decision", None)
+
+    def get_decision(self, image) -> str | None:
+        if image.status == "rejected":
+            return "rejected"
+        quality = self._quality(image)
+        return (quality.decision or None) if quality else None
+
+    def get_rejection_reasons(self, image) -> list:
+        if image.status == "rejected":
+            return [image.rejection_reason] if image.rejection_reason else []
+        quality = self._quality(image)
+        return list(quality.rejection_reasons or []) if quality else []
+
+    def get_overall_score(self, image) -> float | None:
+        quality = self._quality(image)
+        return quality.overall_score if quality else None
+
+    def get_preview_url(self, image) -> str | None:
+        from django.urls import reverse
+
+        if image.status == "rejected":
+            return None
+        path = reverse("moderation:image-preview", kwargs={"organization_id": self.context["organization"].pk, "image_id": image.pk})
+        request = self.context.get("request")
+        return request.build_absolute_uri(path) if request is not None else path
+
+    def get_review_id(self, image) -> int | None:
+        reviews = getattr(image, "org_reviews", None)
+        return reviews[0].pk if reviews else None
+
+
+class ModeratorFolderCoverSerializer(serializers.Serializer):
+    id = serializers.IntegerField(help_text="The photograph's id.")
+    preview_url = serializers.CharField(help_text="Moderator thumbnail; fetch it with the Authorization header.")
+
+
+class ModeratorFolderOwnerSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    username = serializers.CharField()
+
+
+class ModeratorFolderSerializer(serializers.Serializer):
+    """A person folder holding photographs submitted to the organization."""
+
+    id = serializers.IntegerField()
+    display_name = serializers.CharField()
+    owner = ModeratorFolderOwnerSerializer()
+    member_count = serializers.IntegerField(help_text="Photographs in the folder in all.")
+    photos_in_organization = serializers.IntegerField(help_text="Of those, the ones submitted to this organization.")
+    matching_confidence = serializers.FloatField(allow_null=True, help_text="Average member similarity as a percentage; null when none is scored.")
+    cover_images = ModeratorFolderCoverSerializer(many=True)
+    updated_at = serializers.DateTimeField()
+
+
+class ModeratorMergeSuggestionSerializer(serializers.Serializer):
+    similarity = serializers.FloatField(help_text="How alike the two folders' average faces are, as a percentage.")
+    source = ModeratorFolderSerializer(help_text="The folder to merge away.")
+    target = ModeratorFolderSerializer(help_text="The folder to keep.")
+
+
+class ModeratorFolderMergeSerializer(serializers.Serializer):
+    source_group_id = serializers.IntegerField(min_value=1)
+    target_group_id = serializers.IntegerField(min_value=1)
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=500)
