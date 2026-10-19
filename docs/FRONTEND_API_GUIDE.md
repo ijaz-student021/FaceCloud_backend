@@ -166,8 +166,13 @@ POST /api/images/upload/single/    multipart, field: file
 POST /api/images/upload/multiple/  multipart, field: files (repeat the field)
 POST /api/images/upload/zip/       multipart, field: file
    -> 201 a batch: {id, status, total_files, accepted_files, rejected_files,
-                    processing_status, images: [...], ...}
+                    processing_status, processing_mode, images: [...], ...}
 ```
+
+**`processing_mode`** (new, upload answers only): `"background"` when a Celery worker does the work, `"inline"` when the background jobs run inside this very request
+(`CELERY_TASK_ALWAYS_EAGER` is on, normally a development server without a worker). In `inline` mode the answer already holds the finished batch and **there is no
+progress to show**: do not draw a progress bar or poll, show the result, and (in development) a one-line hint "background jobs run inside the request: start the
+worker to see progress". `GET /api/system/health/` tells an administrator the same (section 10).
 
 **Submitting to an organization.** All three upload requests take an optional `organization_id` (a form field next to the
 file). Without it the upload stays in the person's own workspace, exactly as before. With the id of an organization the
@@ -194,6 +199,13 @@ GET /api/images/batches/{batch_id}/progress/
                  progress_percentage, failure_stage, failure_reason, ...}]}
 ```
 
+- **Person folders come after the quality verdict.** A photograph is filed into a person folder only once its quality check has decided: an `accepted` photo
+  at once, a `rejected` one never, and one that `needs_review` only after a moderator approves it (at once when it is in a personal workspace, where no
+  moderator can decide). So a photograph that is going to be rejected never appears in a folder, not even for a moment. Each image in the progress carries
+  `identity_grouping: {status, waiting_for}`: `status` is `queued`, `processing`, `completed`, `needs_review`, `failed`, `cancelled`, `skipped` (rejected: it is
+  never grouped) or `not_applicable` (grouping is off for this photo); a photo that is still waiting is `queued` and `waiting_for` says what for,
+  `quality_verdict` or `moderator_approval` (otherwise it is empty). Draw the grouping step as "waiting" for those, never as done. The batch also has
+  `identity_grouping_finished` (every photo that will be grouped has been) and `suggested_merge_count` (see section 5; `0` until the batch is fully grouped).
 - Poll every 2 to 3 seconds while the batch is active and stop when
   `status` is terminal: `completed`, `partial`, `failed` or `cancelled`.
 - `stage` moves through: `uploaded, queued, preprocessing, face_validation,
@@ -371,6 +383,20 @@ error for it.
   existing folder was, always below the new-folder threshold; `null` when it was the owner's first folder) and
   `evidence.closest_group_id` on its membership. Its `similarity_score` stays `null`: the face is not compared with
   the folder it starts. For matched and review faces `best_score` is the score against the suggested folder, as before.
+- **Folders that may be the same person.** Photographs are grouped one after the other, so the first ones of a batch can open separate folders before later
+  ones show they match. `GET /api/identities/groups/suggested-merges/` (the signed-in owner's own folders only, never anyone else's) answers a plain array
+  `[{source_group, target_group, similarity, source: {id, display_name, member_count}, target: {...}}]`, most alike first (up to 50): `similarity` is 0 to 1
+  (cosine of the folders' average faces; a pair is listed from the configured limit, `0.40` for the SFace model), `source_group` is the folder to merge away (the
+  one with fewer photos) and `target_group` the one to keep. Show it as "Person 003 and Person 001 may be the same person - Merge?" and merge with
+  `POST /api/identities/groups/{target_group}/merge/ {"source_group_id": source_group}`. **Nothing is merged for the person.** The list is worked out when asked
+  (nothing is stored), so after a merge the pair is gone. When a batch has been fully grouped and some of its folders may match, the owner also gets one
+  notification, `event_type` `identity_merge_suggested` ("N of your person folders may be the same person", `action_path` `/dashboard/groups`, once per batch,
+  only when N > 0); it follows the `person_group_created` switch (default on). `suggested_merge_count` in the batch progress is how many pairs involve a folder
+  that batch put photographs in.
+- **A photo the checks reject leaves no trace.** If a photo is rejected after it was grouped (a manual analysis, or a moderator rejecting it), it leaves its
+  folders, a folder only that photo made and that is now empty is archived (`state: "archived"`, the id still resolves; a folder the owner named is kept), and any
+  moderator review of its identity that was still open is closed as `rejected` with the reason "Photo was rejected" and no deciding moderator (`decided_by` is
+  `null`, which is how a closing by the system differs from a decision).
 - Manage folders: `PATCH .../groups/{id}/rename/ {display_name}`,
   `POST .../groups/{id}/merge/ {source_group_id, reason}` (merges the source
   into this folder), `PATCH .../groups/{id}/profile/`,
@@ -864,6 +890,11 @@ Moderators and owners of an organization also receive `event_type`
 `moderator_review_updates` preference, and never goes to the person who uploaded
 the batch (they get their own `batch_completed`).
 
+When a batch has been fully grouped and some of its person folders may be the same person the owner receives `identity_merge_suggested` (severity `info`,
+title "Some of your person folders may be the same person", `message` "N of your person folders may be the same person. Check them and merge the ones that are.",
+`resource_type` `batch`, `resource_id` the batch, `action_path` `/dashboard/groups`, `metadata.batch_id`, `metadata.folder_count`, `metadata.suggested_merge_count`).
+It is in-app only, sent once per batch and only when N is more than 0, and it follows the `person_group_created` preference.
+
 **Preferences** (`GET/PATCH /api/notifications/preferences/`) are seven switches, all booleans, a PATCH may send any of them: `photo_accepted`,
 `photo_rejected`, `batch_upload_finished`, `person_group_created`, `email_notifications` (off by default), `live_session_alerts` (off by default) and
 `moderator_review_updates` (on by default; **new in this response**: show it on the settings screen of owners and moderators only). With
@@ -1008,6 +1039,12 @@ hide these routes, but never rely on that for security.
   `camera_snapshots_bytes` is already inside `originals_and_outputs_bytes`.
 * The older `success_rate_percent` is the share of *quality decisions* that were accepted, not the share of enhancements that worked; the weekly
   enhancement success is `enhancement_success_per_week`. `totals.images.accepted` counts photographs not refused at upload.
+
+**Background jobs running inside the request.** `GET /api/system/health/` has a top-level `background_jobs_inline` (boolean, always present) and, when it is
+`true`, `checks.celery.eager: true` and the celery row of `services` has `detail: "eager"` (instead of `no_workers`): `CELERY_TASK_ALWAYS_EAGER` is on, so
+uploads are processed inside the HTTP request and the progress screens have nothing to show. Show it as a notice ("Background jobs run inside the request: start a
+Celery worker and set CELERY_TASK_ALWAYS_EAGER=False"), not as an outage. The server also logs a warning when it starts and reports the system check
+`operations.W001`; production refuses to start with it on.
 
 **Failed batches and jobs** (Failed Jobs / System Monitoring screens). Every key that was there is unchanged; these are added.
 

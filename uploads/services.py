@@ -260,15 +260,13 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
         ):
             from duplicates.services import enqueue_duplicate_analysis
             enqueue_duplicate_analysis(image_upload)
-        if settings.IDENTITY_AUTO_ANALYZE and not hasattr(image_upload, "identity_analysis"):
-            from identities.services import enqueue_identity_analysis
-            try:
-                enqueue_identity_analysis(image_upload)
-            except ValidationError:
-                pass
         if not hasattr(image_upload, "quality_decision"):
             from quality_control.services import enqueue_quality_analysis
             enqueue_quality_analysis(image_upload)
+        elif not hasattr(image_upload, "identity_analysis"):
+            # Person folders follow the quality verdict (identities/verdict.py); one that is already decided and was never grouped is grouped now.
+            from identities.verdict import group_after_verdict
+            group_after_verdict(image_upload)
         return existing, False
 
     started = time.perf_counter()
@@ -333,18 +331,8 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
         if settings.DUPLICATE_AUTO_ANALYZE:
             from duplicates.services import enqueue_duplicate_analysis
             enqueue_duplicate_analysis(image_upload, force=force)
-        if settings.IDENTITY_AUTO_ANALYZE:
-            from identities.services import enqueue_identity_analysis
-            try:
-                enqueue_identity_analysis(image_upload, force=force)
-            except ValidationError:
-                # Not being eligible yet (e.g. face validation rejected the
-                # image) is an expected outcome for this best-effort auto
-                # trigger, not a preprocessing failure. Letting it propagate
-                # would roll back this whole @transaction.atomic function,
-                # discarding the preprocessing result and face-validation
-                # result that had already succeeded.
-                pass
+        # No identity analysis here: a photograph is filed into a person folder only once its quality verdict allows it, and that is queued from where
+        # the verdict is saved (quality_control.services.process_quality_decision, identities/verdict.py).
         from quality_control.services import enqueue_quality_analysis
         enqueue_quality_analysis(image_upload)
         if old_file_name and old_file_name != result.processed_file.name:

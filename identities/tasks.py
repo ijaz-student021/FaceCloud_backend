@@ -35,7 +35,18 @@ def analyze_image_identity_task(self, analysis_id):
     if analysis.task_id and self.request.id and analysis.task_id != self.request.id:
         return {"analysis_id": analysis_id, "status": "superseded"}
     analysis = process_identity_analysis(analysis_id)
+    _announce_suggested_merges(analysis.image.batch_id)
     return {"analysis_id": analysis_id, "status": analysis.status, "face_count": analysis.face_count, "assigned_count": analysis.assigned_count, "review_count": analysis.review_count}
+
+
+def _announce_suggested_merges(batch_id):
+    """When this was the batch's last photograph to be grouped, tell the owner which of their folders may be one person. Never fails the analysis."""
+    from .suggestions import announce_suggested_merges
+
+    try:
+        announce_suggested_merges(batch_id)
+    except Exception:
+        logger.exception("Could not work out the suggested folder merges of batch_id=%s.", batch_id)
 
 
 def process_identity_group_export(export_id, task_id=""):

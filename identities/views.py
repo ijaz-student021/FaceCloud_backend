@@ -34,9 +34,10 @@ from .serializers import (IdentityAnalysisSerializer, IdentityExportShareRequest
                           IdentityMoveSerializer, IdentityProfileSerializer,
                           IdentityReasonSerializer, IdentityRenameSerializer,
                           IdentityReviewRequestSerializer,
-                          IdentitySearchResponseSerializer)
+                          IdentitySearchResponseSerializer, SuggestedMergeSerializer)
 from .services import (enqueue_identity_analysis, group_member_photos,
                        review_membership, search_by_face)
+from .suggestions import suggested_merges
 
 
 class IdentityExportNotReady(APIException):
@@ -198,6 +199,16 @@ class IdentityGroupRenameView(APIView):
         payload = IdentityRenameSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         return Response(IdentityGroupSerializer(rename_group(group, request.user, payload.validated_data["display_name"])).data)
+
+
+class IdentitySuggestedMergesView(APIView):
+    """The owner's own person folders that look like one person (nothing is merged for them)."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(responses={200: SuggestedMergeSerializer(many=True)}, summary="Person folders that may be the same person")
+    def get(self, request):
+        return Response(suggested_merges(request.user))
 
 
 class IdentityGroupMergeView(APIView):

@@ -152,7 +152,7 @@ def _progress_records(batch):
 
     return (
         batch.image_progress.select_related(
-            "image", "image__preprocessing_result", "image__face_validation", "image__quality_decision",
+            "image", "image__preprocessing_result", "image__face_validation", "image__quality_decision", "image__identity_analysis",
         )
         .prefetch_related(Prefetch(
             "image__enhancement_results",
@@ -171,6 +171,11 @@ def batch_progress_payload(batch):
     records = list(_progress_records(batch))
     durations = [(item.finished_at - item.started_at).total_seconds() for item in records if item.started_at and item.finished_at]
     remaining = summary["counts"]["queued"] + summary["counts"]["processing"]
+    from identities.suggestions import suggested_pairs_of_batch
+    from identities.verdict import batch_grouping_finished, grouping_status
+
+    personal = batch.organization is None or batch.organization.is_personal
+    grouping_finished = batch_grouping_finished(batch)
     eta = timezone.now() + timedelta(seconds=(sum(durations) / len(durations)) * remaining) if durations and remaining else None
     return {
         "batch_id": batch.pk, "upload_type": batch.upload_type,
@@ -178,6 +183,11 @@ def batch_progress_payload(batch):
         "progress_percentage": summary["percentage"], "cancellation_requested": batch.cancellation_requested,
         "retry_count": batch.retry_count, "counts": summary["counts"],
         "estimated_completion_at": eta,
+        # Person folders are made after each photograph's quality verdict, so a photograph can still be waiting for them when its checks are done.
+        "identity_grouping_finished": grouping_finished,
+        # Pairs of folders that this batch put photographs in and that look like one person (0 until the batch has been fully grouped); the list is
+        # GET /api/identities/groups/suggested-merges/.
+        "suggested_merge_count": len(suggested_pairs_of_batch(batch)) if grouping_finished else 0,
         "images": [{
             "image_id": item.image_id, "filename": item.image.original_name,
             "stage": item.stage, "status": item.status,
@@ -185,6 +195,7 @@ def batch_progress_payload(batch):
             "progress_percentage": item.progress_percentage,
             "failure_stage": item.failure_stage, "failure_reason": item.failure_reason,
             "retry_count": item.retry_count, "updated_at": item.updated_at,
+            "identity_grouping": grouping_status(item.image, personal=personal),
         } for item in records],
         "updated_at": batch.progress_updated_at,
     }

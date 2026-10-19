@@ -174,6 +174,7 @@ CATALOGUE = {
     "identities_groups_rename_partial_update": ("Rename an identity group", ""),
     "identities_groups_profile_partial_update": ("Update an identity group's profile", ""),
     "identities_groups_merge_create": ("Merge identity groups", "Merges another group into this one."),
+    "identities_groups_suggested_merges_list": ("Person folders that may be the same person", "The signed-in owner's own folders whose average faces are alike, most alike first (at most 50): source_group is the folder to merge away (fewer photos), target_group the one to keep, similarity is 0 to 1. Nothing is merged and nothing is stored; merge with POST /api/identities/groups/{target_group}/merge/."),
     "identities_groups_delete_destroy": ("Delete an identity group", ""),
     "identities_groups_exports_list": ("List a group's exports", ""),
     "identities_groups_exports_create": ("Export a group's photographs", "Builds a downloadable export (queued)."),

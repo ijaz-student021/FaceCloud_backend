@@ -152,7 +152,8 @@ def remove_photo_from_folders(image, *, reason="The photo was rejected by the ch
     """Take a photograph out of every person folder: its memberships become REMOVED, the folders are refreshed and a folder left empty is archived.
 
     A folder the owner named themselves is only refreshed (it is theirs to delete). Each change is written to the folder's history and to the owner's
-    activity log, and the folder keeps its id, so a link to it still resolves. Returns ``{"memberships": n, "archived": [folder ids]}``.
+    activity log, and the folder keeps its id, so a link to it still resolves. A moderator review of the photograph's identity that is still open is closed
+    (``moderation.services.close_open_identity_reviews``). Returns ``{"memberships": n, "archived": [folder ids], "closed_reviews": n}``.
     """
     from activity.services import record_activity_event
 
@@ -189,12 +190,15 @@ def remove_photo_from_folders(image, *, reason="The photo was rejected by the ch
                 owner=group.owner, actor=None, group=group, action=IdentityChange.Action.ARCHIVED,
                 before={"state": IdentityGroup.State.ACTIVE}, after={"state": group.state}, reason="The folder was left empty.",
             )
-    if memberships:
+    from moderation.services import close_open_identity_reviews
+
+    closed = close_open_identity_reviews(image)          # a review of a membership that no longer exists has nothing left to decide
+    if memberships or closed:
         record_activity_event(
             image.owner, "group", "photo_removed_from_folders", object_type="ImageUpload", object_id=image.pk,
-            details={"memberships": len(memberships), "archived_folders": archived, "reason": reason},
+            details={"memberships": len(memberships), "archived_folders": archived, "closed_reviews": closed, "reason": reason},
         )
-    return {"memberships": len(memberships), "archived": archived}
+    return {"memberships": len(memberships), "archived": archived, "closed_reviews": closed}
 
 
 def group_member_photos(group):

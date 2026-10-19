@@ -1222,6 +1222,7 @@ SPECTACULAR_SETTINGS = {
         "UserRoleEnum": "accounts.models.User.ROLE_CHOICES",
         "ProcessingReportFormatEnum": "reports.models.ProcessingReport.Format",
         "ImageUploadStatusEnum": "uploads.models.ImageUpload.STATUS_CHOICES",
+        "UploadBatchStatusEnum": "uploads.models.UploadBatch.STATUS_CHOICES",
         "OrganizationStatusEnum": "organizations.models.Organization.Status",
         "OrganizationPlanEnum": "organizations.models.Organization.Plan",
         "OrganizationMembershipRoleEnum": "organizations.models.OrganizationMembership.Role",

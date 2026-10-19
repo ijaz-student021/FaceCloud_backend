@@ -197,3 +197,21 @@ class UploadBatchSerializer(serializers.ModelSerializer):
 
     def validate_display_name(self, value):
         return " ".join(value.split()).strip()
+
+
+class UploadBatchCreatedSerializer(UploadBatchSerializer):
+    """The answer to an upload: the batch, and whether its jobs run inside this request."""
+
+    processing_mode = serializers.SerializerMethodField(
+        help_text="'inline': background jobs run inside this request (CELERY_TASK_ALWAYS_EAGER is on, normally development), so the batch is already processed "
+                  "and there is no progress to show. 'background': a Celery worker does the work and the progress endpoints move.",
+    )
+
+    class Meta(UploadBatchSerializer.Meta):
+        fields = UploadBatchSerializer.Meta.fields + ["processing_mode"]
+        read_only_fields = UploadBatchSerializer.Meta.read_only_fields + ["processing_mode"]
+
+    def get_processing_mode(self, batch) -> str:
+        from operations.inline import processing_mode
+
+        return processing_mode()

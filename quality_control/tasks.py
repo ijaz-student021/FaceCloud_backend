@@ -1,8 +1,12 @@
+import logging
+
 from celery import shared_task
 from django.db.utils import InterfaceError, OperationalError
 
 from .models import ImageQualityDecision
 from .services import process_quality_decision
+
+logger = logging.getLogger(__name__)
 
 # Transient infrastructure failures only (dropped DB connections). Business
 # and validation errors are handled per-image and must never retry.
@@ -38,4 +42,19 @@ def analyze_image_quality_task(self, decision_id):
         object_type="ImageUpload", object_id=result.image_id,
     )
     sync_image_progress(result.image_id)
+    _announce_suggested_merges(result)
     return {"decision_id": decision_id, "status": result.status, "decision": result.decision}
+
+
+def _announce_suggested_merges(result):
+    """A photograph whose verdict means it is not grouped can be the last thing its batch was waiting for: then the owner is told about folders that may match."""
+    from django.conf import settings
+
+    if not settings.IDENTITY_AUTO_ANALYZE:
+        return
+    try:
+        from identities.suggestions import announce_suggested_merges
+
+        announce_suggested_merges(result.image.batch_id)
+    except Exception:
+        logger.exception("Could not work out the suggested folder merges of image_id=%s.", result.image_id)

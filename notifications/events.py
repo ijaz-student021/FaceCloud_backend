@@ -225,6 +225,29 @@ def notify_member_of_review_decision(review, actor):
     return notification
 
 
+def notify_folders_may_match(batch, pairs):
+    """Tell the owner of ``batch`` that some of their person folders may be the same person (once per batch; ``pairs`` as ``identities.suggestions`` returns them).
+
+    In-app only, switched by the ``person_group_created`` preference. Nothing is merged: the message sends them to their person folders.
+    """
+    folders = {folder for pair in pairs for folder in (pair["source_group"], pair["target_group"])}
+    if not folders:
+        return None
+    notification, _ = create_user_notification(
+        recipient=batch.owner,
+        event_type=UserNotification.EventType.IDENTITY_MERGE_SUGGESTED,
+        idempotency_key=f"batch:{batch.pk}:folders-may-match",
+        title="Some of your person folders may be the same person",
+        message=f"{len(folders)} of your person folders may be the same person. Check them and merge the ones that are.",
+        severity=UserNotification.Severity.INFO,
+        resource_type="batch",
+        resource_id=batch.pk,
+        action_path="/dashboard/groups",
+        metadata={"batch_id": batch.pk, "folder_count": len(folders), "suggested_merge_count": len(pairs)},
+    )
+    return notification
+
+
 def notify_moderator_review_overdue(review):
     """Tell whoever can act on a review that it has passed its deadline.
 

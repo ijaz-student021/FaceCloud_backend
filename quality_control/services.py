@@ -176,6 +176,10 @@ def process_quality_decision(decision_id):
         if decision == "needs_review":
             from moderation.services import create_review_for_quality_decision
             create_review_for_quality_decision(result)
+        # Person folders follow the verdict: queued here, in the same transaction as the decision, so the photograph's progress never shows it finished in
+        # between (accepted: now; rejected: never; needs_review: now in a personal workspace, else after a moderator approves it). Never raises.
+        from identities.verdict import group_after_verdict
+        group_after_verdict(result.image, verdict=decision)
         return result
     except Exception as error:
         result.status = ImageQualityDecision.Status.FAILED

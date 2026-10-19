@@ -114,6 +114,22 @@ class IdentityMergeSerializer(serializers.Serializer):
     reason = serializers.CharField(max_length=240, required=False, allow_blank=True, default="")
 
 
+class SuggestedMergeFolderSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    display_name = serializers.CharField()
+    member_count = serializers.IntegerField()
+
+
+class SuggestedMergeSerializer(serializers.Serializer):
+    """Two of the owner's own folders that look like one person. Merge with ``POST /api/identities/groups/{target_group}/merge/`` and ``{"source_group_id": source_group}``."""
+
+    source_group = serializers.IntegerField(help_text="The folder to merge away: the one with fewer photographs (the newer on a tie).")
+    target_group = serializers.IntegerField(help_text="The folder to keep.")
+    similarity = serializers.FloatField(help_text="How alike their average faces are, 0 to 1 (cosine similarity).")
+    source = SuggestedMergeFolderSerializer()
+    target = SuggestedMergeFolderSerializer()
+
+
 class IdentityMoveSerializer(serializers.Serializer):
     target_group_id = serializers.IntegerField(min_value=1)
     reason = serializers.CharField(max_length=240, required=False, allow_blank=True, default="")

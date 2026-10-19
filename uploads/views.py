@@ -23,6 +23,7 @@ from .serializers import (
     ImageUploadSerializer,
     MyImageSerializer,
     PreprocessImageRequestSerializer,
+    UploadBatchCreatedSerializer,
     UploadBatchSerializer,
 )
 from .services import (
@@ -59,7 +60,7 @@ def _images_with_status():
 def _batch_response(request, batch):
     """The upload response: the batch with each photo's status, loaded in a fixed number of queries."""
     batch = UploadBatch.objects.prefetch_related(_images_with_status()).get(pk=batch.pk)
-    return Response(UploadBatchSerializer(batch, context={"request": request}).data, status=status.HTTP_201_CREATED)
+    return Response(UploadBatchCreatedSerializer(batch, context={"request": request}).data, status=status.HTTP_201_CREATED)
 
 
 class SingleImageUploadView(APIView):
@@ -71,7 +72,7 @@ class SingleImageUploadView(APIView):
         request={"multipart/form-data": {"type": "object", "properties": {
             "file": {"type": "string", "format": "binary"}, "organization_id": ORGANIZATION_FIELD,
         }}},
-        responses={201: UploadBatchSerializer},
+        responses={201: UploadBatchCreatedSerializer},
     )
     def post(self, request):
         files = _all_request_files(request)
@@ -90,7 +91,7 @@ class MultipleImageUploadView(APIView):
         request={"multipart/form-data": {"type": "object", "properties": {
             "files": {"type": "array", "items": {"type": "string", "format": "binary"}}, "organization_id": ORGANIZATION_FIELD,
         }}},
-        responses={201: UploadBatchSerializer},
+        responses={201: UploadBatchCreatedSerializer},
     )
     def post(self, request):
         files = request.FILES.getlist("files")
@@ -112,7 +113,7 @@ class ZipImageUploadView(APIView):
         request={"multipart/form-data": {"type": "object", "properties": {
             "file": {"type": "string", "format": "binary"}, "organization_id": ORGANIZATION_FIELD,
         }}},
-        responses={201: UploadBatchSerializer},
+        responses={201: UploadBatchCreatedSerializer},
     )
     def post(self, request):
         files = _all_request_files(request)

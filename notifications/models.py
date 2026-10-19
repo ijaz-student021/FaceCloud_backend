@@ -44,6 +44,7 @@ class UserNotification(models.Model):
         MODERATOR_REVIEW_OVERDUE = "moderator_review_overdue", "Moderator review overdue"
         PHOTO_REVIEW_APPROVED = "photo_review_approved", "Photo approved by a moderator"
         PHOTO_REVIEW_REJECTED = "photo_review_rejected", "Photo not accepted by a moderator"
+        IDENTITY_MERGE_SUGGESTED = "identity_merge_suggested", "Person folders may be the same person"
 
     class Severity(models.TextChoices):
         INFO = "info", "Information"

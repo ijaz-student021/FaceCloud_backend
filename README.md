@@ -82,6 +82,12 @@ Original uploads are never overwritten. Standardized, enhanced, edited,
 comparison, report, and package artifacts are stored separately with
 owner-scoped access.
 
+**Person folders come after the quality verdict.** After preprocessing a photograph goes through the face check, the duplicate check and the quality check, in
+that order, and only then is it filed into a person folder: an accepted photograph at once, a rejected one never, and one that needs review only after a
+moderator approves it (at once in a personal workspace, where no moderator can decide). So a photograph that is going to be rejected never opens a folder,
+moves a folder's average face or changes its cover and count. When a batch has been fully grouped the owner is told which of their folders may be the same
+person (`GET /api/identities/groups/suggested-merges/`); nothing is merged for them.
+
 ## Layout
 
 ```
@@ -203,6 +209,13 @@ celery -A config beat -l info                    # exactly one; it runs the stuc
 ```
 
 Run both from the clone whose `.env` you use, so they read the same database ([docs/deployment/one-database.md](docs/deployment/one-database.md)).
+
+**If uploads finish inside the request.** With `DJANGO_DEBUG=True` and `CELERY_TASK_ALWAYS_EAGER` not set, Celery runs every task in the process that queued it:
+an upload is processed inside the HTTP request, which returns a batch that is already finished, and the screens never see any progress. The server says so when it
+starts (a `WARNING` in the log: "Background jobs run inside the request ... start a Celery worker and set `CELERY_TASK_ALWAYS_EAGER=False` to see progress", and
+the system check `operations.W001`), `GET /api/system/health/` reports `background_jobs_inline: true` and the celery service's detail `eager`, and every upload
+answer carries `"processing_mode": "inline"` (`"background"` when a worker does the work). To see progress: start the worker (above) and put
+`CELERY_TASK_ALWAYS_EAGER=False` in `.env`. Production refuses to start with it on.
 
 What runs, and how stuck jobs are recovered, is described in
 [docs/features/20-background-job-operations.md](docs/features/20-background-job-operations.md).

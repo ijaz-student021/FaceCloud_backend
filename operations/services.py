@@ -67,6 +67,15 @@ def check_redis():
 
 
 def check_celery():
+    from .inline import background_jobs_inline
+
+    result = _inspect_workers()
+    if background_jobs_inline():
+        result["eager"] = True        # tasks run inside the request that queued them: workers are not what is doing the work
+    return result
+
+
+def _inspect_workers():
     started = time.perf_counter()
     try:
         replies = celery_app.control.inspect(
@@ -245,7 +254,7 @@ def _services(checks, jobs, checked_at):
         row = {
             "key": key, "name": SERVICE_NAMES.get(key, key), "status": SERVICE_STATES.get(result["status"], result["status"]),
             "latency_ms": result.get("latency_ms"), "checked_at": checked_at,
-            "detail": result.get("code") or result.get("reason") or "",
+            "detail": ("eager" if result.get("eager") else "") or result.get("code") or result.get("reason") or "",
         }
         if key == "celery":
             row["queue_size"] = waiting
@@ -283,9 +292,12 @@ def build_system_health():
         if overall == HEALTHY:
             overall = DEGRADED
 
+    from .inline import background_jobs_inline
+
     checked_at = timezone.now().isoformat()
     return {
         "status": overall,
+        "background_jobs_inline": background_jobs_inline(),
         "version": settings.FACECLOUD_VERSION,
         "checked_at": checked_at,
         "response_time_ms": _elapsed_ms(started),
