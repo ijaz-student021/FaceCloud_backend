@@ -15,7 +15,7 @@ from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from . import lockout
-from .services import (dashboard_for_user, derive_username,
+from .services import (ModeratorWithoutOrganization, dashboard_for_user, derive_username, has_moderator_organization,
                        issue_login_tokens, record_auth_event,
                        resolve_moderator_organization, split_full_name)
 from .sessions import record_rotation, token_session_is_active
@@ -149,6 +149,9 @@ class FaceCloudTokenObtainPairSerializer(serializers.Serializer):
         if user and user.is_suspended:
             record_auth_event("login_failed", request, user, identifier, {"reason": "account_suspended"})
             raise serializers.ValidationError({"detail": "This account is suspended."})
+        if user.role == "moderator" and not has_moderator_organization(user):
+            record_auth_event("login_failed", request, user, identifier, {"reason": "no_organization"})
+            raise ModeratorWithoutOrganization()
         record_auth_event("login", request, user, identifier)
         if api_settings.UPDATE_LAST_LOGIN:
             # SimpleJWT does this in its own serializer, which this one replaces; without it `last_login` stayed null for everyone.
@@ -166,6 +169,8 @@ class FaceCloudTokenRefreshSerializer(TokenRefreshSerializer):
             raise serializers.ValidationError({"detail": "Email verification is required."})
         if user.is_suspended:
             raise serializers.ValidationError({"detail": "This account is suspended."})
+        if user.role == "moderator" and not has_moderator_organization(user):
+            raise ModeratorWithoutOrganization()
         if token.get("token_version", 0) != user.token_version:
             raise serializers.ValidationError({"detail": "This token has been revoked."})
         if not token_session_is_active(token, user):
@@ -340,6 +345,19 @@ class AdminUserSerializer(serializers.ModelSerializer):
         if attrs.get("is_suspended") is False:
             attrs["suspension_reason"] = ""
         return attrs
+
+
+class AdminUserUpdateSerializer(AdminUserSerializer):
+    """PATCH /api/user/admin/users/{id}/: the account's fields plus, when making someone a moderator, the organization they will work for."""
+
+    organization_id = serializers.IntegerField(
+        write_only=True, required=False, allow_null=True,
+        help_text="With role=moderator: the organization the moderator will work for (needed when there is more than one, and when the account "
+                  "has no moderator membership yet). Ignored otherwise.",
+    )
+
+    class Meta(AdminUserSerializer.Meta):
+        fields = AdminUserSerializer.Meta.fields + ["organization_id"]
 
 
 class AdminUserDetailSerializer(AdminUserSerializer):

@@ -52,6 +52,9 @@ class AdminCreateUserTests(AdminCreateBase):
         self.assertEqual(self.client.post(reverse(URL_NAME), payload, format="json").status_code, status.HTTP_401_UNAUTHORIZED)
         for role in ("user", "moderator"):
             person = User.objects.create_user(f"p_{role}", f"p_{role}@example.com", PASSWORD, is_email_verified=True, role=role)
+            if role == "moderator":
+                OrganizationMembership.objects.create(organization=self.organization(f"Home of {role}"), user=person,
+                                                      role=OrganizationMembership.Role.MODERATOR, status=OrganizationMembership.Status.ACTIVE)
             self.as_user(person)
             self.assertEqual(self.client.post(reverse(URL_NAME), payload, format="json").status_code, status.HTTP_403_FORBIDDEN)
         self.assertFalse(User.objects.filter(username="x").exists())

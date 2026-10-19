@@ -8,6 +8,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from organizations.models import Organization
+from organizations.services import create_organization
 
 from .models import AccountInvitation, AuthEvent, User
 
@@ -21,6 +22,7 @@ class AccountInvitationTests(TestCase):
         cache.clear()
         self.admin = self.make_user("inv-admin", role="admin")
         self.superuser = self.make_user("inv-root", role="admin", is_superuser=True)
+        self.organization = create_organization(name="Invite Co", owner=self.make_user("inv-owner"))
 
     def make_user(self, name, **extra):
         return User.objects.create_user(username=name, email=f"{name}@example.com", password=PASSWORD,
@@ -31,10 +33,12 @@ class AccountInvitationTests(TestCase):
         client.force_authenticate(user)
         return client
 
-    def invite(self, actor, email="new.person@example.org", role="moderator"):
+    def invite(self, actor, email="new.person@example.org", role="moderator", **extra):
+        body = {"email": email, "role": role, **extra}
+        if role == "moderator" and "organization_id" not in body:
+            body["organization_id"] = self.organization.pk                   # a moderator invitation names its organization
         with self.captureOnCommitCallbacks(execute=True):
-            return self.client_for(actor).post("/api/user/admin/invitations/", {"email": email, "role": role},
-                                               format="json")
+            return self.client_for(actor).post("/api/user/admin/invitations/", body, format="json")
 
     def token_from_mail(self):
         return re.search(r"token=([\w-]+)", mail.outbox[-1].body).group(1)
@@ -86,7 +90,8 @@ class AccountInvitationTests(TestCase):
         target = self.make_user("target")
         patch = self.client_for(self.admin).patch(f"/api/user/admin/users/{target.pk}/", {"role": "admin"}, format="json")
         self.assertEqual(patch.status_code, 403)
-        self.assertEqual(self.client_for(self.admin).patch(f"/api/user/admin/users/{target.pk}/", {"role": "moderator"},
+        self.assertEqual(self.client_for(self.admin).patch(f"/api/user/admin/users/{target.pk}/",
+                                                           {"role": "moderator", "organization_id": self.organization.pk},
                                                            format="json").status_code, 200)
 
     def test_non_administrators_cannot_invite(self):

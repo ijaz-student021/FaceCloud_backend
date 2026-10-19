@@ -41,6 +41,7 @@ from .serializers import (
     AdminUserDetailSerializer,
     AdminUserCreateSerializer,
     AdminUserSerializer,
+    AdminUserUpdateSerializer,
     ChangePasswordSerializer,
     DeleteAccountSerializer,
     FaceCloudTokenObtainPairSerializer,
@@ -56,6 +57,8 @@ from .serializers import (
     VerifyRegistrationSerializer,
 )
 from .services import (
+    has_moderator_organization,
+    resolve_moderator_organization,
     issue_login_tokens,
     create_account_as_admin,
     derive_username,
@@ -915,7 +918,7 @@ class AdminUserUpdateView(generics.RetrieveUpdateAPIView):
     """GET: an account's detail for administrators. PATCH: role, suspension, activity."""
 
     queryset = User.objects.all()
-    serializer_class = AdminUserSerializer
+    serializer_class = AdminUserUpdateSerializer
     permission_classes = [permissions.IsAuthenticated, IsAdminRole]
     http_method_names = ["get", "patch"]
 
@@ -938,8 +941,21 @@ class AdminUserUpdateView(generics.RetrieveUpdateAPIView):
             from .invitations import assert_can_grant
 
             assert_can_grant(self.request.user, new_role)
+        organization_id = serializer.validated_data.pop("organization_id", None)
+        moderator_organization = None
+        if new_role == "moderator" and new_role != target.role and not has_moderator_organization(target):
+            # A moderator works for an organization: name it (or the only one), with the same messages as when creating a moderator account.
+            moderator_organization = resolve_moderator_organization(organization_id)
         previous = {"role": target.role, "is_suspended": target.is_suspended, "is_active": target.is_active}
         user = serializer.save()
+        if moderator_organization is not None:
+            from organizations.models import OrganizationMembership
+
+            OrganizationMembership.objects.update_or_create(
+                organization=moderator_organization, user=user,
+                defaults={"role": OrganizationMembership.Role.MODERATOR, "status": OrganizationMembership.Status.ACTIVE,
+                          "invited_by": self.request.user},
+            )
         changed = [key for key, value in previous.items() if getattr(user, key) != value]
         if changed:
             user.token_version += 1
@@ -1049,11 +1065,20 @@ class AccountInvitationSerializer(serializers.Serializer):
     id = serializers.IntegerField(read_only=True)
     email = serializers.EmailField()
     role = serializers.ChoiceField(choices=["user", "moderator", "admin"])
+    organization_id = serializers.IntegerField(
+        required=False, allow_null=True, write_only=True,
+        help_text="Required for a moderator invitation: the organization the moderator will work for. Refused for any other role.",
+    )
+    organization = serializers.SerializerMethodField(help_text="{id, name} of the organization a moderator invitation is for; null otherwise.")
     status = serializers.CharField(read_only=True)
     invited_by = serializers.CharField(source="invited_by.username", read_only=True, allow_null=True)
     expires_at = serializers.DateTimeField(read_only=True)
     accepted_at = serializers.DateTimeField(read_only=True, allow_null=True)
     created_at = serializers.DateTimeField(read_only=True)
+
+    def get_organization(self, invitation) -> dict | None:
+        organization = invitation.organization
+        return {"id": organization.pk, "name": organization.name} if organization else None
 
 
 class AccountInvitationListCreateView(generics.ListAPIView):
@@ -1070,7 +1095,7 @@ class AccountInvitationListCreateView(generics.ListAPIView):
     def get_queryset(self):
         from .models import AccountInvitation
 
-        queryset = AccountInvitation.objects.select_related("invited_by").order_by("-created_at", "-pk")
+        queryset = AccountInvitation.objects.select_related("invited_by", "organization").order_by("-created_at", "-pk")
         state = self.request.query_params.get("status")
         return queryset.filter(status=state) if state else queryset
 
@@ -1083,8 +1108,9 @@ class AccountInvitationListCreateView(generics.ListAPIView):
         payload = AccountInvitationSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         invitation = invite(actor=request.user, email=payload.validated_data["email"],
-                            role=payload.validated_data["role"])
-        record_auth_event("account_invited", request, request.user, invitation.email, {"role": invitation.role})
+                            role=payload.validated_data["role"], organization_id=payload.validated_data.get("organization_id"))
+        record_auth_event("account_invited", request, request.user, invitation.email,
+                          {"role": invitation.role, "organization_id": invitation.organization_id})
         return Response(AccountInvitationSerializer(invitation).data, status=status.HTTP_201_CREATED)
 
 
@@ -1131,6 +1157,10 @@ class InvitationPreviewSerializer(serializers.Serializer):
     email = serializers.EmailField()
     role = serializers.CharField()
     expires_at = serializers.DateTimeField()
+    organization_name = serializers.SerializerMethodField(help_text="The organization a moderator invitation is for; null otherwise.")
+
+    def get_organization_name(self, invitation) -> str | None:
+        return invitation.organization.name if invitation.organization_id else None
 
 
 class InvitationInspectView(APIView):

@@ -61,8 +61,10 @@ class PortalTests(APITestCase):
         self.join(user, self.organization(status=Organization.Status.SUSPENDED), OrganizationMembership.Role.MODERATOR)
         self.assertPortal(user, "user")
 
-    def test_the_stored_roles_still_decide_moderator_and_admin(self):
-        self.assertPortal(self.make("storedmod", role="moderator"), "moderator")
+    def test_the_stored_roles_still_decide_admin_and_a_stored_moderator_needs_an_organization(self):
+        stored = self.make("storedmod", role="moderator")
+        self.join(stored, self.organization(), OrganizationMembership.Role.MODERATOR)
+        self.assertPortal(stored, "moderator")
         self.assertPortal(self.make("storedadmin", role="admin"), "admin")
         self.assertPortal(self.make("root", is_superuser=True), "admin")
 

@@ -46,7 +46,8 @@ def _send(invitation, token):
     send_mail(
         subject="You've been invited to FaceCloud",
         message=(
-            f"You've been invited to create a FaceCloud account with the {invitation.role} role.\n\n"
+            f"You've been invited to create a FaceCloud account with the {invitation.role} role"
+            f"{' for ' + invitation.organization.name if invitation.organization_id else ''}.\n\n"
             f"Create your account: {link}\n\n"
             f"This invitation expires in {settings.ACCOUNT_INVITATION_TTL_HOURS} hours. "
             "If you weren't expecting it, you can ignore this email."
@@ -60,8 +61,25 @@ def _expire_stale():
         status=AccountInvitation.Status.EXPIRED)
 
 
-def invite(*, actor, email, role):
+def organization_for_invitation(role, organization_id):
+    """The organization a moderator invitation names (required for the moderator role, refused for any other).
+
+    Same checks and messages as creating a moderator account: it must exist, be active and not be a personal workspace.
+    """
+    from .services import resolve_moderator_organization
+
+    if role != "moderator":
+        if organization_id is not None:
+            raise ValidationError({"organization_id": ["Only a moderator invitation names an organization."]})
+        return None
+    if organization_id is None:
+        raise ValidationError({"organization_id": ["A moderator invitation must name the organization the moderator will work for."]})
+    return resolve_moderator_organization(organization_id)
+
+
+def invite(*, actor, email, role, organization_id=None):
     assert_can_grant(actor, role)
+    organization = organization_for_invitation(role, organization_id)
     email = email.strip().lower()
     if User.objects.annotate(lower_email=Lower("email")).filter(lower_email=email).exists():
         raise InvitationConflict("An account with this email already exists.")
@@ -70,7 +88,7 @@ def invite(*, actor, email, role):
     try:
         with transaction.atomic():
             invitation = AccountInvitation.objects.create(
-                email=email, role=role, token_hash=_hash(token), invited_by=actor,
+                email=email, role=role, organization=organization, token_hash=_hash(token), invited_by=actor,
                 expires_at=timezone.now() + timedelta(hours=settings.ACCOUNT_INVITATION_TTL_HOURS),
             )
     except IntegrityError as error:
@@ -107,8 +125,8 @@ def cancel(invitation, actor):
 def pending_invitation(token):
     """The pending, unexpired invitation for ``token``, or None."""
     _expire_stale()
-    return AccountInvitation.objects.filter(token_hash=_hash(token or ""),
-                                            status=AccountInvitation.Status.PENDING).first()
+    return AccountInvitation.objects.select_related("organization").filter(
+        token_hash=_hash(token or ""), status=AccountInvitation.Status.PENDING).first()
 
 
 def accept(*, token, username, password):
@@ -135,6 +153,15 @@ def accept(*, token, username, password):
         user = User.objects.create_user(username=username, email=invitation.email, password=password,
                                         role=invitation.role, is_email_verified=True)
         create_personal_organization(user)
+        if invitation.role == "moderator":
+            # In the same transaction as the account: a moderator with no organization cannot sign in, so either both exist or neither.
+            from organizations.models import OrganizationMembership
+
+            organization = organization_for_invitation("moderator", invitation.organization_id)       # still active, still not personal
+            OrganizationMembership.objects.create(
+                organization=organization, user=user, role=OrganizationMembership.Role.MODERATOR,
+                status=OrganizationMembership.Status.ACTIVE, invited_by=invitation.invited_by,
+            )
         invitation.status = AccountInvitation.Status.ACCEPTED
         invitation.accepted_user = user
         invitation.accepted_at = timezone.now()

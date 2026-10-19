@@ -71,9 +71,14 @@ POST /api/auth/login/  {identifier, password}     (identifier = username or emai
 - `role` is `user`, `moderator` or `admin`. `dashboard` is **always the same
   value** (`"user"`, `"moderator"`, `"admin"`), meant for choosing which
   dashboard to open after login. A person who is an *active moderator of an
-  active organization* gets `moderator` even though their stored account role is
-  `user` (`user.role` is the stored value; organization owners stay `user`).
-  This chooses the portal only: what each endpoint allows is unchanged.
+  active, non-personal organization* gets `moderator` even though their stored
+  account role is `user` (`user.role` is the stored value; organization owners
+  stay `user`). This chooses the portal only: what each endpoint allows is
+  unchanged. **A moderator works for an organization**: an account whose stored
+  role is `moderator` but that has no active moderator or owner membership in an
+  active organization is refused at sign-in (and at token refresh) with
+  `403 {"detail": "Your moderator account is not assigned to an organization yet.", "code": "no_organization"}`;
+  show that sentence and ask them to contact their administrator (see section 7b).
 - Every user object (`user` here, `GET/PATCH /api/user/profile/`, the admin user
   list) carries `full_name` (the username when no name is set). `PATCH
   /api/user/profile/ {full_name}` changes it.
@@ -660,6 +665,34 @@ nothing measurable was decided.
   `pdf`); then the same poll-and-download lifecycle as section 6. Every report has a
   `summary` (totals and breakdowns, good for a chart) and up to 200 `rows`. None of
   them contains facial data.
+
+## 7b. Organizations and tenancy
+
+FaceCloud is **multi-tenant**: each customer is an *organization*. Three kinds of person, never mixed:
+
+| Who | Belongs to | Sees |
+|---|---|---|
+| **Platform administrator** (FaceCloud staff, `role: admin`) | no organization | the whole platform: `/api/system/*`, `/api/user/admin/*`, `GET/POST /api/organizations/admin/` |
+| **Organization owner** | their organization (membership role `owner`) | everything in their organization; manages it (members, moderators, invitations, export) |
+| **Moderator** | **one** organization (membership role `moderator`) | only what belongs to that organization (see below) |
+| **Member / user** | their personal workspace, and optionally organizations they were invited to | their own photos; photos filed under an organization (`organization_id` on upload) are visible to that organization's moderators |
+
+Isolation between organizations is enforced on the server: a record of another organization answers **404** (never 403, so its existence is not
+revealed); an administrator-only endpoint answers 403 to everyone else.
+
+**A moderator always has an organization.**
+* Sign-in and refresh refuse a moderator account with none: `403` with `"code": "no_organization"` (see section 2). Show the sentence; do not show a
+  generic error. Administrators and ordinary users are never affected.
+* `POST /api/user/admin/invitations/ {email, role, organization_id}`: for `role: "moderator"` the `organization_id` is **required** (400
+  `{"organization_id": [...]}` without it; 400 when it is not an active, shared organization); for any other role it is refused. The invitation
+  and its list row carry `organization: {id, name}` (null for other roles); `POST /api/auth/invitations/inspect/` adds `organization_name`. Accepting the
+  invitation creates the account **and** its active moderator membership in one step (invited by the administrator who sent it); if the
+  organization cannot take the moderator any more the acceptance fails with 400 and nothing is created, and the link stays usable.
+* `PATCH /api/user/admin/users/{id}/ {role: "moderator", organization_id}`: the same organization choice as creating a moderator account (the only
+  active organization is chosen for you; with several, `organization_id` is required; with none, 400 "Create an organization first, then try
+  again."). Not needed when the account already moderates an organization. The membership is created with the role change, or neither happens.
+* Django admin (`/admin/`): saving an account as a moderator needs an organization chosen on the form (or an existing moderator membership).
+* Operations: `python manage.py report_moderators_without_organization` lists (username, email) of stranded moderator accounts; it changes nothing.
 
 ## 8. Notifications
 
