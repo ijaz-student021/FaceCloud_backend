@@ -196,6 +196,8 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+# Where `collectstatic` gathers the admin site's files, for the web server to serve at /static/ (docs/deployment/VPS_RUNBOOK.md).
+STATIC_ROOT = Path(os.environ.get("STATIC_ROOT", BASE_DIR / "staticfiles"))
 MEDIA_URL = "/media/"
 MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT", BASE_DIR / "media"))
 AUTH_USER_MODEL = "accounts.User"
@@ -1244,6 +1246,9 @@ EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True").lower() == "true"
 SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "False").lower() == "true"
 SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "False").lower() == "true"
 CSRF_COOKIE_SECURE = os.environ.get("CSRF_COOKIE_SECURE", "False").lower() == "true"
+# Origins allowed to POST to Django's own forms (the admin site) over https, comma-separated. The browser app talks to the API with a bearer token
+# and needs no CSRF exception; list the API's own address here if the admin site is used behind a proxy (https://api.facecloudai.com).
+CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",") if origin.strip()]
 # Set when a reverse proxy terminates TLS and forwards X-Forwarded-Proto, so Django
 # knows the original request was HTTPS. Only enable it behind a proxy that
 # overwrites that header.
@@ -1281,6 +1286,12 @@ LOGGING = {
 from config.log_redaction import install as install_log_redaction  # noqa: E402
 
 install_log_redaction()
+
+# Which settings the operator actually wrote down (rather than took the development default for). The production guard refuses to start when a
+# setting that must be a deliberate choice was left to its default: see config/production_guard.py (explicit_rule).
+ENV_EXPLICIT = {name: bool(os.environ.get(name)) for name in (
+    "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND", "MEDIA_ROOT", "CACHE_URL", "DB_NAME", "DB_USER", "DB_HOST", "EMAIL_HOST",
+)}
 
 # In production, refuse to start on an unsafe configuration. Kept last so every
 # setting above is final; see config/production_guard.py for the rules.

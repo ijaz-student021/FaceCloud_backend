@@ -132,6 +132,11 @@ def infrastructure_rule(cfg):
         problems.append("EMAIL_BACKEND is a development backend; use SMTP so verification and reset emails are sent.")
     elif not cfg.get("EMAIL_HOST") or _is_placeholder(cfg.get("EMAIL_HOST")):
         problems.append("EMAIL_HOST must be a real SMTP server.")
+    elif str(cfg.get("EMAIL_HOST")).lower() not in LOCAL_HOSTS:
+        for name in ("EMAIL_HOST_USER", "EMAIL_HOST_PASSWORD"):
+            value = cfg.get(name)
+            if not value or _is_placeholder(value):
+                problems.append(f"{name} must be set: the SMTP server needs credentials to send verification and reset emails.")
     if cfg.get("CELERY_TASK_ALWAYS_EAGER"):
         problems.append("CELERY_TASK_ALWAYS_EAGER must be False: jobs belong on the workers, not in web requests.")
     cache = str(((cfg.get("CACHES") or {}).get("default") or {}).get("BACKEND", ""))
@@ -140,6 +145,37 @@ def infrastructure_rule(cfg):
             "CACHE_URL must point at a shared cache (Redis): with a per-process cache every rate limit "
             "multiplies by the number of processes and resets on restart."
         )
+    return problems
+
+
+REDIS_SCHEMES = ("redis://", "rediss://", "unix://")
+
+
+def explicit_rule(cfg):
+    """Settings that must be a deliberate choice, not a development default that happens to work on the machine running the check.
+
+    ``ENV_EXPLICIT`` (built in settings.py) records which of them the operator really set. Each message names the variable, so a missing one is found in one pass.
+    """
+    problems = []
+    explicit = cfg.get("ENV_EXPLICIT") or {}
+    for name in ("DB_NAME", "DB_USER", "DB_HOST"):
+        if name in explicit and not explicit[name]:
+            problems.append(f"{name} must be set (the PostgreSQL database, user and host).")
+    for name in ("CELERY_BROKER_URL", "CELERY_RESULT_BACKEND"):
+        value = str(cfg.get(name) or "")
+        if name in explicit and not explicit[name]:
+            problems.append(f"{name} must be set to the Redis address the workers use (it defaults to a development address).")
+        elif not value.startswith(REDIS_SCHEMES) or _is_placeholder(value):
+            problems.append(f"{name} must be a redis:// or rediss:// address (got '{value}').")
+    cache_url = str(cfg.get("CACHE_URL") or "")
+    if cache_url and not cache_url.startswith(REDIS_SCHEMES):
+        problems.append("CACHE_URL must be a redis:// or rediss:// address.")
+    if str(cfg.get("STORAGE_BACKEND", "filesystem")) == "filesystem":
+        if "MEDIA_ROOT" in explicit and not explicit["MEDIA_ROOT"]:
+            problems.append("MEDIA_ROOT must be set to the directory (or mounted volume) that holds the uploads, for example /srv/facecloud/media: the default sits inside the code folder and is lost on a redeploy.")
+    for origin in cfg.get("CSRF_TRUSTED_ORIGINS") or []:
+        if not str(origin).startswith("https://") or "*" in str(origin) or _is_placeholder(origin):
+            problems.append(f"CSRF_TRUSTED_ORIGINS entry '{origin}' must be a real https:// origin without a wildcard.")
     return problems
 
 
@@ -195,7 +231,7 @@ def model_rule(cfg):
     return problems
 
 
-RULES = (secrets_rule, hosts_and_origins_rule, transport_rule, infrastructure_rule, policy_rule, model_rule)
+RULES = (secrets_rule, hosts_and_origins_rule, transport_rule, infrastructure_rule, explicit_rule, policy_rule, model_rule)
 
 
 def production_problems(cfg):

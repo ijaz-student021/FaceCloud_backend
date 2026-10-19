@@ -113,7 +113,12 @@ jobs:
       DB_PORT: "5432"
       EMAIL_BACKEND: django.core.mail.backends.smtp.EmailBackend
       EMAIL_HOST: smtp.mailer-service.net
+      EMAIL_HOST_USER: mailer-account
       CELERY_TASK_ALWAYS_EAGER: "False"
+      # The guard requires these to be chosen, not left at their development defaults.
+      CELERY_BROKER_URL: redis://127.0.0.1:6379/0
+      CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/1
+      MEDIA_ROOT: /var/lib/facecloud/media
       # Rate limits need a shared cache in production; the guard checks only that one is configured.
       CACHE_URL: redis://127.0.0.1:6379/2
       BIOMETRIC_CONSENT_REQUIRED: "True"
@@ -128,7 +133,7 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Generate throwaway secrets
         run: |
-          for name in DJANGO_SECRET_KEY IDENTITY_EMBEDDING_KEY IMAGE_ENCRYPTION_KEY DB_PASSWORD; do
+          for name in DJANGO_SECRET_KEY IDENTITY_EMBEDDING_KEY IMAGE_ENCRYPTION_KEY DB_PASSWORD EMAIL_HOST_PASSWORD; do
             value=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
             echo "::add-mask::$value"
             echo "$name=$value" >> "$GITHUB_ENV"
