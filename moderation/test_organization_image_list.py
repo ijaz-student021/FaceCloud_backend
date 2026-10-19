@@ -14,7 +14,7 @@ from .tests import ModerationFixtureMixin
 class OrganizationImageListTests(ModerationFixtureMixin, TestCase):
     def setUp(self):
         self.owner = self.make_user("img-owner")
-        self.organization = create_organization(name="Img Co", owner=self.owner)
+        self.organization = create_organization(name="Img Co", owner=self.owner, moderator_data_scope="organization")
         self.moderator = self.make_user("img-mod")
         OrganizationMembership.objects.create(organization=self.organization, user=self.moderator,
                                               role=OrganizationMembership.Role.MODERATOR)

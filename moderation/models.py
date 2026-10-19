@@ -225,8 +225,9 @@ class ModeratorReport(models.Model):
         ordering = ["-created_at"]
         indexes = [models.Index(fields=["organization", "status", "-created_at"])]
         constraints = [
+            # One in-flight report per person, type, format and window: two moderators who see different members each need their own.
             models.UniqueConstraint(
-                fields=["organization", "report_type", "format", "period_key"],
+                fields=["organization", "requested_by", "report_type", "format", "period_key"],
                 condition=models.Q(status__in=["queued", "generating"]),
                 name="moderation_one_active_report_per_period",
             ),

@@ -11,6 +11,7 @@ from django.http import Http404
 from rest_framework.exceptions import PermissionDenied
 
 from .models import OrganizationMembership
+from .scope import DataScope
 from .services import get_active_membership
 
 
@@ -23,6 +24,8 @@ class OrganizationScopedMixin:
 
     require_owner_or_moderator = False
     organization_url_kwarg = "organization_id"
+    # Views that cover the WHOLE organization (the organization-wide export) are for the owner when moderators see only their own members.
+    owner_only_when_scoped = False
 
     def initial(self, request, *args, **kwargs):
         self.perform_authentication(request)
@@ -37,6 +40,11 @@ class OrganizationScopedMixin:
         if self.active_membership is None:
             raise Http404("Organization not found.")
         self.organization = self.active_membership.organization
+        self.data_scope = DataScope(self.organization, request.user, self.active_membership)
+        if self.owner_only_when_scoped and self.data_scope.restricted:
+            raise PermissionDenied(
+                "This covers the whole organization, and your organization lets moderators see only their own members: ask the organization owner."
+            )
         if self.require_owner_or_moderator and self.active_membership.role not in (
             OrganizationMembership.Role.OWNER, OrganizationMembership.Role.MODERATOR,
         ):

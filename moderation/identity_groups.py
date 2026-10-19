@@ -27,14 +27,19 @@ def _organization_photos(organization):
     return ImageUpload.objects.none() if organization.is_personal else ImageUpload.objects.filter(batch__organization=organization)
 
 
-def organization_folders(organization):
-    """Active person folders that hold a photograph submitted to ``organization``, with how many of those photographs each holds."""
+def organization_folders(organization, scope=None):
+    """Active person folders that hold a photograph submitted to ``organization``, with how many of those photographs each holds.
+
+    A folder belongs to one member (its owner), so ``scope`` (a ``DataScope``) removes whole folders of members the viewer may not see."""
     photos = _organization_photos(organization)
     present = IdentityMembership.objects.filter(
         identity_group=OuterRef("pk"), identity_face__image__in=photos,
     ).exclude(state__in=INACTIVE)
+    folders = IdentityGroup.objects.filter(state=IdentityGroup.State.ACTIVE).filter(Exists(present))
+    if scope is not None:
+        folders = scope.exclude(folders)
     return (
-        IdentityGroup.objects.filter(state=IdentityGroup.State.ACTIVE).filter(Exists(present))
+        folders
         .select_related("owner")
         .annotate(photos_in_organization=Count(
             "memberships__identity_face__image",
@@ -82,7 +87,7 @@ def _centroid(folder):
     return vector / norm if norm else None
 
 
-def suggested_merges(organization, request=None):
+def suggested_merges(organization, request=None, scope=None):
     """Pairs of one member's folders whose average faces are alike, most alike first (cosine similarity as a percentage).
 
     Same owner, same identity model, and at least ``MODERATOR_MERGE_SUGGESTION_MIN_SIMILARITY``. ``source`` is the folder to merge away (the one with fewer
@@ -90,7 +95,7 @@ def suggested_merges(organization, request=None):
     """
     minimum = settings.MODERATOR_MERGE_SUGGESTION_MIN_SIMILARITY
     by_owner = {}
-    for folder in organization_folders(organization):
+    for folder in organization_folders(organization, scope):
         by_owner.setdefault(folder.owner_id, []).append(folder)
     pairs = []
     for folders in by_owner.values():
@@ -110,13 +115,13 @@ def suggested_merges(organization, request=None):
     return [{"similarity": round(100 * similarity, 1), "source": described[first.pk], "target": described[second.pk]} for similarity, first, second in pairs]
 
 
-def merge_folders(*, organization, actor, source_group_id, target_group_id, reason="", request=None):
+def merge_folders(*, organization, actor, source_group_id, target_group_id, reason="", request=None, scope=None):
     """Merge one folder into another; both must be this organization's folders of the same owner. Returns ``(source, target)``."""
     from identities.management import merge_groups
 
     if source_group_id == target_group_id:
         raise ValidationError({"detail": "A person folder cannot be merged into itself."})
-    folders = {folder.pk: folder for folder in organization_folders(organization).filter(pk__in=[source_group_id, target_group_id])}
+    folders = {folder.pk: folder for folder in organization_folders(organization, scope).filter(pk__in=[source_group_id, target_group_id])}
     if len(folders) != 2:
         raise ValidationError({"detail": "Both person folders must hold photographs submitted to this organization."})
     source, target = folders[source_group_id], folders[target_group_id]

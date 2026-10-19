@@ -28,6 +28,7 @@ from rest_framework.exceptions import APIException, ValidationError
 
 from duplicates.models import DuplicateMatch
 from organizations.models import OrganizationAuditEvent, OrganizationMembership
+from organizations.scope import visible_audit_events
 from organizations.services import get_active_membership, record_audit_event
 from quality_control.models import ImageQualityDecision
 from uploads.models import UploadBatch
@@ -289,6 +290,11 @@ def assign_review(*, review, actor, moderator, request=None):
         OrganizationMembership.Role.OWNER, OrganizationMembership.Role.MODERATOR,
     ):
         raise ValidationError({"moderator_id": "This user is not an owner or moderator of this organization."})
+    from organizations.scope import DataScope
+
+    if not DataScope(locked.organization, moderator, membership).sees(locked.image.owner_id):
+        # Giving a review to a moderator who may not see that member's photos would hand them the very data the scope keeps from them.
+        raise ValidationError({"moderator_id": "This moderator does not see that member's photographs."})
     locked.assigned_moderator = moderator
     locked.save(update_fields=["assigned_moderator", "updated_at"])
     record_audit_event(
@@ -370,7 +376,7 @@ def release_review_claim(*, review, actor, is_owner=False, request=None):
 BULK_ACTIONS = ("approve", "reject", "escalate")
 
 
-def bulk_decide_reviews(*, organization, actor, review_ids, action, reason="", notes="", request=None):
+def bulk_decide_reviews(*, organization, actor, review_ids, action, reason="", notes="", request=None, scope=None):
     """Apply one decision to many reviews, reporting each one's outcome.
 
     Only approve, reject and escalate are offered. "Correct" is left out on
@@ -397,7 +403,7 @@ def bulk_decide_reviews(*, organization, actor, review_ids, action, reason="", n
 
     found = {
         review.pk: review
-        for review in ModeratorReview.objects.filter(organization=organization, pk__in=unique_ids)
+        for review in organization_reviews(organization, scope).filter(pk__in=unique_ids)
     }
     succeeded, failed = [], []
     for review_id in unique_ids:
@@ -475,23 +481,29 @@ def cancel_batch_for_organization(*, batch, actor, request=None):
     return updated
 
 
-def open_reviews(organization):
-    """Every review in the organization still waiting for a decision."""
-    return ModeratorReview.objects.filter(
-        organization=organization, status__in=OPEN_REVIEW_STATUSES, decided_at__isnull=True,
+def organization_reviews(organization, scope=None):
+    """The organization's reviews, without those of members ``scope`` (a ``DataScope``) says the viewer may not see."""
+    reviews = ModeratorReview.objects.filter(organization=organization)
+    return scope.exclude(reviews, "image__owner_id") if scope is not None else reviews
+
+
+def open_reviews(organization, scope=None):
+    """Every review in the organization still waiting for a decision (that the viewer may see)."""
+    return organization_reviews(organization, scope).filter(
+        status__in=OPEN_REVIEW_STATUSES, decided_at__isnull=True,
     )
 
 
-def overdue_reviews(organization, now=None):
+def overdue_reviews(organization, now=None, scope=None):
     now = now or timezone.now()
-    return open_reviews(organization).filter(due_at__isnull=False, due_at__lt=now)
+    return open_reviews(organization, scope).filter(due_at__isnull=False, due_at__lt=now)
 
 
-def dashboard_summary(organization):
+def dashboard_summary(organization, scope=None):
     today = timezone.localdate()
     now = timezone.now()
-    reviews = ModeratorReview.objects.filter(organization=organization)
-    waiting = open_reviews(organization)
+    reviews = organization_reviews(organization, scope)
+    waiting = open_reviews(organization, scope)
     due_soon_cutoff = now + timedelta(hours=settings.MODERATION_SLA_DUE_SOON_HOURS)
     oldest_created = waiting.aggregate(oldest=Min("created_at"))["oldest"]
     return {
@@ -537,7 +549,7 @@ def _hours(duration):
     return round(duration.total_seconds() / 3600, 2) if duration is not None else None
 
 
-def moderator_metrics(organization, days=30, now=None):
+def moderator_metrics(organization, days=30, now=None, scope=None):
     """Throughput, speed and timeliness per moderator over a window.
 
     Counts only decided reviews, because an undecided one says nothing about
@@ -548,9 +560,7 @@ def moderator_metrics(organization, days=30, now=None):
     """
     now = now or timezone.now()
     since = now - timedelta(days=days)
-    decided = ModeratorReview.objects.filter(
-        organization=organization, decided_by__isnull=False, decided_at__gte=since,
-    )
+    decided = organization_reviews(organization, scope).filter(decided_by__isnull=False, decided_at__gte=since)
     latency = _decision_latency_expression()
     rows = []
     per_moderator = (
@@ -601,8 +611,8 @@ def moderator_metrics(organization, days=30, now=None):
             "late": totals["late"],
             "on_time_rate": round(totals["on_time"] / measured_total, 4) if measured_total else None,
             "average_decision_hours": _hours(totals["average_decision_time"]),
-            "open_now": open_reviews(organization).count(),
-            "overdue_now": overdue_reviews(organization, now).count(),
+            "open_now": open_reviews(organization, scope).count(),
+            "overdue_now": overdue_reviews(organization, now, scope).count(),
         },
     }
 
@@ -688,8 +698,8 @@ def _period_description(period, field):
     }
 
 
-def build_review_summary_payload(organization, period=None):
-    reviews = _in_period(ModeratorReview.objects.filter(organization=organization), "created_at", period)
+def build_review_summary_payload(organization, period=None, scope=None):
+    reviews = _in_period(organization_reviews(organization, scope), "created_at", period)
     rows = list(
         reviews.order_by("-created_at").values(
             "id", "source", "status", "ai_recommendation", "ai_confidence",
@@ -719,9 +729,9 @@ def build_review_summary_payload(organization, period=None):
     }
 
 
-def build_moderator_activity_payload(organization, period=None):
+def build_moderator_activity_payload(organization, period=None, scope=None):
     decided = _in_period(
-        ModeratorReview.objects.filter(organization=organization, decided_by__isnull=False), "decided_at", period,
+        organization_reviews(organization, scope).filter(decided_by__isnull=False), "decided_at", period,
     )
     per_moderator = list(
         decided.values("decided_by_id", "decided_by__username")
@@ -734,9 +744,9 @@ def build_moderator_activity_payload(organization, period=None):
         .order_by("-total")
     )
     rows = list(
-        _in_period(OrganizationAuditEvent.objects.filter(
+        _in_period(visible_audit_events(OrganizationAuditEvent.objects.filter(
             organization=organization, action__in=_ORGANIZATION_AUDIT_ACTIONS_FOR_ACTIVITY,
-        ), "created_at", period)
+        ), organization, scope), "created_at", period)
         .order_by("-created_at")
         .values("actor_id", "actor__username", "action", "target_type", "target_id", "reason", "created_at")[:200]
     )
@@ -767,15 +777,16 @@ def _report_envelope(organization, report_type, summary, rows, period=None, filt
     }
 
 
-def _organization_quality_decisions(organization):
-    return ImageQualityDecision.objects.filter(
+def _organization_quality_decisions(organization, scope=None):
+    decisions = ImageQualityDecision.objects.filter(
         image__batch__organization=organization, status=ImageQualityDecision.Status.COMPLETED,
     )
+    return scope.exclude(decisions, "image__owner_id") if scope is not None else decisions
 
 
-def build_rejection_reasons_payload(organization, period=None):
+def build_rejection_reasons_payload(organization, period=None, scope=None):
     """Why photos were rejected or sent to review, most common reason first."""
-    flagged = _in_period(_organization_quality_decisions(organization), "updated_at", period).filter(
+    flagged = _in_period(_organization_quality_decisions(organization, scope), "updated_at", period).filter(
         decision__in=[ImageQualityDecision.Decision.REJECTED, ImageQualityDecision.Decision.NEEDS_REVIEW],
     )
     reasons = Counter(
@@ -813,10 +824,10 @@ def _rounded(value):
     return round(value, 1) if value is not None else None
 
 
-def build_quality_scores_payload(organization, period=None):
+def build_quality_scores_payload(organization, period=None, scope=None):
     """How good the organization's photos are: averages and a score distribution."""
     decisions = _in_period(
-        _organization_quality_decisions(organization), "updated_at", period,
+        _organization_quality_decisions(organization, scope), "updated_at", period,
     ).filter(overall_score__isnull=False)
     averages = decisions.aggregate(overall=Avg("overall_score"), **{name: Avg(name) for name in QUALITY_SUBSCORES})
     buckets = decisions.aggregate(**{
@@ -844,9 +855,10 @@ def build_quality_scores_payload(organization, period=None):
                             period, "quality decision updated_at")
 
 
-def build_batches_payload(organization, period=None):
+def build_batches_payload(organization, period=None, scope=None):
     """The organization's upload batches and how they finished."""
-    batches = _in_period(UploadBatch.objects.filter(organization=organization), "created_at", period)
+    batches = UploadBatch.objects.filter(organization=organization)
+    batches = _in_period(scope.exclude(batches) if scope is not None else batches, "created_at", period)
     totals = batches.aggregate(
         files=Sum("total_files"), accepted=Sum("accepted_files"), rejected=Sum("rejected_files"),
         processing_failed=Sum("processing_failed_files"), retries=Sum("retry_count"),
@@ -876,11 +888,10 @@ def build_batches_payload(organization, period=None):
                             period, "batch created_at")
 
 
-def build_duplicate_decisions_payload(organization, period=None):
+def build_duplicate_decisions_payload(organization, period=None, scope=None):
     """Suspected duplicates and what was decided about them (hash-based, no faces)."""
-    matches = _in_period(
-        DuplicateMatch.objects.filter(source_image__batch__organization=organization), "created_at", period,
-    )
+    matches = DuplicateMatch.objects.filter(source_image__batch__organization=organization)
+    matches = _in_period(scope.exclude(matches, "source_image__owner_id") if scope is not None else matches, "created_at", period)
     rows = [
         {
             "match_id": row["id"], "source_image_id": row["source_image_id"],
@@ -903,7 +914,7 @@ def build_duplicate_decisions_payload(organization, period=None):
                             period, "duplicate match created_at")
 
 
-def build_general_activity_payload(organization, period=None):
+def build_general_activity_payload(organization, period=None, scope=None):
     """Everything recorded in the organization's audit trail, plus period totals.
 
     Rows are audit events (who did what to which member, review or batch);
@@ -912,7 +923,9 @@ def build_general_activity_payload(organization, period=None):
     own members appear, as they do in its audit log; no image content or
     facial data.
     """
-    events = _in_period(OrganizationAuditEvent.objects.filter(organization=organization), "created_at", period)
+    events = _in_period(
+        visible_audit_events(OrganizationAuditEvent.objects.filter(organization=organization), organization, scope), "created_at", period,
+    )
     rows = [
         {
             "event_id": row["id"], "action": row["action"], "actor_id": row["actor_id"],
@@ -923,7 +936,8 @@ def build_general_activity_payload(organization, period=None):
             "id", "action", "actor_id", "actor__username", "target_type", "target_id", "reason", "created_at",
         )[:REPORT_ROW_LIMIT]
     ]
-    batches = _in_period(UploadBatch.objects.filter(organization=organization), "created_at", period)
+    batches = UploadBatch.objects.filter(organization=organization)
+    batches = _in_period(scope.exclude(batches) if scope is not None else batches, "created_at", period)
     summary = {
         "audit_events": events.count(),
         "by_action": dict(Counter(events.values_list("action", flat=True)).most_common()),
@@ -932,9 +946,7 @@ def build_general_activity_payload(organization, period=None):
         ).most_common()),
         "batches_created": batches.count(),
         "images_uploaded": sum(batches.values_list("total_files", flat=True)),
-        "reviews_created": _in_period(
-            ModeratorReview.objects.filter(organization=organization), "created_at", period,
-        ).count(),
+        "reviews_created": _in_period(organization_reviews(organization, scope), "created_at", period).count(),
     }
     return _report_envelope(organization, ModeratorReport.ReportType.GENERAL_ACTIVITY, summary, rows,
                             period, "audit event created_at; batch and review created_at")
@@ -952,8 +964,12 @@ _REPORT_PAYLOAD_BUILDERS = {
 
 
 def build_moderator_report_payload(report):
+    """The report's data, as the person who asked for it may see it (what ``moderator_data_scope`` allows them, evaluated now)."""
+    from organizations.scope import data_scope
+
     period = None if report.date_from is None and report.date_to is None else (report.date_from, report.date_to)
-    return _REPORT_PAYLOAD_BUILDERS[report.report_type](report.organization, period)
+    scope = data_scope(report.organization, report.requested_by) if report.requested_by_id else None
+    return _REPORT_PAYLOAD_BUILDERS[report.report_type](report.organization, period, scope=scope)
 
 
 def moderator_report_expiration_time():
@@ -966,7 +982,7 @@ def enqueue_moderator_report(*, organization, requested_by, report_type, report_
     period_key = report_period_key(date_from, date_to)
     active_filters = {
         "organization": organization, "report_type": report_type, "format": report_format,
-        "period_key": period_key,
+        "period_key": period_key, "requested_by": requested_by,
         "status__in": [ModeratorReport.Status.QUEUED, ModeratorReport.Status.GENERATING],
     }
     try:
