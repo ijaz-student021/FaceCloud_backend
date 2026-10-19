@@ -31,6 +31,7 @@ SENTENCES = {
     Action.BATCH_REPROCESSED_BY_MODERATOR: "Reprocessed {label}.",
     Action.IDENTITY_GROUPS_MERGED_BY_MODERATOR: "Merged person folders into {label}.",
     Action.ORGANIZATION_DATA_EXPORTED: "Exported the organization's data.",
+    Action.MEMBER_NOTIFIED_OF_REVIEW: "Told the member about the decision on {label}.",
 }
 DECISION_WORDS = {
     "approve": "Approved", "reject": "Rejected", "correct": "Corrected", "escalate": "Escalated", "hold": "Held", "keep": "Kept",

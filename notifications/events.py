@@ -184,6 +184,47 @@ def notify_moderators_batch_failed(batch):
     return notifications
 
 
+def notify_member_of_review_decision(review, actor):
+    """Tell the member whose photograph a moderator decided on what was decided (approved or not accepted), in plain words.
+
+    Sent for approve, reject and correct (a correction is an approval the moderator adjusted); never for keep_in_review, never to the
+    moderator who decided, and never for the moderator's own photographs. The only free text the member sees is ``message_to_member``: the
+    internal reason and notes are not part of it. The preferences ``photo_accepted`` / ``photo_rejected`` and ``email_notifications`` are respected by
+    ``create_user_notification``. When a notification was created the organization's audit trail records it (target: the review).
+    """
+    from moderation.member_messages import message_for_member
+    from moderation.models import ModeratorReview
+    from organizations.models import OrganizationAuditEvent
+    from organizations.services import record_audit_event
+
+    if review.status not in (ModeratorReview.Status.APPROVED, ModeratorReview.Status.REJECTED, ModeratorReview.Status.CORRECTED):
+        return None
+    image = review.image
+    owner = image.owner
+    if owner.pk == actor.pk:
+        return None
+    rejected = review.status == ModeratorReview.Status.REJECTED
+    outcome = "rejected" if rejected else "approved"
+    notification, created = create_user_notification(
+        recipient=owner,
+        event_type=UserNotification.EventType.PHOTO_REVIEW_REJECTED if rejected else UserNotification.EventType.PHOTO_REVIEW_APPROVED,
+        idempotency_key=f"review:{review.pk}:member:{outcome}",
+        title="Your photo was not accepted" if rejected else "Your photo was approved",
+        message=message_for_member(review, outcome),
+        severity=UserNotification.Severity.WARNING if rejected else UserNotification.Severity.SUCCESS,
+        resource_type="image",
+        resource_id=image.pk,
+        action_path=f"/dashboard/images/{image.pk}",
+        metadata={"image_id": image.pk, "review_id": review.pk, "organization_id": review.organization_id, "filename": image.original_name},
+    )
+    if created and notification is not None:
+        record_audit_event(
+            review.organization, actor, OrganizationAuditEvent.Action.MEMBER_NOTIFIED_OF_REVIEW,
+            target_type="ModeratorReview", target_id=review.pk, new_value={"outcome": outcome},
+        )
+    return notification
+
+
 def notify_moderator_review_overdue(review):
     """Tell whoever can act on a review that it has passed its deadline.
 

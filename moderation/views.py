@@ -212,6 +212,7 @@ class ModeratorReviewDecisionView(OrganizationScopedMixin, APIView):
             reason=serializer.validated_data.get("reason", ""),
             notes=serializer.validated_data.get("notes", ""),
             group_id=serializer.validated_data.get("group_id"), request=request,
+            message_to_member=serializer.validated_data.get("message_to_member", ""),
         )
         return Response(ModeratorReviewSerializer(decided).data)
 
@@ -325,6 +326,7 @@ class ModeratorBulkDecisionView(OrganizationScopedMixin, APIView):
             action=serializer.validated_data["action"],
             reason=serializer.validated_data.get("reason", ""),
             notes=serializer.validated_data.get("notes", ""),
+            message_to_member=serializer.validated_data.get("message_to_member", ""),
             request=request,
         )
         return Response(ModeratorBulkResultSerializer(result).data)

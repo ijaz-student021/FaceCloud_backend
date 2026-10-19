@@ -548,13 +548,13 @@ state and put it in the URL; changing it client-side grants nothing.
 ```text
 GET  .../moderator/reviews/?status=&source=&overdue=&assignment=&ordering=
 GET  .../moderator/reviews/{id}/
-POST .../moderator/reviews/{id}/decision/   {action, reason?, notes?, group_id?}
+POST .../moderator/reviews/{id}/decision/   {action, reason?, notes?, message_to_member?, group_id?}
 POST .../moderator/reviews/{id}/assign/     {moderator_id}
 POST .../moderator/reviews/{id}/escalate/   {reason?}
 GET  .../moderator/reviews/{id}/image/?size=  the photo, as a thumbnail; size is 256 (default) or 1024, anything else is a 400
 POST .../moderator/reviews/{id}/claim/      take the review (soft lock)
 POST .../moderator/reviews/{id}/release/    give it back to the queue
-POST .../moderator/reviews/bulk-decision/   {review_ids[], action, reason?, notes?}
+POST .../moderator/reviews/bulk-decision/   {review_ids[], action, reason?, notes?, message_to_member?}
 POST .../moderator/reviews/{id}/merge-identity-groups/  {source_group_id?, target_group_id?, reason?}
 GET  .../moderator/dashboard/               counts for the overview cards
 GET  .../moderator/metrics/?days=30         per-moderator performance
@@ -602,6 +602,16 @@ work the same photo: the response carries `claimed_by`, `is_claimed` and
 expires on its own, so nothing is ever stranded; claiming your own review again
 simply extends it. `release/` returns it to the queue -- the holder can always
 release, and an organization owner can release somebody else's hold.
+
+**Telling the member what was decided.** `approve`, `reject` and `correct` (a correction is an approval the moderator adjusted) create an in-app
+notification for the member who uploaded the photograph, and an email copy when they turned emails on; `keep_in_review` and `escalate` do not. Never the
+deciding moderator, and nothing when the photograph is the moderator's own. `message_to_member` (up to 500 characters, optional, on the single and the
+bulk decision) is **the only free text the member is shown**: put the field in the decision form as "Message to the member" and make clear that it is seen
+by them. `reason` and `notes` are internal and are never sent. If `message_to_member` is empty a standard plain sentence for the reason code is used
+(for example "Your photo is too blurry. Take it again holding the camera steady."). The moderator review detail returns `message_to_member`. A bulk decision
+tells each member once per photograph (the same message for all). The notification respects the member's `photo_accepted` / `photo_rejected`
+preferences, and the organization's audit trail records that the member was told (`action: member_notified_of_review`, target: the review; it is not
+recorded when a preference switched the notification off).
 
 **Bulk decisions.** `bulk-decision/` takes up to 50 `review_ids` with `action`
 `approve`, `reject` or `escalate` (`correct` is not available in bulk because it
@@ -735,6 +745,11 @@ separate `type` field to map). Typical sources: `success` (batch finished, repor
 or package ready), `warning` (a photo needs review, or a job finished only partly), `error` (a job
 failed or a photo was rejected), `info` (everything else). Note the notification
 `event_type` is the specific event name, not the colour.
+
+A member whose photograph a moderator decided on receives `photo_review_approved` (severity `success`, title "Your photo was approved") or
+`photo_review_rejected` (severity `warning`, title "Your photo was not accepted"), `message` = the moderator's message to them or a standard sentence,
+`resource_type` `image`, `resource_id` the photo, `action_path` `/dashboard/images/{image_id}` (open that photograph's page), `metadata.review_id`,
+`metadata.image_id`, `metadata.organization_id`. They follow the `photo_accepted` / `photo_rejected` preferences and `email_notifications`.
 
 Moderators and owners of an organization also receive `event_type`
 `moderator_batch_failed` when one of the organization's batches fails entirely

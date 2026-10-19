@@ -81,6 +81,8 @@ class ModeratorReview(models.Model):
     sla_breached_at = models.DateTimeField(null=True, blank=True)
     decision_reason = models.TextField(blank=True)
     decision_notes = models.TextField(blank=True)
+    # The ONLY free text the member who uploaded the photograph is shown about this decision (the reason and notes above stay internal).
+    message_to_member = models.CharField(max_length=500, blank=True)
     decided_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
     )

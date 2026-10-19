@@ -161,7 +161,7 @@ def create_review_for_identity_membership(membership):
 
 
 @transaction.atomic
-def decide_review(*, review, actor, action, reason="", notes="", group_id=None, request=None):
+def decide_review(*, review, actor, action, reason="", notes="", group_id=None, request=None, message_to_member=""):
     if action not in _REVIEW_STATUS_FOR_ACTION:
         raise ValidationError({"action": "Unknown review action."})
     locked = ModeratorReview.objects.select_for_update().get(pk=review.pk)
@@ -174,6 +174,7 @@ def decide_review(*, review, actor, action, reason="", notes="", group_id=None, 
     locked.decision_reason = reason
     locked.decision_notes = notes
     if locked.status != ModeratorReview.Status.IN_REVIEW:
+        locked.message_to_member = (message_to_member or "").strip()[:500]
         locked.decided_by = actor
         locked.decided_at = timezone.now()
         # A decided review is nobody's work in progress any more. "Hold" keeps
@@ -209,6 +210,10 @@ def decide_review(*, review, actor, action, reason="", notes="", group_id=None, 
         previous_value={"status": previous_status},
         new_value={"action": action, "status": locked.status}, reason=reason, request=request,
     )
+    if locked.status != ModeratorReview.Status.IN_REVIEW:
+        from notifications.events import notify_member_of_review_decision
+
+        transaction.on_commit(lambda: notify_member_of_review_decision(locked, actor))
     return locked
 
 
@@ -376,7 +381,7 @@ def release_review_claim(*, review, actor, is_owner=False, request=None):
 BULK_ACTIONS = ("approve", "reject", "escalate")
 
 
-def bulk_decide_reviews(*, organization, actor, review_ids, action, reason="", notes="", request=None, scope=None):
+def bulk_decide_reviews(*, organization, actor, review_ids, action, reason="", notes="", request=None, scope=None, message_to_member=""):
     """Apply one decision to many reviews, reporting each one's outcome.
 
     Only approve, reject and escalate are offered. "Correct" is left out on
@@ -419,6 +424,7 @@ def bulk_decide_reviews(*, organization, actor, review_ids, action, reason="", n
             else:
                 decided = decide_review(
                     review=review, actor=actor, action=action, reason=reason, notes=notes, request=request,
+                    message_to_member=message_to_member,
                 )
         except (ModerationConflict, ValidationError) as error:
             failed.append({"review_id": review_id, "detail": _error_detail(error)})

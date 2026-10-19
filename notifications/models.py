@@ -42,6 +42,8 @@ class UserNotification(models.Model):
         MODERATOR_REVIEW_ESCALATED = "moderator_review_escalated", "Moderator review escalated"
         MODERATOR_BATCH_FAILED = "moderator_batch_failed", "Organization batch failed"
         MODERATOR_REVIEW_OVERDUE = "moderator_review_overdue", "Moderator review overdue"
+        PHOTO_REVIEW_APPROVED = "photo_review_approved", "Photo approved by a moderator"
+        PHOTO_REVIEW_REJECTED = "photo_review_rejected", "Photo not accepted by a moderator"
 
     class Severity(models.TextChoices):
         INFO = "info", "Information"
