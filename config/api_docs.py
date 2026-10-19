@@ -253,6 +253,8 @@ CATALOGUE = {
     "organizations_audit_list": ("Organization audit log", ""),
     "organizations_admin_list": ("List all organizations (administrators)", "FaceCloud-administrator-only."),
     "organizations_admin_create": ("Create an organization (administrators)", "FaceCloud-administrator-only."),
+    "organizations_admin_retrieve": ("Get one organization (administrators)", "FaceCloud-administrator-only. The organization with its owner and head counts."),
+    "organizations_admin_partial_update": ("Rename, change the plan, suspend or reactivate an organization (administrators)", "FaceCloud-administrator-only. Any of name, plan, status (active or suspended); an optional reason is kept in the audit trail. While suspended, the organization's own endpoints answer 403 for its members, moderators and owner and uploads to it are refused; nothing is deleted, so reactivating restores everything. A personal workspace cannot be suspended."),
     "organizations_members_list": ("List members", ""),
     "organizations_members_partial_update": ("Change a member's role or status", ""),
     "organizations_members_destroy": ("Remove a member", "Removes organization access only; it does not delete the member's account."),

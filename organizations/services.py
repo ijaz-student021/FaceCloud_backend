@@ -34,6 +34,21 @@ class OrganizationConflict(APIException):
     default_detail = "This action conflicts with the organization's current state."
 
 
+class OrganizationSuspended(PermissionDenied):
+    """403 for anything done inside an organization the administrator has suspended (a ``code`` the frontend can branch on)."""
+
+    default_code = "organization_suspended"
+    message = "This organization is suspended."
+
+    def __init__(self):
+        super().__init__(detail={"detail": self.message, "code": self.default_code})
+
+
+def assert_organization_active(organization):
+    if organization.status == Organization.Status.SUSPENDED:
+        raise OrganizationSuspended()
+
+
 def hash_token(token):
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
@@ -85,6 +100,46 @@ def create_personal_organization(user):
     )
 
 
+@transaction.atomic
+def update_organization_as_administrator(*, organization, actor, name=None, plan=None, status=None, reason="", request=None):
+    """Rename an organization, change its plan, suspend or reactivate it: one transaction, one audit event per kind of change.
+
+    Only what actually changes is written and audited. Suspending keeps every record as it is (members, photographs, reviews); reactivating
+    therefore restores everything. A personal workspace cannot be suspended: that would lock a person out of their own photographs, and the
+    way to stop a person is to suspend the account.
+    """
+    locked = Organization.objects.select_for_update().get(pk=organization.pk)
+    if status == Organization.Status.SUSPENDED and locked.is_personal:
+        raise ValidationError({"status": "A personal workspace cannot be suspended. Suspend the account instead."})
+    Action = OrganizationAuditEvent.Action
+    details = {}
+    if name is not None and name != locked.name:
+        details["name"] = (locked.name, name)
+    if plan is not None and plan != locked.plan:
+        details["plan"] = (locked.plan, plan)
+    changed_status = status is not None and status != locked.status
+    previous_status = locked.status
+    for field, (_, new) in details.items():
+        setattr(locked, field, new)
+    if changed_status:
+        locked.status = status
+    if details or changed_status:
+        locked.save(update_fields=[*details, *(["status"] if changed_status else []), "updated_at"])
+    if details:
+        record_audit_event(
+            locked, actor, Action.ORGANIZATION_UPDATED, target_type="Organization", target_id=locked.pk,
+            previous_value={field: old for field, (old, _) in details.items()}, new_value={field: new for field, (_, new) in details.items()},
+            reason=reason, request=request,
+        )
+    if changed_status:
+        record_audit_event(
+            locked, actor, Action.ORGANIZATION_SUSPENDED if status == Organization.Status.SUSPENDED else Action.ORGANIZATION_REACTIVATED,
+            target_type="Organization", target_id=locked.pk,
+            previous_value={"status": previous_status}, new_value={"status": status}, reason=reason, request=request,
+        )
+    return locked
+
+
 def get_default_organization(user):
     """The organization new content the user creates should be tagged with.
 
@@ -92,11 +147,11 @@ def get_default_organization(user):
     ``create_personal_organization``) so ownership keeps behaving the way it
     always has; falls back to their oldest other active membership, and to
     ``None`` only for a user with no organization at all (a test fixture
-    created directly rather than through registration).
+    created directly rather than through registration). A suspended organization is never the default.
     """
     membership = (
         OrganizationMembership.objects.select_related("organization")
-        .filter(user=user, status=OrganizationMembership.Status.ACTIVE)
+        .filter(user=user, status=OrganizationMembership.Status.ACTIVE, organization__status=Organization.Status.ACTIVE)
         .order_by("-organization__is_personal", "created_at")
         .first()
     )
@@ -121,6 +176,7 @@ def resolve_upload_organization(user, organization_id=None):
     membership = get_active_membership(user, organization_id)
     if membership is None:
         raise ValidationError({"organization_id": ["You are not an active member of that organization."]})
+    assert_organization_active(membership.organization)
     return membership.organization
 
 
@@ -220,7 +276,9 @@ def preview_invitation(token):
         .filter(token_hash=hash_token(token or ""), status=OrganizationInvitation.Status.PENDING)
         .first()
     )
-    return invitation if invitation is not None and not invitation.is_expired() else None
+    if invitation is None or invitation.is_expired() or invitation.organization.status != Organization.Status.ACTIVE:
+        return None                                          # a suspended organization cannot take anyone in: the token is no good for now
+    return invitation
 
 
 def accept_invitation(*, token, user, request=None):
@@ -236,6 +294,7 @@ def accept_invitation(*, token, user, request=None):
         raise OrganizationConflict("This invitation is no longer valid.")
     if invitation.email.lower() != (user.email or "").lower():
         raise PermissionDenied("Sign in with the invited email address to accept this invitation.")
+    assert_organization_active(invitation.organization)
     membership, _ = OrganizationMembership.objects.update_or_create(
         organization=invitation.organization, user=user,
         defaults={

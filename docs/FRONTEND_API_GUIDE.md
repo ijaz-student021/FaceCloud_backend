@@ -682,7 +682,7 @@ FaceCloud is **multi-tenant**: each customer is an *organization*. Three kinds o
 
 | Who | Belongs to | Sees |
 |---|---|---|
-| **Platform administrator** (FaceCloud staff, `role: admin`) | no organization | the whole platform: `/api/system/*`, `/api/user/admin/*`, `GET/POST /api/organizations/admin/` |
+| **Platform administrator** (FaceCloud staff, `role: admin`) | no organization | the whole platform: `/api/system/*`, `/api/user/admin/*`, `/api/organizations/admin/` (list, create, read, rename, plan, suspend) |
 | **Organization owner** | their organization (membership role `owner`) | everything in their organization; manages it (members, moderators, invitations, export) |
 | **Moderator** | **one** organization (membership role `moderator`) | only what belongs to that organization (see below) |
 | **Member / user** | their personal workspace, and optionally organizations they were invited to | their own photos; photos filed under an organization (`organization_id` on upload) are visible to that organization's moderators |
@@ -726,7 +726,23 @@ only to the owner and the moderators who may see that member).
 * The organization-wide export (`GET/POST /api/organizations/{id}/export/...`) covers everyone's data, so on `own_members` it is for the **owner only** (403 for a
   moderator) and `capabilities.export_organization` is `false` for that moderator: hide the button.
 * When the moderator who invited someone is removed or demoted, those members become visible to every moderator immediately and that moderator's open reviews go back to the queue.
-* The setting is changed by the owner or the platform administrator (the endpoints arrive with the owner console and the administrator's organization management).
+* The setting is changed by the owner or the platform administrator (the owner's endpoint arrives with the owner console; the administrator's organization management below does not change it yet).
+
+**The platform administrator manages organizations** (`role: admin` only; everyone else 403):
+
+* `GET /api/organizations/admin/` (list) and `GET /api/organizations/admin/{id}/`: each row keeps its old fields and adds `owner` (`{id, username}`: the oldest *active* owner,
+  or `null`), `member_count` (every **active** membership, the owner and the moderators included) and `moderator_count` (active moderators). Invited, suspended and removed
+  memberships are not counted. `POST /api/organizations/admin/` answers with the same shape.
+* `PATCH /api/organizations/admin/{id}/ {name?, plan?, status?, reason?}`: send any of `name` (1 to 150 characters), `plan` (`free`, `team`, `enterprise`) and `status`
+  (`active` or `suspended`); at least one of the three. `reason` (up to 500 characters) is stored in the audit trail only. The answer is the updated row. Every change
+  is written to the organization's audit trail (`organization_updated` with the old and new `name`/`plan`, `organization_suspended`, `organization_reactivated`), which the owner can
+  read there. A **personal workspace** cannot be suspended (400 on `status`): suspend the account instead.
+* **A suspended organization.** Nothing is deleted. While `status` is `suspended`, every organization endpoint (`/api/organizations/{id}/...`, including the moderator and export
+  ones) answers its **members, moderators and owner** `403 {"detail": "This organization is suspended.", "code": "organization_suspended"}`; someone who is not a member still gets
+  404. Uploading with `organization_id` of a suspended organization is the same 403 and nothing is stored; an invitation to it cannot be previewed (the usual 404) or accepted
+  (403); a moderator whose **only** organization is suspended is refused at sign-in with the same sentence and code. The person's **personal workspace is unaffected**: uploads without
+  `organization_id` still go there. `GET /api/organizations/` still lists the organization, with `status: "suspended"` and every `capabilities` value `false`, so show a banner and hide
+  the buttons. Reactivating (`status: "active"`) restores everything at once.
 
 ## 8. Notifications
 

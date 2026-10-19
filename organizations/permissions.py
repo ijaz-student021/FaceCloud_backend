@@ -12,7 +12,7 @@ from rest_framework.exceptions import PermissionDenied
 
 from .models import OrganizationMembership
 from .scope import DataScope
-from .services import get_active_membership
+from .services import assert_organization_active, get_active_membership
 
 
 class OrganizationScopedMixin:
@@ -40,6 +40,7 @@ class OrganizationScopedMixin:
         if self.active_membership is None:
             raise Http404("Organization not found.")
         self.organization = self.active_membership.organization
+        assert_organization_active(self.organization)          # after the 404 above: an outsider is never told the organization exists, suspended or not
         self.data_scope = DataScope(self.organization, request.user, self.active_membership)
         if self.owner_only_when_scoped and self.data_scope.restricted:
             raise PermissionDenied(

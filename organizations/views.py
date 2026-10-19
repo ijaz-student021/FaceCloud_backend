@@ -1,3 +1,4 @@
+from django.db.models import Count, OuterRef, Q, Subquery
 from django.shortcuts import get_object_or_404
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
@@ -13,6 +14,8 @@ from .models import Organization, OrganizationInvitation, OrganizationMembership
 from .permissions import OrganizationScopedMixin
 from .scope import visible_audit_events
 from .serializers import (
+    AdminOrganizationSerializer,
+    AdminOrganizationUpdateSerializer,
     OrganizationWithMembershipSerializer,
     MemberRemovalSerializer,
     OrganizationAuditEventSerializer,
@@ -23,7 +26,6 @@ from .serializers import (
     OrganizationInvitationSerializer,
     OrganizationMembershipSerializer,
     OrganizationMembershipUpdateSerializer,
-    OrganizationSerializer,
 )
 from .services import (
     accept_invitation,
@@ -34,6 +36,7 @@ from .services import (
     remove_member,
     resend_invitation,
     update_member,
+    update_organization_as_administrator,
 )
 
 ERROR_RESPONSES = {
@@ -59,24 +62,40 @@ class OrganizationListView(generics.ListAPIView):
         if getattr(self.request, "user", None) and self.request.user.is_authenticated:
             context["memberships"] = {
                 membership.organization_id: membership
-                for membership in OrganizationMembership.objects.filter(
+                for membership in OrganizationMembership.objects.select_related("organization").filter(
                     user=self.request.user, status=OrganizationMembership.Status.ACTIVE,
                 )
             }
         return context
 
 
+def administered_organizations():
+    """Every organization with the owner and the head counts the administrator's screens show, in one query."""
+    owner = OrganizationMembership.objects.filter(
+        organization=OuterRef("pk"), role=OrganizationMembership.Role.OWNER, status=OrganizationMembership.Status.ACTIVE,
+    ).order_by("created_at", "pk")
+    active = Q(memberships__status=OrganizationMembership.Status.ACTIVE)
+    return Organization.objects.annotate(
+        member_count=Count("memberships", filter=active),
+        moderator_count=Count("memberships", filter=active & Q(memberships__role=OrganizationMembership.Role.MODERATOR)),
+        owner_user_id=Subquery(owner.values("user_id")[:1]),
+        owner_username=Subquery(owner.values("user__username")[:1]),
+    )
+
+
 class AdminOrganizationListCreateView(generics.ListCreateAPIView):
     """FaceCloud-administrator-only: create and list every organization."""
 
     permission_classes = [IsAdminRole]
-    queryset = Organization.objects.all()
     throttle_scope = "org_invite"
 
-    def get_serializer_class(self):
-        return OrganizationCreateSerializer if self.request.method == "POST" else OrganizationSerializer
+    def get_queryset(self):
+        return administered_organizations()
 
-    @extend_schema(request=OrganizationCreateSerializer, responses={201: OrganizationSerializer, **ERROR_RESPONSES})
+    def get_serializer_class(self):
+        return OrganizationCreateSerializer if self.request.method == "POST" else AdminOrganizationSerializer
+
+    @extend_schema(request=OrganizationCreateSerializer, responses={201: AdminOrganizationSerializer, **ERROR_RESPONSES})
     def post(self, request, *args, **kwargs):
         serializer = OrganizationCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -85,7 +104,30 @@ class AdminOrganizationListCreateView(generics.ListCreateAPIView):
             plan=serializer.validated_data.get("plan", Organization.Plan.FREE),
             actor=request.user, request=request,
         )
-        return Response(OrganizationSerializer(organization).data, status=status.HTTP_201_CREATED)
+        return Response(AdminOrganizationSerializer(administered_organizations().get(pk=organization.pk)).data, status=status.HTTP_201_CREATED)
+
+
+class AdminOrganizationDetailView(APIView):
+    """FaceCloud-administrator-only: read one organization, or rename it, change its plan, suspend or reactivate it."""
+
+    permission_classes = [IsAdminRole]
+
+    @extend_schema(responses={200: AdminOrganizationSerializer, **ERROR_RESPONSES})
+    def get(self, request, organization_id):
+        organization = get_object_or_404(administered_organizations(), pk=organization_id)
+        return Response(AdminOrganizationSerializer(organization).data)
+
+    @extend_schema(request=AdminOrganizationUpdateSerializer, responses={200: AdminOrganizationSerializer, **ERROR_RESPONSES})
+    def patch(self, request, organization_id):
+        organization = get_object_or_404(Organization, pk=organization_id)
+        serializer = AdminOrganizationUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        update_organization_as_administrator(
+            organization=organization, actor=request.user, name=data.get("name"), plan=data.get("plan"),
+            status=data.get("status"), reason=data.get("reason", ""), request=request,
+        )
+        return Response(AdminOrganizationSerializer(administered_organizations().get(pk=organization.pk)).data)
 
 
 class OrganizationDetailView(OrganizationScopedMixin, APIView):
