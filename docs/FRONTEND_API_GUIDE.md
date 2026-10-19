@@ -61,6 +61,13 @@ POST /api/auth/login/  {identifier, password}     (identifier = username or emai
    -> 200 {access, refresh, role, dashboard, user}
 ```
 
+- **Too many failed attempts.** Sign-in is limited by *failed* attempts only, so people sharing one address (a classroom) do not
+  lock each other out and a correct password is never refused for that reason. Two things can answer `429`: the account's own
+  backoff after 5 wrong passwords in a row (`"Too many failed sign-in attempts. Try again in N seconds."`, whatever the address),
+  and the failed-attempt limit per address and account name (`"Request was throttled. Expected available in N seconds."`). Both carry a
+  `Retry-After` header with the seconds: show "try again in N seconds" (or a countdown) instead of a generic error. Token refresh is
+  limited per refresh token, so a flood of refreshes from one person does not affect anyone else on the address. The values and the
+  demo-day settings are in `docs/deployment/rate-limits.md`.
 - `role` is `user`, `moderator` or `admin`. `dashboard` is **always the same
   value** (`"user"`, `"moderator"`, `"admin"`), meant for choosing which
   dashboard to open after login. A person who is an *active moderator of an
