@@ -1,7 +1,8 @@
 from django.conf import settings
-from django.db.models import F
+from django.db.models import Avg, Count, F, Q
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
+from django.urls import reverse
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
@@ -20,6 +21,11 @@ from uploads.services import BatchHasNoFailedImages, BatchRetryLimitReached
 
 from .models import ModeratorReport, ModeratorReview
 from .serializers import (
+    ModeratorFolderMergeSerializer,
+    ModeratorFolderSerializer,
+    ModeratorImageSerializer,
+    ModeratorMergeSuggestionSerializer,
+    ModeratorReviewDetailSerializer,
     ModeratorAssignSerializer,
     ModeratorBulkDecisionSerializer,
     ModeratorBulkResultSerializer,
@@ -110,10 +116,15 @@ class ModeratorReviewListView(OrganizationScopedMixin, generics.ListAPIView):
 class ModeratorReviewDetailView(OrganizationScopedMixin, APIView):
     require_owner_or_moderator = True
 
-    @extend_schema(responses={200: ModeratorReviewSerializer, **ERROR_RESPONSES})
+    @extend_schema(responses={200: ModeratorReviewDetailSerializer, **ERROR_RESPONSES})
     def get(self, request, organization_id, review_id):
-        review = get_object_or_404(ModeratorReview, pk=review_id, organization_id=organization_id)
-        return Response(ModeratorReviewSerializer(review).data)
+        review = get_object_or_404(
+            ModeratorReview.objects.select_related(
+                "assigned_moderator", "decided_by", "claimed_by", "image__owner", "image__quality_decision", "image__face_validation",
+            ),
+            pk=review_id, organization_id=organization_id,
+        )
+        return Response(ModeratorReviewDetailSerializer(review, context={"request": request}).data)
 
 
 class ModeratorReviewImageView(OrganizationScopedMixin, APIView):
@@ -355,15 +366,70 @@ class ModeratorDashboardView(OrganizationScopedMixin, APIView):
         return Response(ModeratorDashboardSerializer(dashboard_summary(self.organization)).data)
 
 
+OUTCOMES = ("accepted", "rejected", "needs_review", "failed")
+FINISHED_BATCH_STATUSES = ("completed", "partial", "failed", "cancelled")
+
+
+def batch_name(batch):
+    """What the screens call a batch: its label, else the ZIP's file name, else ``Upload <id>`` (the same wording as search and "Your uploads")."""
+    return batch.display_name or batch.original_archive_name or f"Upload {batch.pk}"
+
+
+def annotate_batch_stats(queryset):
+    """Per-batch outcome counts and mean progress in the same query, so a list of batches costs one query."""
+    return queryset.annotate(
+        stat_progress=Avg("image_progress__progress_percentage"),
+        **{f"stat_{name}": Count("image_progress", filter=Q(image_progress__status=name), distinct=True) for name in OUTCOMES},
+    )
+
+
+def batch_stats(batch):
+    """``(progress_percentage, counts)`` from the annotations when the batch has them, else counted now."""
+    if hasattr(batch, "stat_progress"):
+        progress = batch.stat_progress
+        counts = {name: getattr(batch, f"stat_{name}") for name in OUTCOMES}
+    else:
+        from django.db.models import Avg as _Avg
+
+        rows = batch.image_progress.all()
+        progress = rows.aggregate(value=_Avg("progress_percentage"))["value"]
+        by_status = dict(rows.values_list("status").annotate(n=Count("id")).order_by())
+        counts = {name: by_status.get(name, 0) for name in OUTCOMES}
+    if progress is None:
+        progress = 100.0 if batch.processing_status in FINISHED_BATCH_STATUSES else 0.0
+    return round(float(progress), 1), counts
+
+
+class ModeratorBatchListSerializer(AdminFailedBatchSerializer):
+    """A batch as the Batches screen draws it: the shared fields plus a name, a progress figure and a count per outcome."""
+
+    name = serializers.SerializerMethodField(help_text="The label, else the ZIP's file name, else 'Upload <id>'.")
+    progress_percentage = serializers.SerializerMethodField(help_text="Mean progress of the batch's photos, 0 to 100.")
+    counts = serializers.SerializerMethodField(help_text="Photos per outcome: accepted, rejected, needs_review, failed.")
+
+    class Meta(AdminFailedBatchSerializer.Meta):
+        fields = AdminFailedBatchSerializer.Meta.fields + ["name", "progress_percentage", "counts"]
+        read_only_fields = fields
+
+    def get_name(self, batch) -> str:
+        return batch_name(batch)
+
+    def get_progress_percentage(self, batch) -> float:
+        return batch_stats(batch)[0]
+
+    def get_counts(self, batch) -> dict:
+        return batch_stats(batch)[1]
+
+
 class ModeratorBatchListView(OrganizationScopedMixin, generics.ListAPIView):
     require_owner_or_moderator = True
-    serializer_class = AdminFailedBatchSerializer
+    serializer_class = ModeratorBatchListSerializer
 
     def get_queryset(self):
-        queryset = (
+        queryset = annotate_batch_stats(
             UploadBatch.objects.filter(organization_id=self.kwargs["organization_id"])
-            .select_related("owner").order_by("-updated_at")
-        )
+            .select_related("owner")
+        ).order_by("-updated_at")
         status_filter = self.request.query_params.get("processing_status")
         if status_filter:
             queryset = queryset.filter(processing_status=status_filter)
@@ -422,7 +488,7 @@ class ModeratorReportListCreateView(OrganizationScopedMixin, generics.ListAPIVie
     throttle_scope = "org_report"
 
     def get_queryset(self):
-        return ModeratorReport.objects.filter(organization_id=self.kwargs["organization_id"])
+        return ModeratorReport.objects.filter(organization_id=self.kwargs["organization_id"]).select_related("requested_by")
 
     @extend_schema(
         request=ModeratorReportCreateSerializer,
@@ -446,7 +512,7 @@ class ModeratorReportListCreateView(OrganizationScopedMixin, generics.ListAPIVie
             date_to=serializer.validated_data["date_to"],
         )
         return Response(
-            ModeratorReportSerializer(report).data,
+            ModeratorReportSerializer(report, context={"request": request}).data,
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
 
@@ -458,7 +524,7 @@ class ModeratorReportDetailView(OrganizationScopedMixin, APIView):
     def get(self, request, organization_id, report_id):
         report = get_object_or_404(ModeratorReport, pk=report_id, organization_id=organization_id)
         expire_moderator_report_if_needed(report)
-        return Response(ModeratorReportSerializer(report).data)
+        return Response(ModeratorReportSerializer(report, context={"request": request}).data)
 
 
 class ModeratorReportFileView(OrganizationScopedMixin, APIView):
@@ -531,11 +597,14 @@ class ModeratorBatchImageSerializer(serializers.Serializer):
     retry_count = serializers.IntegerField()
     quality_decision = serializers.CharField(allow_null=True)
     enhancement_status = serializers.CharField(allow_null=True)
+    file_size = serializers.IntegerField(help_text="Bytes of the uploaded file.")
+    outcome = serializers.CharField(help_text="accepted, rejected, needs_review, failed, cancelled or processing.")
+    preview_url = serializers.CharField(allow_null=True, help_text="Thumbnail of the photo (the moderator image preview); null for a file refused at upload.")
 
 
-class ModeratorBatchSummarySerializer(AdminFailedBatchSerializer):
-    class Meta(AdminFailedBatchSerializer.Meta):
-        fields = AdminFailedBatchSerializer.Meta.fields + ["rejected_files"]
+class ModeratorBatchSummarySerializer(ModeratorBatchListSerializer):
+    class Meta(ModeratorBatchListSerializer.Meta):
+        fields = ModeratorBatchListSerializer.Meta.fields + ["rejected_files"]
         read_only_fields = fields
 
 
@@ -593,6 +662,11 @@ class ModeratorBatchDetailView(OrganizationScopedMixin, APIView):
                 "retry_count": progress.retry_count if progress else 0,
                 "quality_decision": (decision.decision or None) if decision else None,
                 "enhancement_status": enhancements[0].status if enhancements else None,
+                "file_size": image.file_size,
+                "outcome": progress.status if progress and progress.status in (*OUTCOMES, "cancelled") else "processing",
+                "preview_url": None if image.status == "rejected" else request.build_absolute_uri(
+                    reverse("moderation:image-preview", kwargs={"organization_id": self.organization.pk, "image_id": image.pk})
+                ),
             })
         counts = Counter(row["progress_status"] or "no_progress_record" for row in rows)
         return Response(ModeratorBatchDetailSerializer({
@@ -607,6 +681,118 @@ def organization_images(organization):
     if organization.is_personal:
         return ImageUpload.objects.none()
     return ImageUpload.objects.filter(batch__organization=organization)
+
+
+class ModeratorImageListView(OrganizationScopedMixin, generics.ListAPIView):
+    """The photographs submitted to this organization (owner or moderator): Rejected Images, and any other filter of them.
+
+    Never a personal workspace. ``?decision=rejected|needs_review|accepted`` (``rejected`` includes files refused at upload), ``?q=`` (photo name or
+    uploader), ``?batch=<id>``; newest first; a plain array unless ``page`` is sent.
+    """
+
+    require_owner_or_moderator = True
+    serializer_class = ModeratorImageSerializer
+
+    @extend_schema(parameters=[
+        OpenApiParameter("decision", str, enum=["rejected", "needs_review", "accepted"], description="Only photos with this outcome."),
+        OpenApiParameter("q", str, description="Part of the photo's name or the uploader's username."),
+        OpenApiParameter("batch", int, description="Only photos of this upload batch."),
+    ])
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
+    def get_serializer_context(self):
+        return {**super().get_serializer_context(), "organization": self.organization}
+
+    def get_queryset(self):
+        from django.db.models import Prefetch
+
+        params = self.request.query_params
+        queryset = (
+            organization_images(self.organization)
+            .select_related("owner", "quality_decision")
+            .prefetch_related(Prefetch(
+                "moderator_reviews", queryset=ModeratorReview.objects.filter(organization=self.organization).order_by("-created_at"),
+                to_attr="org_reviews",
+            ))
+            .order_by("-created_at", "-pk")
+        )
+        decision = params.get("decision")
+        if decision:
+            if decision == "rejected":
+                queryset = queryset.filter(Q(status="rejected") | Q(quality_decision__decision="rejected"))
+            elif decision in ("needs_review", "accepted"):
+                queryset = queryset.exclude(status="rejected").filter(quality_decision__decision=decision)
+            else:
+                raise ValidationError({"decision": ["Choose rejected, needs_review or accepted."]})
+        text = (params.get("q") or "").strip()
+        if text:
+            queryset = queryset.filter(Q(original_name__icontains=text) | Q(owner__username__icontains=text))
+        batch = params.get("batch")
+        if batch:
+            if not batch.isdigit():
+                raise ValidationError({"batch": ["Send a batch id."]})
+            queryset = queryset.filter(batch_id=int(batch))
+        return queryset
+
+
+class ModeratorIdentityGroupListView(OrganizationScopedMixin, generics.ListAPIView):
+    """The person folders that hold photographs submitted to this organization (owner or moderator), most recently changed first."""
+
+    require_owner_or_moderator = True
+    serializer_class = ModeratorFolderSerializer
+
+    @extend_schema(parameters=[
+        OpenApiParameter("q", str, description="Part of the folder's name or its owner's username."),
+        OpenApiParameter("owner", int, description="Only this member's folders."),
+    ], responses={200: ModeratorFolderSerializer(many=True), **ERROR_RESPONSES})
+    def get(self, request, *args, **kwargs):
+        from . import identity_groups
+
+        params = request.query_params
+        folders = identity_groups.organization_folders(self.organization)
+        text = (params.get("q") or "").strip()
+        if text:
+            folders = folders.filter(Q(display_name__icontains=text) | Q(owner__username__icontains=text))
+        owner = params.get("owner")
+        if owner:
+            if not owner.isdigit():
+                raise ValidationError({"owner": ["Send a user id."]})
+            folders = folders.filter(owner_id=int(owner))
+        page = self.paginate_queryset(folders)
+        rows = identity_groups.describe_folders(page if page is not None else folders, self.organization, request)
+        return self.get_paginated_response(rows) if page is not None else Response(rows)
+
+
+class ModeratorMergeSuggestionsView(OrganizationScopedMixin, APIView):
+    """Pairs of one member's folders that look like the same person, most alike first (at most 20; nothing is stored)."""
+
+    require_owner_or_moderator = True
+
+    @extend_schema(responses={200: ModeratorMergeSuggestionSerializer(many=True), **ERROR_RESPONSES})
+    def get(self, request, organization_id):
+        from . import identity_groups
+
+        return Response(identity_groups.suggested_merges(self.organization, request))
+
+
+class ModeratorFolderMergeView(OrganizationScopedMixin, APIView):
+    """Merge one of the organization's person folders into another folder of the same member (audited)."""
+
+    require_owner_or_moderator = True
+    throttle_scope = "org_bulk_moderation"
+
+    @extend_schema(request=ModeratorFolderMergeSerializer, responses={200: OpenApiTypes.OBJECT, **ERROR_RESPONSES})
+    def post(self, request, organization_id):
+        from . import identity_groups
+
+        payload = ModeratorFolderMergeSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        source, target = identity_groups.merge_folders(
+            organization=self.organization, actor=request.user, request=request, **payload.validated_data,
+        )
+        return Response({"source": {"id": source.pk, "state": source.state}, "target": {"id": target.pk, "member_count": target.member_count,
+                                                                                         "display_name": target.display_name}})
 
 
 class ModeratorImagePreviewView(OrganizationScopedMixin, APIView):

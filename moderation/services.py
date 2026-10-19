@@ -167,6 +167,7 @@ def decide_review(*, review, actor, action, reason="", notes="", group_id=None, 
     if locked.decided_at is not None:
         raise ModerationConflict("This review has already been decided.")
     _reject_if_held_by_another(locked, actor)
+    previous_status = locked.status
     locked.status = _REVIEW_STATUS_FOR_ACTION[action]
     locked.assigned_moderator = locked.assigned_moderator or actor
     locked.decision_reason = reason
@@ -204,6 +205,7 @@ def decide_review(*, review, actor, action, reason="", notes="", group_id=None, 
     record_audit_event(
         locked.organization, actor, OrganizationAuditEvent.Action.MODERATOR_REVIEW_DECIDED,
         target_type="ModeratorReview", target_id=locked.pk,
+        previous_value={"status": previous_status},
         new_value={"action": action, "status": locked.status}, reason=reason, request=request,
     )
     return locked

@@ -145,6 +145,7 @@ class AdminAuditView(APIView):
             OpenApiParameter("user", OpenApiTypes.INT, description="Restrict to one user's id."),
             OpenApiParameter("category", OpenApiTypes.STR, description="'auth', or an activity category (upload, processing, moderation, ...)."),
             OpenApiParameter("source", OpenApiTypes.STR, description="'auth' or 'activity' only."),
+            OpenApiParameter("q", OpenApiTypes.STR, description="Text to find in the actor's name, the event (its name or its sentence) or the category; up to 100 characters."),
             OpenApiParameter("page", OpenApiTypes.INT, description="1-based page number."),
             OpenApiParameter("page_size", OpenApiTypes.INT, description="Default 50, max 200."),
         ],
@@ -155,7 +156,7 @@ class AdminAuditView(APIView):
         try:
             payload = build_audit_feed(
                 user=params.get("user"), category=params.get("category"), source=params.get("source"),
-                page=params.get("page", 1), page_size=params.get("page_size", 50),
+                page=params.get("page", 1), page_size=params.get("page_size", 50), q=params.get("q"),
             )
         except InvalidAuditFilter as error:
             raise ValidationError({"detail": [str(error)]}) from error

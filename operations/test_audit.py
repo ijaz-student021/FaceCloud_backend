@@ -199,3 +199,68 @@ class AuditRowReadingTests(TestCase):
             AuthEvent.objects.create(user=self.moderator, event="login", identifier="mod-one")
         with self.assertNumQueries(3):                 # auth events, activity events, the actors
             build_audit_feed(page_size=50)
+
+
+class AuditSearchTests(TestCase):
+    """``?q=`` finds rows by actor name, event (name or sentence) and category, and combines with the other filters."""
+
+    def setUp(self):
+        self.sara = User.objects.create_user(username="sara", email="sara@example.com", password="ForestRiver!4821", is_email_verified=True)
+        self.omar = User.objects.create_user(username="omar", email="omar@example.com", password="ForestRiver!4821", is_email_verified=True)
+        AuthEvent.objects.create(user=self.sara, event="login", identifier="sara@example.com")
+        AuthEvent.objects.create(user=self.omar, event="password_changed", identifier="omar@example.com")
+        AuthEvent.objects.create(user=None, event="login_failed", identifier="ghost@example.com")
+        ActivityEvent.objects.create(user=self.sara, category=ActivityEvent.Category.UPLOAD, event="upload_received")
+        ActivityEvent.objects.create(user=self.omar, category=ActivityEvent.Category.DOWNLOAD, event="package_ready")
+
+    def found(self, **kwargs):
+        return [(row["actor_name"], row["event"]) for row in build_audit_feed(**kwargs)["results"]]
+
+    def test_by_actor_name_username_or_typed_identifier(self):
+        self.assertEqual(sorted(self.found(q="sara")), [("sara", "login"), ("sara", "upload_received")])
+        self.assertEqual(self.found(q="GHOST"), [("ghost@example.com", "login_failed")])           # case-insensitive, unknown account
+
+    def test_by_event_name_or_by_the_sentence_the_screen_shows(self):
+        self.assertEqual(self.found(q="password_changed"), [("omar", "password_changed")])
+        self.assertEqual(self.found(q="password changed"), [("omar", "password_changed")])         # spaces read as underscores
+        self.assertIn(("sara", "login"), self.found(q="signed in"))                                 # the sentence for "login"
+        self.assertEqual(self.found(q="package"), [("omar", "package_ready")])
+
+    def test_by_category_name_or_label(self):
+        self.assertEqual(self.found(q="upload"), [("sara", "upload_received")])
+        self.assertEqual({event for _name, event in self.found(q="accounts")}, {"login", "password_changed", "login_failed"})
+        self.assertEqual({event for _name, event in self.found(q="download")}, {"package_ready"})
+
+    def test_it_combines_with_the_other_filters(self):
+        self.assertEqual(self.found(q="omar", source="activity"), [("omar", "package_ready")])      # his password change is an auth row
+        self.assertEqual(self.found(q="sara", user=self.omar.pk), [])
+        self.assertEqual(self.found(q="sara", category="upload"), [("sara", "upload_received")])
+
+    def test_nothing_found_is_an_empty_page_and_the_filter_is_echoed(self):
+        feed = build_audit_feed(q="zzz-nothing")
+        self.assertEqual(feed["results"], [])
+        self.assertEqual(feed["filters_applied"]["q"], "zzz-nothing")
+        self.assertIsNone(build_audit_feed()["filters_applied"]["q"])
+
+    def test_a_blank_search_is_no_search_and_a_too_long_one_is_refused(self):
+        self.assertEqual(len(build_audit_feed(q="   ")["results"]), 5)
+        with self.assertRaises(InvalidAuditFilter):
+            build_audit_feed(q="x" * 101)
+
+    def test_paging_still_counts_matches_only(self):
+        for _ in range(3):
+            ActivityEvent.objects.create(user=self.sara, category=ActivityEvent.Category.UPLOAD, event="upload_received")
+        page = build_audit_feed(q="upload", page=1, page_size=2)
+        self.assertEqual((len(page["results"]), page["has_next"]), (2, True))
+        self.assertEqual(len(build_audit_feed(q="upload", page=2, page_size=2)["results"]), 2)
+
+    def test_the_endpoint_takes_q_for_an_administrator_only(self):
+        admin = User.objects.create_user(username="auditor", email="auditor@example.com", password="ForestRiver!4821",
+                                         is_email_verified=True, role="admin")
+        client = APIClient()
+        client.force_authenticate(admin)
+        body = client.get(reverse("operations:admin-audit"), {"q": "omar"}).json()
+        self.assertEqual({row["actor_name"] for row in body["results"]}, {"omar"})
+        self.assertEqual(client.get(reverse("operations:admin-audit"), {"q": "x" * 101}).status_code, 400)
+        client.force_authenticate(self.sara)
+        self.assertEqual(client.get(reverse("operations:admin-audit"), {"q": "omar"}).status_code, 403)
