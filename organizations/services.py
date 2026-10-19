@@ -14,7 +14,8 @@ from datetime import timedelta
 from django.conf import settings
 from django.core.mail import send_mail
 from django.db import transaction
-from django.db.models import Count, OuterRef, Q, Subquery
+from django.db.models import Count, IntegerField, OuterRef, Q, Subquery
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django.utils.text import slugify
 from rest_framework import status
@@ -48,6 +49,59 @@ class OrganizationSuspended(PermissionDenied):
 def assert_organization_active(organization):
     if organization.status == Organization.Status.SUSPENDED:
         raise OrganizationSuspended()
+
+
+class PlanLimitReached(PermissionDenied):
+    """403 when adding a person would take an organization past what its plan allows (``kind`` and ``limit`` let the frontend say which)."""
+
+    default_code = "plan_limit_reached"
+
+    def __init__(self, kind, limit):
+        noun = kind[:-1] if limit == 1 else kind
+        super().__init__(detail={"detail": f"Your plan allows {limit} {noun}.", "code": self.default_code, "kind": kind})
+        self.detail["limit"] = limit                  # DRF turns every value of a detail dict into text; the limit stays a number
+
+
+SEAT_KINDS = {OrganizationMembership.Role.MODERATOR: "moderators", OrganizationMembership.Role.MEMBER: "members"}       # the owner takes no seat
+
+
+def plan_limits(organization):
+    """``{"moderators": n, "members": n}`` for the organization's plan; ``None`` means unlimited (see ``settings.ORGANIZATION_PLAN_LIMITS``)."""
+    limits = settings.ORGANIZATION_PLAN_LIMITS.get(organization.plan, {})
+    return {"moderators": limits.get("moderators"), "members": limits.get("members")}
+
+
+def seats_in_use(organization, kind, *, with_invitations=True, excluding_user=None):
+    """The seats of ``kind`` taken: active memberships of that role, plus (``with_invitations``) the invitations still waiting, which hold a seat so that an
+    invitation is never sent that could not be accepted. ``excluding_user`` leaves that person's own membership out."""
+    from accounts.models import AccountInvitation
+
+    role = next(role for role, name in SEAT_KINDS.items() if name == kind)
+    active = OrganizationMembership.objects.filter(organization=organization, role=role, status=OrganizationMembership.Status.ACTIVE)
+    if excluding_user is not None:
+        active = active.exclude(user=excluding_user)
+    count = active.count()
+    if with_invitations:
+        now = timezone.now()
+        count += OrganizationInvitation.objects.filter(
+            organization=organization, role=role, status=OrganizationInvitation.Status.PENDING, expires_at__gt=now).count()
+        if role == OrganizationMembership.Role.MODERATOR:       # an administrator's invitation to create a moderator account for this organization
+            count += AccountInvitation.objects.filter(
+                organization=organization, role="moderator", status=AccountInvitation.Status.PENDING, expires_at__gt=now).count()
+    return count
+
+
+def assert_seat_available(organization, role, *, with_invitations=True, excluding_user=None):
+    """Raise ``PlanLimitReached`` when one more person with ``role`` would pass the plan's limit. Locks the organization row (inside a transaction) so two
+    simultaneous additions cannot both take the last seat."""
+    kind = SEAT_KINDS.get(role)
+    if kind is None:
+        return
+    if transaction.get_connection().in_atomic_block:
+        organization = Organization.objects.select_for_update().get(pk=organization.pk)
+    limit = plan_limits(organization)[kind]
+    if limit is not None and seats_in_use(organization, kind, with_invitations=with_invitations, excluding_user=excluding_user) >= limit:
+        raise PlanLimitReached(kind, limit)
 
 
 def hash_token(token):
@@ -108,11 +162,29 @@ def organizations_with_head_counts():
         organization=OuterRef("pk"), role=OrganizationMembership.Role.OWNER, status=OrganizationMembership.Status.ACTIVE,
     ).order_by("created_at", "pk")
     active = Q(memberships__status=OrganizationMembership.Status.ACTIVE)
+    from accounts.models import AccountInvitation
+
+    now = timezone.now()
+
+    def count_of(queryset):
+        return Coalesce(
+            Subquery(queryset.filter(organization=OuterRef("pk")).order_by().values("organization").annotate(n=Count("pk")).values("n")[:1], output_field=IntegerField()),
+            0,
+        )
+
+    Role = OrganizationMembership.Role
+    waiting = OrganizationInvitation.objects.filter(status=OrganizationInvitation.Status.PENDING, expires_at__gt=now)
     return Organization.objects.annotate(
         member_count=Count("memberships", filter=active),
-        moderator_count=Count("memberships", filter=active & Q(memberships__role=OrganizationMembership.Role.MODERATOR)),
+        moderator_count=Count("memberships", filter=active & Q(memberships__role=Role.MODERATOR)),
         owner_user_id=Subquery(owner.values("user_id")[:1]),
         owner_username=Subquery(owner.values("user__username")[:1]),
+        # Seats in use (see seats_in_use): active people plus invitations still waiting.
+        member_seats=count_of(OrganizationMembership.objects.filter(role=Role.MEMBER, status=OrganizationMembership.Status.ACTIVE))
+        + count_of(waiting.filter(role=Role.MEMBER)),
+        moderator_seats=count_of(OrganizationMembership.objects.filter(role=Role.MODERATOR, status=OrganizationMembership.Status.ACTIVE))
+        + count_of(waiting.filter(role=Role.MODERATOR))
+        + count_of(AccountInvitation.objects.filter(role="moderator", status=AccountInvitation.Status.PENDING, expires_at__gt=now)),
     )
 
 
@@ -243,11 +315,13 @@ def invite_member(*, organization, actor_membership, email, role, request=None):
     ).exists():
         raise OrganizationConflict("An invitation is already pending for this email address.")
     token = secrets.token_urlsafe(32)
-    invitation = OrganizationInvitation.objects.create(
-        organization=organization, email=email, role=role,
-        token_hash=hash_token(token), invited_by=actor_membership.user,
-        expires_at=timezone.now() + timedelta(hours=settings.ORG_INVITATION_TTL_HOURS),
-    )
+    with transaction.atomic():
+        assert_seat_available(organization, role)                      # the invitation holds a seat until it is accepted, cancelled or expires
+        invitation = OrganizationInvitation.objects.create(
+            organization=organization, email=email, role=role,
+            token_hash=hash_token(token), invited_by=actor_membership.user,
+            expires_at=timezone.now() + timedelta(hours=settings.ORG_INVITATION_TTL_HOURS),
+        )
     _send_invitation_email(invitation, token)
     record_audit_event(
         organization, actor_membership.user, OrganizationAuditEvent.Action.MEMBER_INVITED,
@@ -261,9 +335,12 @@ def resend_invitation(*, invitation, actor_membership, request=None):
     if invitation.status != OrganizationInvitation.Status.PENDING:
         raise OrganizationConflict("Only a pending invitation can be resent.")
     token = secrets.token_urlsafe(32)
-    invitation.token_hash = hash_token(token)
-    invitation.expires_at = timezone.now() + timedelta(hours=settings.ORG_INVITATION_TTL_HOURS)
-    invitation.save(update_fields=["token_hash", "expires_at", "updated_at"])
+    with transaction.atomic():
+        if invitation.is_expired():                                    # an expired invitation holds no seat: bringing it back needs one
+            assert_seat_available(invitation.organization, invitation.role)
+        invitation.token_hash = hash_token(token)
+        invitation.expires_at = timezone.now() + timedelta(hours=settings.ORG_INVITATION_TTL_HOURS)
+        invitation.save(update_fields=["token_hash", "expires_at", "updated_at"])
     _send_invitation_email(invitation, token)
     record_audit_event(
         invitation.organization, actor_membership.user, OrganizationAuditEvent.Action.INVITATION_RESENT,
@@ -314,6 +391,7 @@ def accept_invitation(*, token, user, request=None):
     if invitation.email.lower() != (user.email or "").lower():
         raise PermissionDenied("Sign in with the invited email address to accept this invitation.")
     assert_organization_active(invitation.organization)
+    assert_seat_available(invitation.organization, invitation.role, with_invitations=False, excluding_user=user)       # re-checked: the plan or the team may have changed
     membership, _ = OrganizationMembership.objects.update_or_create(
         organization=invitation.organization, user=user,
         defaults={
@@ -371,6 +449,9 @@ def update_member(*, membership, actor_membership, role=None, status_value=None,
         if demoting_last_owner and status_value != OrganizationMembership.Status.ACTIVE:
             raise OrganizationConflict("The last organization owner cannot be suspended or removed.")
         locked.status = status_value
+    if locked.status == OrganizationMembership.Status.ACTIVE and (previous["status"] != locked.status or previous["role"] != locked.role):
+        # Promoting, demoting or reactivating takes a seat of the new kind. After the last-owner rules above, so the more basic refusal comes first.
+        assert_seat_available(locked.organization, locked.role, excluding_user=locked.user)
     locked.save(update_fields=["role", "status", "updated_at"])
     released = 0
     if not (

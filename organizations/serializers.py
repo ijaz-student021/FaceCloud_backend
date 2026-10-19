@@ -4,6 +4,7 @@ from rest_framework import serializers
 
 from .capabilities import membership_capabilities, membership_summary
 from .models import Organization, OrganizationAuditEvent, OrganizationInvitation, OrganizationMembership
+from .services import plan_limits, seats_in_use
 
 User = get_user_model()
 
@@ -26,7 +27,36 @@ class OrganizationOwnerSerializer(serializers.Serializer):
     username = serializers.CharField()
 
 
-class AdminOrganizationSerializer(OrganizationSerializer):
+class PlanLimitsSerializer(serializers.Serializer):
+    moderators = serializers.IntegerField(allow_null=True, help_text="null means unlimited.")
+    members = serializers.IntegerField(allow_null=True, help_text="null means unlimited.")
+
+
+class PlanUsageSerializer(serializers.Serializer):
+    moderators = serializers.IntegerField()
+    members = serializers.IntegerField()
+
+
+class PlanFiguresMixin(serializers.Serializer):
+    """``limits`` (what the plan allows; null = unlimited) and ``usage`` (the seats taken: active people plus invitations still waiting, which hold a seat).
+
+    Read from the ``moderator_seats`` / ``member_seats`` annotations of ``organizations_with_head_counts()`` (one query for a page), or counted when absent.
+    """
+
+    limits = serializers.SerializerMethodField()
+    usage = serializers.SerializerMethodField()
+
+    @extend_schema_field(PlanLimitsSerializer)
+    def get_limits(self, organization):
+        return plan_limits(organization)
+
+    @extend_schema_field(PlanUsageSerializer)
+    def get_usage(self, organization):
+        seats = {"moderators": getattr(organization, "moderator_seats", None), "members": getattr(organization, "member_seats", None)}
+        return {kind: count if count is not None else seats_in_use(organization, kind) for kind, count in seats.items()}
+
+
+class AdminOrganizationSerializer(PlanFiguresMixin, OrganizationSerializer):
     """What the administrator sees of every organization: the organization plus who owns it and how many people are in it.
 
     ``member_count`` counts every active membership (the owner and the moderators included); ``moderator_count`` the active moderators.
@@ -39,7 +69,7 @@ class AdminOrganizationSerializer(OrganizationSerializer):
     owner = serializers.SerializerMethodField()
 
     class Meta(OrganizationSerializer.Meta):
-        fields = OrganizationSerializer.Meta.fields + ["owner", "member_count", "moderator_count"]
+        fields = OrganizationSerializer.Meta.fields + ["owner", "member_count", "moderator_count", "limits", "usage"]
         read_only_fields = fields
 
     @extend_schema_field(OrganizationOwnerSerializer(allow_null=True))
@@ -128,7 +158,7 @@ class OrganizationWithMembershipSerializer(OrganizationSerializer):
         return membership_capabilities(self._membership(organization))
 
 
-class OrganizationDetailSerializer(OrganizationWithMembershipSerializer):
+class OrganizationDetailSerializer(PlanFiguresMixin, OrganizationWithMembershipSerializer):
     """One organization as its own people see it. The owner and the moderators also get who owns it and how many people are in it; a plain member does not.
 
     ``member_count`` counts every active membership (the owner and the moderators included), ``moderator_count`` the active moderators, ``owner`` is the
@@ -138,10 +168,10 @@ class OrganizationDetailSerializer(OrganizationWithMembershipSerializer):
     owner = serializers.SerializerMethodField()
     member_count = serializers.IntegerField(read_only=True, required=False)
     moderator_count = serializers.IntegerField(read_only=True, required=False)
-    STAFF_ONLY = ("owner", "member_count", "moderator_count")
+    STAFF_ONLY = ("owner", "member_count", "moderator_count", "limits", "usage")
 
     class Meta(OrganizationWithMembershipSerializer.Meta):
-        fields = OrganizationWithMembershipSerializer.Meta.fields + ["owner", "member_count", "moderator_count"]
+        fields = OrganizationWithMembershipSerializer.Meta.fields + ["owner", "member_count", "moderator_count", "limits", "usage"]
         read_only_fields = fields
 
     @extend_schema_field(OrganizationOwnerSerializer(allow_null=True))

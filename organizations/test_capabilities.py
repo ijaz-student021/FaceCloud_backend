@@ -7,7 +7,7 @@ refused with 403.
 from django.test import TestCase
 
 from .capabilities import CAPABILITY_NAMES
-from .models import OrganizationMembership
+from .models import Organization, OrganizationMembership
 from .tests import OrgFixtureMixin
 
 Role = OrganizationMembership.Role
@@ -17,6 +17,7 @@ class CapabilitiesMatchEnforcementTests(OrgFixtureMixin, TestCase):
     def setUp(self):
         self.owner = self.make_user("owner")
         self.organization = self.make_org(self.owner)
+        Organization.objects.filter(pk=self.organization.pk).update(plan=Organization.Plan.ENTERPRISE)       # about who may do what, not about seats
         self.moderator = self.make_user("moderator")
         self.add_member(self.organization, self.moderator, Role.MODERATOR)
         self.member = self.make_user("member")
