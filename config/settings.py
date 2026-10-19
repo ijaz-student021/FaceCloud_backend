@@ -903,7 +903,9 @@ SYSTEM_HEALTH_TIMEOUT_SECONDS = env.float("SYSTEM_HEALTH_TIMEOUT_SECONDS", defau
 FACECLOUD_VERSION = env("FACECLOUD_VERSION", default="dev")
 # Send the model-loading tasks to their own queue (empty = the default queue, as before); see config/celery_routes.py.
 ENHANCEMENT_QUEUE_NAME = env("ENHANCEMENT_QUEUE_NAME", default="")
-_task_routes = task_routes(ENHANCEMENT_QUEUE_NAME, GFPGAN_QUEUE_ENABLED, GFPGAN_QUEUE_NAME)
+# Gallery edits ("Save as new version") on a queue of their own, so a save does not wait behind a batch enhancement. Empty = where they were.
+ENHANCEMENT_EDIT_QUEUE_NAME = env("ENHANCEMENT_EDIT_QUEUE_NAME", default="")
+_task_routes = task_routes(ENHANCEMENT_QUEUE_NAME, GFPGAN_QUEUE_ENABLED, GFPGAN_QUEUE_NAME, ENHANCEMENT_EDIT_QUEUE_NAME)
 if _task_routes:
     CELERY_TASK_ROUTES = _task_routes
 # A "processing" job that has not changed for the task time limit plus this

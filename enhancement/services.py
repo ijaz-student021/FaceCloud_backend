@@ -4,6 +4,7 @@ Lighting correction is applied to the LAB luminance channel. Colour channels are
 left unchanged so the baseline does not intentionally normalize skin tones.
 """
 
+import json
 import logging
 import math
 import time
@@ -21,7 +22,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
 from django.core.files.base import ContentFile
 from django.db import transaction
-from django.db.utils import InterfaceError, OperationalError
+from django.db.utils import DatabaseError, InterfaceError, OperationalError
 from django.utils import timezone
 from rest_framework import status as http_status
 from rest_framework.exceptions import APIException, ValidationError
@@ -68,6 +69,9 @@ from .hd_restoration import (
     upscale_with_realesrgan,
 )
 from .lowlight import LowLightUnavailable, enhance_with_retinexformer
+from .edit_instrument import (
+    ENHANCING, FINISHING, FINISHING_AT, MODELS_FROM, MODELS_TO, NO_INSTRUMENT, READING, READING_AT, SAVED_AT, EditInstrument,
+)
 from .model_controls import MODEL_CONTROL_NAMES, apply_model_controls
 from .zero_dce import ZeroDCEUnavailable, enhance_with_zero_dce
 
@@ -2960,20 +2964,42 @@ def _auto_editor_adjustments(quality, intent="auto", blockiness_detected=False):
     return recommend_local_adjustments(quality, intent, blockiness_detected=blockiness_detected)["controls"]
 
 
-def _render_editor_controls(source, controls, strength=1.0):
+def _render_editor_controls(source, controls, strength=1.0, model_stage=None, instrument=None):
     """Model-backed sliders first (enhancement/model_controls.py), then bounded tone controls in float LAB (tone.py).
+
+    ``model_stage`` is ``(image, report, reasons)`` from ``apply_model_controls(source, controls, 1.0)``: the models have already run, and a safety
+    ``strength`` below 1 is then applied by blending that result back toward the source instead of running the models again. Without it the models
+    run here, at ``strength``.
 
     Returns ``(image, effective, model_report, model_reasons)``.
     """
-    modelled, model_report, model_reasons = apply_model_controls(source, controls, strength)
+    instrument = instrument or NO_INSTRUMENT
+    if model_stage is None:
+        modelled, model_report, model_reasons = apply_model_controls(source, controls, strength, instrument=instrument)
+    else:
+        modelled, model_report, model_reasons = model_stage
+        if strength < 1.0 and modelled is not source:
+            modelled = cv2.addWeighted(modelled, strength, source, 1.0 - strength, 0)
     tone_controls = {name: value for name, value in controls.items() if name not in MODEL_CONTROL_NAMES}
-    rendered, effective = render_tone(modelled, tone_controls, strength)
+    with instrument.stage("tone_render"):
+        rendered, effective = render_tone(modelled, tone_controls, strength)
     for name in MODEL_CONTROL_NAMES:
         effective[name] = float(controls.get(name, 0.0)) * strength
     return rendered, effective, model_report, model_reasons
 
 
-def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline=None):
+def _model_report_at(report, controls, strength):
+    """The model-slider report as it reads at ``strength``: ``requested`` and ``blend`` are the values after the safety reduction, as before."""
+    if strength >= 1.0:
+        return report
+    scaled = []
+    for entry in report:
+        requested = float(controls.get(entry["control"], 0.0)) * strength
+        scaled.append({**entry, "requested": round(requested, 2), "blend": round(min(requested, 100.0) / 100.0, 3)})
+    return scaled
+
+
+def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline=None, instrument=None):
     """Render one non-destructive Auto or Manual gallery edit.
 
     ``baseline`` is the pre-AI-enhancement image (the preprocessed original).
@@ -2986,14 +3012,22 @@ def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline
     "auto", "preserve" or "brighten"); Manual uses the validated control values.
     The returned metadata records what was requested, validated and applied,
     each guard reduction, any fallback and the renderer version.
+
+    The model-backed sliders run **once**. When a safety guard asks for a weaker render, the models are not run again: their result is blended back
+    toward the source by the reduced strength and only the tone controls are rendered again (for one model slider this is the same image as running the
+    model at the reduced strength, to within a grey level; with several, each later model saw the first's reduced output before and now sees the full
+    one). ``baseline`` is read by the caller only when the intensity slider needs it (``intensity`` below 100). ``instrument`` (``edit_instrument``)
+    records timings and progress; without one nothing is recorded.
     """
+    instrument = instrument or NO_INSTRUMENT
     if source is None or source.size == 0:
         raise ValidationError("The enhanced image cannot be edited safely.")
     if mode not in EditMode.values:
         raise ValidationError({"mode": "Choose auto or manual."})
 
     requested_raw = dict(requested_adjustments or {})
-    before = analyze_image_quality(source)
+    with instrument.stage("analyze_before"):
+        before = analyze_image_quality(source)
     recommendation = None
     if mode == EditMode.AUTO:
         intent = requested_raw.get("intent", "auto")
@@ -3021,9 +3055,23 @@ def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline
     model_report, model_reasons = [], []
     after = before
     if not is_neutral(controls):
+        model_stage = None
+        if any(float(controls.get(name, 0.0)) > 0 for name in MODEL_CONTROL_NAMES):
+            # The slow part, run once at full strength whatever the guards decide below.
+            model_stage = apply_model_controls(source, controls, 1.0, instrument=instrument)
+        else:
+            model_stage = (source, [], [])
+        instrument.progress(ENHANCING, MODELS_TO)
+        render_strength = strength
         for _attempt in range(10):
-            rendered, effective, model_report, model_reasons = _render_editor_controls(source, controls, strength)
-            after = analyze_image_quality(rendered)
+            render_strength = strength
+            attempt_started = time.perf_counter()
+            rendered, effective, model_report, model_reasons = _render_editor_controls(
+                source, controls, strength, model_stage=model_stage, instrument=instrument,
+            )
+            with instrument.stage("analyze_after"):
+                after = analyze_image_quality(rendered)
+            instrument.attempt_done((time.perf_counter() - attempt_started) * 1000.0)
             contrast_floor = before["contrast_stddev"] * 0.70
             if (
                 after["highlight_clipping_percent"] <= clipping_limit
@@ -3040,9 +3088,13 @@ def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline
                     reasons.append(reason)
             guard_reductions.append({"strength": round(strength, 4), "reasons": attempt_reasons})
             strength *= 0.78
+        model_report = _model_report_at(model_report, controls, render_strength)
 
     intensity_applied = False
     if intensity < 100.0:
+        if callable(baseline):                # a loader: the unenhanced photo is read only when this slider needs it
+            with instrument.stage("read_baseline"):
+                baseline = baseline()
         if baseline is None:
             fallback_reasons.append("intensity_not_applied_no_unenhanced_baseline")
         else:
@@ -3098,6 +3150,16 @@ def _read_preprocessed_baseline(preprocessing):
     finally:
         preprocessing.processed_file.close()
     return cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_COLOR)
+
+
+def _set_edit_progress(edit_pk, token, stage, percent):
+    """Record how far a rendering edit is, for the client that polls it. Only the execution holding the claim writes; a failure here never fails the edit."""
+    try:
+        ImageEditVersion.objects.filter(pk=edit_pk, claim_token=token, status=EnhancementStatus.PROCESSING).update(
+            progress_stage=stage, progress_percent=percent,
+        )
+    except (DatabaseError, InterfaceError):
+        logger.debug("Could not record the progress of edit %s.", edit_pk, exc_info=True)
 
 
 class EditSuperseded(Exception):
@@ -3156,25 +3218,37 @@ def process_image_edit(edit, token=None, resume_token=""):
         edit.claimed_at = now
         edit.started_at = edit.started_at or now
         edit.failure_reason = ""
+        edit.progress_stage, edit.progress_percent = READING, READING_AT
         edit.save(update_fields=[
-            "status", "claim_token", "claimed_at", "started_at", "failure_reason", "source_version", "updated_at",
+            "status", "claim_token", "claimed_at", "started_at", "failure_reason", "source_version", "progress_stage", "progress_percent",
+            "updated_at",
         ])
 
     started = time.perf_counter()
     stored_name = None
+    instrument = EditInstrument(on_progress=lambda stage, percent: _set_edit_progress(edit.pk, token, stage, percent))
     try:
         result = edit.enhancement_result
         preprocessing = result.preprocessing_result
-        source, alpha = read_enhanced_with_alpha(result)
-        baseline = _read_preprocessed_baseline(preprocessing)
+        with instrument.stage("read_source"):
+            source, alpha = read_enhanced_with_alpha(result)
+        instrument.progress(ENHANCING, MODELS_FROM)
         requested = dict(edit.requested_adjustments or {})
+        with instrument.stage("prepare"):
+            measured = visible_for_measurement(source, alpha)
         rendered, metadata = apply_gallery_adjustments(
-            visible_for_measurement(source, alpha), edit.mode, requested, baseline=baseline,
+            measured, edit.mode, requested,
+            baseline=lambda: _read_preprocessed_baseline(preprocessing),       # decoded only when the intensity slider is below 100
+            instrument=instrument,
         )
-        rendered = restore_hidden(rendered, source, alpha)
-        output_image = attach(rendered, alpha)
-        payload, extension, output_format = _encode_output(output_image, preprocessing)
-        metadata["encoded_output"] = _verify_encoded_output(payload, output_image, output_format)
+        instrument.progress(FINISHING, FINISHING_AT)
+        with instrument.stage("restore_alpha"):
+            rendered = restore_hidden(rendered, source, alpha)
+            output_image = attach(rendered, alpha)
+        with instrument.stage("encode"):
+            payload, extension, output_format = _encode_output(output_image, preprocessing)
+        with instrument.stage("verify"):
+            metadata["encoded_output"] = _verify_encoded_output(payload, output_image, output_format)
         metadata["transparency"] = {
             "source_had_alpha": alpha is not None, "preserved": alpha is not None,
             "policy": transparency_policy(output_format),
@@ -3182,9 +3256,15 @@ def process_image_edit(edit, token=None, resume_token=""):
         metadata["source_version"] = edit.source_version
         source_stem = Path(result.output_name).stem
         output_name = f"{source_stem}_edit_{edit.pk}{extension}"
-        edit.edited_file.save(output_name, ContentFile(payload), save=False)
+        with instrument.stage("save_file"):
+            edit.edited_file.save(output_name, ContentFile(payload), save=False)
         stored_name = edit.edited_file.name
+        instrument.progress(FINISHING, SAVED_AT)
         duration = max(1, round((time.perf_counter() - started) * 1000))
+        # Where the time went (everything up to the stored file; the final database update is not in it).
+        metadata["timings_ms"] = instrument.timings_ms()
+        metadata["image_pixels"] = int(rendered.shape[0]) * int(rendered.shape[1])
+        metadata["guard_attempts"] = {"count": len(instrument.attempt_ms), "ms": instrument.attempt_ms}
         with transaction.atomic():
             # Publish only as the owner, under the row lock, from the row as it is now.
             current = ImageEditVersion.objects.select_for_update().filter(pk=edit.pk).first()
@@ -3206,11 +3286,17 @@ def process_image_edit(edit, token=None, resume_token=""):
             current.quality_metadata = metadata
             current.failure_reason = ""
             current.finished_at = timezone.now()
+            current.progress_stage, current.progress_percent = "", 100
             ImageEditVersion.objects.filter(
                 enhancement_result=current.enhancement_result_id, is_current=True,
             ).exclude(pk=current.pk).update(is_current=False)
             current.is_current = True
             current.save()
+        logger.info(
+            "gallery_edit_timings %s",
+            json.dumps({"edit_id": current.pk, "mode": current.mode, "pixels": metadata["image_pixels"], "guard_attempts": len(instrument.attempt_ms),
+                        "timings_ms": metadata["timings_ms"]}, sort_keys=True),
+        )
         return current
     except EditSuperseded:
         logger.warning("Edit %s was deleted or taken over while it rendered; its output was discarded.", edit.pk)
