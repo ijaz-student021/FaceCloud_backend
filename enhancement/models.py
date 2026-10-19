@@ -237,6 +237,9 @@ class ImageEditVersion(models.Model):
     )
     claim_token = models.CharField(max_length=32, blank=True, default="")
     claimed_at = models.DateTimeField(null=True, blank=True)
+    # How far a rendering edit is, for the client that polls it (enhancement/edit_instrument.py): reading, enhancing or finishing, and a percentage.
+    progress_stage = models.CharField(max_length=12, blank=True, default="")
+    progress_percent = models.PositiveSmallIntegerField(default=0)
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

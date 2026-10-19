@@ -102,12 +102,36 @@ class AdminOrganizationUpdateSerializer(serializers.Serializer):
         return attrs
 
 
-class OwnerOrganizationUpdateSerializer(AdminOrganizationUpdateSerializer):
-    """PATCH body for the organization's owner: ``name`` and ``moderator_data_scope`` (plan and status are the administrator's; the view answers 403 if sent)."""
+class OwnerOrganizationUpdateSerializer(serializers.Serializer):
+    """PATCH body for the organization's owner: ``name``, ``moderator_data_scope`` and the branding (``brand_name``, ``brand_accent``).
 
-    plan = None
-    status = None
-    CHANGES = ("name", "moderator_data_scope")
+    The plan and the status are the administrator's (the view answers 403 if they are sent); the branding is the owner's alone. A blank brand name or
+    accent clears it. The logo is uploaded separately (``PUT /api/organizations/{id}/logo/``).
+    """
+
+    name = serializers.CharField(max_length=150, required=False)
+    moderator_data_scope = serializers.ChoiceField(choices=Organization.ModeratorDataScope.choices, required=False)
+    brand_name = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False, help_text="Shown to members instead of the name; blank clears it. At most 100 characters.")
+    brand_accent = serializers.CharField(required=False, allow_blank=True, help_text="A colour like #1a73e8 (or #1ae); stored as #rrggbb. Blank clears it.")
+    reason = serializers.CharField(max_length=500, required=False, allow_blank=True)
+    CHANGES = ("name", "moderator_data_scope", "brand_name", "brand_accent")
+
+    validate_name = AdminOrganizationUpdateSerializer.validate_name
+
+    def validate_brand_name(self, value):
+        from .branding import clean_brand_name
+
+        return clean_brand_name(value)
+
+    def validate_brand_accent(self, value):
+        from .branding import clean_accent
+
+        return clean_accent(value)
+
+    def validate(self, attrs):
+        if not any(key in attrs for key in self.CHANGES):
+            raise serializers.ValidationError({"detail": "Send at least one of name, moderator_data_scope, brand_name or brand_accent."})
+        return attrs
 
 
 class MembershipSummarySerializer(serializers.Serializer):
@@ -141,10 +165,19 @@ class OrganizationWithMembershipSerializer(OrganizationSerializer):
 
     membership = serializers.SerializerMethodField()
     capabilities = serializers.SerializerMethodField()
+    logo_url = serializers.SerializerMethodField(
+        help_text="Authenticated URL of the organization's logo (it changes when the logo is replaced), or null. Fetch it with the Authorization header.",
+    )
 
     class Meta(OrganizationSerializer.Meta):
-        fields = OrganizationSerializer.Meta.fields + ["membership", "capabilities"]
+        fields = OrganizationSerializer.Meta.fields + ["brand_name", "brand_accent", "logo_url", "membership", "capabilities"]
         read_only_fields = fields
+
+    def get_logo_url(self, organization) -> str | None:
+        if not organization.logo:
+            return None
+        version = int(organization.logo_updated_at.timestamp() * 1000) if organization.logo_updated_at else 0           # milliseconds: two replacements in one second differ
+        return f"/api/organizations/{organization.pk}/logo/?v={version}"
 
     def _membership(self, organization):
         return self.context.get("memberships", {}).get(organization.pk)

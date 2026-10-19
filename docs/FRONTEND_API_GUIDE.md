@@ -54,6 +54,21 @@ POST /api/auth/verify-email/resend/ {registration_id}     (new link, the old one
 GET  /api/auth/registrations/{registration_id}/status/    (masked status, for a "check your email" screen)
 ```
 
+**Registering from an organization invitation (one step).** The invitation link is `{FRONTEND_URL}/invitations/{token}`. If the person has no account, let them register on
+that page and add `invitation_token` (the token from the link) to the same `POST /api/auth/register/` body:
+
+```text
+POST /api/auth/register/   {full_name, email, password, password_confirm?, username?, invitation_token}
+   -> 201 {access, refresh, user, role, dashboard, organization_roles}     (the same shape as login)
+```
+
+The invitation was sent to that mailbox, so the address counts as verified: the account is created verified, the invitation is accepted and the person is signed in, all in one
+transaction (a moderator invitation lands in the moderator portal: `dashboard: "moderator"`). `email` must be the invited address (case does not matter); use the
+invitation preview (section 7) to show it read-only. A token that is unknown, used, cancelled, expired, for a suspended organization, **or for another email address** answers the same
+`404 {"detail": "This invitation is invalid, used or expired."}` as the preview and creates nothing: show that sentence only. Otherwise the usual rules hold: password rules
+(400), the address already has an account (400 on `email`: ask them to sign in, then accept the invitation), the registration rate limit (429), and `403` `plan_limit_reached` when the
+organization has no seat left (nothing is created and the invitation stays usable). Without `invitation_token` nothing changes (202 and the verification email).
+
 **Login**
 
 ```text
@@ -301,6 +316,10 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}     -> 201
 `GET /api/enhancements/edits/{id}/`. Edits are immutable versions:
 `POST .../edits/{id}/activate/` picks the current one and
 `GET .../edits/{id}/download/` fetches it. The original is never overwritten.
+While you poll (every 1.5 s is fine), the edit says how far it is: `stage` is `queued` (waiting for a worker), `reading`, `enhancing` or `finishing`, and
+`progress_percent` is a coarse 0 to 100 that never goes backwards (0 queued, about 5 reading, 15 to 80 enhancing, 85 to 95 finishing, 100 completed). Both are
+`null` once the edit has `failed` or been `cancelled`, and `stage` is `null` when it has `completed`. Use them for a progress bar; keep deciding "done" by `status`.
+`quality_metadata.timings_ms` (milliseconds per stage, with `total`), `image_pixels` and `guard_attempts` (`{count, ms}`) say where a save spent its time.
 Show client-side previews while the user drags sliders and submit the final
 values for the full-resolution server render.
 
@@ -460,6 +479,17 @@ again), `no_accepted_images` (nothing passed, nothing to enhance),
 (`package_type`: `accepted_results` or `complete_batch`) expire after a
 configurable time, so show an expiry and offer "regenerate".
 
+**What a processing report contains** (`payload`, and the JSON file). A **batch** report's `summary` is
+`{total_images, accepted_uploads, rejected_uploads, processing_status, status_counts, total_input_size}` plus three fields:
+`images_deleted` (`true` when any photo of the upload no longer exists), `images_remaining` (how many are still stored, which is also the length of `images`) and
+`enhanced_images` (how many of the remaining photos were enhanced; `null` when none remain, because it is then unknown). The totals always come from the batch itself, so
+**after photos are deleted a report no longer shows `total_images: 0` next to `accepted_uploads: 2`**: `total_images` stays the size of the upload, `images` shrinks to what
+remains, and `status_counts` has a `deleted` entry for the photos that are gone, so the counts always add up to `total_images` (`{"deleted": 3}` when everything is gone).
+Show a line such as "The photos of this upload have been deleted; only totals are shown" when `images_deleted` is `true`. Nothing was renamed or removed.
+The **PDF** is written for people: the date as `19 Oct 2026, 09:29 UTC`, sizes in KB / MB, results as separate rows (Accepted, Rejected, Needs review, plus any other that occurred),
+statuses, reasons and duplicate decisions in words, long file names wrapped at `_ - .`, the reason for each rejected photo, scores labelled "out of 100", and a footer with the report type,
+the source and "Page n of N". JSON and CSV keep the raw codes, raw numbers and ISO dates (the CSV is unchanged; for a batch whose photos are all deleted it is just the header).
+
 **Share links.** `POST /api/shares/ {result, ttl_hours?, label?, watermark?,
 watermark_position?, watermark_opacity?, watermark_text?}` returns the link
 **including the raw `token` exactly once**, plus `public_url` and `info_url`.
@@ -542,8 +572,9 @@ state and put it in the URL; changing it client-side grants nothing.
   wording ("approved", "rejected", "corrected": a decision's `message` is "Approved face.jpg.", so `q=approved` finds exactly the approvals),
   and the **name of the photo, upload or person folder** the event was about ("face.jpg", "staff_q3.zip")), `?date_from=`, `?date_to=` (a bare date includes
   that whole day), `?target_type=` and `?target_id=`; a bad value is a 400. The history of one review is
-  `?target_type=ModeratorReview&target_id={review id}`. **There is no "user notified" field**: nobody is notified of a decision,
-  so leave that column out. The older `Audit trail` description follows.
+  `?target_type=ModeratorReview&target_id={review id}`. A "user notified" column is
+  the event `member_notified_of_review` ("Told the member about the decision on face.jpg.") on the same review: the member is told about an approve, reject or correct decision
+  (section 8), and that is recorded here. The older `Audit trail` description follows.
 - Audit trail (stored fields): `GET .../audit/`. Organization-wide data export (async):
   `POST .../export/`, poll `GET .../export/{id}/`, download
   `.../export/{id}/download/`.
@@ -743,13 +774,26 @@ only to the owner and the moderators who may see that member).
 * `GET /api/organizations/{id}/` adds, **for the owner and the moderators only**, `owner` (`{id, username}` or `null`), `member_count` (every active membership, owner and
   moderators included) and `moderator_count`; a plain member does not get those three keys. `moderator_data_scope` and `plan` are on every row. `capabilities.edit_organization` is
   `true` only for an owner of a shared organization: show the edit form for that.
-* `PATCH /api/organizations/{id}/ {name?, moderator_data_scope?, reason?}` (owner only, 403 for a moderator or member): `name` 1 to 150 characters, `moderator_data_scope`
+* `PATCH /api/organizations/{id}/ {name?, moderator_data_scope?, brand_name?, brand_accent?, reason?}` (owner only, 403 for a moderator or member; branding below): `name` 1 to 150 characters, `moderator_data_scope`
   `own_members` or `organization` (takes effect on the next request). The answer is the updated detail above. Sending `plan` or `status` is **403** ("The plan and the status are
   changed by the FaceCloud administrator"), even alongside other fields; a personal workspace and a suspended organization also answer 403. Audited as `organization_updated`
   with the old and new values (the owner and moderators read it in the audit trail).
 * The owner already could, and still can, through the existing endpoints: deactivate (`PATCH members/{id}/ {status: "suspended"}`), reactivate (`{status: "active"}`), remove
   (`DELETE members/{id}/`), promote or demote (`{role: "moderator" | "owner" | "member"}`), invite moderators (`POST invitations/ {role: "moderator"}`; a moderator may only invite
   members), and request the organization export (`POST export/`, even when moderators see only their own members). The last owner cannot be removed, demoted or deactivated (409).
+
+**Branding** (owner only to change, every member sees it). Three things, on every organization row (`GET /api/organizations/` and `GET /api/organizations/{id}/`, so on the switcher too):
+`brand_name` (text shown to members instead of `name`; `""` when not set, so show `brand_name || name`), `brand_accent` (`#rrggbb`, or `""`) and `logo_url` (or `null`).
+
+* `PATCH /api/organizations/{id}/ {brand_name?, brand_accent?}` (the owner's PATCH above; a blank value clears it). `brand_name`: trimmed, at most 100 characters, no line breaks or control characters (400).
+  `brand_accent`: `#rgb` or `#rrggbb` in any case, stored as lower-case `#rrggbb` (400 otherwise: "Use a colour like #1a73e8."). The administrator cannot set branding. Audited in the same `organization_updated` event.
+* **Logo**: `PUT /api/organizations/{id}/logo/` (multipart, field `logo`; owner only). PNG or JPEG only, **at most 1 MB** (400 `{"logo": ["The logo must be at most 1 MB."]}`; 400 for another format,
+  for a file that is not an image, or for one with too many pixels). It is decoded and **re-encoded as a PNG of at most 512 px** (transparency kept, metadata and anything hidden in the file dropped), replacing the old
+  one, which is deleted. The answer is the organization (with the new `logo_url`). `DELETE .../logo/` removes it (owner only; nothing to remove is not an error). Both are audited
+  (`organization_logo_changed`, `organization_logo_removed`) and limited to 30 an hour (429).
+* **Showing it**: `logo_url` is `/api/organizations/{id}/logo/?v=<milliseconds>`; `v` changes whenever the logo is replaced, so the browser cache is never stale. The file is **never public**: `GET` it **with the
+  Authorization header** (an `<img src>` cannot send it: fetch it as a blob and use an object URL). Members of the organization get the PNG (`Cache-Control: private, max-age=3600`); anyone else 404, no sign-in 401; 404 when
+  there is no logo (check `logo_url` first); 403 while the organization is suspended. `capabilities.edit_organization` says whether to show the edit form and the upload button.
 
 **Plans, limits and usage.** `plan` (`free`, `team`, `enterprise`) decides how many **moderators** and plain **members** an organization may have (the owner takes no seat). Defaults: free 1 moderator
 and 10 members, team 5 and 100, enterprise unlimited; set in `settings.ORGANIZATION_PLAN_LIMITS` (environment `ORG_PLAN_<PLAN>_<MODERATORS|MEMBERS>`, a number or `unlimited`). There is no billing:

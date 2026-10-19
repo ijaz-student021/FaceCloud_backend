@@ -186,6 +186,9 @@ WantedBy=multi-user.target
 `sudo systemctl daemon-reload && sudo systemctl enable --now facecloud-web facecloud-worker facecloud-beat`. Linux uses the default worker pool (the `--pool=solo` advice is for macOS only).
 To give image jobs their own worker (recommended once the heavy models run), set `ENHANCEMENT_QUEUE_NAME=inference` in the environment and start a second worker unit with `-Q inference --concurrency=1`
 and the first with `-Q celery`.
+To keep **"Save as new version" quick** while a batch is being enhanced, give gallery edits a queue of their own too: set `ENHANCEMENT_EDIT_QUEUE_NAME=edits` (in the API's and every worker's
+environment, the sender decides the queue) and start a third worker unit with `-Q edits --concurrency=1`. A save then never waits behind a batch. Left empty, edits stay on the inference queue.
+Check with `celery -A config inspect active_queues` that a worker listens on `edits`: with no worker on it, saves stay `queued`.
 
 ## 9. Nginx and HTTPS
 
