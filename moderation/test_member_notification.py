@@ -83,6 +83,58 @@ class NotifyTests(ModerationFixtureMixin, TestCase):
         self.decide(self.review(), "correct")
         self.assertEqual(self.told()[0].event_type, "photo_review_approved")
 
+    def test_correct_tells_the_member_in_the_moderators_own_words(self):
+        review = self.review()
+        self.decide(review, "correct", reason="internal: wrong person", message_to_member="I fixed the details on this photo.")
+        (note,) = self.told()
+        self.assertEqual((note.event_type, note.severity, note.title), ("photo_review_approved", "success", "Your photo was approved"))
+        self.assertEqual(note.message, "I fixed the details on this photo.")
+        self.assertEqual((note.recipient_id, note.resource_type, note.resource_id, note.action_path),
+                         (self.member.pk, "image", review.image_id, f"/dashboard/images/{review.image_id}"))
+        self.assertEqual(note.metadata["review_id"], review.pk)
+        self.assertNotIn("internal", f"{note.title} {note.message} {note.metadata}")
+        event = OrganizationAuditEvent.objects.get(action="member_notified_of_review")
+        self.assertEqual((event.target_id, event.new_value), (review.pk, {"outcome": "approved"}))
+
+    def test_correct_without_a_message_uses_the_standard_sentence(self):
+        self.decide(self.review(), "correct")
+        self.assertEqual(self.told()[0].message, APPROVED_DEFAULT)
+
+    def test_correct_is_told_once_even_if_the_same_decision_is_repeated(self):
+        review = self.review()
+        self.decide(review, "correct", message_to_member="Done.")
+        response = self.client.post(reverse("moderation:review-decision", kwargs={"organization_id": self.organization.pk, "review_id": review.pk}),
+                                    {"action": "correct"}, format="json")
+        self.assertEqual(response.status_code, 409)                                  # a decided review cannot be decided again
+        self.assertEqual(len(self.told()), 1)
+
+    def test_correct_follows_the_same_switches_as_approve(self):
+        NotificationPreference.objects.create(user=self.member, photo_accepted=False)
+        self.decide(self.review(), "correct", message_to_member="Done.")
+        self.assertEqual(self.told(), [])
+        self.assertFalse(OrganizationAuditEvent.objects.filter(action="member_notified_of_review").exists())
+        NotificationPreference.objects.filter(user=self.member).update(photo_accepted=True, photo_rejected=False)
+        self.decide(self.review(), "correct", message_to_member="Done again.")
+        self.assertEqual(len(self.told()), 1)                                        # "photo_rejected" off does not silence a correction
+
+    @override_settings(NOTIFICATION_EMAILS_ENABLED=True, EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    def test_correct_sends_the_email_copy_when_the_member_wants_emails(self):
+        NotificationPreference.objects.create(user=self.member, email_notifications=True)
+        self.decide(self.review(), "correct", message_to_member="Corrected for you.")
+        (note,) = self.told()
+        self.assertEqual(note.email_status, "sent")
+        self.assertIn("Corrected for you.", mail.outbox[-1].body)
+
+    def test_correct_on_a_duplicate_review_tells_the_member_too(self):
+        review, _match = self.make_duplicate_review(self.member, self.organization)
+        self.decide(review, "correct", message_to_member="Not a copy, it is fine.")
+        (note,) = self.told()
+        self.assertEqual(note.message, "Not a copy, it is fine.")
+
+    def test_correct_on_the_moderators_own_photograph_notifies_nobody(self):
+        self.decide(self.review(member=self.moderator), "correct")
+        self.assertEqual(UserNotification.objects.filter(event_type__in=["photo_review_approved", "photo_review_rejected"]).count(), 0)
+
     def test_keep_in_review_tells_nobody_and_the_final_decision_still_does(self):
         review = self.review()
         self.decide(review, "keep_in_review", message_to_member="still looking")

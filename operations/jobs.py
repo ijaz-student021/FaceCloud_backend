@@ -42,6 +42,11 @@ class JobKind:
     finished_field: str | None = "finished_at"
     # Attribute holding the ImageUpload id, so batch progress can be re-synced.
     image_field: str | None = None
+    # How the failure screens name this kind of work, and the pipeline stage it is (a batch works it out from its photographs).
+    label: str = ""
+    stage: str = ""
+    # Lookup from a row to the UploadBatch it belongs to (the row itself when ""), so its organization can be shown; None: no batch.
+    batch_path: str | None = None
 
     def model_class(self):
         return apps.get_model(self.model)
@@ -55,55 +60,58 @@ JOB_KINDS = (
     JobKind(
         "enhancement", "enhancement.ImageEnhancementResult",
         queued=("pending", "queued"), processing=("processing",),
-        failed="failed", image_field="image_id",
+        failed="failed", image_field="image_id", label="Enhancement", stage="enhancement", batch_path="image__batch",
     ),
     JobKind(
         "enhancement_batch", "enhancement.EnhancementBatchJob",
         queued=("pending", "queued"), processing=("processing",), failed="failed",
+        label="Enhancement of a whole batch", stage="enhancement", batch_path="source_batch",
     ),
     JobKind(
         "model_comparison", "enhancement.ModelComparison",
         queued=("pending", "queued"), processing=("processing",), failed="failed",
+        label="Model comparison", stage="model_comparison", batch_path="image__batch",
     ),
     JobKind(
         "gallery_edit", "enhancement.ImageEditVersion",
         queued=("pending", "queued"), processing=("processing",), failed="failed",
+        label="Gallery edit", stage="gallery_edit", batch_path="enhancement_result__image__batch",
     ),
     JobKind(
         "identity_analysis", "identities.IdentityAnalysis",
         queued=("queued",), processing=("processing",),
-        failed="failed", image_field="image_id",
+        failed="failed", image_field="image_id", label="Identity analysis", stage="identity_grouping", batch_path="image__batch",
     ),
     JobKind(
         "preprocessing", "uploads.ImagePreprocessingResult",
         queued=(), processing=("processing",), failed="failed",
-        finished_field=None,
+        finished_field=None, label="Preprocessing", stage="preprocessing", batch_path="image__batch",
     ),
     JobKind(
         "upload_batch", "uploads.UploadBatch",
         queued=("queued",), processing=("processing",), failed="failed",
         status_field="processing_status", reason_field="processing_error",
-        finished_field="processing_finished_at",
+        finished_field="processing_finished_at", label="Upload batch", batch_path="",
     ),
     JobKind(
         "download_package", "downloads.DownloadPackage",
         queued=("queued",), processing=("generating",), failed="failed",
-        finished_field=None,
+        finished_field=None, label="Download package", stage="download_package", batch_path="batch",
     ),
     JobKind(
         "collage", "collages.Collage",
         queued=("queued",), processing=("generating",), failed="failed",
-        finished_field=None,
+        finished_field=None, label="Collage", stage="collage",
     ),
     JobKind(
         "report", "reports.ProcessingReport",
         queued=("queued",), processing=("generating",), failed="failed",
-        finished_field=None,
+        finished_field=None, label="Processing report", stage="report", batch_path="batch",
     ),
     JobKind(
         "identity_export", "identities.IdentityGroupExport",
         queued=("queued",), processing=("generating",), failed="failed",
-        finished_field=None,
+        finished_field=None, label="Identity export", stage="identity_export",
     ),
 )
 
@@ -219,35 +227,75 @@ class InvalidJobKind(ValueError):
     """Raised for an unrecognised ``kind`` filter; carries a user-facing message."""
 
 
+def _batch_of(row, job_kind):
+    """The UploadBatch a failed row belongs to, or None (a kind with no batch, or a row whose link is empty)."""
+    if job_kind.batch_path is None:
+        return None
+    target = row
+    for part in filter(None, job_kind.batch_path.split("__")):
+        target = getattr(target, part, None)
+        if target is None:
+            return None
+    return target
+
+
+def _failed_job_row(row, job_kind, workspaces):
+    """One failed job as the administrator's screen shows it: the original keys, then where, why and when, in plain words."""
+    from .failures import describe_failed_batch, organization_of, stage_label
+
+    batch = _batch_of(row, job_kind)
+    organization_id, organization_name = organization_of(batch, row.owner_id, workspaces)
+    stored = getattr(row, job_kind.reason_field, "") or ""
+    finished = getattr(row, job_kind.finished_field, None) if job_kind.finished_field else None
+    entry = {
+        "id": row.pk,
+        "owner_id": row.owner_id,
+        "owner_username": row.owner.username,
+        "reason": stored,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+        "kind": job_kind.key,
+        "kind_label": job_kind.label,
+        "organization_id": organization_id,
+        "organization_name": organization_name,
+        "failure_stage": job_kind.stage,
+        "failure_stage_label": stage_label(job_kind.stage),
+        "failure_reason": stored.strip()[:500] or f"{job_kind.label} failed, but no reason was recorded.",
+        "failed_at": finished or row.updated_at,
+    }
+    if job_kind.key == "upload_batch":
+        entry.update(describe_failed_batch(row))
+    return entry
+
+
 def list_failed_jobs(*, kind=None, owner=None, limit_per_kind=DEFAULT_FAILED_JOBS_LIMIT_PER_KIND):
     """The most recent failed row of each job kind, for administrator visibility.
 
     Read-only: this surfaces what failed so an admin (or the affected user, via
     the owner-facing retry/support flow) can act on it. ``kind`` restricts to one
     job kind by its ``JobKind.key``; ``owner`` restricts to one user's id.
+
+    Every row carries who (``owner_*``), which organization (``organization_*``: its batch's, else the owner's own workspace), what
+    (``kind``, ``kind_label``), where it failed (``failure_stage`` and its label), why (``failure_reason``, always a sentence; ``reason`` is the stored
+    text, which may be empty) and when (``failed_at``). A failed upload batch also says whether it can be retried now, like the failed-batch list.
     """
     if kind is not None and kind not in JOB_KIND_KEYS:
         raise InvalidJobKind(f"Unknown job kind '{kind}'. Choose one of: {', '.join(JOB_KIND_KEYS)}.")
     limit = max(1, min(int(limit_per_kind), MAX_FAILED_JOBS_LIMIT_PER_KIND))
     kinds = [candidate for candidate in JOB_KINDS if kind is None or candidate.key == kind]
     results = {}
+    workspaces = {}
     for job_kind in kinds:
         model = job_kind.model_class()
         rows = model.objects.filter(**{job_kind.status_field: job_kind.failed})
         if owner is not None:
             rows = rows.filter(owner_id=owner)
-        rows = rows.select_related("owner").order_by("-updated_at")[:limit]
-        results[job_kind.key] = [
-            {
-                "id": row.pk,
-                "owner_id": row.owner_id,
-                "owner_username": row.owner.username,
-                "reason": getattr(row, job_kind.reason_field, ""),
-                "created_at": row.created_at,
-                "updated_at": row.updated_at,
-            }
-            for row in rows
-        ]
+        rows = rows.select_related("owner")
+        if job_kind.batch_path is not None:
+            organization_path = f"{job_kind.batch_path}__organization" if job_kind.batch_path else "organization"
+            rows = rows.select_related(organization_path)
+        rows = rows.order_by("-updated_at")[:limit]
+        results[job_kind.key] = [_failed_job_row(row, job_kind, workspaces) for row in rows]
     return {
         "generated_at": timezone.now(),
         "limit_per_kind": limit,

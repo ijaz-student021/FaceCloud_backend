@@ -13,6 +13,7 @@ class NotificationPreferenceSerializer(serializers.ModelSerializer):
             "person_group_created",
             "email_notifications",
             "live_session_alerts",
+            "moderator_review_updates",
             "updated_at",
         ]
         read_only_fields = ["updated_at"]

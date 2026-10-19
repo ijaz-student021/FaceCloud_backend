@@ -154,6 +154,11 @@ email exists; say "If an account exists, we sent an email."
 `POST /api/user/change-password/`, `DELETE /api/user/delete-account/`,
 `GET /api/user/dashboard/`, `GET /api/user/activity/` (the activity timeline).
 
+**Changing the password** (`POST /api/user/change-password/ {current_password, new_password}`): a wrong `current_password` is a `400` on that field; a
+`new_password` identical to the current one is a `400` `{"new_password": ["Choose a password you have not just used."]}` (show it under the new-password
+field). A refused request changes nothing and signs nobody out. Only a change that goes through ends every session, on every device, including the one
+that made it: send the person to the sign-in page.
+
 ## 3. Upload and processing
 
 ```text
@@ -645,7 +650,9 @@ deciding moderator, and nothing when the photograph is the moderator's own. `mes
 bulk decision) is **the only free text the member is shown**: put the field in the decision form as "Message to the member" and make clear that it is seen
 by them. `reason` and `notes` are internal and are never sent. If `message_to_member` is empty a standard plain sentence for the reason code is used
 (for example "Your photo is too blurry. Take it again holding the camera steady."). The moderator review detail returns `message_to_member`. A bulk decision
-tells each member once per photograph (the same message for all). The notification respects the member's `photo_accepted` / `photo_rejected`
+tells each member once per photograph (the same message for all). A `correct` arrives as the event `photo_review_approved` ("Your photo was approved")
+with the moderator's `message_to_member` as its text, and follows the member's `photo_accepted` switch; `reject` arrives as `photo_review_rejected` and
+follows `photo_rejected`. The notification respects the member's `photo_accepted` / `photo_rejected`
 preferences, and the organization's audit trail records that the member was told (`action: member_notified_of_review`, target: the review; it is not
 recorded when a preference switched the notification off).
 
@@ -857,6 +864,12 @@ Moderators and owners of an organization also receive `event_type`
 `moderator_review_updates` preference, and never goes to the person who uploaded
 the batch (they get their own `batch_completed`).
 
+**Preferences** (`GET/PATCH /api/notifications/preferences/`) are seven switches, all booleans, a PATCH may send any of them: `photo_accepted`,
+`photo_rejected`, `batch_upload_finished`, `person_group_created`, `email_notifications` (off by default), `live_session_alerts` (off by default) and
+`moderator_review_updates` (on by default; **new in this response**: show it on the settings screen of owners and moderators only). With
+`moderator_review_updates` off a moderator or owner is no longer told that a review was assigned to them, escalated or overdue, or that a batch failed;
+the reviews themselves are unaffected. Everything else in the response is unchanged.
+
 ## 8a. Activity (history button and Activity page)
 
 `GET /api/user/activity/?category=&page=&page_size=` (default 20 per page, max
@@ -995,6 +1008,35 @@ hide these routes, but never rely on that for security.
   `camera_snapshots_bytes` is already inside `originals_and_outputs_bytes`.
 * The older `success_rate_percent` is the share of *quality decisions* that were accepted, not the share of enhancements that worked; the weekly
   enhancement success is `enhancement_success_per_week`. `totals.images.accepted` counts photographs not refused at upload.
+
+**Failed batches and jobs** (Failed Jobs / System Monitoring screens). Every key that was there is unchanged; these are added.
+
+`GET /api/system/batches/failed/` (paged: `results`, `next`, `previous`, `count`) - one row per failed batch:
+
+| Field | Meaning |
+|---|---|
+| `owner_id`, `owner_username` | who uploaded it (as before) |
+| `organization_id`, `organization_name` | the organization it was uploaded to; a batch never filed under one shows the owner's own workspace; both `null` when they have none |
+| `failure_stage`, `failure_stage_label` | where it failed: `preprocessing`, `face_validation`, `quality_analysis` or `enhancement`, and "Face validation" etc. for display. The stage most of its failed photographs failed at (a tie goes to the earlier stage). Empty when unknown. **Use this, not `current_stage`**: that one reads `completed` once every photograph has finished, failed or not |
+| `failure_reason` | why, as a sentence ("The stored image could not be safely preprocessed."); the most common reason of its failed photographs. Never empty |
+| `failed_images` | how many photographs failed |
+| `failed_at` | when it failed (ISO 8601): the latest of its photographs, else when the batch finished, else its last change. `updated_at` is unchanged |
+| `can_retry` | `true` when "Retry" would work now. Disable the button when `false` and show `retry_blocked_reason` ("This batch has no failed images to retry." / "The maximum of 3 batch retries has been reached.") as its tooltip |
+| `retry_blocked_reason`, `max_retries`, `retries_left` | the sentence (empty when `can_retry`), the limit, and how many are left (`retry_count` is as before) |
+
+`POST /api/system/batches/{id}/retry/` answers `202` with the batch's progress, as before (`status`, `stage`, `retry_count`, `counts`, `images` ...), and now also
+`processing_status` (the same value as `status`, under the name the list uses, so the row can be updated in place: normally `queued`), `max_retries` and
+`retries_left`. A batch that cannot be retried is a `400` `{"detail": ["..."]}` with the same sentence as `retry_blocked_reason`; an unknown batch is `404`.
+
+`GET /api/system/jobs/failed/?kind=&owner=&limit_per_kind=` - `kinds.<kind>[]`, each row keeps `id`, `owner_id`, `owner_username`, `reason` (the stored text, may
+be empty), `created_at`, `updated_at` and adds `kind`, `kind_label` ("Enhancement", "Download package" ...), `organization_id`, `organization_name` (its batch's, else
+the owner's own workspace), `failure_stage` / `failure_stage_label` (the kind of work it is: `enhancement`, `preprocessing`, `identity_grouping`, `report`, ...),
+`failure_reason` (always a sentence: `reason`, or "<kind> failed, but no reason was recorded.") and `failed_at` (when it finished failing, else `updated_at`). A row of
+kind `upload_batch` is described exactly like the failed-batch list above, including `can_retry`.
+
+`GET /api/system/moderation/` has no failure rows: it counts reviews. `organizations_needing_attention[]` is `{organization_id, organization_name, pending, in_review,
+escalated, stale_open, overdue, oldest_open_at}` and `moderator_workload[]` is `{moderator_id, username, assigned_open, decided_total}`. A batch that failed in an
+organization is in the failed-batch list (and the organization's moderators and owners are notified, `moderator_batch_failed`).
 
 **Audit search.** `GET /api/system/audit/?q=` keeps only rows whose actor's name (username, or the identifier typed at a failed
 sign-in), event (its stored name, or the sentence the screen shows: "signed in" finds `login`) or category (its name or label, for example
