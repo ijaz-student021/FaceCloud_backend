@@ -19,6 +19,13 @@ from rest_framework.exceptions import APIException, PermissionDenied, Validation
 from .models import AccountInvitation, User
 
 
+def assert_seat_available(*args, **kwargs):
+    """``organizations.services.assert_seat_available`` (imported late: that module imports this app)."""
+    from organizations.services import assert_seat_available as check
+
+    return check(*args, **kwargs)
+
+
 class InvitationConflict(APIException):
     status_code = status.HTTP_409_CONFLICT
     default_code = "invitation_conflict"
@@ -84,9 +91,13 @@ def invite(*, actor, email, role, organization_id=None):
     if User.objects.annotate(lower_email=Lower("email")).filter(lower_email=email).exists():
         raise InvitationConflict("An account with this email already exists.")
     _expire_stale()
+    if AccountInvitation.objects.filter(email=email, status=AccountInvitation.Status.PENDING).exists():
+        raise InvitationConflict("A pending invitation for this email already exists.")          # before the plan check: the duplicate is the more basic refusal
     token = secrets.token_urlsafe(32)
     try:
         with transaction.atomic():
+            if organization is not None:
+                assert_seat_available(organization, "moderator")          # PlanLimitReached (403) when the organization's plan has no moderator seat left
             invitation = AccountInvitation.objects.create(
                 email=email, role=role, organization=organization, token_hash=_hash(token), invited_by=actor,
                 expires_at=timezone.now() + timedelta(hours=settings.ACCOUNT_INVITATION_TTL_HOURS),
@@ -102,6 +113,8 @@ def resend(invitation, actor):
     if invitation.status not in (AccountInvitation.Status.PENDING, AccountInvitation.Status.EXPIRED):
         raise InvitationConflict(f"This invitation is {invitation.status}.")
     token = secrets.token_urlsafe(32)
+    if invitation.organization_id is not None and (invitation.status == AccountInvitation.Status.EXPIRED or invitation.expires_at <= timezone.now()):
+        assert_seat_available(invitation.organization, "moderator")      # an expired invitation holds no seat: bringing it back needs one
     invitation.token_hash = _hash(token)
     invitation.status = AccountInvitation.Status.PENDING
     invitation.expires_at = timezone.now() + timedelta(hours=settings.ACCOUNT_INVITATION_TTL_HOURS)
@@ -158,6 +171,7 @@ def accept(*, token, username, password):
             from organizations.models import OrganizationMembership
 
             organization = organization_for_invitation("moderator", invitation.organization_id)       # still active, still not personal
+            assert_seat_available(organization, "moderator", with_invitations=False)               # and still has room: nothing is created otherwise
             OrganizationMembership.objects.create(
                 organization=organization, user=user, role=OrganizationMembership.Role.MODERATOR,
                 status=OrganizationMembership.Status.ACTIVE, invited_by=invitation.invited_by,

@@ -138,6 +138,7 @@ class MembershipProtectionTests(OrgFixtureMixin, TestCase):
     def setUp(self):
         self.owner = self.make_user("protect-owner")
         self.org = self.make_org(self.owner, "Protect Co")
+        Organization.objects.filter(pk=self.org.pk).update(plan=Organization.Plan.ENTERPRISE)       # these tests are about who may do what, not about seats
         self.owner_membership = OrganizationMembership.objects.get(organization=self.org, user=self.owner)
         self.moderator_user = self.make_user("protect-mod")
         self.moderator_membership = self.add_member(self.org, self.moderator_user, OrganizationMembership.Role.MODERATOR)

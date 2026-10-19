@@ -952,6 +952,11 @@ class AdminUserUpdateView(generics.RetrieveUpdateAPIView):
         if new_role == "moderator" and new_role != target.role and not has_moderator_organization(target):
             # A moderator works for an organization: name it (or the only one), with the same messages as when creating a moderator account.
             moderator_organization = resolve_moderator_organization(organization_id)
+        if moderator_organization is not None:
+            from organizations.models import OrganizationMembership
+            from organizations.services import assert_seat_available
+
+            assert_seat_available(moderator_organization, OrganizationMembership.Role.MODERATOR, excluding_user=target)
         previous = {"role": target.role, "is_suspended": target.is_suspended, "is_active": target.is_active}
         user = serializer.save()
         if moderator_organization is not None:

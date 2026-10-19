@@ -745,6 +745,22 @@ only to the owner and the moderators who may see that member).
   (`DELETE members/{id}/`), promote or demote (`{role: "moderator" | "owner" | "member"}`), invite moderators (`POST invitations/ {role: "moderator"}`; a moderator may only invite
   members), and request the organization export (`POST export/`, even when moderators see only their own members). The last owner cannot be removed, demoted or deactivated (409).
 
+**Plans, limits and usage.** `plan` (`free`, `team`, `enterprise`) decides how many **moderators** and plain **members** an organization may have (the owner takes no seat). Defaults: free 1 moderator
+and 10 members, team 5 and 100, enterprise unlimited; set in `settings.ORGANIZATION_PLAN_LIMITS` (environment `ORG_PLAN_<PLAN>_<MODERATORS|MEMBERS>`, a number or `unlimited`). There is no billing:
+the administrator sets the plan.
+
+* **Where it is shown.** `limits` (`{moderators, members}`, `null` = unlimited) and `usage` (`{moderators, members}`) are on `GET /api/organizations/{id}/` (owner and moderators; not a plain
+  member) and on every row of `GET /api/organizations/admin/` (and the administrator's detail / PATCH / POST answers). `usage` counts **seats**: the active people of that kind **plus the invitations
+  still waiting** (they hold a seat, so an invitation is never sent that could not be accepted; cancelling or letting one expire frees it). `member_count` / `moderator_count` stay "active people".
+  Disable "Invite" when `usage` has reached `limits`.
+* **When it is refused.** `403 {"detail": "Your plan allows 1 moderator.", "code": "plan_limit_reached", "kind": "moderators" | "members", "limit": 1}` (`limit` is a number; "Your plan allows 10 members." for
+  several) on: inviting (`POST /api/organizations/{id}/invitations/`), bringing an expired invitation back (`.../resend/`), accepting an invitation (checked again), changing a role
+  (`PATCH members/{id}/`: promoting a member to moderator, demoting a moderator to member) or reactivating a deactivated member, and the administrator's ways in: creating a moderator account
+  (`POST /api/user/admin/users/`), changing a user's role to moderator, and an account invitation for a moderator (`POST /api/user/admin/invitations/`, and accepting it). The Django admin form shows the
+  same sentence. Nothing is created when it is refused. Making someone an owner, and anything for a plain user account, takes no seat. Show the sentence; offer to contact the administrator.
+* An organization that is already above a limit (it existed before the limits) **keeps everyone** and simply cannot add more until it is under.
+* Order of refusals: a duplicate (409) or the last-owner rule (409) answers before the plan limit.
+
 **The platform administrator manages organizations** (`role: admin` only; everyone else 403):
 
 * `GET /api/organizations/admin/` (list) and `GET /api/organizations/admin/{id}/`: each row keeps its old fields and adds `owner` (`{id, username}`: the oldest *active* owner,

@@ -220,7 +220,11 @@ class OwnerPatchTests(Fixtures, TestCase):
 
 @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
 class OwnerPowersOverMembersTests(Fixtures, TestCase):
-    """Each thing an owner of a non-personal organization is expected to do, through the endpoints that already exist."""
+    """Each thing an owner of a non-personal organization is expected to do, through the endpoints that already exist (on a plan with no seat limits)."""
+
+    def setUp(self):
+        super().setUp()
+        Organization.objects.filter(pk=self.organization.pk).update(plan=Organization.Plan.ENTERPRISE)
 
     def change(self, membership, body, user=None):
         return self.client_for(user or self.owner).patch(self.members_url(membership), body, format="json")

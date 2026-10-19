@@ -336,7 +336,10 @@ def create_account_as_admin(*, administrator, username, email, password, role, o
     administrator and the new account.
     """
     from organizations.models import OrganizationMembership
+    from organizations.services import assert_seat_available
 
+    if role == "moderator":
+        assert_seat_available(organization, OrganizationMembership.Role.MODERATOR)         # PlanLimitReached (403) before anything is created
     User = get_user_model()
     first_name, last_name = split_full_name(full_name)
     user = User.objects.create_user(
