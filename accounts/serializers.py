@@ -56,6 +56,11 @@ class RegisterSerializer(serializers.Serializer):
         write_only=True,
         trim_whitespace=False,
     )
+    invitation_token = serializers.CharField(
+        required=False, allow_blank=True, write_only=True, max_length=256,
+        help_text="The token of an organization invitation sent to this email address (from the link in the invitation email). "
+                  "With it the address counts as verified: the account is created, the invitation accepted and the login tokens returned (201).",
+    )
 
     def validate_full_name(self, value):
         return clean_full_name(value)

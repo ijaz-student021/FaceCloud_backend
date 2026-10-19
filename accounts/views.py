@@ -58,6 +58,8 @@ from .serializers import (
 )
 from .services import (
     has_moderator_organization,
+    invitation_for_registration,
+    register_from_invitation,
     resolve_moderator_organization,
     issue_login_tokens,
     create_account_as_admin,
@@ -104,10 +106,21 @@ LoginResponseSerializer = inline_serializer("LoginResponse", {
             "Creates a pending registration and emails a verification **link** "
             "(`{FRONTEND_URL}/verify-email?registration_id=...&token=...`). "
             "No account exists until the link's `registration_id` and `token` are sent to POST /verify-email/. "
-            "`username` is optional: when omitted it is derived from the email address."
+            "`username` is optional: when omitted it is derived from the email address. "
+            "**With `invitation_token`** (the token in an organization invitation email, sent to this same address) no verification is needed: "
+            "the account is created verified, the invitation accepted and the normal login tokens returned with **201**. "
+            "A token that is unknown, used, cancelled, expired, for an organization that is suspended, or for another email address answers the same "
+            "**404** `This invitation is invalid, used or expired.` as the invitation preview, and creates nothing; "
+            "**403** `plan_limit_reached` when the organization's plan has no seat left."
         ),
         request=RegisterSerializer,
-        responses={202: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        responses={
+            202: OpenApiTypes.OBJECT,
+            201: LoginResponseSerializer,
+            400: OpenApiTypes.OBJECT,
+            403: OpenApiTypes.OBJECT,
+            404: OpenApiTypes.OBJECT,
+        },
         examples=[
             OpenApiExample(
                 "New account",
@@ -128,8 +141,21 @@ class RegisterView(APIView):
     throttle_scope = "registration"
 
     def post(self, request):
+        invitation_token = request.data.get("invitation_token") if hasattr(request.data, "get") else None
+        if isinstance(invitation_token, str) and invitation_token.strip():
+            # Checked before anything else about the request: a bad token, or a token for another address, answers one 404 sentence and creates nothing.
+            invitation_for_registration(invitation_token, str(request.data.get("email") or ""))
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        if isinstance(invitation_token, str) and invitation_token.strip():
+            try:
+                user = register_from_invitation(
+                    token=invitation_token, full_name=serializer.validated_data["full_name"], email=serializer.validated_data["email"],
+                    password=serializer.validated_data["password"], username=serializer.validated_data.get("username"), request=request,
+                )
+            except IntegrityError:           # two sign-ups chose the same username at once; nothing was created
+                return Response({"detail": "That username was just taken. Please try again."}, status=status.HTTP_409_CONFLICT)
+            return Response(issue_login_tokens(user, request), status=status.HTTP_201_CREATED)
         supplied_username = serializer.validated_data.get("username")
         full_name = serializer.validated_data["full_name"]
         email = serializer.validated_data["email"]

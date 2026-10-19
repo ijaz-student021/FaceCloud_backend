@@ -326,6 +326,57 @@ def resolve_moderator_organization(organization_id=None):
     return candidates[0]
 
 
+INVALID_INVITATION = "This invitation is invalid, used or expired."
+
+
+def invitation_for_registration(token, email):
+    """The pending organization invitation ``token`` opens for someone registering with ``email``.
+
+    Anything else (unknown, used, cancelled or expired token, an organization that is suspended, or an invitation for another address) raises the
+    same 404 sentence as the invitation preview: the holder of a token may learn only whether it is good for them.
+    """
+    from organizations.services import preview_invitation
+    from rest_framework.exceptions import NotFound
+
+    invitation = preview_invitation((token or "").strip())
+    if invitation is None or invitation.email.strip().lower() != (email or "").strip().lower():
+        raise NotFound(INVALID_INVITATION)
+    return invitation
+
+
+@transaction.atomic
+def register_from_invitation(*, token, full_name, email, password, username=None, request=None):
+    """Create a verified account for the invited address and accept the invitation, in one transaction.
+
+    The invitation link went to this mailbox, so the address counts as verified. If any step fails (no seat left in the plan, the invitation was used
+    a moment ago, the username is taken) nothing is created. Returns the new user.
+    """
+    from organizations.services import accept_invitation, create_personal_organization
+
+    from .models import PendingRegistration
+
+    User = get_user_model()
+    first_name, last_name = split_full_name(full_name)
+    username = username or derive_username(email)
+    # Someone else's unfinished registration may hold this username: that is the ordinary registration's conflict, with its sentence.
+    if PendingRegistration.objects.filter(username__iexact=username, status__in=PendingRegistration.ACTIVE_STATUSES).exclude(email__iexact=email).exists():
+        from rest_framework.exceptions import ValidationError
+
+        raise ValidationError({"detail": "An active registration already uses this username or email address."})
+    # This person's own unfinished registration for the same address is replaced by this one (its link would only meet "claimed").
+    PendingRegistration.objects.filter(email__iexact=email, status__in=PendingRegistration.ACTIVE_STATUSES).update(
+        status=PendingRegistration.STATUS_CANCELLED, password_hash="", token_hash="")
+    user = User.objects.create_user(
+        username=username, email=email, password=password, first_name=first_name, last_name=last_name, role="user", is_email_verified=True,
+    )
+    create_personal_organization(user)
+    membership = accept_invitation(token=(token or "").strip(), user=user, request=request)
+    details = {"via": "organization_invitation", "organization_id": membership.organization_id, "role": membership.role}
+    record_auth_event("registered", request, user, user.email, details)
+    record_auth_event("email_verified", request, user, user.email, details)
+    return user
+
+
 @transaction.atomic
 def create_account_as_admin(*, administrator, username, email, password, role, organization=None, full_name="", request=None):
     """Create an already-verified account for someone, in one transaction.

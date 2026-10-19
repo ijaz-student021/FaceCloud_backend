@@ -265,6 +265,10 @@ def sample_instance(model):
         return model(requested_by_id=1)
     except TypeError:
         pass
+    try:
+        return model(logo_uploaded_by_id=1)  # an organization's logo, keyed by the person who uploaded it
+    except TypeError:
+        pass
     # Models that reach their owner through a parent: comparison outputs, and the
     # cached source of an editor preview (through its enhancement result).
     from enhancement.models import ImageEnhancementResult, ModelComparison
