@@ -126,6 +126,15 @@ class OrganizationInvitationAcceptSerializer(serializers.Serializer):
     token = serializers.CharField()
 
 
+class OrganizationInvitationPreviewSerializer(serializers.Serializer):
+    """What the person who received an invitation sees before accepting it."""
+
+    organization_name = serializers.CharField(source="organization.name")
+    email = serializers.EmailField(help_text="The address the invitation was sent to; accepting needs an account with this email.")
+    role = serializers.ChoiceField(choices=OrganizationInvitation.Role.choices)
+    expires_at = serializers.DateTimeField()
+
+
 class OrganizationAuditEventSerializer(serializers.ModelSerializer):
     actor = MemberUserSerializer(read_only=True)
     actor_name = serializers.SerializerMethodField()

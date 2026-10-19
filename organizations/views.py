@@ -1,7 +1,7 @@
 from django.shortcuts import get_object_or_404
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
-from rest_framework import generics, status
+from rest_framework import generics, permissions, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
@@ -17,6 +17,7 @@ from .serializers import (
     OrganizationAuditEventSerializer,
     OrganizationCreateSerializer,
     OrganizationInvitationAcceptSerializer,
+    OrganizationInvitationPreviewSerializer,
     OrganizationInvitationCreateSerializer,
     OrganizationInvitationSerializer,
     OrganizationMembershipSerializer,
@@ -28,6 +29,7 @@ from .services import (
     cancel_invitation,
     create_organization,
     invite_member,
+    preview_invitation,
     remove_member,
     resend_invitation,
     update_member,
@@ -216,6 +218,31 @@ class OrganizationInvitationCancelView(OrganizationScopedMixin, APIView):
             invitation=invitation, actor_membership=self.active_membership, request=request,
         )
         return Response(OrganizationInvitationSerializer(invitation).data)
+
+
+class OrganizationInvitationPreviewView(APIView):
+    """Public: which organization an invitation is from, to which email and role, and when it expires.
+
+    The link in the invitation email is ``{FRONTEND_URL}/invitations/{token}``; the page behind it calls this before asking the person to sign
+    in. An unknown, used, cancelled or expired token all answer the same 404, so nothing is learned from a wrong guess.
+    """
+
+    authentication_classes = []                 # a stale sign-in on the browser must not turn a good token into a 401
+    permission_classes = [permissions.AllowAny]
+    throttle_scope = "invitation"
+
+    @extend_schema(
+        responses={200: OrganizationInvitationPreviewSerializer, 404: OpenApiTypes.OBJECT},
+        summary="Preview an organization invitation",
+        auth=[],
+    )
+    def get(self, request, token):
+        invitation = preview_invitation(token)
+        if invitation is None:
+            return Response({"detail": "This invitation is invalid, used or expired."}, status=status.HTTP_404_NOT_FOUND)
+        response = Response(OrganizationInvitationPreviewSerializer(invitation).data)
+        response["Cache-Control"] = "no-store"
+        return response
 
 
 class OrganizationInvitationAcceptView(APIView):

@@ -209,6 +209,19 @@ def cancel_invitation(*, invitation, actor_membership, request=None):
 
 
 @transaction.atomic
+def preview_invitation(token):
+    """The pending, unexpired invitation a token belongs to, or ``None`` for an unknown, used, cancelled or expired one.
+
+    Nothing distinguishes those cases to the caller: the answer to "is this token good" is the only thing a holder of a token may learn.
+    """
+    invitation = (
+        OrganizationInvitation.objects.select_related("organization")
+        .filter(token_hash=hash_token(token or ""), status=OrganizationInvitation.Status.PENDING)
+        .first()
+    )
+    return invitation if invitation is not None and not invitation.is_expired() else None
+
+
 def accept_invitation(*, token, user, request=None):
     invitation = (
         OrganizationInvitation.objects.select_for_update()
