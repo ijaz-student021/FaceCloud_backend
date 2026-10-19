@@ -470,6 +470,17 @@ again), `no_accepted_images` (nothing passed, nothing to enhance),
 (`package_type`: `accepted_results` or `complete_batch`) expire after a
 configurable time, so show an expiry and offer "regenerate".
 
+**What a processing report contains** (`payload`, and the JSON file). A **batch** report's `summary` is
+`{total_images, accepted_uploads, rejected_uploads, processing_status, status_counts, total_input_size}` plus three fields:
+`images_deleted` (`true` when any photo of the upload no longer exists), `images_remaining` (how many are still stored, which is also the length of `images`) and
+`enhanced_images` (how many of the remaining photos were enhanced; `null` when none remain, because it is then unknown). The totals always come from the batch itself, so
+**after photos are deleted a report no longer shows `total_images: 0` next to `accepted_uploads: 2`**: `total_images` stays the size of the upload, `images` shrinks to what
+remains, and `status_counts` has a `deleted` entry for the photos that are gone, so the counts always add up to `total_images` (`{"deleted": 3}` when everything is gone).
+Show a line such as "The photos of this upload have been deleted; only totals are shown" when `images_deleted` is `true`. Nothing was renamed or removed.
+The **PDF** is written for people: the date as `19 Oct 2026, 09:29 UTC`, sizes in KB / MB, results as separate rows (Accepted, Rejected, Needs review, plus any other that occurred),
+statuses, reasons and duplicate decisions in words, long file names wrapped at `_ - .`, the reason for each rejected photo, scores labelled "out of 100", and a footer with the report type,
+the source and "Page n of N". JSON and CSV keep the raw codes, raw numbers and ISO dates (the CSV is unchanged; for a batch whose photos are all deleted it is just the header).
+
 **Share links.** `POST /api/shares/ {result, ttl_hours?, label?, watermark?,
 watermark_position?, watermark_opacity?, watermark_text?}` returns the link
 **including the raw `token` exactly once**, plus `public_url` and `info_url`.
