@@ -75,6 +75,33 @@ def describe_event(event, labels):
     return message, label, (event.previous_value or {}).get("status"), (event.new_value or {}).get("status")
 
 
+def _search_filter(text):
+    """What ``?q=`` keeps: the actor (username or email), the reason, the action (its stored name, or its sentence), a decision's wording
+    ("approved", "rejected", ...), or the name of the photo, upload or folder the event was about."""
+    import re
+
+    from identities.models import IdentityGroup
+    from moderation.models import ModeratorReview
+    from uploads.models import ImageUpload, UploadBatch
+
+    lowered = text.lower()
+    # A sentence matches on its fixed words: "{label}" and "{decision}" are filled in per event, so they are not searched as text.
+    sentences = [action for action, template in SENTENCES.items() if lowered in re.sub(r"\{\w+\}", "", template).lower()]
+    decisions = [word for word, label in DECISION_WORDS.items() if lowered in label.lower()]
+    found = (
+        Q(actor__username__icontains=text) | Q(actor__email__icontains=text) | Q(reason__icontains=text)
+        | Q(action__icontains=lowered.replace(" ", "_")) | Q(action__in=sentences)
+        | Q(target_type="ModeratorReview", target_id__in=ModeratorReview.objects.filter(image__original_name__icontains=text).values("pk"))
+        | Q(target_type="ImageUpload", target_id__in=ImageUpload.objects.filter(original_name__icontains=text).values("pk"))
+        | Q(target_type="UploadBatch", target_id__in=UploadBatch.objects.filter(
+            Q(display_name__icontains=text) | Q(original_archive_name__icontains=text)).values("pk"))
+        | Q(target_type="IdentityGroup", target_id__in=IdentityGroup.objects.filter(display_name__icontains=text).values("pk"))
+    )
+    if decisions:
+        found |= Q(action=Action.MODERATOR_REVIEW_DECIDED, new_value__action__in=decisions)
+    return found
+
+
 def filter_events(queryset, params):
     """Apply ``?action=``, ``?actor=``, ``?q=``, ``?date_from=``, ``?date_to=``, ``?target_type=`` and ``?target_id=``; ``ValueError`` for a bad value."""
     from django.utils import timezone
@@ -112,10 +139,5 @@ def filter_events(queryset, params):
     if text:
         if len(text) > 100:
             raise ValueError("q must be at most 100 characters.")
-        lowered = text.lower()
-        sentences = [action for action, sentence in SENTENCES.items() if lowered in sentence.lower()]
-        queryset = queryset.filter(
-            Q(actor__username__icontains=text) | Q(actor__email__icontains=text) | Q(reason__icontains=text)
-            | Q(action__icontains=lowered.replace(" ", "_")) | Q(action__in=sentences),
-        )
+        queryset = queryset.filter(_search_filter(text))
     return queryset

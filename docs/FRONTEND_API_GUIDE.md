@@ -527,8 +527,10 @@ state and put it in the URL; changing it client-side grants nothing.
   `target_type`, `target_id`, `previous_value`, `new_value`, `reason`, `created_at`) and adds `actor_name`, `message` (a sentence
   without the actor, for example "Approved face.jpg."), `target_label` (the photo, upload or folder name; `null` when none or gone)
   and `from_status` / `to_status` (the review's status before and after a decision, `null` for other events and for decisions
-  recorded before this was kept). Filters: `?action=` (for example `moderator_review_decided`), `?actor=<user id>`, `?q=` (actor
-  name or email, the reason, the action's name or sentence; up to 100 characters), `?date_from=`, `?date_to=` (a bare date includes
+  recorded before this was kept). Filters: `?action=` (for example `moderator_review_decided`), `?actor=<user id>`, `?q=` (case-insensitive, up to
+  100 characters; finds the actor's name or email, the reason, the action's name or the fixed words of its sentence ("escalated"), a decision's
+  wording ("approved", "rejected", "corrected": a decision's `message` is "Approved face.jpg.", so `q=approved` finds exactly the approvals),
+  and the **name of the photo, upload or person folder** the event was about ("face.jpg", "staff_q3.zip")), `?date_from=`, `?date_to=` (a bare date includes
   that whole day), `?target_type=` and `?target_id=`; a bad value is a 400. The history of one review is
   `?target_type=ModeratorReview&target_id={review id}`. **There is no "user notified" field**: nobody is notified of a decision,
   so leave that column out. The older `Audit trail` description follows.
@@ -544,7 +546,7 @@ GET  .../moderator/reviews/{id}/
 POST .../moderator/reviews/{id}/decision/   {action, reason?, notes?, group_id?}
 POST .../moderator/reviews/{id}/assign/     {moderator_id}
 POST .../moderator/reviews/{id}/escalate/   {reason?}
-GET  .../moderator/reviews/{id}/image/?size=  the photo, as a thumbnail
+GET  .../moderator/reviews/{id}/image/?size=  the photo, as a thumbnail; size is 256 (default) or 1024, anything else is a 400
 POST .../moderator/reviews/{id}/claim/      take the review (soft lock)
 POST .../moderator/reviews/{id}/release/    give it back to the queue
 POST .../moderator/reviews/bulk-decision/   {review_ids[], action, reason?, notes?}
@@ -620,7 +622,9 @@ nothing measurable was decided.
   "progress_percentage": 90.0, "counts": {"accepted": 2, "rejected": 1, "needs_review": 1, "failed": 1}, "total_files": 5, ...}`.
   `GET .../moderator/batches/{id}/` has the same fields under `batch` and, for each photo in `images[]`, `file_size`
   (bytes), `outcome` (`accepted`, `rejected`, `needs_review`, `failed`, `cancelled` or `processing`) and `preview_url`
-  (the moderator thumbnail, fetch it with the Authorization header; `null` for a file refused at upload).
+  (the moderator thumbnail, fetch it with the Authorization header; `null` for a file refused at upload). Thumbnails come in the
+  configured sizes only (`THUMBNAIL_SIZES`, 256 and 1024): `?size=` with any other value, for example 800, is a 400
+  `{"size": "Choose one of: 256, 1024."}`; the same holds for `.../moderator/images/{id}/preview/` and `.../reviews/{id}/image/`.
   Actions: `POST .../moderator/batches/{id}/retry/`, `/cancel/` and `/reprocess/`.
 - **Identity Review screen.** Only person folders that hold photographs **submitted to this organization** are listed, and a moderator
   can only merge two folders of the **same member**. `GET .../moderator/identity-groups/?q=&owner=` (a plain array, or paged) returns
