@@ -16,7 +16,7 @@ from .tests import ModerationFixtureMixin
 class AuditScreenFieldsTests(ModerationFixtureMixin, TestCase):
     def setUp(self):
         self.owner = self.make_user("audit-screen-owner")
-        self.organization = create_organization(name="Audit Co", owner=self.owner)
+        self.organization = create_organization(name="Audit Co", owner=self.owner, moderator_data_scope="organization")
         self.moderator = self.make_user("audit-screen-mod")
         OrganizationMembership.objects.create(organization=self.organization, user=self.moderator,
                                               role=OrganizationMembership.Role.MODERATOR)

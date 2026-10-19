@@ -13,9 +13,17 @@ class Organization(models.Model):
         TEAM = "team", "Team"
         ENTERPRISE = "enterprise", "Enterprise"
 
+    class ModeratorDataScope(models.TextChoices):
+        OWN_MEMBERS = "own_members", "Each moderator sees their own members"
+        ORGANIZATION = "organization", "Every moderator sees the whole organization"
+
     name = models.CharField(max_length=150)
     slug = models.SlugField(max_length=60, unique=True)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.ACTIVE)
+    # What a MODERATOR of this organization can see (an owner always sees everything). New organizations start with ``own_members``; organizations
+    # that existed before this setting keep ``organization`` (their behaviour is unchanged until the owner or the administrator chooses).
+    # Enforced on the server by organizations/scope.py.
+    moderator_data_scope = models.CharField(max_length=16, choices=ModeratorDataScope.choices, default=ModeratorDataScope.OWN_MEMBERS)
     plan = models.CharField(max_length=16, choices=Plan.choices, default=Plan.FREE)
     # Auto-created alongside every account (see organizations.services.create_personal_organization)
     # so existing user-scoped ownership keeps working unchanged until someone is invited in.

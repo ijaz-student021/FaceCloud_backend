@@ -61,9 +61,10 @@ def _unique_slug(base):
 
 
 @transaction.atomic
-def create_organization(*, name, owner, plan=Organization.Plan.FREE, is_personal=False, actor=None, request=None):
+def create_organization(*, name, owner, plan=Organization.Plan.FREE, is_personal=False, actor=None, request=None, moderator_data_scope=None):
+    extra = {"moderator_data_scope": moderator_data_scope} if moderator_data_scope else {}      # otherwise the model default: own_members
     organization = Organization.objects.create(
-        name=name, slug=_unique_slug(name), plan=plan, is_personal=is_personal,
+        name=name, slug=_unique_slug(name), plan=plan, is_personal=is_personal, **extra,
     )
     OrganizationMembership.objects.create(
         organization=organization, user=owner, role=OrganizationMembership.Role.OWNER,

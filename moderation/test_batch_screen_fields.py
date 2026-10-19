@@ -12,7 +12,7 @@ from .tests import ModerationFixtureMixin
 class BatchScreenFieldsTests(ModerationFixtureMixin, TestCase):
     def setUp(self):
         self.owner = self.make_user("screen-owner")
-        self.organization = create_organization(name="Screen Co", owner=self.owner)
+        self.organization = create_organization(name="Screen Co", owner=self.owner, moderator_data_scope="organization")
         self.moderator = self.make_user("screen-mod")
         OrganizationMembership.objects.create(organization=self.organization, user=self.moderator,
                                               role=OrganizationMembership.Role.MODERATOR)

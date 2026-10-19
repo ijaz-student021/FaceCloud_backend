@@ -11,6 +11,7 @@ from accounts.permissions import IsAdminRole
 
 from .models import Organization, OrganizationInvitation, OrganizationMembership
 from .permissions import OrganizationScopedMixin
+from .scope import visible_audit_events
 from .serializers import (
     OrganizationWithMembershipSerializer,
     MemberRemovalSerializer,
@@ -99,7 +100,7 @@ class OrganizationMemberListView(OrganizationScopedMixin, generics.ListAPIView):
     serializer_class = OrganizationMembershipSerializer
 
     def get_queryset(self):
-        return (
+        return self.data_scope.exclude_memberships(
             OrganizationMembership.objects.filter(organization_id=self.kwargs["organization_id"])
             .exclude(status=OrganizationMembership.Status.REMOVED)
             .select_related("user", "invited_by")
@@ -111,8 +112,8 @@ class OrganizationMemberDetailView(OrganizationScopedMixin, APIView):
 
     def _get_membership(self):
         return get_object_or_404(
-            OrganizationMembership, pk=self.kwargs["membership_id"],
-            organization_id=self.kwargs["organization_id"],
+            self.data_scope.exclude_memberships(OrganizationMembership.objects.filter(organization_id=self.kwargs["organization_id"])),
+            pk=self.kwargs["membership_id"],
         )
 
     @extend_schema(
@@ -161,9 +162,8 @@ class OrganizationInvitationListCreateView(OrganizationScopedMixin, generics.Lis
         )
 
     def get_queryset(self):
-        return (
-            OrganizationInvitation.objects.filter(organization_id=self.kwargs["organization_id"])
-            .select_related("invited_by")
+        return self.data_scope.exclude_invitations(
+            OrganizationInvitation.objects.filter(organization_id=self.kwargs["organization_id"]).select_related("invited_by")
         )
 
     @extend_schema(
@@ -195,7 +195,7 @@ class OrganizationInvitationResendView(OrganizationScopedMixin, APIView):
     )
     def post(self, request, organization_id, invitation_id):
         invitation = get_object_or_404(
-            OrganizationInvitation, pk=invitation_id, organization_id=organization_id,
+            self.data_scope.exclude_invitations(OrganizationInvitation.objects.filter(organization_id=organization_id)), pk=invitation_id,
         )
         invitation = resend_invitation(
             invitation=invitation, actor_membership=self.active_membership, request=request,
@@ -212,7 +212,7 @@ class OrganizationInvitationCancelView(OrganizationScopedMixin, APIView):
     )
     def delete(self, request, organization_id, invitation_id):
         invitation = get_object_or_404(
-            OrganizationInvitation, pk=invitation_id, organization_id=organization_id,
+            self.data_scope.exclude_invitations(OrganizationInvitation.objects.filter(organization_id=organization_id)), pk=invitation_id,
         )
         invitation = cancel_invitation(
             invitation=invitation, actor_membership=self.active_membership, request=request,
@@ -281,7 +281,7 @@ class OrganizationAuditListView(OrganizationScopedMixin, generics.ListAPIView):
     def get_queryset(self):
         from .audit_reading import filter_events
 
-        queryset = self.organization.audit_events.select_related("actor")
+        queryset = visible_audit_events(self.organization.audit_events.select_related("actor"), self.organization, self.data_scope)
         try:
             return filter_events(queryset, self.request.query_params)
         except ValueError as error:

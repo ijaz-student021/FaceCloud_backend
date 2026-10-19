@@ -694,6 +694,30 @@ revealed); an administrator-only endpoint answers 403 to everyone else.
 * Django admin (`/admin/`): saving an account as a moderator needs an organization chosen on the form (or an existing moderator membership).
 * Operations: `python manage.py report_moderators_without_organization` lists (username, email) of stranded moderator accounts; it changes nothing.
 
+**A moderator sees their own members** (`moderator_data_scope`, on every organization row of `GET /api/organizations/` and `GET /api/organizations/{id}/`,
+read-only for moderators):
+
+| Value | Meaning |
+|---|---|
+| `own_members` (the default for **new** organizations) | A moderator sees the members **they invited**, plus every member **no current moderator invited** (invited by the platform administrator, by an owner, by nobody, or by someone who is no longer a moderator), so no photograph is ever left without a reviewer. Never the members another current moderator invited. |
+| `organization` (what every organization that existed before this setting keeps) | Every moderator sees the whole organization, as before. |
+
+The **owner always sees everything.** Enforced on the server; the frontend only needs to show less. What is limited, for a moderator on `own_members`:
+reviews (list, detail, image, claim, release, decide, escalate, assign, bulk decide, merge), batches (list, detail, retry, cancel, reprocess), photographs and
+previews, person folders (list, suggested merges, merge), the dashboard and performance counts (visible members only), reports (built from what the requester
+sees, and a moderator lists and downloads **only the reports they asked for**), the member list and the invitation list (staff rows stay; a member another moderator
+invited does not appear, and invitations another moderator sent do not), the audit trail (their own actions, plus events about visible members and
+objects, but not events about a hidden member and not another moderator's bulk decisions), and the review notifications (a failed-batch or overdue-review notice goes
+only to the owner and the moderators who may see that member).
+
+* **404, never 403, for something outside the visible set**, exactly as for another organization (a 403 would say it exists). A bulk decision treats a hidden review id
+  like a missing one (`"No such review in this organization."`); ids in a request *body* (merging two folders) are validated, so they are a 400.
+* Assigning a review to a moderator who may not see that member's photographs is a 400 on `moderator_id`.
+* The organization-wide export (`GET/POST /api/organizations/{id}/export/...`) covers everyone's data, so on `own_members` it is for the **owner only** (403 for a
+  moderator) and `capabilities.export_organization` is `false` for that moderator: hide the button.
+* When the moderator who invited someone is removed or demoted, those members become visible to every moderator immediately and that moderator's open reviews go back to the queue.
+* The setting is changed by the owner or the platform administrator (the endpoints arrive with the owner console and the administrator's organization management).
+
 ## 8. Notifications
 
 `GET /api/notifications/` (list), `GET /api/notifications/unread-count/` (badge),

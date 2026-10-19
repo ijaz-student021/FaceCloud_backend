@@ -32,6 +32,10 @@ def membership_capabilities(membership):
     role = membership.role if active else None
     staff = role in MANAGER_ROLES                      # require_owner_or_moderator views
     owner = role == Role.OWNER
+    # The organization-wide export covers every member's data: with moderators limited to their own members, only the owner may run it.
+    scoped_moderator = (
+        role == Role.MODERATOR and membership.organization.moderator_data_scope == membership.organization.ModeratorDataScope.OWN_MEMBERS
+    )
     # services._assert_can_manage: a moderator cannot manage PROTECTED_FROM_MODERATOR.
     manages_protected = staff and (owner or not PROTECTED_FROM_MODERATOR)
     return {
@@ -45,7 +49,7 @@ def membership_capabilities(membership):
         "moderate_reviews": staff,
         "manage_batches": staff,
         "create_reports": staff,
-        "export_organization": staff,
+        "export_organization": staff and not scoped_moderator,
     }
 
 

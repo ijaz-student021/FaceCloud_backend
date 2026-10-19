@@ -51,6 +51,7 @@ from .services import (
     expire_moderator_report_if_needed,
     merge_duplicate_identity_groups,
     moderator_metrics,
+    organization_reviews,
     release_review_claim,
     retry_batch_for_organization,
 )
@@ -63,6 +64,12 @@ ERROR_RESPONSES = {
 
 def _is_true(value):
     return str(value).lower() in {"1", "true", "yes"}
+
+
+def visible_reports(view):
+    """The organization's reports; a moderator who sees only their own members reads only the reports they asked for (they hold other people's scope)."""
+    reports = ModeratorReport.objects.filter(organization=view.organization)
+    return reports.filter(requested_by=view.request.user) if view.data_scope.restricted else reports
 
 
 @extend_schema(
@@ -87,9 +94,9 @@ class ModeratorReviewListView(OrganizationScopedMixin, generics.ListAPIView):
     serializer_class = ModeratorReviewSerializer
 
     def get_queryset(self):
-        queryset = ModeratorReview.objects.filter(
-            organization_id=self.kwargs["organization_id"],
-        ).select_related("assigned_moderator", "decided_by", "claimed_by", "image")
+        queryset = organization_reviews(self.organization, self.data_scope).select_related(
+            "assigned_moderator", "decided_by", "claimed_by", "image",
+        )
         status_filter = self.request.query_params.get("status")
         if status_filter:
             queryset = queryset.filter(status=status_filter)
@@ -119,10 +126,10 @@ class ModeratorReviewDetailView(OrganizationScopedMixin, APIView):
     @extend_schema(responses={200: ModeratorReviewDetailSerializer, **ERROR_RESPONSES})
     def get(self, request, organization_id, review_id):
         review = get_object_or_404(
-            ModeratorReview.objects.select_related(
+            organization_reviews(self.organization, self.data_scope).select_related(
                 "assigned_moderator", "decided_by", "claimed_by", "image__owner", "image__quality_decision", "image__face_validation",
             ),
-            pk=review_id, organization_id=organization_id,
+            pk=review_id,
         )
         return Response(ModeratorReviewDetailSerializer(review, context={"request": request}).data)
 
@@ -165,8 +172,8 @@ class ModeratorReviewImageView(OrganizationScopedMixin, APIView):
     def get(self, request, organization_id, review_id):
         size = self._requested_size(request)
         review = get_object_or_404(
-            ModeratorReview.objects.select_related("image"),
-            pk=review_id, organization_id=organization_id,
+            organization_reviews(self.organization, self.data_scope).select_related("image"),
+            pk=review_id,
         )
         try:
             thumbnail = get_or_create_thumbnail(review.image, size)
@@ -197,7 +204,7 @@ class ModeratorReviewDecisionView(OrganizationScopedMixin, APIView):
         summary="Approve, reject, correct, or hold a review",
     )
     def post(self, request, organization_id, review_id):
-        review = get_object_or_404(ModeratorReview, pk=review_id, organization_id=organization_id)
+        review = get_object_or_404(organization_reviews(self.organization, self.data_scope), pk=review_id)
         serializer = ModeratorDecisionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         decided = decide_review(
@@ -218,7 +225,7 @@ class ModeratorReviewEscalateView(OrganizationScopedMixin, APIView):
         summary="Escalate a review",
     )
     def post(self, request, organization_id, review_id):
-        review = get_object_or_404(ModeratorReview, pk=review_id, organization_id=organization_id)
+        review = get_object_or_404(organization_reviews(self.organization, self.data_scope), pk=review_id)
         serializer = ModeratorEscalateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         escalated = escalate_review(
@@ -237,7 +244,7 @@ class ModeratorReviewAssignView(OrganizationScopedMixin, APIView):
         summary="Assign a review to a specific moderator",
     )
     def post(self, request, organization_id, review_id):
-        review = get_object_or_404(ModeratorReview, pk=review_id, organization_id=organization_id)
+        review = get_object_or_404(organization_reviews(self.organization, self.data_scope), pk=review_id)
         serializer = ModeratorAssignSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         assigned = assign_review(
@@ -263,7 +270,7 @@ class ModeratorReviewClaimView(OrganizationScopedMixin, APIView):
         ),
     )
     def post(self, request, organization_id, review_id):
-        review = get_object_or_404(ModeratorReview, pk=review_id, organization_id=organization_id)
+        review = get_object_or_404(organization_reviews(self.organization, self.data_scope), pk=review_id)
         claimed = claim_review(review=review, actor=request.user, request=request)
         return Response(ModeratorReviewSerializer(claimed).data)
 
@@ -283,7 +290,7 @@ class ModeratorReviewReleaseView(OrganizationScopedMixin, APIView):
         ),
     )
     def post(self, request, organization_id, review_id):
-        review = get_object_or_404(ModeratorReview, pk=review_id, organization_id=organization_id)
+        review = get_object_or_404(organization_reviews(self.organization, self.data_scope), pk=review_id)
         released = release_review_claim(
             review=review, actor=request.user,
             is_owner=self.active_membership.role == OrganizationMembership.Role.OWNER,
@@ -313,7 +320,7 @@ class ModeratorBulkDecisionView(OrganizationScopedMixin, APIView):
         serializer = ModeratorBulkDecisionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         result = bulk_decide_reviews(
-            organization=self.organization, actor=request.user,
+            organization=self.organization, actor=request.user, scope=self.data_scope,
             review_ids=serializer.validated_data["review_ids"],
             action=serializer.validated_data["action"],
             reason=serializer.validated_data.get("reason", ""),
@@ -341,7 +348,7 @@ class ModeratorPerformanceView(OrganizationScopedMixin, APIView):
     )
     def get(self, request, organization_id):
         days = self._window_days(request)
-        return Response(ModeratorPerformanceSerializer(moderator_metrics(self.organization, days)).data)
+        return Response(ModeratorPerformanceSerializer(moderator_metrics(self.organization, days, scope=self.data_scope)).data)
 
     def _window_days(self, request):
         raw = request.query_params.get("days")
@@ -363,7 +370,7 @@ class ModeratorDashboardView(OrganizationScopedMixin, APIView):
 
     @extend_schema(responses={200: ModeratorDashboardSerializer, **ERROR_RESPONSES})
     def get(self, request, organization_id):
-        return Response(ModeratorDashboardSerializer(dashboard_summary(self.organization)).data)
+        return Response(ModeratorDashboardSerializer(dashboard_summary(self.organization, self.data_scope)).data)
 
 
 OUTCOMES = ("accepted", "rejected", "needs_review", "failed")
@@ -427,7 +434,7 @@ class ModeratorBatchListView(OrganizationScopedMixin, generics.ListAPIView):
 
     def get_queryset(self):
         queryset = annotate_batch_stats(
-            UploadBatch.objects.filter(organization_id=self.kwargs["organization_id"])
+            self.data_scope.exclude(UploadBatch.objects.filter(organization_id=self.kwargs["organization_id"]))
             .select_related("owner")
         ).order_by("-updated_at")
         status_filter = self.request.query_params.get("processing_status")
@@ -446,7 +453,7 @@ class ModeratorBatchRetryView(OrganizationScopedMixin, APIView):
         summary="Retry a failed batch",
     )
     def post(self, request, organization_id, batch_id):
-        batch = get_object_or_404(UploadBatch, pk=batch_id, organization_id=organization_id)
+        batch = get_object_or_404(self.data_scope.exclude(UploadBatch.objects.filter(organization=self.organization)), pk=batch_id)
         try:
             batch = retry_batch_for_organization(batch=batch, actor=request.user, request=request)
         except (BatchHasNoFailedImages, BatchRetryLimitReached) as error:
@@ -463,7 +470,7 @@ class ModeratorBatchCancelView(OrganizationScopedMixin, APIView):
         summary="Cancel a batch still in progress",
     )
     def post(self, request, organization_id, batch_id):
-        batch = get_object_or_404(UploadBatch, pk=batch_id, organization_id=organization_id)
+        batch = get_object_or_404(self.data_scope.exclude(UploadBatch.objects.filter(organization=self.organization)), pk=batch_id)
         batch = cancel_batch_for_organization(batch=batch, actor=request.user, request=request)
         return Response(AdminFailedBatchSerializer(batch).data)
 
@@ -488,7 +495,7 @@ class ModeratorReportListCreateView(OrganizationScopedMixin, generics.ListAPIVie
     throttle_scope = "org_report"
 
     def get_queryset(self):
-        return ModeratorReport.objects.filter(organization_id=self.kwargs["organization_id"]).select_related("requested_by")
+        return visible_reports(self).select_related("requested_by")
 
     @extend_schema(
         request=ModeratorReportCreateSerializer,
@@ -522,7 +529,7 @@ class ModeratorReportDetailView(OrganizationScopedMixin, APIView):
 
     @extend_schema(responses={200: ModeratorReportSerializer, **ERROR_RESPONSES})
     def get(self, request, organization_id, report_id):
-        report = get_object_or_404(ModeratorReport, pk=report_id, organization_id=organization_id)
+        report = get_object_or_404(visible_reports(self), pk=report_id)
         expire_moderator_report_if_needed(report)
         return Response(ModeratorReportSerializer(report, context={"request": request}).data)
 
@@ -535,7 +542,7 @@ class ModeratorReportFileView(OrganizationScopedMixin, APIView):
         summary="Download a ready organization report",
     )
     def get(self, request, organization_id, report_id):
-        report = get_object_or_404(ModeratorReport, pk=report_id, organization_id=organization_id)
+        report = get_object_or_404(visible_reports(self), pk=report_id)
         if expire_moderator_report_if_needed(report):
             raise ModeratorReportExpired()
         if report.status != ModeratorReport.Status.READY:
@@ -569,7 +576,7 @@ class ModeratorDuplicateGroupMergeView(OrganizationScopedMixin, APIView):
         summary="Merge the identity groups behind a duplicate-match review",
     )
     def post(self, request, organization_id, review_id):
-        review = get_object_or_404(ModeratorReview, pk=review_id, organization_id=organization_id)
+        review = get_object_or_404(organization_reviews(self.organization, self.data_scope), pk=review_id)
         serializer = ModeratorDuplicateGroupMergeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         source, target = merge_duplicate_identity_groups(
@@ -635,7 +642,7 @@ class ModeratorBatchDetailView(OrganizationScopedMixin, APIView):
         from uploads.models import ImageUpload
 
         batch = get_object_or_404(
-            UploadBatch.objects.select_related("owner"), pk=batch_id, organization_id=self.organization.pk,
+            self.data_scope.exclude(UploadBatch.objects.select_related("owner").filter(organization=self.organization)), pk=batch_id,
         )
         images = list(
             ImageUpload.objects.filter(batch=batch)
@@ -674,13 +681,14 @@ class ModeratorBatchDetailView(OrganizationScopedMixin, APIView):
         }).data)
 
 
-def organization_images(organization):
-    """Images submitted to ``organization``: its batches, never a personal space."""
+def organization_images(organization, scope=None):
+    """Images submitted to ``organization``: its batches, never a personal space (and, for a ``scope``, never a member the viewer may not see)."""
     from uploads.models import ImageUpload
 
     if organization.is_personal:
         return ImageUpload.objects.none()
-    return ImageUpload.objects.filter(batch__organization=organization)
+    images = ImageUpload.objects.filter(batch__organization=organization)
+    return scope.exclude(images) if scope is not None else images
 
 
 class ModeratorImageListView(OrganizationScopedMixin, generics.ListAPIView):
@@ -709,7 +717,7 @@ class ModeratorImageListView(OrganizationScopedMixin, generics.ListAPIView):
 
         params = self.request.query_params
         queryset = (
-            organization_images(self.organization)
+            organization_images(self.organization, self.data_scope)
             .select_related("owner", "quality_decision")
             .prefetch_related(Prefetch(
                 "moderator_reviews", queryset=ModeratorReview.objects.filter(organization=self.organization).order_by("-created_at"),
@@ -750,7 +758,7 @@ class ModeratorIdentityGroupListView(OrganizationScopedMixin, generics.ListAPIVi
         from . import identity_groups
 
         params = request.query_params
-        folders = identity_groups.organization_folders(self.organization)
+        folders = identity_groups.organization_folders(self.organization, self.data_scope)
         text = (params.get("q") or "").strip()
         if text:
             folders = folders.filter(Q(display_name__icontains=text) | Q(owner__username__icontains=text))
@@ -773,7 +781,7 @@ class ModeratorMergeSuggestionsView(OrganizationScopedMixin, APIView):
     def get(self, request, organization_id):
         from . import identity_groups
 
-        return Response(identity_groups.suggested_merges(self.organization, request))
+        return Response(identity_groups.suggested_merges(self.organization, request, self.data_scope))
 
 
 class ModeratorFolderMergeView(OrganizationScopedMixin, APIView):
@@ -789,7 +797,7 @@ class ModeratorFolderMergeView(OrganizationScopedMixin, APIView):
         payload = ModeratorFolderMergeSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         source, target = identity_groups.merge_folders(
-            organization=self.organization, actor=request.user, request=request, **payload.validated_data,
+            organization=self.organization, actor=request.user, request=request, scope=self.data_scope, **payload.validated_data,
         )
         return Response({"source": {"id": source.pk, "state": source.state}, "target": {"id": target.pk, "member_count": target.member_count,
                                                                                          "display_name": target.display_name}})
@@ -833,7 +841,7 @@ class ModeratorImagePreviewView(OrganizationScopedMixin, APIView):
         if raw_size and (not raw_size.isdigit() or int(raw_size) not in allowed_sizes()):
             raise ValidationError({"size": f"Choose one of: {', '.join(str(size) for size in allowed_sizes())}."})
         size = int(raw_size) if raw_size else default_size()
-        image = get_object_or_404(organization_images(self.organization).filter(status="uploaded"), pk=image_id)
+        image = get_object_or_404(organization_images(self.organization, self.data_scope).filter(status="uploaded"), pk=image_id)
         try:
             if variant == "original":
                 thumbnail = get_or_create_thumbnail(image, size)
@@ -892,8 +900,9 @@ class ModeratorBatchReprocessView(OrganizationScopedMixin, APIView):
 
         if self.organization.is_personal:
             raise Http404("Batch not found.")
-        batch = get_object_or_404(UploadBatch.objects.select_related("owner"), pk=batch_id,
-                                  organization_id=self.organization.pk)
+        batch = get_object_or_404(
+            self.data_scope.exclude(UploadBatch.objects.select_related("owner").filter(organization=self.organization)), pk=batch_id,
+        )
         payload = ModeratorReprocessSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         ensure_enhancement_capacity(batch.owner, batch=True)

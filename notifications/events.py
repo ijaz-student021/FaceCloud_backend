@@ -159,13 +159,12 @@ def notify_moderators_batch_failed(batch):
     """
     if batch.organization_id is None:
         return []
-    from organizations.models import OrganizationMembership
+    from organizations.scope import moderators_who_see
 
-    staff = OrganizationMembership.objects.filter(
-        organization_id=batch.organization_id,
-        role__in=[OrganizationMembership.Role.OWNER, OrganizationMembership.Role.MODERATOR],
-        status=OrganizationMembership.Status.ACTIVE,
-    ).exclude(user_id=batch.owner_id).select_related("user")
+    # Owners, and the moderators who may see this member's data (one who sees only their own members is not told about a batch of someone else's).
+    staff = [
+        membership for membership in moderators_who_see(batch.organization, batch.owner_id) if membership.user_id != batch.owner_id
+    ]
     notifications = []
     for membership in staff:
         notification, _ = create_user_notification(
@@ -193,19 +192,13 @@ def notify_moderator_review_overdue(review):
     to the organization's owners and moderators instead, because nobody has
     picked it up and that is exactly what makes it late.
     """
-    from organizations.models import OrganizationMembership
 
     if review.assigned_moderator_id is not None:
         recipients = [review.assigned_moderator]
     else:
-        recipients = [
-            membership.user
-            for membership in OrganizationMembership.objects.filter(
-                organization_id=review.organization_id,
-                role__in=[OrganizationMembership.Role.OWNER, OrganizationMembership.Role.MODERATOR],
-                status=OrganizationMembership.Status.ACTIVE,
-            ).select_related("user")
-        ]
+        from organizations.scope import moderators_who_see
+
+        recipients = [membership.user for membership in moderators_who_see(review.organization, review.image.owner_id)]
     notifications = []
     for recipient in recipients:
         notification, _ = create_user_notification(
