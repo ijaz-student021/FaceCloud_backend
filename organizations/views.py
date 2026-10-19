@@ -1,9 +1,8 @@
-from django.db.models import Count, OuterRef, Q, Subquery
 from django.shortcuts import get_object_or_404
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import generics, permissions, status
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
@@ -16,6 +15,7 @@ from .scope import visible_audit_events
 from .serializers import (
     AdminOrganizationSerializer,
     AdminOrganizationUpdateSerializer,
+    OrganizationDetailSerializer,
     OrganizationWithMembershipSerializer,
     MemberRemovalSerializer,
     OrganizationAuditEventSerializer,
@@ -26,17 +26,20 @@ from .serializers import (
     OrganizationInvitationSerializer,
     OrganizationMembershipSerializer,
     OrganizationMembershipUpdateSerializer,
+    OwnerOrganizationUpdateSerializer,
 )
 from .services import (
     accept_invitation,
     cancel_invitation,
     create_organization,
+    get_active_membership,
     invite_member,
     preview_invitation,
     remove_member,
     resend_invitation,
     update_member,
-    update_organization_as_administrator,
+    organizations_with_head_counts,
+    update_organization,
 )
 
 ERROR_RESPONSES = {
@@ -69,20 +72,6 @@ class OrganizationListView(generics.ListAPIView):
         return context
 
 
-def administered_organizations():
-    """Every organization with the owner and the head counts the administrator's screens show, in one query."""
-    owner = OrganizationMembership.objects.filter(
-        organization=OuterRef("pk"), role=OrganizationMembership.Role.OWNER, status=OrganizationMembership.Status.ACTIVE,
-    ).order_by("created_at", "pk")
-    active = Q(memberships__status=OrganizationMembership.Status.ACTIVE)
-    return Organization.objects.annotate(
-        member_count=Count("memberships", filter=active),
-        moderator_count=Count("memberships", filter=active & Q(memberships__role=OrganizationMembership.Role.MODERATOR)),
-        owner_user_id=Subquery(owner.values("user_id")[:1]),
-        owner_username=Subquery(owner.values("user__username")[:1]),
-    )
-
-
 class AdminOrganizationListCreateView(generics.ListCreateAPIView):
     """FaceCloud-administrator-only: create and list every organization."""
 
@@ -90,7 +79,7 @@ class AdminOrganizationListCreateView(generics.ListCreateAPIView):
     throttle_scope = "org_invite"
 
     def get_queryset(self):
-        return administered_organizations()
+        return organizations_with_head_counts()
 
     def get_serializer_class(self):
         return OrganizationCreateSerializer if self.request.method == "POST" else AdminOrganizationSerializer
@@ -104,7 +93,7 @@ class AdminOrganizationListCreateView(generics.ListCreateAPIView):
             plan=serializer.validated_data.get("plan", Organization.Plan.FREE),
             actor=request.user, request=request,
         )
-        return Response(AdminOrganizationSerializer(administered_organizations().get(pk=organization.pk)).data, status=status.HTTP_201_CREATED)
+        return Response(AdminOrganizationSerializer(organizations_with_head_counts().get(pk=organization.pk)).data, status=status.HTTP_201_CREATED)
 
 
 class AdminOrganizationDetailView(APIView):
@@ -114,7 +103,7 @@ class AdminOrganizationDetailView(APIView):
 
     @extend_schema(responses={200: AdminOrganizationSerializer, **ERROR_RESPONSES})
     def get(self, request, organization_id):
-        organization = get_object_or_404(administered_organizations(), pk=organization_id)
+        organization = get_object_or_404(organizations_with_head_counts(), pk=organization_id)
         return Response(AdminOrganizationSerializer(organization).data)
 
     @extend_schema(request=AdminOrganizationUpdateSerializer, responses={200: AdminOrganizationSerializer, **ERROR_RESPONSES})
@@ -123,18 +112,41 @@ class AdminOrganizationDetailView(APIView):
         serializer = AdminOrganizationUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        update_organization_as_administrator(
-            organization=organization, actor=request.user, name=data.get("name"), plan=data.get("plan"),
-            status=data.get("status"), reason=data.get("reason", ""), request=request,
+        update_organization(
+            organization=organization, actor=request.user, name=data.get("name"), plan=data.get("plan"), status=data.get("status"),
+            moderator_data_scope=data.get("moderator_data_scope"), reason=data.get("reason", ""), request=request,
         )
-        return Response(AdminOrganizationSerializer(administered_organizations().get(pk=organization.pk)).data)
+        return Response(AdminOrganizationSerializer(organizations_with_head_counts().get(pk=organization.pk)).data)
 
 
 class OrganizationDetailView(OrganizationScopedMixin, APIView):
-    @extend_schema(responses={200: OrganizationWithMembershipSerializer, **ERROR_RESPONSES})
+    """One organization: for its owner and moderators also who owns it and how many people are in it. The owner can change its name and what its moderators see."""
+
+    def _detail(self, request, organization_id):
+        membership = get_active_membership(request.user, organization_id)                       # fresh: capabilities read the organization's current setting
+        organization = organizations_with_head_counts().get(pk=organization_id)
+        return OrganizationDetailSerializer(organization, context={"request": request, "memberships": {organization.pk: membership}}).data
+
+    @extend_schema(responses={200: OrganizationDetailSerializer, **ERROR_RESPONSES})
     def get(self, request, organization_id):
-        context = {"request": request, "memberships": {self.organization.pk: self.active_membership}}
-        return Response(OrganizationWithMembershipSerializer(self.organization, context=context).data)
+        return Response(self._detail(request, organization_id))
+
+    @extend_schema(request=OwnerOrganizationUpdateSerializer, responses={200: OrganizationDetailSerializer, **ERROR_RESPONSES})
+    def patch(self, request, organization_id):
+        if self.active_membership.role != OrganizationMembership.Role.OWNER:
+            raise PermissionDenied("Only an organization owner can change these settings.")
+        if self.organization.is_personal:
+            raise PermissionDenied("A personal workspace has no settings to change.")
+        if any(key in request.data for key in ("plan", "status")):
+            raise PermissionDenied("The plan and the status are changed by the FaceCloud administrator.")
+        serializer = OwnerOrganizationUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        update_organization(
+            organization=self.organization, actor=request.user, name=data.get("name"),
+            moderator_data_scope=data.get("moderator_data_scope"), reason=data.get("reason", ""), request=request,
+        )
+        return Response(self._detail(request, organization_id))
 
 
 class OrganizationMemberListView(OrganizationScopedMixin, generics.ListAPIView):

@@ -51,12 +51,14 @@ class AdminOrganizationSerializer(OrganizationSerializer):
 
 
 class AdminOrganizationUpdateSerializer(serializers.Serializer):
-    """PATCH body for the administrator: any of name, plan, status; ``reason`` is kept in the audit trail only."""
+    """PATCH body for the administrator: any of name, plan, status, moderator_data_scope; ``reason`` is kept in the audit trail only."""
 
     name = serializers.CharField(max_length=150, required=False)
     plan = serializers.ChoiceField(choices=Organization.Plan.choices, required=False)
     status = serializers.ChoiceField(choices=Organization.Status.choices, required=False)
+    moderator_data_scope = serializers.ChoiceField(choices=Organization.ModeratorDataScope.choices, required=False)
     reason = serializers.CharField(max_length=500, required=False, allow_blank=True)
+    CHANGES = ("name", "plan", "status", "moderator_data_scope")
 
     def validate_name(self, value):
         value = value.strip()
@@ -65,9 +67,17 @@ class AdminOrganizationUpdateSerializer(serializers.Serializer):
         return value
 
     def validate(self, attrs):
-        if not any(key in attrs for key in ("name", "plan", "status")):
-            raise serializers.ValidationError({"detail": "Send at least one of name, plan or status."})
+        if not any(key in attrs for key in self.CHANGES):
+            raise serializers.ValidationError({"detail": "Send at least one of name, plan, status or moderator_data_scope."})
         return attrs
+
+
+class OwnerOrganizationUpdateSerializer(AdminOrganizationUpdateSerializer):
+    """PATCH body for the organization's owner: ``name`` and ``moderator_data_scope`` (plan and status are the administrator's; the view answers 403 if sent)."""
+
+    plan = None
+    status = None
+    CHANGES = ("name", "moderator_data_scope")
 
 
 class MembershipSummarySerializer(serializers.Serializer):
@@ -90,6 +100,7 @@ class CapabilitiesSerializer(serializers.Serializer):
     manage_batches = serializers.BooleanField()
     create_reports = serializers.BooleanField()
     export_organization = serializers.BooleanField()
+    edit_organization = serializers.BooleanField()
 
 
 class OrganizationWithMembershipSerializer(OrganizationSerializer):
@@ -115,6 +126,36 @@ class OrganizationWithMembershipSerializer(OrganizationSerializer):
     @extend_schema_field(CapabilitiesSerializer)
     def get_capabilities(self, organization):
         return membership_capabilities(self._membership(organization))
+
+
+class OrganizationDetailSerializer(OrganizationWithMembershipSerializer):
+    """One organization as its own people see it. The owner and the moderators also get who owns it and how many people are in it; a plain member does not.
+
+    ``member_count`` counts every active membership (the owner and the moderators included), ``moderator_count`` the active moderators, ``owner`` is the
+    oldest active owner or null. The instance comes from ``organizations_with_head_counts()`` (one query).
+    """
+
+    owner = serializers.SerializerMethodField()
+    member_count = serializers.IntegerField(read_only=True, required=False)
+    moderator_count = serializers.IntegerField(read_only=True, required=False)
+    STAFF_ONLY = ("owner", "member_count", "moderator_count")
+
+    class Meta(OrganizationWithMembershipSerializer.Meta):
+        fields = OrganizationWithMembershipSerializer.Meta.fields + ["owner", "member_count", "moderator_count"]
+        read_only_fields = fields
+
+    @extend_schema_field(OrganizationOwnerSerializer(allow_null=True))
+    def get_owner(self, organization):
+        owner_id = getattr(organization, "owner_user_id", None)
+        return None if owner_id is None else {"id": owner_id, "username": organization.owner_username}
+
+    def to_representation(self, organization):
+        data = super().to_representation(organization)
+        membership = self._membership(organization)
+        if membership is None or membership.role not in (OrganizationMembership.Role.OWNER, OrganizationMembership.Role.MODERATOR):
+            for key in self.STAFF_ONLY:
+                data.pop(key, None)
+        return data
 
 
 class OrganizationCreateSerializer(serializers.ModelSerializer):

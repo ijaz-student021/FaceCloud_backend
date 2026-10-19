@@ -50,6 +50,7 @@ class CapabilitiesMatchEnforcementTests(OrgFixtureMixin, TestCase):
             "manage_batches": ("get", "moderator/batches/", None),
             "create_reports": ("get", "moderator/reports/", None),
             "export_organization": ("get", "export/", None),
+            "edit_organization": ("patch", "", {"name": "Acme"}),
         }
 
     def test_every_capability_is_probed(self):
