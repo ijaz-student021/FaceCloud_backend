@@ -1185,6 +1185,8 @@ SPECTACULAR_SETTINGS = {
         "OrganizationInvitationStatusEnum": "organizations.models.OrganizationInvitation.Status",
         "OrganizationAuditActionEnum": "organizations.models.OrganizationAuditEvent.Action",
         "ModeratorReportTypeEnum": "moderation.models.ModeratorReport.ReportType",
+        "ModeratorReviewStatusEnum": "moderation.models.ModeratorReview.Status",
+        "ModeratorReviewSourceEnum": "moderation.models.ModeratorReview.Source",
     },
 }
 

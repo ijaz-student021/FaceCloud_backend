@@ -485,7 +485,7 @@ class ModeratorReportListCreateView(OrganizationScopedMixin, generics.ListAPIVie
     throttle_scope = "org_report"
 
     def get_queryset(self):
-        return ModeratorReport.objects.filter(organization_id=self.kwargs["organization_id"])
+        return ModeratorReport.objects.filter(organization_id=self.kwargs["organization_id"]).select_related("requested_by")
 
     @extend_schema(
         request=ModeratorReportCreateSerializer,
@@ -509,7 +509,7 @@ class ModeratorReportListCreateView(OrganizationScopedMixin, generics.ListAPIVie
             date_to=serializer.validated_data["date_to"],
         )
         return Response(
-            ModeratorReportSerializer(report).data,
+            ModeratorReportSerializer(report, context={"request": request}).data,
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
 
@@ -521,7 +521,7 @@ class ModeratorReportDetailView(OrganizationScopedMixin, APIView):
     def get(self, request, organization_id, report_id):
         report = get_object_or_404(ModeratorReport, pk=report_id, organization_id=organization_id)
         expire_moderator_report_if_needed(report)
-        return Response(ModeratorReportSerializer(report).data)
+        return Response(ModeratorReportSerializer(report, context={"request": request}).data)
 
 
 class ModeratorReportFileView(OrganizationScopedMixin, APIView):

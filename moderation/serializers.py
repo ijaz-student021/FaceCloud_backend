@@ -101,14 +101,29 @@ class ModeratorAssignSerializer(serializers.Serializer):
 
 
 class ModeratorReportSerializer(serializers.ModelSerializer):
+    requested_by_name = serializers.SerializerMethodField(help_text="The username of whoever asked for it; null when that account is gone.")
+    download_url = serializers.SerializerMethodField(help_text="Where to fetch the file (with the Authorization header); null until the report is ready.")
+
     class Meta:
         model = ModeratorReport
         fields = [
-            "id", "organization", "requested_by", "report_type", "format", "status",
-            "date_from", "date_to",
+            "id", "organization", "requested_by", "requested_by_name", "report_type", "format", "status",
+            "date_from", "date_to", "download_url",
             "file_size", "failure_reason", "generated_at", "expires_at", "created_at",
         ]
         read_only_fields = fields
+
+    def get_requested_by_name(self, report) -> str | None:
+        return report.requested_by.username if report.requested_by else None
+
+    def get_download_url(self, report) -> str | None:
+        from django.urls import reverse
+
+        if report.status != ModeratorReport.Status.READY:
+            return None
+        path = reverse("moderation:report-download", kwargs={"organization_id": report.organization_id, "report_id": report.pk})
+        request = self.context.get("request")
+        return request.build_absolute_uri(path) if request is not None else path
 
 
 MAX_REPORT_PERIOD_DAYS = 366
