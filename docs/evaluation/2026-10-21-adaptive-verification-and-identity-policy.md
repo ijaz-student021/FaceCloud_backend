@@ -147,7 +147,7 @@ Use the worker environment (it has PyTorch); the script exits non-zero if any ca
 `--full-responses` keeps the whole API response in the JSON. No `.env` is read for the settings that matter: the script forces them (`BIOMETRIC_CONSENT_REQUIRED=True`, the detector, the identity provider and
 its pinned checksums from the committed manifest, the licence record from `.runtime/licenses` when the environment does not set one).
 
-Evidence paths (runs 1-8): compact copies (no photographs, no face crops, download links redacted, bulky measurement reports trimmed) are committed under
+Evidence paths (runs 1-8): compact copies (no photographs, no face crops, links and task ids redacted, bulky measurement reports trimmed) are committed under
 `docs/evaluation/evidence/2026-10-21/<label>.json`; the same runs in full, including `verification.json`, are on the author's machine at
 `~/FaceCloud_verification_evidence/2026-10-21/<label>/`.
 

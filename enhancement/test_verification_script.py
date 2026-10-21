@@ -125,10 +125,13 @@ class PolicyChecksTests(SimpleTestCase):
 
 
 class EvidenceTests(SimpleTestCase):
-    def test_redaction_removes_links_to_stored_photographs_at_any_depth(self):
-        body = {"id": 3, "download_url": "http://testserver/api/x/download/", "items": [{"preview_url": "http://x", "keep": 1}], "keep": "yes"}
+    def test_redaction_removes_links_and_task_ids_at_any_depth(self):
+        body = {"id": 3, "download_url": "http://testserver/api/x/download/", "original_download_url": "http://testserver/o/", "editor_url": "/editor/3",
+                "standardized_download_url": "http://testserver/s/", "task_id": "0123456789abcdef0123456789abcdef",
+                "items": [{"preview_url": "http://x", "keep": 1}], "keep": "yes"}
         redacted = script.redact(body)
-        self.assertEqual(redacted["download_url"], "<redacted>")
+        for key in ("download_url", "original_download_url", "editor_url", "standardized_download_url", "task_id"):
+            self.assertEqual(redacted[key], "<redacted>", key)
         self.assertEqual(redacted["items"][0], {"preview_url": "<redacted>", "keep": 1})
         self.assertEqual((redacted["id"], redacted["keep"]), (3, "yes"))
         self.assertEqual(body["download_url"], "http://testserver/api/x/download/")                                # the original is not modified

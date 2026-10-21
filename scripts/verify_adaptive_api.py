@@ -36,7 +36,7 @@ returned file's bytes also equal the upload's is recorded (``output_file_bytes_e
 
 Evidence (nothing in it is a photograph): ``evidence.json`` has the commit and branch, the command line, the environment, every setting the run forced, the
 checkpoint files with their SHA-256 and whether they match the pinned value, the size and a short hash of each source photograph, and for each case the HTTP
-statuses, the API responses (download links redacted; the bulky measurement reports inside ``applied_parameters`` are left out unless ``--full-responses``),
+statuses, the API responses (links and task ids redacted; the bulky measurement reports inside ``applied_parameters`` are left out unless ``--full-responses``),
 the quality and face-check decisions, the identity block and the metrics. ``verification.json`` is the
 same cases as a plain list. Tiles (clean | degraded | output side by side) are written only with ``--save-tiles``: they are your photographs and your faces,
 so keep them off GitHub. The photographs are not modified and nothing is uploaded anywhere; the database is a throwaway test database and media goes to a
@@ -96,9 +96,12 @@ def classify_case(enhance_status, enhance_body, detail, quality_decision, refusa
 
 
 def redact(value):
-    """A copy of an API response with download links removed (the evidence never carries a link to a stored photograph)."""
+    """A copy of an API response without links and task ids: every ``*_url`` field (download, original, standardized, editor, preview, thumbnail) and ``task_id``.
+
+    The evidence never carries a link to a stored photograph, and a task id says nothing a reader needs.
+    """
     if isinstance(value, dict):
-        return {key: ("<redacted>" if key in ("download_url", "preview_url", "thumbnail_url") and item else redact(item)) for key, item in value.items()}
+        return {key: ("<redacted>" if item and (key.endswith("_url") or key == "task_id") else redact(item)) for key, item in value.items()}
     if isinstance(value, list):
         return [redact(item) for item in value]
     return value
