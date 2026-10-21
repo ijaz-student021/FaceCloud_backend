@@ -1,0 +1,2028 @@
+{
+ "schema": 1,
+ "label": "5-review-failclosed-consent",
+ "started_at": "2026-10-21T12:18:21+00:00",
+ "command": [
+  "verify_adaptive_api.py",
+  "--images",
+  "<folder_of_consented_photos>",
+  "--out",
+  "<evidence_dir>",
+  "--label",
+  "5-review-failclosed-consent",
+  "--consent",
+  "granted",
+  "--quality-underexposed",
+  "review",
+  "--identity-policy",
+  "fail_closed"
+ ],
+ "git": {
+  "commit": "8a700ad5852fd9ad97644d54bba1b49e1e49be58",
+  "branch": "fix/adaptive-verification-identity-honesty",
+  "dirty": true
+ },
+ "environment": {
+  "python": "3.12.13",
+  "platform": "macOS-27.2-arm64-arm-64bit",
+  "machine": "arm64",
+  "cpu_count": 8,
+  "memory_bytes": 8589934592,
+  "django": "6.1.2",
+  "cv2": "5.0.0",
+  "numpy": "2.5.3",
+  "torch": "2.14.0",
+  "lpips": null,
+  "devices": {
+   "cuda": false,
+   "mps": true
+  }
+ },
+ "settings": {
+  "ENHANCEMENT_RENDER_POLICY": "adaptive_v1",
+  "RETINEXFORMER_ENABLED": true,
+  "ZERO_DCE_ENABLED": false,
+  "NAFNET_DENOISE_ENABLED": true,
+  "NAFNET_DEBLUR_ENABLED": true,
+  "HD_RESTORATION_ENABLED": true,
+  "CODEFORMER_ENABLED": false,
+  "GFPGAN_ENABLED": false,
+  "ADAPTIVE_DEBUG_ARTIFACTS": false,
+  "ADAPTIVE_TIME_BUDGET_SECONDS": 180.0,
+  "ENHANCEMENT_MODEL_RESIDENCY": "auto",
+  "QUALITY_UNDEREXPOSED_FACE_ACTION": "review",
+  "QUALITY_REJECT_MIN_LUMINANCE": 25.0,
+  "QUALITY_REJECT_CONTRAST": 12.0,
+  "ENHANCEMENT_IDENTITY_UNVERIFIED_POLICY": "fail_closed",
+  "BIOMETRIC_CONSENT_REQUIRED": true,
+  "FACE_DETECTOR_PROVIDER": "yunet_v1",
+  "IDENTITY_PROVIDER": "sface_2021dec_v1",
+  "IDENTITY_GUARD_ENABLED": true,
+  "CELERY_TASK_ALWAYS_EAGER": true,
+  "IMAGE_ENCRYPTION_ENABLED": false,
+  "STORAGE_BACKEND": "filesystem"
+ },
+ "consent": {
+  "requested": "granted",
+  "effective": true
+ },
+ "checkpoints": [
+  {
+   "model": "retinexformer",
+   "setting": "RETINEXFORMER_MODEL_PATH",
+   "file": "Retinexformer_NTIRE.pth",
+   "pinned_sha256": "ba460a6882090ff3312c11fe96b3e7dc5be8e013b8c3b3a7ef6a529cc5ff27fa",
+   "bytes": 6476406,
+   "sha256": "ba460a6882090ff3312c11fe96b3e7dc5be8e013b8c3b3a7ef6a529cc5ff27fa",
+   "matches_pin": true
+  },
+  {
+   "model": "nafnet_gopro",
+   "setting": "NAFNET_MODEL_PATH",
+   "file": "NAFNet-GoPro-width64.pth",
+   "pinned_sha256": "329d3ab4077b8d6b7ff61de376e483714667960bf85be027bf4335cda701196f",
+   "bytes": 271778961,
+   "sha256": "329d3ab4077b8d6b7ff61de376e483714667960bf85be027bf4335cda701196f",
+   "matches_pin": true
+  },
+  {
+   "model": "nafnet_sidd",
+   "setting": "NAFNET_SIDD_MODEL_PATH",
+   "file": "NAFNet-SIDD-width64.pth",
+   "pinned_sha256": "cd685efaae01f7c4e9951f2deab05780079c8eb1e49ed664b72f6db04dabb445",
+   "bytes": 464154961,
+   "sha256": "cd685efaae01f7c4e9951f2deab05780079c8eb1e49ed664b72f6db04dabb445",
+   "matches_pin": true
+  },
+  {
+   "model": "realesrgan",
+   "setting": "REALESRGAN_MODEL_PATH",
+   "file": "RealESRGAN_x4plus.pth",
+   "pinned_sha256": "4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1",
+   "bytes": 67040989,
+   "sha256": "4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1",
+   "matches_pin": true
+  },
+  {
+   "model": "zero_dce",
+   "setting": "ZERO_DCE_MODEL_PATH",
+   "file": "zero_dce_epoch99.onnx",
+   "pinned_sha256": "e5cb6f921c7997f89105f6aa86242f30ff3f5379f5c6cd5282eb2aada14dae14",
+   "bytes": 320301,
+   "sha256": "e5cb6f921c7997f89105f6aa86242f30ff3f5379f5c6cd5282eb2aada14dae14",
+   "matches_pin": true
+  },
+  {
+   "model": "yunet",
+   "setting": "YUNET_MODEL_PATH",
+   "file": "yunet_s_dynamic.onnx",
+   "pinned_sha256": "daede24002cc8590f457998cc5e6c9e8b82f45f6bd969506a8913cd4ed10a2d3",
+   "bytes": 237823,
+   "sha256": "daede24002cc8590f457998cc5e6c9e8b82f45f6bd969506a8913cd4ed10a2d3",
+   "matches_pin": true
+  },
+  {
+   "model": "sface",
+   "setting": "IDENTITY_MODEL_PATH",
+   "file": "face_recognition_sface_2021dec.onnx",
+   "pinned_sha256": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+   "bytes": 38696353,
+   "sha256": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+   "matches_pin": true
+  }
+ ],
+ "sources": [
+  {
+   "index": 0,
+   "role": "first",
+   "sha256_prefix": "ede8d889288af4aa",
+   "original_size": [
+    1200,
+    1600
+   ],
+   "used_size": [
+    480,
+    640
+   ]
+  },
+  {
+   "index": 1,
+   "role": "second",
+   "sha256_prefix": "043bd1b46cd90958",
+   "original_size": [
+    1204,
+    1600
+   ],
+   "used_size": [
+    482,
+    640
+   ]
+  }
+ ],
+ "max_edge": 640,
+ "cases": [
+  {
+   "case": "dark_portrait",
+   "source": "first",
+   "degradation": "synthetic: x0.25 light + Gaussian noise sigma 2",
+   "input_size": [
+    480,
+    640
+   ],
+   "checks": {
+    "upload_ok": true,
+    "stored_original_unchanged": true,
+    "identity_never_claimed_without_a_comparison": true,
+    "http_202_then_completed": true,
+    "download_ok": true,
+    "one_output_file": true,
+    "output_size_matches_report": true,
+    "no_debug_or_intermediate_files": true,
+    "preserved_is_pixel_identical_to_input": true
+   },
+   "quality_decision": {
+    "decision": "needs_review",
+    "reasons": [
+     "severe_underexposure",
+     "contrast_too_low"
+    ],
+    "mean_luminance": 16.55,
+    "contrast_stddev": 9.97
+   },
+   "face_check": {
+    "decision": "accepted",
+    "face_count": 1,
+    "rejection_reason": ""
+   },
+   "seconds": 0.7,
+   "http": {
+    "upload": 201,
+    "enhance": 202,
+    "enhance_body": {
+     "id": 1,
+     "image": 1,
+     "batch_job": null,
+     "requested_level": "auto",
+     "applied_level": "low",
+     "requested_style": "natural",
+     "status": "completed",
+     "enhancement_outcome": "original_preserved",
+     "enhancement_summary": "Identity could not be verified for the faces in this photograph, so the original photograph was kept.",
+     "applied_stages": [],
+     "skipped_stages": [],
+     "hd_unavailable_reason": null,
+     "identity_status": "unavailable",
+     "identity_check_bypassed": false,
+     "identity_notice": "Identity could not be verified (The source face is too dark for a reliable identity comparison), so the photograph was left unchanged.",
+     "output_name": "dark_portrait_enhanced_low.png",
+     "output_format": "png",
+     "output_width": 480,
+     "output_height": 640,
+     "output_file_size": 452230,
+     "processing_duration_ms": 256,
+     "task_id": "9c5a2e776c8d4351a83e91f3969be389",
+     "applied_parameters": {
+      "algorithm": "adaptive_v1+original_preserved",
+      "identity_status": "unavailable",
+      "identity_verification": {
+       "threshold": null,
+       "similarity": null,
+       "face_restoration_unverified": false,
+       "mode": "failed_closed",
+       "scope": "Compared with the uploaded photograph only; similarity of face embeddings is evidence, not a guarantee.",
+       "status": "unavailable",
+       "state": "not_verifiable",
+       "verified": false,
+       "reason": "The source face is too dark for a reliable identity comparison.",
+       "notice": "Identity could not be verified (The source face is too dark for a reliable identity comparison), so the photograph was left unchanged."
+      },
+      "warnings": [
+       "The source face is too dark for a reliable identity comparison.",
+       "Identity could not be verified, so the original photograph was kept (fail-closed policy).",
+       "The source image failed quality checks (severe_underexposure, contrast_too_low); enhancement was still attempted and may not fully correct the source defects."
+      ],
+      "stage_reports": [],
+      "resolution_contract": {
+       "validated": true,
+       "source_dimensions": [
+        480,
+        640
+       ],
+       "actual_output_dimensions": [
+        480,
+        640
+       ]
+      },
+      "pipeline_version": "adaptive_candidate_pipeline_v1",
+      "adaptive": {
+       "outcome": "original_preserved",
+       "summary": "Identity could not be verified for the faces in this photograph, so the original photograph was kept.",
+       "operations_applied": [],
+       "operations_skipped": [
+        {
+         "operation": "low_light_enhancement",
+         "policy": "identity_fail_closed",
+         "reason": "Identity could not be verified for the faces in this photograph, and this server leaves such photographs unchanged. The source face is too dark for a reliable identity comparison."
+        }
+       ],
+       "stages": [],
+       "unresolved_defects": [],
+       "limits": {
+        "max_candidates": 8,
+        "time_budget_seconds": 180.0
+       },
+       "seconds": 0.17
+      },
+      "trimmed": true
+     },
+     "failure_reason": "",
+     "original_download_url": "http://testserver/api/images/1/download/",
+     "standardized_download_url": "http://testserver/api/images/1/preprocessing/download/",
+     "download_url": "<redacted>",
+     "editor_url": "http://testserver/api/enhancements/results/1/edits/",
+     "current_edit": null,
+     "started_at": "2026-10-21T12:18:26.510948Z",
+     "finished_at": "2026-10-21T12:18:26.770843Z",
+     "created_at": "2026-10-21T12:18:26.501693Z"
+    },
+    "result_detail": {
+     "id": 1,
+     "image": 1,
+     "batch_job": null,
+     "requested_level": "auto",
+     "applied_level": "low",
+     "requested_style": "natural",
+     "status": "completed",
+     "enhancement_outcome": "original_preserved",
+     "enhancement_summary": "Identity could not be verified for the faces in this photograph, so the original photograph was kept.",
+     "applied_stages": [],
+     "skipped_stages": [],
+     "hd_unavailable_reason": null,
+     "identity_status": "unavailable",
+     "identity_check_bypassed": false,
+     "identity_notice": "Identity could not be verified (The source face is too dark for a reliable identity comparison), so the photograph was left unchanged.",
+     "output_name": "dark_portrait_enhanced_low.png",
+     "output_format": "png",
+     "output_width": 480,
+     "output_height": 640,
+     "output_file_size": 452230,
+     "processing_duration_ms": 256,
+     "task_id": "9c5a2e776c8d4351a83e91f3969be389",
+     "applied_parameters": {
+      "algorithm": "adaptive_v1+original_preserved",
+      "identity_status": "unavailable",
+      "identity_verification": {
+       "threshold": null,
+       "similarity": null,
+       "face_restoration_unverified": false,
+       "mode": "failed_closed",
+       "scope": "Compared with the uploaded photograph only; similarity of face embeddings is evidence, not a guarantee.",
+       "status": "unavailable",
+       "state": "not_verifiable",
+       "verified": false,
+       "reason": "The source face is too dark for a reliable identity comparison.",
+       "notice": "Identity could not be verified (The source face is too dark for a reliable identity comparison), so the photograph was left unchanged."
+      },
+      "warnings": [
+       "The source face is too dark for a reliable identity comparison.",
+       "Identity could not be verified, so the original photograph was kept (fail-closed policy).",
+       "The source image failed quality checks (severe_underexposure, contrast_too_low); enhancement was still attempted and may not fully correct the source defects."
+      ],
+      "stage_reports": [],
+      "resolution_contract": {
+       "validated": true,
+       "source_dimensions": [
+        480,
+        640
+       ],
+       "actual_output_dimensions": [
+        480,
+        640
+       ]
+      },
+      "pipeline_version": "adaptive_candidate_pipeline_v1",
+      "adaptive": {
+       "outcome": "original_preserved",
+       "summary": "Identity could not be verified for the faces in this photograph, so the original photograph was kept.",
+       "operations_applied": [],
+       "operations_skipped": [
+        {
+         "operation": "low_light_enhancement",
+         "policy": "identity_fail_closed",
+         "reason": "Identity could not be verified for the faces in this photograph, and this server leaves such photographs unchanged. The source face is too dark for a reliable identity comparison."
+        }
+       ],
+       "stages": [],
+       "unresolved_defects": [],
+       "limits": {
+        "max_candidates": 8,
+        "time_budget_seconds": 180.0
+       },
+       "seconds": 0.17
+      },
+      "trimmed": true
+     },
+     "failure_reason": "",
+     "original_download_url": "http://testserver/api/images/1/download/",
+     "standardized_download_url": "http://testserver/api/images/1/preprocessing/download/",
+     "download_url": "<redacted>",
+     "editor_url": "http://testserver/api/enhancements/results/1/edits/",
+     "current_edit": null,
+     "started_at": "2026-10-21T12:18:26.510948Z",
+     "finished_at": "2026-10-21T12:18:26.770843Z",
+     "created_at": "2026-10-21T12:18:26.501693Z"
+    },
+    "download": 200
+   },
+   "classification": "original_preserved",
+   "summary": "Identity could not be verified for the faces in this photograph, so the original photograph was kept.",
+   "identity_status": "unavailable",
+   "identity_verification": {
+    "threshold": null,
+    "similarity": null,
+    "face_restoration_unverified": false,
+    "mode": "failed_closed",
+    "scope": "Compared with the uploaded photograph only; similarity of face embeddings is evidence, not a guarantee.",
+    "status": "unavailable",
+    "state": "not_verifiable",
+    "verified": false,
+    "reason": "The source face is too dark for a reliable identity comparison.",
+    "notice": "Identity could not be verified (The source face is too dark for a reliable identity comparison), so the photograph was left unchanged."
+   },
+   "algorithm": "adaptive_v1+original_preserved",
+   "output_size": [
+    480,
+    640
+   ],
+   "input_vs_clean": {
+    "psnr": 12.677,
+    "ssim": 0.408,
+    "resized_to_reference": false,
+    "lpips": null,
+    "lpips_unavailable": "ModuleNotFoundError"
+   },
+   "output_vs_clean": {
+    "psnr": 12.677,
+    "ssim": 0.408,
+    "resized_to_reference": false,
+    "lpips": null,
+    "lpips_unavailable": "ModuleNotFoundError"
+   },
+   "identity_input_vs_clean": {
+    "sface": 0.9168,
+    "arcface": 0.9367
+   },
+   "identity_output_vs_clean": {
+    "sface": 0.9168,
+    "arcface": 0.9367
+   },
+   "same_decision_in_debug_mode": true,
+   "models_executed": [],
+   "operations_skipped": [
+    {
+     "operation": "low_light_enhancement",
+     "policy": "identity_fail_closed",
+     "reason": "Identity could not be verified for the faces in this photograph, and this server leaves such photographs unchanged. The source face is too dark for a reliable identity comparison."
+    }
+   ],
+   "unresolved_defects": [],
+   "all_checks_pass": true
+  },
+  {
+   "case": "noisy_portrait",
+   "source": "first",
+   "degradation": "synthetic: Gaussian noise sigma 18",
+   "input_size": [
+    480,
+    640
+   ],
+   "checks": {
+    "upload_ok": true,
+    "stored_original_unchanged": true,
+    "identity_never_claimed_without_a_comparison": true,
+    "http_202_then_completed": true,
+    "download_ok": true,
+    "one_output_file": true,
+    "output_size_matches_report": true,
+    "no_debug_or_intermediate_files": true,
+    "changed_output_differs_from_input": true
+   },
+   "quality_decision": {
+    "decision": "accepted",
+    "reasons": [],
+    "mean_luminance": 68.14,
+    "contrast_stddev": 40.56
+   },
+   "face_check": {
+    "decision": "accepted",
+    "face_count": 1,
+    "rejection_reason": ""
+   },
+   "seconds": 9.1,
+   "http": {
+    "upload": 201,
+    "enhance": 202,
+    "enhance_body": {
+     "id": 2,
+     "image": 2,
+     "batch_job": null,
+     "requested_level": "auto",
+     "applied_level": "low",
+     "requested_style": "natural",
+     "status": "completed",
+     "enhancement_outcome": "partially_enhanced",
+     "enhancement_summary": "Enhanced: reduced noise. Not fully corrected: Noise remains.",
+     "applied_stages": [
+      {
+       "stage": "denoise",
+       "engine": "nafnet_sidd",
+       "variant": "blend 1.0"
+      }
+     ],
+     "skipped_stages": [],
+     "hd_unavailable_reason": null,
+     "identity_status": "verified",
+     "identity_check_bypassed": false,
+     "identity_notice": "",
+     "output_name": "noisy_portrait_enhanced_low.png",
+     "output_format": "png",
+     "output_width": 480,
+     "output_height": 640,
+     "output_file_size": 625440,
+     "processing_duration_ms": 8901,
+     "task_id": "06448b80d8de43dca0d239e15d52d3b8",
+     "applied_parameters": {
+      "algorithm": "adaptive_v1+nafnet_sidd",
+      "identity_status": "verified",
+      "identity_verification": {
+       "threshold": 0.8,
+       "similarity": 0.9287,
+       "face_restoration_unverified": false,
+       "mode": "verified",
+       "scope": "Compared with the uploaded photograph only; similarity of face embeddings is evidence, not a guarantee.",
+       "status": "verified",
+       "state": "verified",
+       "verified": true,
+       "notice": "",
+       "reason": ""
+      },
+      "warnings": [],
+      "stage_reports": [
+       {
+        "stage": "denoising",
+        "status": "accepted",
+        "changed_pixels": true
+       }
+      ],
+      "resolution_contract": {
+       "validated": true,
+       "source_dimensions": [
+        480,
+        640
+       ],
+       "actual_output_dimensions": [
+        480,
+        640
+       ]
+      },
+      "pipeline_version": "adaptive_candidate_pipeline_v1",
+      "adaptive": {
+       "outcome": "partially_enhanced",
+       "summary": "Enhanced: reduced noise. Not fully corrected: Noise remains.",
+       "operations_applied": [
+        "denoising"
+       ],
+       "operations_skipped": [],
+       "stages": [
+        {
+         "operation": "denoising",
+         "reason": "Noise: moderate (estimate 6.0).",
+         "engines": [
+          "nafnet_sidd",
+          "opencv_nlm"
+         ],
+         "skipped_engines": [],
+         "notes": [],
+         "candidates": [
+          "c1_denoising",
+          "c2_denoising"
+         ],
+         "seconds": 8.43,
+         "models_run": [
+          "nafnet_sidd"
+         ],
+         "status": "accepted",
+         "chosen": "c1_denoising",
+         "variant": "blend 1.0"
+        }
+       ],
+       "unresolved_defects": [
+        "visible_noise"
+       ],
+       "limits": {
+        "max_candidates": 8,
+        "time_budget_seconds": 180.0
+       },
+       "seconds": 8.82
+      },
+      "trimmed": true
+     },
+     "failure_reason": "",
+     "original_download_url": "http://testserver/api/images/2/download/",
+     "standardized_download_url": "http://testserver/api/images/2/preprocessing/download/",
+     "download_url": "<redacted>",
+     "editor_url": "http://testserver/api/enhancements/results/2/edits/",
+     "current_edit": null,
+     "started_at": "2026-10-21T12:18:27.345814Z",
+     "finished_at": "2026-10-21T12:18:36.251124Z",
+     "created_at": "2026-10-21T12:18:27.336232Z"
+    },
+    "result_detail": {
+     "id": 2,
+     "image": 2,
+     "batch_job": null,
+     "requested_level": "auto",
+     "applied_level": "low",
+     "requested_style": "natural",
+     "status": "completed",
+     "enhancement_outcome": "partially_enhanced",
+     "enhancement_summary": "Enhanced: reduced noise. Not fully corrected: Noise remains.",
+     "applied_stages": [
+      {
+       "stage": "denoise",
+       "engine": "nafnet_sidd",
+       "variant": "blend 1.0"
+      }
+     ],
+     "skipped_stages": [],
+     "hd_unavailable_reason": null,
+     "identity_status": "verified",
+     "identity_check_bypassed": false,
+     "identity_notice": "",
+     "output_name": "noisy_portrait_enhanced_low.png",
+     "output_format": "png",
+     "output_width": 480,
+     "output_height": 640,
+     "output_file_size": 625440,
+     "processing_duration_ms": 8901,
+     "task_id": "06448b80d8de43dca0d239e15d52d3b8",
+     "applied_parameters": {
+      "algorithm": "adaptive_v1+nafnet_sidd",
+      "identity_status": "verified",
+      "identity_verification": {
+       "threshold": 0.8,
+       "similarity": 0.9287,
+       "face_restoration_unverified": false,
+       "mode": "verified",
+       "scope": "Compared with the uploaded photograph only; similarity of face embeddings is evidence, not a guarantee.",
+       "status": "verified",
+       "state": "verified",
+       "verified": true,
+       "notice": "",
+       "reason": ""
+      },
+      "warnings": [],
+      "stage_reports": [
+       {
+        "stage": "denoising",
+        "status": "accepted",
+        "changed_pixels": true
+       }
+      ],
+      "resolution_contract": {
+       "validated": true,
+       "source_dimensions": [
+        480,
+        640
+       ],
+       "actual_output_dimensions": [
+        480,
+        640
+       ]
+      },
+      "pipeline_version": "adaptive_candidate_pipeline_v1",
+      "adaptive": {
+       "outcome": "partially_enhanced",
+       "summary": "Enhanced: reduced noise. Not fully corrected: Noise remains.",
+       "operations_applied": [
+        "denoising"
+       ],
+       "operations_skipped": [],
+       "stages": [
+        {
+         "operation": "denoising",
+         "reason": "Noise: moderate (estimate 6.0).",
+         "engines": [
+          "nafnet_sidd",
+          "opencv_nlm"
+         ],
+         "skipped_engines": [],
+         "notes": [],
+         "candidates": [
+          "c1_denoising",
+          "c2_denoising"
+         ],
+         "seconds": 8.43,
+         "models_run": [
+          "nafnet_sidd"
+         ],
+         "status": "accepted",
+         "chosen": "c1_denoising",
+         "variant": "blend 1.0"
+        }
+       ],
+       "unresolved_defects": [
+        "visible_noise"
+       ],
+       "limits": {
+        "max_candidates": 8,
+        "time_budget_seconds": 180.0
+       },
+       "seconds": 8.82
+      },
+      "trimmed": true
+     },
+     "failure_reason": "",
+     "original_download_url": "http://testserver/api/images/2/download/",
+     "standardized_download_url": "http://testserver/api/images/2/preprocessing/download/",
+     "download_url": "<redacted>",
+     "editor_url": "http://testserver/api/enhancements/results/2/edits/",
+     "current_edit": null,
+     "started_at": "2026-10-21T12:18:27.345814Z",
+     "finished_at": "2026-10-21T12:18:36.251124Z",
+     "created_at": "2026-10-21T12:18:27.336232Z"
+    },
+    "download": 200
+   },
+   "classification": "partially_enhanced",
+   "summary": "Enhanced: reduced noise. Not fully corrected: Noise remains.",
+   "identity_status": "verified",
+   "identity_verification": {
+    "threshold": 0.8,
+    "similarity": 0.9287,
+    "face_restoration_unverified": false,
+    "mode": "verified",
+    "scope": "Compared with the uploaded photograph only; similarity of face embeddings is evidence, not a guarantee.",
+    "status": "verified",
+    "state": "verified",
+    "verified": true,
+    "notice": "",
+    "reason": ""
+   },
+   "algorithm": "adaptive_v1+nafnet_sidd",
+   "output_size": [
+    480,
+    640
+   ],
+   "input_vs_clean": {
+    "psnr": 23.356,
+    "ssim": 0.6471,
+    "resized_to_reference": false,
+    "lpips": null,
+    "lpips_unavailable": "ModuleNotFoundError"
+   },
+   "output_vs_clean": {
+    "psnr": 24.803,
+    "ssim": 0.7401,
+    "resized_to_reference": false,
+    "lpips": null,
+    "lpips_unavailable": "ModuleNotFoundError"
+   },
+   "identity_input_vs_clean": {
+    "sface": 0.8454,
+    "arcface": 0.9139
+   },
+   "identity_output_vs_clean": {
+    "sface": 0.8637,
+    "arcface": 0.9179
+   },
+   "same_decision_in_debug_mode": true,
+   "models_executed": [
+    {
+     "candidate": "c1_denoising",
+     "operation": "denoising",
+     "variant": "blend 1.0",
+     "accepted": true,
+     "rejected_for": [],
+     "models": [
+      "nafnet_sidd"
+     ],
+     "device": "mps",
+     "seconds": 3.578
+    },
+    {
+     "candidate": "c2_denoising",
+     "operation": "denoising",
+     "variant": "blend 0.65",
+     "accepted": true,
+     "rejected_for": [],
+     "models": [
+      "nafnet_sidd"
+     ],
+     "device": "mps",
+     "seconds": 6.732
+    }
+   ],
+   "operations_skipped": [],
+   "unresolved_defects": [
+    "visible_noise"
+   ],
+   "all_checks_pass": true
+  },
+  {
+   "case": "motion_blur",
+   "source": "first",
+   "degradation": "synthetic: 19-pixel horizontal linear motion kernel",
+   "input_size": [
+    480,
+    640
+   ],
+   "checks": {
+    "upload_ok": true,
+    "stored_original_unchanged": true,
+    "identity_never_claimed_without_a_comparison": true,
+    "http_202_then_completed": true,
+    "download_ok": true,
+    "one_output_file": true,
+    "output_size_matches_report": true,
+    "no_debug_or_intermediate_files": true,
+    "changed_output_differs_from_input": true
+   },
+   "quality_decision": {
+    "decision": "accepted",
+    "reasons": [],
+    "mean_luminance": 68.14,
+    "contrast_stddev": 38.63
+   },
+   "face_check": {
+    "decision": "accepted",
+    "face_count": 1,
+    "rejection_reason": ""
+   },
+   "seconds": 7.3,
+   "http": {
+    "upload": 201,
+    "enhance": 202,
+    "enhance_body": {
+     "id": 3,
+     "image": 3,
+     "batch_job": null,
+     "requested_level": "auto",
+     "applied_level": "low",
+     "requested_style": "natural",
+     "status": "completed",
+     "enhancement_outcome": "partially_enhanced",
+     "enhancement_summary": "Enhanced: reduced motion blur. Not fully corrected: A degraded face remains that could not be restored safely. The face is still blurred; the deblurring model was unavailable or its result was not safe to use.",
+     "applied_stages": [
+      {
+       "stage": "deblur",
+       "engine": "nafnet_gopro",
+       "variant": "blend 1.0"
+      }
+     ],
+     "skipped_stages": [
+      {
+       "stage": "face_restore",
+       "reason": "No face-restoration model is switched on."
+      }
+     ],
+     "hd_unavailable_reason": "Restoration was needed but not completed: face_restore (No face-restoration model is switched on.)",
+     "identity_status": "verified",
+     "identity_check_bypassed": false,
+     "identity_notice": "",
+     "output_name": "motion_blur_enhanced_low.png",
+     "output_format": "png",
+     "output_width": 480,
+     "output_height": 640,
+     "output_file_size": 216759,
+     "processing_duration_ms": 6515,
+     "task_id": "585d527a1a894ac1b47433bdbafcabae",
+     "applied_parameters": {
+      "algorithm": "adaptive_v1+nafnet_gopro",
+      "identity_status": "verified",
+      "identity_verification": {
+       "threshold": 0.8,
+       "similarity": 0.8091,
+       "face_restoration_unverified": false,
+       "mode": "verified",
+       "scope": "Compared with the uploaded photograph only; similarity of face embeddings is evidence, not a guarantee.",
+       "status": "verified",
+       "state": "verified",
+       "verified": true,
+       "notice": "",
+       "reason": ""
+      },
+      "warnings": [],
+      "stage_reports": [
+       {
+        "stage": "motion_deblurring",
+        "status": "accepted",
+        "changed_pixels": true
+       }
+      ],
+      "resolution_contract": {
+       "validated": true,
+       "source_dimensions": [
+        480,
+        640
+       ],
+       "actual_output_dimensions": [
+        480,
+        640
+       ]
+      },
+      "pipeline_version": "adaptive_candidate_pipeline_v1",
+      "adaptive": {
+       "outcome": "partially_enhanced",
+       "summary": "Enhanced: reduced motion blur. Not fully corrected: A degraded face remains that could not be restored safely. The face is still blurred; the deblurring model was unavailable or its result was not safe to use.",
+       "operations_applied": [
+        "motion_deblurring"
+       ],
+       "operations_skipped": [
+        {
+         "operation": "face_restoration",
+         "reason": "No face-restoration model is switched on."
+        }
+       ],
+       "stages": [
+        {
+         "operation": "motion_deblurring",
+         "reason": "The main face is blurred (face detail 18.8).",
+         "engines": [
+          "nafnet_gopro"
+         ],
+         "skipped_engines": [],
+         "notes": [],
+         "candidates": [
+          "c1_motion_deblurring",
+          "c2_motion_deblurring"
+         ],
+         "seconds": 5.86,
+         "models_run": [
+          "nafnet_gopro"
+         ],
+         "status": "accepted",
+         "chosen": "c1_motion_deblurring",
+         "variant": "blend 1.0"
+        }
+       ],
+       "unresolved_defects": [
+        "face_blur",
+        "face_poor"
+       ],
+       "limits": {
+        "max_candidates": 8,
+        "time_budget_seconds": 180.0
+       },
+       "seconds": 6.4
+      },
+      "trimmed": true
+     },
+     "failure_reason": "",
+     "original_download_url": "http://testserver/api/images/3/download/",
+     "standardized_download_url": "http://testserver/api/images/3/preprocessing/download/",
+     "download_url": "<redacted>",
+     "editor_url": "http://testserver/api/enhancements/results/3/edits/",
+     "current_edit": null,
+     "started_at": "2026-10-21T12:18:50.909836Z",
+     "finished_at": "2026-10-21T12:18:57.430181Z",
+     "created_at": "2026-10-21T12:18:50.898626Z"
+    },
+    "result_detail": {
+     "id": 3,
+     "image": 3,
+     "batch_job": null,
+     "requested_level": "auto",
+     "applied_level": "low",
+     "requested_style": "natural",
+     "status": "completed",
+     "enhancement_outcome": "partially_enhanced",
+     "enhancement_summary": "Enhanced: reduced motion blur. Not fully corrected: A degraded face remains that could not be restored safely. The face is still blurred; the deblurring model was unavailable or its result was not safe to use.",
+     "applied_stages": [
+      {
+       "stage": "deblur",
+       "engine": "nafnet_gopro",
+       "variant": "blend 1.0"
+      }
+     ],
+     "skipped_stages": [
+      {
+       "stage": "face_restore",
+       "reason": "No face-restoration model is switched on."
+      }
+     ],
+     "hd_unavailable_reason": "Restoration was needed but not completed: face_restore (No face-restoration model is switched on.)",
+     "identity_status": "verified",
+     "identity_check_bypassed": false,
+     "identity_notice": "",
+     "output_name": "motion_blur_enhanced_low.png",
+     "output_format": "png",
+     "output_width": 480,
+     "output_height": 640,
+     "output_file_size": 216759,
+     "processing_duration_ms": 6515,
+     "task_id": "585d527a1a894ac1b47433bdbafcabae",
+     "applied_parameters": {
+      "algorithm": "adaptive_v1+nafnet_gopro",
+      "identity_status": "verified",
+      "identity_verification": {
+       "threshold": 0.8,
+       "similarity": 0.8091,
+       "face_restoration_unverified": false,
+       "mode": "verified",
+       "scope": "Compared with the uploaded photograph only; similarity of face embeddings is evidence, not a guarantee.",
+       "status": "verified",
+       "state": "verified",
+       "verified": true,
+       "notice": "",
+       "reason": ""
+      },
+      "warnings": [],
+      "stage_reports": [
+       {
+        "stage": "motion_deblurring",
+        "status": "accepted",
+        "changed_pixels": true
+       }
+      ],
+      "resolution_contract": {
+       "validated": true,
+       "source_dimensions": [
+        480,
+        640
+       ],
+       "actual_output_dimensions": [
+        480,
+        640
+       ]
+      },
+      "pipeline_version": "adaptive_candidate_pipeline_v1",
+      "adaptive": {
+       "outcome": "partially_enhanced",
+       "summary": "Enhanced: reduced motion blur. Not fully corrected: A degraded face remains that could not be restored safely. The face is still blurred; the deblurring model was unavailable or its result was not safe to use.",
+       "operations_applied": [
+        "motion_deblurring"
+       ],
+       "operations_skipped": [
+        {
+         "operation": "face_restoration",
+         "reason": "No face-restoration model is switched on."
+        }
+       ],
+       "stages": [
+        {
+         "operation": "motion_deblurring",
+         "reason": "The main face is blurred (face detail 18.8).",
+         "engines": [
+          "nafnet_gopro"
+         ],
+         "skipped_engines": [],
+         "notes": [],
+         "candidates": [
+          "c1_motion_deblurring",
+          "c2_motion_deblurring"
+         ],
+         "seconds": 5.86,
+         "models_run": [
+          "nafnet_gopro"
+         ],
+         "status": "accepted",
+         "chosen": "c1_motion_deblurring",
+         "variant": "blend 1.0"
+        }
+       ],
+       "unresolved_defects": [
+        "face_blur",
+        "face_poor"
+       ],
+       "limits": {
+        "max_candidates": 8,
+        "time_budget_seconds": 180.0
+       },
+       "seconds": 6.4
+      },
+      "trimmed": true
+     },
+     "failure_reason": "",
+     "original_download_url": "http://testserver/api/images/3/download/",
+     "standardized_download_url": "http://testserver/api/images/3/preprocessing/download/",
+     "download_url": "<redacted>",
+     "editor_url": "http://testserver/api/enhancements/results/3/edits/",
+     "current_edit": null,
+     "started_at": "2026-10-21T12:18:50.909836Z",
+     "finished_at": "2026-10-21T12:18:57.430181Z",
+     "created_at": "2026-10-21T12:18:50.898626Z"
+    },
+    "download": 200
+   },
+   "classification": "partially_enhanced",
+   "summary": "Enhanced: reduced motion blur. Not fully corrected: A degraded face remains that could not be restored safely. The face is still blurred; the deblurring model was unavailable or its result was not safe to use.",
+   "identity_status": "verified",
+   "identity_verification": {
+    "threshold": 0.8,
+    "similarity": 0.8091,
+    "face_restoration_unverified": false,
+    "mode": "verified",
+    "scope": "Compared with the uploaded photograph only; similarity of face embeddings is evidence, not a guarantee.",
+    "status": "verified",
+    "state": "verified",
+    "verified": true,
+    "notice": "",
+    "reason": ""
+   },
+   "algorithm": "adaptive_v1+nafnet_gopro",
+   "output_size": [
+    480,
+    640
+   ],
+   "input_vs_clean": {
+    "psnr": 32.589,
+    "ssim": 0.9179,
+    "resized_to_reference": false,
+    "lpips": null,
+    "lpips_unavailable": "ModuleNotFoundError"
+   },
+   "output_vs_clean": {
+    "psnr": 40.563,
+    "ssim": 0.9717,
+    "resized_to_reference": false,
+    "lpips": null,
+    "lpips_unavailable": "ModuleNotFoundError"
+   },
+   "identity_input_vs_clean": {
+    "sface": 0.8065,
+    "arcface": 0.7674
+   },
+   "identity_output_vs_clean": {
+    "sface": 0.9856,
+    "arcface": 0.9827
+   },
+   "same_decision_in_debug_mode": true,
+   "models_executed": [
+    {
+     "candidate": "c1_motion_deblurring",
+     "operation": "motion_deblurring",
+     "variant": "blend 1.0",
+     "accepted": true,
+     "rejected_for": [],
+     "models": [
+      "nafnet_gopro"
+     ],
+     "device": "mps",
+     "seconds": 2.455
+    },
+    {
+     "candidate": "c2_motion_deblurring",
+     "operation": "motion_deblurring",
+     "variant": "blend 0.6",
+     "accepted": true,
+     "rejected_for": [],
+     "models": [
+      "nafnet_gopro"
+     ],
+     "device": "mps",
+     "seconds": 2.465
+    }
+   ],
+   "operations_skipped": [
+    {
+     "operation": "face_restoration",
+     "reason": "No face-restoration model is switched on."
+    }
+   ],
+   "unresolved_defects": [
+    "face_blur",
+    "face_poor"
+   ],
+   "all_checks_pass": true
+  },
+  {
+   "case": "dark_and_defocused",
+   "source": "first",
+   "degradation": "synthetic: dark (x0.25) then 11-pixel disk defocus",
+   "input_size": [
+    480,
+    640
+   ],
+   "checks": {
+    "upload_ok": true,
+    "stored_original_unchanged": true,
+    "identity_never_claimed_without_a_comparison": true,
+    "http_202_then_completed": true,
+    "download_ok": true,
+    "one_output_file": true,
+    "output_size_matches_report": true,
+    "no_debug_or_intermediate_files": true,
+    "preserved_is_pixel_identical_to_input": true
+   },
+   "quality_decision": {
+    "decision": "needs_review",
+    "reasons": [
+     "severe_underexposure",
+     "contrast_too_low"
+    ],
+    "mean_luminance": 16.52,
+    "contrast_stddev": 9.68
+   },
+   "face_check": {
+    "decision": "accepted",
+    "face_count": 1,
+    "rejection_reason": ""
+   },
+   "seconds": 0.7,
+   "http": {
+    "upload": 201,
+    "enhance": 202,
+    "enhance_body": {
+     "id": 4,
+     "image": 4,
+     "batch_job": null,
+     "requested_level": "auto",
+     "applied_level": "low",
+     "requested_style": "natural",
+     "status": "completed",
+     "enhancement_outcome": "original_preserved",
+     "enhancement_summary": "Identity could not be verified for the faces in this photograph, so the original photograph was kept.",
+     "applied_stages": [],
+     "skipped_stages": [],
+     "hd_unavailable_reason": null,
+     "identity_status": "unavailable",
+     "identity_check_bypassed": false,
+     "identity_notice": "Identity could not be verified (The source face is too dark for a reliable identity comparison), so the photograph was left unchanged.",
+     "output_name": "dark_and_defocused_enhanced_low.png",
+     "output_format": "png",
+     "output_width": 480,
+     "output_height": 640,
+     "output_file_size": 124866,
+     "processing_duration_ms": 138,
+     "task_id": "f1e591533d06453699c30fd22846448d",
+     "applied_parameters": {
+      "algorithm": "adaptive_v1+original_preserved",
+      "identity_status": "unavailable",
+      "identity_verification": {
+       "threshold": null,
+       "similarity": null,
+       "face_restoration_unverified": false,
+       "mode": "failed_closed",
+       "scope": "Compared with the uploaded photograph only; similarity of face embeddings is evidence, not a guarantee.",
+       "status": "unavailable",
+       "state": "not_verifiable",
+       "verified": false,
+       "reason": "The source face is too dark for a reliable identity comparison.",
+       "notice": "Identity could not be verified (The source face is too dark for a reliable identity comparison), so the photograph was left unchanged."
+      },
+      "warnings": [
+       "The source face is too dark for a reliable identity comparison.",
+       "Identity could not be verified, so the original photograph was kept (fail-closed policy).",
+       "The source image failed quality checks (severe_underexposure, contrast_too_low); enhancement was still attempted and may not fully correct the source defects."
+      ],
+      "stage_reports": [],
+      "resolution_contract": {
+       "validated": true,
+       "source_dimensions": [
+        480,
+        640
+       ],
+       "actual_output_dimensions": [
+        480,
+        640
+       ]
+      },
+      "pipeline_version": "adaptive_candidate_pipeline_v1",
+      "adaptive": {
+       "outcome": "original_preserved",
+       "summary": "Identity could not be verified for the faces in this photograph, so the original photograph was kept.",
+       "operations_applied": [],
+       "operations_skipped": [
+        {
+         "operation": "low_light_enhancement",
+         "policy": "identity_fail_closed",
+         "reason": "Identity could not be verified for the faces in this photograph, and this server leaves such photographs unchanged. The source face is too dark for a reliable identity comparison."
+        }
+       ],
+       "stages": [],
+       "unresolved_defects": [],
+       "limits": {
+        "max_candidates": 8,
+        "time_budget_seconds": 180.0
+       },
+       "seconds": 0.07
+      },
+      "trimmed": true
+     },
+     "failure_reason": "",
+     "original_download_url": "http://testserver/api/images/4/download/",
+     "standardized_download_url": "http://testserver/api/images/4/preprocessing/download/",
+     "download_url": "<redacted>",
+     "editor_url": "http://testserver/api/enhancements/results/4/edits/",
+     "current_edit": null,
+     "started_at": "2026-10-21T12:19:04.009030Z",
+     "finished_at": "2026-10-21T12:19:04.151193Z",
+     "created_at": "2026-10-21T12:19:03.999866Z"
+    },
+    "result_detail": {
+     "id": 4,
+     "image": 4,
+     "batch_job": null,
+     "requested_level": "auto",
+     "applied_level": "low",
+     "requested_style": "natural",
+     "status": "completed",
+     "enhancement_outcome": "original_preserved",
+     "enhancement_summary": "Identity could not be verified for the faces in this photograph, so the original photograph was kept.",
+     "applied_stages": [],
+     "skipped_stages": [],
+     "hd_unavailable_reason": null,
+     "identity_status": "unavailable",
+     "identity_check_bypassed": false,
+     "identity_notice": "Identity could not be verified (The source face is too dark for a reliable identity comparison), so the photograph was left unchanged.",
+     "output_name": "dark_and_defocused_enhanced_low.png",
+     "output_format": "png",
+     "output_width": 480,
+     "output_height": 640,
+     "output_file_size": 124866,
+     "processing_duration_ms": 138,
+     "task_id": "f1e591533d06453699c30fd22846448d",
+     "applied_parameters": {
+      "algorithm": "adaptive_v1+original_preserved",
+      "identity_status": "unavailable",
+      "identity_verification": {
+       "threshold": null,
+       "similarity": null,
+       "face_restoration_unverified": false,
+       "mode": "failed_closed",
+       "scope": "Compared with the uploaded photograph only; similarity of face embeddings is evidence, not a guarantee.",
+       "status": "unavailable",
+       "state": "not_verifiable",
+       "verified": false,
+       "reason": "The source face is too dark for a reliable identity comparison.",
+       "notice": "Identity could not be verified (The source face is too dark for a reliable identity comparison), so the photograph was left unchanged."
+      },
+      "warnings": [
+       "The source face is too dark for a reliable identity comparison.",
+       "Identity could not be verified, so the original photograph was kept (fail-closed policy).",
+       "The source image failed quality checks (severe_underexposure, contrast_too_low); enhancement was still attempted and may not fully correct the source defects."
+      ],
+      "stage_reports": [],
+      "resolution_contract": {
+       "validated": true,
+       "source_dimensions": [
+        480,
+        640
+       ],
+       "actual_output_dimensions": [
+        480,
+        640
+       ]
+      },
+      "pipeline_version": "adaptive_candidate_pipeline_v1",
+      "adaptive": {
+       "outcome": "original_preserved",
+       "summary": "Identity could not be verified for the faces in this photograph, so the original photograph was kept.",
+       "operations_applied": [],
+       "operations_skipped": [
+        {
+         "operation": "low_light_enhancement",
+         "policy": "identity_fail_closed",
+         "reason": "Identity could not be verified for the faces in this photograph, and this server leaves such photographs unchanged. The source face is too dark for a reliable identity comparison."
+        }
+       ],
+       "stages": [],
+       "unresolved_defects": [],
+       "limits": {
+        "max_candidates": 8,
+        "time_budget_seconds": 180.0
+       },
+       "seconds": 0.07
+      },
+      "trimmed": true
+     },
+     "failure_reason": "",
+     "original_download_url": "http://testserver/api/images/4/download/",
+     "standardized_download_url": "http://testserver/api/images/4/preprocessing/download/",
+     "download_url": "<redacted>",
+     "editor_url": "http://testserver/api/enhancements/results/4/edits/",
+     "current_edit": null,
+     "started_at": "2026-10-21T12:19:04.009030Z",
+     "finished_at": "2026-10-21T12:19:04.151193Z",
+     "created_at": "2026-10-21T12:19:03.999866Z"
+    },
+    "download": 200
+   },
+   "classification": "original_preserved",
+   "summary": "Identity could not be verified for the faces in this photograph, so the original photograph was kept.",
+   "identity_status": "unavailable",
+   "identity_verification": {
+    "threshold": null,
+    "similarity": null,
+    "face_restoration_unverified": false,
+    "mode": "failed_closed",
+    "scope": "Compared with the uploaded photograph only; similarity of face embeddings is evidence, not a guarantee.",
+    "status": "unavailable",
+    "state": "not_verifiable",
+    "verified": false,
+    "reason": "The source face is too dark for a reliable identity comparison.",
+    "notice": "Identity could not be verified (The source face is too dark for a reliable identity comparison), so the photograph was left unchanged."
+   },
+   "algorithm": "adaptive_v1+original_preserved",
+   "output_size": [
+    480,
+    640
+   ],
+   "input_vs_clean": {
+    "psnr": 12.659,
+    "ssim": 0.3955,
+    "resized_to_reference": false,
+    "lpips": null,
+    "lpips_unavailable": "ModuleNotFoundError"
+   },
+   "output_vs_clean": {
+    "psnr": 12.659,
+    "ssim": 0.3955,
+    "resized_to_reference": false,
+    "lpips": null,
+    "lpips_unavailable": "ModuleNotFoundError"
+   },
+   "identity_input_vs_clean": {
+    "sface": 0.8608,
+    "arcface": 0.871
+   },
+   "identity_output_vs_clean": {
+    "sface": 0.8608,
+    "arcface": 0.871
+   },
+   "same_decision_in_debug_mode": true,
+   "models_executed": [],
+   "operations_skipped": [
+    {
+     "operation": "low_light_enhancement",
+     "policy": "identity_fail_closed",
+     "reason": "Identity could not be verified for the faces in this photograph, and this server leaves such photographs unchanged. The source face is too dark for a reliable identity comparison."
+    }
+   ],
+   "unresolved_defects": [],
+   "all_checks_pass": true
+  },
+  {
+   "case": "clean_photograph",
+   "source": "first",
+   "degradation": "none: the untouched photograph",
+   "input_size": [
+    480,
+    640
+   ],
+   "checks": {
+    "upload_ok": true,
+    "stored_original_unchanged": true,
+    "identity_never_claimed_without_a_comparison": true,
+    "http_202_then_completed": true,
+    "download_ok": true,
+    "one_output_file": true,
+    "output_size_matches_report": true,
+    "no_debug_or_intermediate_files": true,
+    "preserved_is_pixel_identical_to_input": true
+   },
+   "quality_decision": {
+    "decision": "accepted",
+    "reasons": [],
+    "mean_luminance": 68.15,
+    "contrast_stddev": 39.57
+   },
+   "face_check": {
+    "decision": "accepted",
+    "face_count": 1,
+    "rejection_reason": ""
+   },
+   "seconds": 0.6,
+   "http": {
+    "upload": 201,
+    "enhance": 202,
+    "enhance_body": {
+     "id": 5,
+     "image": 5,
+     "batch_job": null,
+     "requested_level": "auto",
+     "applied_level": "low",
+     "requested_style": "natural",
+     "status": "completed",
+     "enhancement_outcome": "original_preserved",
+     "enhancement_summary": "The photograph did not need enhancement, so it was left as it is.",
+     "applied_stages": [],
+     "skipped_stages": [],
+     "hd_unavailable_reason": null,
+     "identity_status": "verified",
+     "identity_check_bypassed": false,
+     "identity_notice": "",
+     "output_name": "clean_photograph_enhanced_low.png",
+     "output_format": "png",
+     "output_width": 480,
+     "output_height": 640,
+     "output_file_size": 298880,
+     "processing_duration_ms": 269,
+     "task_id": "d4c239afee984de4bdbe6463d44a68d8",
+     "applied_parameters": {
+      "algorithm": "adaptive_v1+original_preserved",
+      "identity_status": "verified",
+      "identity_verification": {
+       "threshold": 0.8,
+       "similarity": null,
+       "face_restoration_unverified": false,
+       "mode": "not_applicable",
+       "scope": "Compared with the uploaded photograph only; similarity of face embeddings is evidence, not a guarantee.",
+       "status": "verified",
+       "state": "not_applicable",
+       "verified": true,
+       "notice": "",
+       "reason": "The photograph was not changed."
+      },
+      "warnings": [],
+      "stage_reports": [],
+      "resolution_contract": {
+       "validated": true,
+       "source_dimensions": [
+        480,
+        640
+       ],
+       "actual_output_dimensions": [
+        480,
+        640
+       ]
+      },
+      "pipeline_version": "adaptive_candidate_pipeline_v1",
+      "adaptive": {
+       "outcome": "original_preserved",
+       "summary": "The photograph did not need enhancement, so it was left as it is.",
+       "operations_applied": [],
+       "operations_skipped": [],
+       "stages": [],
+       "unresolved_defects": [],
+       "limits": {
+        "max_candidates": 8,
+        "time_budget_seconds": 180.0
+       },
+       "seconds": 0.15
+      },
+      "trimmed": true
+     },
+     "failure_reason": "",
+     "original_download_url": "http://testserver/api/images/5/download/",
+     "standardized_download_url": "http://testserver/api/images/5/preprocessing/download/",
+     "download_url": "<redacted>",
+     "editor_url": "http://testserver/api/enhancements/results/5/edits/",
+     "current_edit": null,
+     "started_at": "2026-10-21T12:19:04.865952Z",
+     "finished_at": "2026-10-21T12:19:05.138630Z",
+     "created_at": "2026-10-21T12:19:04.855426Z"
+    },
+    "result_detail": {
+     "id": 5,
+     "image": 5,
+     "batch_job": null,
+     "requested_level": "auto",
+     "applied_level": "low",
+     "requested_style": "natural",
+     "status": "completed",
+     "enhancement_outcome": "original_preserved",
+     "enhancement_summary": "The photograph did not need enhancement, so it was left as it is.",
+     "applied_stages": [],
+     "skipped_stages": [],
+     "hd_unavailable_reason": null,
+     "identity_status": "verified",
+     "identity_check_bypassed": false,
+     "identity_notice": "",
+     "output_name": "clean_photograph_enhanced_low.png",
+     "output_format": "png",
+     "output_width": 480,
+     "output_height": 640,
+     "output_file_size": 298880,
+     "processing_duration_ms": 269,
+     "task_id": "d4c239afee984de4bdbe6463d44a68d8",
+     "applied_parameters": {
+      "algorithm": "adaptive_v1+original_preserved",
+      "identity_status": "verified",
+      "identity_verification": {
+       "threshold": 0.8,
+       "similarity": null,
+       "face_restoration_unverified": false,
+       "mode": "not_applicable",
+       "scope": "Compared with the uploaded photograph only; similarity of face embeddings is evidence, not a guarantee.",
+       "status": "verified",
+       "state": "not_applicable",
+       "verified": true,
+       "notice": "",
+       "reason": "The photograph was not changed."
+      },
+      "warnings": [],
+      "stage_reports": [],
+      "resolution_contract": {
+       "validated": true,
+       "source_dimensions": [
+        480,
+        640
+       ],
+       "actual_output_dimensions": [
+        480,
+        640
+       ]
+      },
+      "pipeline_version": "adaptive_candidate_pipeline_v1",
+      "adaptive": {
+       "outcome": "original_preserved",
+       "summary": "The photograph did not need enhancement, so it was left as it is.",
+       "operations_applied": [],
+       "operations_skipped": [],
+       "stages": [],
+       "unresolved_defects": [],
+       "limits": {
+        "max_candidates": 8,
+        "time_budget_seconds": 180.0
+       },
+       "seconds": 0.15
+      },
+      "trimmed": true
+     },
+     "failure_reason": "",
+     "original_download_url": "http://testserver/api/images/5/download/",
+     "standardized_download_url": "http://testserver/api/images/5/preprocessing/download/",
+     "download_url": "<redacted>",
+     "editor_url": "http://testserver/api/enhancements/results/5/edits/",
+     "current_edit": null,
+     "started_at": "2026-10-21T12:19:04.865952Z",
+     "finished_at": "2026-10-21T12:19:05.138630Z",
+     "created_at": "2026-10-21T12:19:04.855426Z"
+    },
+    "download": 200
+   },
+   "classification": "original_preserved",
+   "summary": "The photograph did not need enhancement, so it was left as it is.",
+   "identity_status": "verified",
+   "identity_verification": {
+    "threshold": 0.8,
+    "similarity": null,
+    "face_restoration_unverified": false,
+    "mode": "not_applicable",
+    "scope": "Compared with the uploaded photograph only; similarity of face embeddings is evidence, not a guarantee.",
+    "status": "verified",
+    "state": "not_applicable",
+    "verified": true,
+    "notice": "",
+    "reason": "The photograph was not changed."
+   },
+   "algorithm": "adaptive_v1+original_preserved",
+   "output_size": [
+    480,
+    640
+   ],
+   "input_vs_clean": {
+    "psnr": 361.202,
+    "ssim": 1.0,
+    "resized_to_reference": false,
+    "lpips": null,
+    "lpips_unavailable": "ModuleNotFoundError"
+   },
+   "output_vs_clean": {
+    "psnr": 361.202,
+    "ssim": 1.0,
+    "resized_to_reference": false,
+    "lpips": null,
+    "lpips_unavailable": "ModuleNotFoundError"
+   },
+   "identity_input_vs_clean": {
+    "sface": 1.0,
+    "arcface": 1.0
+   },
+   "identity_output_vs_clean": {
+    "sface": 1.0,
+    "arcface": 1.0
+   },
+   "same_decision_in_debug_mode": true,
+   "models_executed": [],
+   "operations_skipped": [],
+   "unresolved_defects": [],
+   "all_checks_pass": true
+  },
+  {
+   "case": "motion_blur_second_photo",
+   "source": "second",
+   "degradation": "synthetic: 19-pixel horizontal linear motion kernel",
+   "input_size": [
+    482,
+    640
+   ],
+   "checks": {
+    "upload_ok": true,
+    "stored_original_unchanged": true,
+    "identity_never_claimed_without_a_comparison": true,
+    "http_202_then_completed": true,
+    "download_ok": true,
+    "one_output_file": true,
+    "output_size_matches_report": true,
+    "no_debug_or_intermediate_files": true,
+    "preserved_is_pixel_identical_to_input": true
+   },
+   "quality_decision": {
+    "decision": "needs_review",
+    "reasons": [
+     "face_validation_required"
+    ],
+    "mean_luminance": 123.16,
+    "contrast_stddev": 70.06
+   },
+   "face_check": {
+    "decision": "needs_review",
+    "face_count": 1,
+    "rejection_reason": "face_off_center"
+   },
+   "seconds": 5.9,
+   "http": {
+    "upload": 201,
+    "enhance": 202,
+    "enhance_body": {
+     "id": 6,
+     "image": 6,
+     "batch_job": null,
+     "requested_level": "auto",
+     "applied_level": "low",
+     "requested_style": "natural",
+     "status": "completed",
+     "enhancement_outcome": "original_preserved",
+     "enhancement_summary": "No enhancement passed the safety checks, so the original photograph was kept.",
+     "applied_stages": [],
+     "skipped_stages": [
+      {
+       "stage": "deblur",
+       "reason": "the result did not pass the safety checks: face_geometry_changed, halo_or_ringing, identity_changed"
+      },
+      {
+       "stage": "face_restore",
+       "reason": "No face-restoration model is switched on."
+      }
+     ],
+     "hd_unavailable_reason": "Restoration was needed but not completed: deblur (the result did not pass the safety checks: face_geometry_changed, halo_or_ringing, identity_changed); face_restore (No face-restoration model is switched on.)",
+     "identity_status": "verified",
+     "identity_check_bypassed": false,
+     "identity_notice": "",
+     "output_name": "motion_blur_second_photo_enhanced_low.png",
+     "output_format": "png",
+     "output_width": 482,
+     "output_height": 640,
+     "output_file_size": 204928,
+     "processing_duration_ms": 5394,
+     "task_id": "c7dcfdeaea1a4aa585e0a47ca78755d4",
+     "applied_parameters": {
+      "algorithm": "adaptive_v1+original_preserved",
+      "identity_status": "verified",
+      "identity_verification": {
+       "threshold": 0.8,
+       "similarity": null,
+       "face_restoration_unverified": false,
+       "mode": "not_applicable",
+       "scope": "Compared with the uploaded photograph only; similarity of face embeddings is evidence, not a guarantee.",
+       "status": "verified",
+       "state": "not_applicable",
+       "verified": true,
+       "notice": "",
+       "reason": "The photograph was not changed."
+      },
+      "warnings": [
+       "The source image failed quality checks (face_validation_required); enhancement was still attempted and may not fully correct the source defects."
+      ],
+      "stage_reports": [
+       {
+        "stage": "motion_deblurring",
+        "status": "rejected",
+        "changed_pixels": false
+       }
+      ],
+      "resolution_contract": {
+       "validated": true,
+       "source_dimensions": [
+        482,
+        640
+       ],
+       "actual_output_dimensions": [
+        482,
+        640
+       ]
+      },
+      "pipeline_version": "adaptive_candidate_pipeline_v1",
+      "adaptive": {
+       "outcome": "original_preserved",
+       "summary": "No enhancement passed the safety checks, so the original photograph was kept.",
+       "operations_applied": [],
+       "operations_skipped": [
+        {
+         "operation": "face_restoration",
+         "reason": "No face-restoration model is switched on."
+        }
+       ],
+       "stages": [
+        {
+         "operation": "motion_deblurring",
+         "reason": "Motion blur (direction ratio 0.267).",
+         "engines": [
+          "nafnet_gopro"
+         ],
+         "skipped_engines": [],
+         "notes": [],
+         "candidates": [
+          "c1_motion_deblurring",
+          "c2_motion_deblurring"
+         ],
+         "seconds": 4.99,
+         "models_run": [
+          "nafnet_gopro"
+         ],
+         "status": "rejected",
+         "rejection_reasons": [
+          "face_geometry_changed",
+          "halo_or_ringing",
+          "identity_changed"
+         ]
+        }
+       ],
+       "unresolved_defects": [],
+       "limits": {
+        "max_candidates": 8,
+        "time_budget_seconds": 180.0
+       },
+       "seconds": 5.27
+      },
+      "trimmed": true
+     },
+     "failure_reason": "",
+     "original_download_url": "http://testserver/api/images/6/download/",
+     "standardized_download_url": "http://testserver/api/images/6/preprocessing/download/",
+     "download_url": "<redacted>",
+     "editor_url": "http://testserver/api/enhancements/results/6/edits/",
+     "current_edit": null,
+     "started_at": "2026-10-21T12:19:05.983808Z",
+     "finished_at": "2026-10-21T12:19:11.381790Z",
+     "created_at": "2026-10-21T12:19:05.973293Z"
+    },
+    "result_detail": {
+     "id": 6,
+     "image": 6,
+     "batch_job": null,
+     "requested_level": "auto",
+     "applied_level": "low",
+     "requested_style": "natural",
+     "status": "completed",
+     "enhancement_outcome": "original_preserved",
+     "enhancement_summary": "No enhancement passed the safety checks, so the original photograph was kept.",
+     "applied_stages": [],
+     "skipped_stages": [
+      {
+       "stage": "deblur",
+       "reason": "the result did not pass the safety checks: face_geometry_changed, halo_or_ringing, identity_changed"
+      },
+      {
+       "stage": "face_restore",
+       "reason": "No face-restoration model is switched on."
+      }
+     ],
+     "hd_unavailable_reason": "Restoration was needed but not completed: deblur (the result did not pass the safety checks: face_geometry_changed, halo_or_ringing, identity_changed); face_restore (No face-restoration model is switched on.)",
+     "identity_status": "verified",
+     "identity_check_bypassed": false,
+     "identity_notice": "",
+     "output_name": "motion_blur_second_photo_enhanced_low.png",
+     "output_format": "png",
+     "output_width": 482,
+     "output_height": 640,
+     "output_file_size": 204928,
+     "processing_duration_ms": 5394,
+     "task_id": "c7dcfdeaea1a4aa585e0a47ca78755d4",
+     "applied_parameters": {
+      "algorithm": "adaptive_v1+original_preserved",
+      "identity_status": "verified",
+      "identity_verification": {
+       "threshold": 0.8,
+       "similarity": null,
+       "face_restoration_unverified": false,
+       "mode": "not_applicable",
+       "scope": "Compared with the uploaded photograph only; similarity of face embeddings is evidence, not a guarantee.",
+       "status": "verified",
+       "state": "not_applicable",
+       "verified": true,
+       "notice": "",
+       "reason": "The photograph was not changed."
+      },
+      "warnings": [
+       "The source image failed quality checks (face_validation_required); enhancement was still attempted and may not fully correct the source defects."
+      ],
+      "stage_reports": [
+       {
+        "stage": "motion_deblurring",
+        "status": "rejected",
+        "changed_pixels": false
+       }
+      ],
+      "resolution_contract": {
+       "validated": true,
+       "source_dimensions": [
+        482,
+        640
+       ],
+       "actual_output_dimensions": [
+        482,
+        640
+       ]
+      },
+      "pipeline_version": "adaptive_candidate_pipeline_v1",
+      "adaptive": {
+       "outcome": "original_preserved",
+       "summary": "No enhancement passed the safety checks, so the original photograph was kept.",
+       "operations_applied": [],
+       "operations_skipped": [
+        {
+         "operation": "face_restoration",
+         "reason": "No face-restoration model is switched on."
+        }
+       ],
+       "stages": [
+        {
+         "operation": "motion_deblurring",
+         "reason": "Motion blur (direction ratio 0.267).",
+         "engines": [
+          "nafnet_gopro"
+         ],
+         "skipped_engines": [],
+         "notes": [],
+         "candidates": [
+          "c1_motion_deblurring",
+          "c2_motion_deblurring"
+         ],
+         "seconds": 4.99,
+         "models_run": [
+          "nafnet_gopro"
+         ],
+         "status": "rejected",
+         "rejection_reasons": [
+          "face_geometry_changed",
+          "halo_or_ringing",
+          "identity_changed"
+         ]
+        }
+       ],
+       "unresolved_defects": [],
+       "limits": {
+        "max_candidates": 8,
+        "time_budget_seconds": 180.0
+       },
+       "seconds": 5.27
+      },
+      "trimmed": true
+     },
+     "failure_reason": "",
+     "original_download_url": "http://testserver/api/images/6/download/",
+     "standardized_download_url": "http://testserver/api/images/6/preprocessing/download/",
+     "download_url": "<redacted>",
+     "editor_url": "http://testserver/api/enhancements/results/6/edits/",
+     "current_edit": null,
+     "started_at": "2026-10-21T12:19:05.983808Z",
+     "finished_at": "2026-10-21T12:19:11.381790Z",
+     "created_at": "2026-10-21T12:19:05.973293Z"
+    },
+    "download": 200
+   },
+   "classification": "original_preserved",
+   "summary": "No enhancement passed the safety checks, so the original photograph was kept.",
+   "identity_status": "verified",
+   "identity_verification": {
+    "threshold": 0.8,
+    "similarity": null,
+    "face_restoration_unverified": false,
+    "mode": "not_applicable",
+    "scope": "Compared with the uploaded photograph only; similarity of face embeddings is evidence, not a guarantee.",
+    "status": "verified",
+    "state": "not_applicable",
+    "verified": true,
+    "notice": "",
+    "reason": "The photograph was not changed."
+   },
+   "algorithm": "adaptive_v1+original_preserved",
+   "output_size": [
+    482,
+    640
+   ],
+   "input_vs_clean": {
+    "psnr": 25.662,
+    "ssim": 0.7901,
+    "resized_to_reference": false,
+    "lpips": null,
+    "lpips_unavailable": "ModuleNotFoundError"
+   },
+   "output_vs_clean": {
+    "psnr": 25.662,
+    "ssim": 0.7901,
+    "resized_to_reference": false,
+    "lpips": null,
+    "lpips_unavailable": "ModuleNotFoundError"
+   },
+   "identity_input_vs_clean": {
+    "sface": 0.5043,
+    "arcface": 0.5705
+   },
+   "identity_output_vs_clean": {
+    "sface": 0.5043,
+    "arcface": 0.5705
+   },
+   "same_decision_in_debug_mode": true,
+   "models_executed": [
+    {
+     "candidate": "c1_motion_deblurring",
+     "operation": "motion_deblurring",
+     "variant": "blend 1.0",
+     "accepted": false,
+     "rejected_for": [
+      "halo_or_ringing",
+      "face_geometry_changed",
+      "identity_changed"
+     ],
+     "models": [
+      "nafnet_gopro"
+     ],
+     "device": "mps",
+     "seconds": 2.355
+    },
+    {
+     "candidate": "c2_motion_deblurring",
+     "operation": "motion_deblurring",
+     "variant": "blend 0.6",
+     "accepted": false,
+     "rejected_for": [
+      "identity_changed"
+     ],
+     "models": [
+      "nafnet_gopro"
+     ],
+     "device": "mps",
+     "seconds": 2.349
+    }
+   ],
+   "operations_skipped": [
+    {
+     "operation": "face_restoration",
+     "reason": "No face-restoration model is switched on."
+    }
+   ],
+   "unresolved_defects": [],
+   "all_checks_pass": true
+  }
+ ],
+ "summary": {
+  "cases": 6,
+  "by_classification": {
+   "enhanced": 0,
+   "partially_enhanced": 2,
+   "original_preserved": 4,
+   "failed": 0,
+   "expected_rejection": 0
+  },
+  "all_checks_pass": true,
+  "failed_cases": []
+ },
+ "notes": [
+  "Synthetic degradations of the supplied photographs; the clean photograph is the reference. PSNR/SSIM are whole-image, SSIM is the project's luminance proxy; identity similarities compare the largest face of the clean photograph with that of the degraded/output one. No photograph or face crop is stored here."
+ ]
+}

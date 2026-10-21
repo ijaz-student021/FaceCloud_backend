@@ -275,6 +275,20 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}     -> 201
   (`GET /api/enhancements/comparisons/{id}/`) and at the end of its CSV report,
   with the same meaning, so a profile reads there as it would on the result it
   produces. They are null / false / empty for the untouched `original` entry.
+- **When identity cannot be verified (adaptive engine).** No biometric consent, no identity model, a face too dark or small to compare, or an inconclusive
+  comparison: `identity_status` is `unavailable` or `inconclusive`, and `applied_parameters.identity_verification` says exactly what happened:
+  `verified: false` always (it is `true` only when a comparison held), `state` (`not_verifiable`, `uncertain`), `reason`, `notice` (the sentence to show) and
+  **`mode`**: `verified`, `limited_unverified` (the server's default: changes that do not synthesise a face - brightening, denoising, deblurring, enlarging -
+  were applied and identity was **not** verified; face restoration is never applied), `failed_closed` (the server is set to `fail_closed`: identity could
+  not be verified, so nothing was applied and `enhancement_outcome` is `original_preserved`) or `not_applicable` (no face, or the photograph was not changed).
+  Show the `notice` on `limited_unverified` and `failed_closed` results, and never a "verified" badge for them. Which of the two policies the server uses
+  is an operator setting (`ENHANCEMENT_IDENTITY_UNVERIFIED_POLICY`, default `limited`); any consent or acknowledgement wording around it is a product
+  decision that is not in the API yet.
+- **Very dark photographs.** By default a photograph the quality check rejects only for darkness (`severe_underexposure` / `contrast_too_low`) is
+  `rejected`, and a rejected photograph is never enhanced: `POST /api/enhancements/images/{id}/` answers `400 ["This photo was rejected by the checks, so
+  it is not enhanced."]` and creates nothing. Show that refusal as a refusal, never as an enhancement. A server may set `QUALITY_UNDEREXPOSED_FACE_ACTION=review`:
+  such a photograph, when a face was found and accepted, is then `needs_review` (same reasons) and may be enhanced; the engine still returns the original
+  unless a result passes every gate, and `identity_verification` is as described above (a face that dark can rarely be compared, so expect `unavailable`).
 - The job is asynchronous. Poll `GET /api/enhancements/results/{id}/` until
   `status` is `completed` (or `failed`, with `failure_reason`). Other statuses:
   `pending, queued, processing, partial, cancelled`.

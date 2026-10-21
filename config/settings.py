@@ -282,6 +282,17 @@ if ENHANCEMENT_RENDER_POLICY not in ("lightweight_v1", "balanced_v1", "learned_v
         f"not {ENHANCEMENT_RENDER_POLICY!r}."
     )
 
+# What the adaptive engine (adaptive_v1) does with a photograph that has a face when identity CANNOT be verified: no biometric consent, no identity model,
+# a face too dark or small to embed, or an inconclusive comparison. "limited" (default, the behaviour so far): the operations that do not synthesise a
+# face (brightening, denoising, deblurring, enlarging) may still be applied after the geometry checks, and the result says so
+# (identity_verification.mode "limited_unverified", verified false, with its notice); face restoration is never applied. "fail_closed": no candidate is
+# accepted for such a photograph, the original is returned unchanged (mode "failed_closed"). Neither mode ever reports identity as verified.
+ENHANCEMENT_IDENTITY_UNVERIFIED_POLICY = env("ENHANCEMENT_IDENTITY_UNVERIFIED_POLICY", default="limited")
+if ENHANCEMENT_IDENTITY_UNVERIFIED_POLICY not in ("limited", "fail_closed"):
+    raise ImproperlyConfigured(
+        f"ENHANCEMENT_IDENTITY_UNVERIFIED_POLICY must be limited or fail_closed, not {ENHANCEMENT_IDENTITY_UNVERIFIED_POLICY!r}."
+    )
+
 # The restoration chain (enhancement/restoration.py): Real-ESRGAN (BSD-3-Clause, upscale to HD) and NAFNet-GoPro (MIT, deblur) are on by
 # default; each only runs where its checkpoint is installed and the photograph needs it, and a result says when it could not. CodeFormer
 # (S-Lab, non-commercial) and GFPGAN stay off by default (see CODEFORMER_ENABLED below); the production guard refuses them unless acknowledged.
@@ -676,6 +687,14 @@ QUALITY_FACE_SHARPNESS_TARGET = env.float("QUALITY_FACE_SHARPNESS_TARGET", defau
 QUALITY_FACE_REGION_INSET = env.float("QUALITY_FACE_REGION_INSET", default=0.15)
 QUALITY_FACE_MIN_CONFIDENCE = env.float("QUALITY_FACE_MIN_CONFIDENCE", default=0.5)
 QUALITY_FACE_BLUR_WARNING = env.float("QUALITY_FACE_BLUR_WARNING", default=50.0)
+# What the quality check does with a photograph that it would reject ONLY for being very dark (mean luminance under QUALITY_REJECT_MIN_LUMINANCE, or
+# contrast under QUALITY_REJECT_CONTRAST) when a face was found and the face check did not reject it. "reject" (default, the behaviour so far):
+# rejected, and a rejected photograph is never enhanced. "review": needs_review instead, the same way blur and low resolution never reject a photograph
+# with a face. That makes it eligible for an enhancement request (and, for an organization's upload, for a moderator), but nothing is accepted
+# automatically: the adaptive engine returns the original unless a candidate passes its quality, colour, artifact and identity gates.
+QUALITY_UNDEREXPOSED_FACE_ACTION = env("QUALITY_UNDEREXPOSED_FACE_ACTION", default="reject")
+if QUALITY_UNDEREXPOSED_FACE_ACTION not in ("reject", "review"):
+    raise ImproperlyConfigured(f"QUALITY_UNDEREXPOSED_FACE_ACTION must be reject or review, not {QUALITY_UNDEREXPOSED_FACE_ACTION!r}.")
 
 # Duplicate detection. Perceptual and face-region matches are review evidence,
 # not identity recognition and never create cross-user matches.

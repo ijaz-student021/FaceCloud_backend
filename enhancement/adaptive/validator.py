@@ -31,6 +31,7 @@ import numpy as np
 from django.conf import settings
 
 from .colour import lift_colour_metrics
+from .identity_policy import fail_closed
 
 
 @dataclass(frozen=True)
@@ -286,9 +287,11 @@ class FinalImageQualityValidator:
         status = {"passed": landmarks_ok, "landmark_shift": None if shift is None else round(shift, 4)}
         if not landmarks_ok:
             verdict["reasons"].append("face_lost" if shift is None else "face_geometry_changed")
+        # A generative restoration is never accepted unverified; under the opt-in fail-closed policy neither is any other operation.
+        unverified_blocks = operation == "face_restoration" or fail_closed()
         if self.identity is None:
             status.update(similarity=None, embedding="unavailable")
-            if operation == "face_restoration":  # a generative restoration is never accepted unverified
+            if unverified_blocks:
                 status["passed"] = False
                 verdict["reasons"].append("identity_unverifiable")
         else:
@@ -297,7 +300,7 @@ class FinalImageQualityValidator:
             if checked["status"] == "failed":
                 status["passed"] = False
                 verdict["reasons"].append("identity_changed")
-            elif checked["status"] != "verified" and operation == "face_restoration":
+            elif checked["status"] != "verified" and unverified_blocks:
                 status["passed"] = False
                 verdict["reasons"].append("identity_unverifiable")
         verdict["gates"]["identity"] = status

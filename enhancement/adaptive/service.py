@@ -39,6 +39,7 @@ from enhancement.models import EnhancementLevel
 from . import operations as ops
 from .analyzer import ImageQualityAnalyzer
 from .candidates import CandidatePool, PoolFull
+from . import identity_policy
 from .debug import DebugRecorder
 from .router import AdaptiveEnhancementRouter
 from .validator import FinalImageQualityValidator
@@ -111,7 +112,7 @@ class IdentityChecker:
         return {"status": "verified" if worst >= self.threshold else "failed", "similarity": worst, "threshold": self.threshold}
 
 
-def identity_report(report0, identity, accepted_operations, final_check, allow_biometric_processing):
+def identity_report(report0, identity, accepted_operations, final_check, allow_biometric_processing, blocked=False):
     """What was and was not established about identity, in terms that cannot be mistaken for a guarantee.
 
     ``state`` is the plain-language answer: ``verified`` (every face in the result was compared with the upload and held),
@@ -121,11 +122,24 @@ def identity_report(report0, identity, accepted_operations, final_check, allow_b
     failed; null for a photograph without a face). An unavailable comparison is never reported as passed, and ``verified`` only ever
     means "similar to the photograph that was uploaded" (an embedding is evidence, not proof, and cannot see drift from a clean
     appearance that was never given).
+
+    ``mode`` (``identity_policy.MODES``) says what the engine did about it: ``verified``; ``limited_unverified`` (changes that do not
+    synthesise a face were applied and identity was NOT verified: the default policy); ``failed_closed`` (``blocked``: identity could not be
+    verified, so the original was kept: the ``fail_closed`` policy); ``not_applicable`` (nothing to verify). ``verified`` is true only when
+    a comparison held (or when the photograph is the upload itself and a comparison was possible).
     """
     base = {"threshold": identity.threshold, "similarity": None, "face_restoration_unverified": False,
+            "mode": identity_policy.MODE_NOT_APPLICABLE,
             "scope": "Compared with the uploaded photograph only; similarity of face embeddings is evidence, not a guarantee."}
     if not report0.faces:
         return {**base, "status": None, "state": "not_applicable", "verified": False, "notice": "", "reason": identity.reason}
+    if blocked:   # fail_closed: nothing was applied because identity could not be verified
+        reason = identity.reason or "No identity model could be used."
+        if not allow_biometric_processing:
+            reason = "Biometric processing is not permitted for this account."
+        return {**base, "status": "inconclusive" if identity.available else "unavailable", "state": "uncertain" if identity.available else "not_verifiable",
+                "verified": False, "mode": identity_policy.MODE_FAILED_CLOSED, "reason": reason,
+                "notice": f"Identity could not be verified ({reason.rstrip('.')}), so the photograph was left unchanged."}
     if not accepted_operations:   # the output is the upload itself, so there is nothing to compare; the status keeps its earlier values
         return {**base, "status": "verified" if identity.available else "unavailable", "state": "not_applicable",
                 "verified": identity.available, "notice": "", "reason": "The photograph was not changed."}
@@ -133,17 +147,17 @@ def identity_report(report0, identity, accepted_operations, final_check, allow_b
         reason = identity.reason or "No identity model could be used."
         if not allow_biometric_processing:
             reason = "Biometric processing is not permitted for this account."
-        return {**base, "status": "unavailable", "state": "not_verifiable", "verified": False, "reason": reason,
+        return {**base, "status": "unavailable", "state": "not_verifiable", "verified": False, "mode": identity_policy.MODE_LIMITED, "reason": reason,
                 "notice": f"Identity could not be verified ({reason.rstrip('.')}). No face restoration was applied; the faces in this "
                           "photograph were not compared with the original."}
     status = final_check["status"]
     base["similarity"] = final_check.get("similarity")
     if status == "verified":
-        return {**base, "status": "verified", "state": "verified", "verified": True, "notice": "", "reason": ""}
+        return {**base, "status": "verified", "state": "verified", "verified": True, "mode": identity_policy.MODE_VERIFIED, "notice": "", "reason": ""}
     if status == "failed":   # the validator does not accept such a candidate; reported rather than assumed
-        return {**base, "status": "failed", "state": "uncertain", "verified": False, "reason": "",
+        return {**base, "status": "failed", "state": "uncertain", "verified": False, "mode": identity_policy.MODE_LIMITED, "reason": "",
                 "notice": "A face in the result no longer matches the uploaded photograph."}
-    return {**base, "status": "inconclusive", "state": "uncertain", "verified": False, "reason": "",
+    return {**base, "status": "inconclusive", "state": "uncertain", "verified": False, "mode": identity_policy.MODE_LIMITED, "reason": "",
             "notice": "Identity could not be confirmed for every face after enhancement (a face may be small, dark or turned); "
                       "no face restoration was applied without it."}
 
@@ -294,6 +308,7 @@ class AdaptiveImageEnhancementService:
             warnings.append(identity.reason)
 
         timed_out = False
+        identity_blocked = False
         while True:
             if time.perf_counter() - started > self.config.time_budget_seconds or timed_out:
                 warnings.append("The time budget was reached; remaining operations were not attempted.")
@@ -305,6 +320,14 @@ class AdaptiveImageEnhancementService:
             if decision.step is None:
                 break
             step = decision.step
+            if identity_policy.fail_closed() and report0.faces and not identity.available:
+                # Opt-in policy: a photograph with a face whose identity cannot be verified is not changed at all. Stop before any model runs.
+                identity_blocked = True
+                skipped.append({"operation": step.operation, "policy": "identity_fail_closed",
+                                "reason": "Identity could not be verified for the faces in this photograph, and this server leaves such photographs "
+                                          "unchanged. " + identity.reason})
+                warnings.append("Identity could not be verified, so the original photograph was kept (fail-closed policy).")
+                break
             if (step.operation == ops.FACE and not identity.available and allow_biometric_processing
                     and "too dark" in identity.reason and current is not pool.original):
                 # The original face was too dark to embed; the validated, lifted image is the best available reference.
@@ -357,7 +380,11 @@ class AdaptiveImageEnhancementService:
         else:
             outcome = ENHANCED
         final_identity = identity.check(final) if identity.available and accepted_operations else None
-        identity_block = identity_report(report0, identity, accepted_operations, final_identity, allow_biometric_processing)
+        # Under the fail-closed policy a candidate refused because identity could not be confirmed counts as blocked as well.
+        identity_blocked = identity_blocked or (identity_policy.fail_closed() and bool(report0.faces) and not accepted_operations and any(
+            "identity_unverifiable" in (s.get("rejection_reasons") or []) for s in stages))
+        identity_block = identity_report(report0, identity, accepted_operations, final_identity, allow_biometric_processing,
+                                         blocked=identity_blocked)
         if any("brightened photograph" in warning for warning in warnings):
             identity_block["scope"] = ("Compared with the brightened photograph, because the uploaded face was too dark to embed; "
                                        "the brightening itself could not be checked against the original face.")
@@ -430,6 +457,9 @@ class AdaptiveImageEnhancementService:
                  ops.FACE: "restored a degraded face", ops.UPSCALE: "enlarged the photograph"}
         done = [words[s["operation"]] for s in stages if s["status"] == "accepted"]
         if outcome == ORIGINAL_PRESERVED:
+            if any(item.get("policy") == "identity_fail_closed" for item in skipped) or (identity_policy.fail_closed() and any(
+                    "identity_unverifiable" in (s.get("rejection_reasons") or []) for s in stages)):
+                return "Identity could not be verified for the faces in this photograph, so the original photograph was kept."
             rejected = [s for s in stages if s["status"] in ("rejected", "unavailable", "no_engine")]
             if any(s.get("timed_out") for s in stages):
                 return "The enhancement ran out of time, so the original photograph was kept."

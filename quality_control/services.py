@@ -99,6 +99,10 @@ def photo_has_face(face_validation):
     return face_validation is not None and (face_validation.face_count or 0) > 0
 
 
+# Reject reasons that mean "too dark to judge, but a lift may help"; the only ones QUALITY_UNDEREXPOSED_FACE_ACTION=review may soften.
+UNDEREXPOSURE_REASONS = frozenset({"severe_underexposure", "contrast_too_low"})
+
+
 def make_decision(metrics, scores, face_validation):
     reject = []
     review = []
@@ -135,6 +139,15 @@ def make_decision(metrics, scores, face_validation):
     elif face_validation.decision == "rejected":
         reject.append(face_validation.rejection_reason or "face_validation_rejected")
 
+    if (
+        reject and settings.QUALITY_UNDEREXPOSED_FACE_ACTION == "review" and has_face
+        and face_validation.decision != "rejected" and set(reject) <= UNDEREXPOSURE_REASONS
+    ):
+        # Opt-in. Only darkness (nothing else) stands between this photograph and acceptance, and a face the face check did not reject is there to
+        # work with: hold it for review instead of refusing it, like blur and low resolution. Nothing is accepted here; enhancement still has to pass
+        # the engine's own gates, and a photograph with another reject reason, no face or a rejected face stays rejected.
+        review = [*reject, *review]
+        reject = []
     reject = list(dict.fromkeys(reject))
     review = [reason for reason in dict.fromkeys(review) if reason not in reject]
     if reject:
