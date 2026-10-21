@@ -199,6 +199,27 @@ class FailClosedPolicyTests(EngineBase):
         self.assertNotIn("identity_unverifiable", limited["reasons"])
 
 
+class PolicyAppliesOnlyToTheAdaptiveEngineTests(SimpleTestCase):
+    """``ENHANCEMENT_IDENTITY_UNVERIFIED_POLICY`` is read by the adaptive engine only: under the default render policy it changes nothing."""
+
+    @override_settings(ENHANCEMENT_RENDER_POLICY="lightweight_v1", ENHANCEMENT_IDENTITY_UNVERIFIED_POLICY="fail_closed")
+    def test_the_lightweight_pipeline_never_reaches_the_adaptive_engine_so_the_setting_cannot_apply(self):
+        from .services import enhance_bgr
+
+        with patch("enhancement.adaptive.service.AdaptiveImageEnhancementService.enhance", side_effect=AssertionError("the adaptive engine must not run")):
+            output, _level, parameters = enhance_bgr(portrait(brightness=0.5), "auto", allow_biometric_processing=False)
+        self.assertNotIn("adaptive", parameters)
+        self.assertEqual(output.shape, portrait(brightness=0.5).shape)
+
+    @override_settings(ENHANCEMENT_RENDER_POLICY="adaptive_v1", ENHANCEMENT_IDENTITY_UNVERIFIED_POLICY="fail_closed")
+    def test_under_the_adaptive_policy_the_setting_reaches_the_engine(self):
+        from .services import enhance_bgr
+
+        with patch("enhancement.adaptive.service.AdaptiveImageEnhancementService.enhance", return_value=("sentinel", "low", {})) as engine:
+            self.assertEqual(enhance_bgr(portrait(), "auto", allow_biometric_processing=False)[0], "sentinel")
+        engine.assert_called_once()
+
+
 class NeverClaimedWhenUnverifiedTests(EngineBase):
     """The invariant, over every combination: ``verified`` is true only for a comparison that held (or an untouched photograph)."""
 

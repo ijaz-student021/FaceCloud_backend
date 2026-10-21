@@ -79,6 +79,10 @@ class PolicyChecksTests(SimpleTestCase):
         self.assertFalse(chosen(not_dark_enough, True)["policy_dark_case_rejected_for_underexposure"])
         wrong_reason = row("dark_portrait", "expected_rejection", "rejected", ["resolution_too_low"], enhance_status=400)
         self.assertFalse(chosen(wrong_reason, True)["policy_dark_case_rejected_for_underexposure"])
+        refused_but_not_labelled_as_such = row("dark_portrait", "failed", "rejected", ["severe_underexposure"], enhance_status=400)
+        self.assertFalse(chosen(refused_but_not_labelled_as_such, True)["policy_dark_case_rejected_for_underexposure"])
+        answered_202 = row("dark_portrait", "expected_rejection", "rejected", ["severe_underexposure"], enhance_status=202)
+        self.assertFalse(chosen(answered_202, True)["policy_dark_case_rejected_for_underexposure"])
 
     def test_with_consent_a_verified_enhancement_is_allowed(self):
         self.assertTrue(all(chosen(row(), True).values()), chosen(row(), True))
