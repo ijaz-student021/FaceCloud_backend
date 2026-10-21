@@ -23,6 +23,10 @@ What the run checks, besides the classification: exactly one output file per enh
 ``original_preserved`` output is pixel-identical to its input; no debug or intermediate image was stored; the stored original upload is byte-identical
 before and after; and ``identity_verification.verified`` is true only when ``state`` is ``verified`` (or the photograph was not changed).
 
+With ``--quality-underexposed reject`` and/or ``--identity-policy fail_closed`` the run also checks that each case obeyed those settings (``policy_*`` checks): a rejected photograph is
+refused and never enhanced; a very dark case is rejected for ``severe_underexposure``; and whenever identity was unavailable or inconclusive nothing was applied, the original came back
+pixel for pixel, and the stored upload is unchanged.
+
 The consent switch matters: with ``--consent absent`` the user has no biometric consent (BIOMETRIC_CONSENT_REQUIRED is forced on), so the engine cannot
 verify identity and says so; the default grants consent, as a real account that agreed would have. The settings that decide what happens to a very
 dark photograph and to unverifiable identity are explicit flags, defaulting to the project defaults (``reject`` and ``limited``).
@@ -135,6 +139,50 @@ def identity_block_is_honest(block):
     if not isinstance(block, dict) or not block.get("verified"):
         return True
     return block.get("state") in ("verified", "not_applicable")
+
+
+def applied_operations(detail):
+    """The operations the engine applied, from a (possibly trimmed) enhancement result; ``None`` when the result does not say."""
+    adaptive = ((detail or {}).get("applied_parameters") or {}).get("adaptive")
+    return adaptive.get("operations_applied") if isinstance(adaptive, dict) else None
+
+
+def policy_checks(row, *, consent_granted, quality_action, identity_policy):
+    """Did this case obey the settings of the run? ``{check name: bool}``; only the checks that apply to the combination are present.
+
+    * ``quality_action == "reject"``: a photograph the quality check rejected is refused (400, nothing created), and a very dark case is rejected for
+      ``severe_underexposure``; it is never enhanced.
+    * ``identity_policy == "fail_closed"``: no result is ever labelled ``limited_unverified``; pixels change only when identity was verified; whenever identity
+      was unavailable or inconclusive (no consent, no model, a face that cannot be compared) nothing was applied and the original was returned; the
+      ``failed_closed`` mode ran no model at all; and without consent nothing is changed.
+    """
+    checks = {}
+    quality = row["quality_decision"]
+    classification = row["classification"]
+    if quality_action == "reject":
+        checks["policy_rejected_photo_is_refused_never_enhanced"] = quality["decision"] != "rejected" or classification == "expected_rejection"
+        if row["case"].startswith("dark"):
+            checks["policy_dark_case_rejected_for_underexposure"] = (
+                quality["decision"] == "rejected" and "severe_underexposure" in quality["reasons"] and row["http"]["enhance"] == 400
+                and classification == "expected_rejection")
+    if identity_policy == "fail_closed" and classification in ENGINE_OUTCOMES:
+        block = row.get("identity_verification") or {}
+        detail = row["http"]["result_detail"]
+        operations = applied_operations(detail)
+        stages = (detail or {}).get("applied_stages")
+        unverified = block.get("status") in ("unavailable", "inconclusive") or block.get("state") in ("not_verifiable", "uncertain")
+        changed = classification in ("enhanced", "partially_enhanced")
+        checks["policy_fail_closed_never_limited_unverified"] = block.get("mode") != "limited_unverified"
+        checks["policy_fail_closed_changes_only_a_verified_identity"] = (not changed) or (block.get("mode") == "verified" and block.get("verified") is True)
+        if unverified:
+            checks["policy_unverified_identity_applied_nothing"] = (
+                classification == "original_preserved" and operations == [] and stages in ([], None)
+                and row["checks"].get("preserved_is_pixel_identical_to_input") is True)
+        if block.get("mode") == "failed_closed":
+            checks["policy_failed_closed_ran_no_model"] = row.get("models_executed") == []
+        if not consent_granted:
+            checks["policy_no_consent_means_no_change"] = classification == "original_preserved"
+    return checks
 
 
 def summarise(rows):
@@ -454,6 +502,8 @@ def main():
                     row["operations_skipped"] = adaptive["operations_skipped"]
                     row["unresolved_defects"] = adaptive["unresolved_defects"]
                     shutil.rmtree(Path(media) / "debug", ignore_errors=True)
+                checks.update(policy_checks(row, consent_granted=bool(consent_effective), quality_action=arguments.quality_underexposed,
+                                            identity_policy=arguments.identity_policy))
                 row["all_checks_pass"] = classification != "failed" and all(checks.values())
                 rows.append(row)
                 print(f"{name:26s} {classification:20s} checks={'PASS' if row['all_checks_pass'] else 'FAIL'} {row['seconds']}s", flush=True)

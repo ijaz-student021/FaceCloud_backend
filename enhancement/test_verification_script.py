@@ -49,6 +49,77 @@ class ClassifyCaseTests(SimpleTestCase):
         self.assertEqual(set(script.CLASSIFICATIONS), {"enhanced", "partially_enhanced", "original_preserved", "failed", "expected_rejection"})
 
 
+def row(case="noisy_portrait", classification="partially_enhanced", quality="accepted", reasons=(), enhance_status=202, mode="verified", verified=True,
+        status="verified", state="verified", operations=("denoising",), models=("nafnet_sidd",), identical=None, stages=("denoise",)):
+    detail = None if enhance_status != 202 else {"applied_stages": [{"stage": item} for item in stages],
+                                                  "applied_parameters": {"adaptive": {"operations_applied": list(operations)}}}
+    return {
+        "case": case, "classification": classification, "quality_decision": {"decision": quality, "reasons": list(reasons)},
+        "http": {"enhance": enhance_status, "result_detail": detail},
+        "identity_verification": None if detail is None else {"mode": mode, "verified": verified, "status": status, "state": state},
+        "models_executed": list(models),
+        "checks": {} if identical is None else {"preserved_is_pixel_identical_to_input": identical},
+    }
+
+
+def chosen(row_, consent):
+    return script.policy_checks(row_, consent_granted=consent, quality_action="reject", identity_policy="fail_closed")
+
+
+class PolicyChecksTests(SimpleTestCase):
+    """The settings of a run are checked case by case: D1 reject and D2 fail_closed."""
+
+    def test_a_rejected_dark_case_must_be_refused_for_underexposure(self):
+        good = row("dark_portrait", "expected_rejection", "rejected", ["severe_underexposure", "contrast_too_low"], enhance_status=400)
+        self.assertTrue(all(chosen(good, True).values()), chosen(good, True))
+        self.assertEqual(set(chosen(good, True)), {"policy_rejected_photo_is_refused_never_enhanced", "policy_dark_case_rejected_for_underexposure"})
+        enhanced_anyway = row("dark_portrait", "enhanced", "rejected", ["severe_underexposure"])
+        self.assertFalse(chosen(enhanced_anyway, True)["policy_rejected_photo_is_refused_never_enhanced"])
+        not_dark_enough = row("dark_portrait", "original_preserved", "accepted", [], identical=True, operations=(), stages=(), models=(), mode="not_applicable")
+        self.assertFalse(chosen(not_dark_enough, True)["policy_dark_case_rejected_for_underexposure"])
+        wrong_reason = row("dark_portrait", "expected_rejection", "rejected", ["resolution_too_low"], enhance_status=400)
+        self.assertFalse(chosen(wrong_reason, True)["policy_dark_case_rejected_for_underexposure"])
+
+    def test_with_consent_a_verified_enhancement_is_allowed(self):
+        self.assertTrue(all(chosen(row(), True).values()), chosen(row(), True))
+
+    def test_fail_closed_never_lets_an_unverified_change_through(self):
+        limited = row(mode="limited_unverified", verified=False, status="unavailable", state="not_verifiable")
+        checks = chosen(limited, True)
+        self.assertFalse(checks["policy_fail_closed_never_limited_unverified"])
+        self.assertFalse(checks["policy_fail_closed_changes_only_a_verified_identity"])
+        self.assertFalse(checks["policy_unverified_identity_applied_nothing"])
+        verified_label_without_a_comparison = row(mode="verified", verified=False)
+        self.assertFalse(chosen(verified_label_without_a_comparison, True)["policy_fail_closed_changes_only_a_verified_identity"])
+
+    def test_without_consent_the_original_comes_back_and_no_model_ran(self):
+        kept = row(classification="original_preserved", mode="failed_closed", verified=False, status="unavailable", state="not_verifiable",
+                   operations=(), stages=(), models=(), identical=True)
+        checks = chosen(kept, False)
+        self.assertTrue(all(checks.values()), checks)
+        self.assertEqual(set(checks), {"policy_rejected_photo_is_refused_never_enhanced", "policy_fail_closed_never_limited_unverified",
+                                       "policy_fail_closed_changes_only_a_verified_identity", "policy_unverified_identity_applied_nothing",
+                                       "policy_failed_closed_ran_no_model", "policy_no_consent_means_no_change"})
+        self.assertFalse(chosen(row(classification="original_preserved", mode="failed_closed", verified=False, status="unavailable", state="not_verifiable",
+                                    operations=(), stages=(), models=("nafnet_sidd",), identical=True), False)["policy_failed_closed_ran_no_model"])
+        self.assertFalse(chosen(row(classification="original_preserved", mode="failed_closed", verified=False, status="unavailable", state="not_verifiable",
+                                    operations=(), stages=(), models=(), identical=False), False)["policy_unverified_identity_applied_nothing"])
+        self.assertFalse(chosen(row(operations=("denoising",), classification="original_preserved", mode="failed_closed", verified=False, status="unavailable",
+                                    state="not_verifiable", models=(), identical=True), False)["policy_unverified_identity_applied_nothing"])
+        self.assertFalse(chosen(row(), False)["policy_no_consent_means_no_change"])                              # a change without consent
+
+    def test_an_unchanged_photograph_without_consent_is_fine(self):
+        clean = row("clean_photograph", "original_preserved", operations=(), stages=(), models=(), mode="not_applicable", verified=False,
+                    status="unavailable", state="not_applicable", identical=True)
+        self.assertTrue(all(chosen(clean, False).values()), chosen(clean, False))
+
+    def test_other_settings_add_no_policy_checks(self):
+        casual = script.policy_checks(row(), consent_granted=True, quality_action="review", identity_policy="limited")
+        self.assertEqual(casual, {})
+        self.assertEqual(script.applied_operations(None), None)
+        self.assertEqual(script.applied_operations({"applied_parameters": {"adaptive": {"operations_applied": ["x"]}}}), ["x"])
+
+
 class EvidenceTests(SimpleTestCase):
     def test_redaction_removes_links_to_stored_photographs_at_any_depth(self):
         body = {"id": 3, "download_url": "http://testserver/api/x/download/", "items": [{"preview_url": "http://x", "keep": 1}], "keep": "yes"}
