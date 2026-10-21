@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "label": "5-review-failclosed-consent",
- "started_at": "2026-10-21T12:18:21+00:00",
+ "started_at": "2026-10-21T14:01:05+00:00",
  "command": [
   "verify_adaptive_api.py",
   "--images",
@@ -18,9 +18,9 @@
   "fail_closed"
  ],
  "git": {
-  "commit": "8a700ad5852fd9ad97644d54bba1b49e1e49be58",
+  "commit": "b3aad1421777e4cfaa2e7ddd45351a9fea74f25b",
   "branch": "fix/adaptive-verification-identity-honesty",
-  "dirty": true
+  "dirty": false
  },
  "environment": {
   "python": "3.12.13",
@@ -178,8 +178,13 @@
     "one_output_file": true,
     "output_size_matches_report": true,
     "no_debug_or_intermediate_files": true,
-    "preserved_is_pixel_identical_to_input": true
+    "preserved_is_pixel_identical_to_input": true,
+    "policy_fail_closed_never_limited_unverified": true,
+    "policy_fail_closed_changes_only_a_verified_identity": true,
+    "policy_unverified_identity_applied_nothing": true,
+    "policy_failed_closed_ran_no_model": true
    },
+   "stored_original_sha256_prefix": "f9e6e8fbaae91371",
    "quality_decision": {
     "decision": "needs_review",
     "reasons": [
@@ -194,7 +199,9 @@
     "face_count": 1,
     "rejection_reason": ""
    },
-   "seconds": 0.7,
+   "output_file_sha256_prefix": "11832e4598ab7c9f",
+   "output_file_bytes_equal_stored_original": false,
+   "seconds": 0.8,
    "http": {
     "upload": 201,
     "enhance": 202,
@@ -219,8 +226,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 452230,
-     "processing_duration_ms": 256,
-     "task_id": "9c5a2e776c8d4351a83e91f3969be389",
+     "processing_duration_ms": 259,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -276,14 +283,14 @@
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/1/download/",
-     "standardized_download_url": "http://testserver/api/images/1/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/1/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:18:26.510948Z",
-     "finished_at": "2026-10-21T12:18:26.770843Z",
-     "created_at": "2026-10-21T12:18:26.501693Z"
+     "started_at": "2026-10-21T14:01:10.908018Z",
+     "finished_at": "2026-10-21T14:01:11.170658Z",
+     "created_at": "2026-10-21T14:01:10.898665Z"
     },
     "result_detail": {
      "id": 1,
@@ -306,8 +313,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 452230,
-     "processing_duration_ms": 256,
-     "task_id": "9c5a2e776c8d4351a83e91f3969be389",
+     "processing_duration_ms": 259,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -363,14 +370,14 @@
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/1/download/",
-     "standardized_download_url": "http://testserver/api/images/1/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/1/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:18:26.510948Z",
-     "finished_at": "2026-10-21T12:18:26.770843Z",
-     "created_at": "2026-10-21T12:18:26.501693Z"
+     "started_at": "2026-10-21T14:01:10.908018Z",
+     "finished_at": "2026-10-21T14:01:11.170658Z",
+     "created_at": "2026-10-21T14:01:10.898665Z"
     },
     "download": 200
    },
@@ -445,8 +452,11 @@
     "one_output_file": true,
     "output_size_matches_report": true,
     "no_debug_or_intermediate_files": true,
-    "changed_output_differs_from_input": true
+    "changed_output_differs_from_input": true,
+    "policy_fail_closed_never_limited_unverified": true,
+    "policy_fail_closed_changes_only_a_verified_identity": true
    },
+   "stored_original_sha256_prefix": "3f5fe73e8e11945f",
    "quality_decision": {
     "decision": "accepted",
     "reasons": [],
@@ -458,7 +468,9 @@
     "face_count": 1,
     "rejection_reason": ""
    },
-   "seconds": 9.1,
+   "output_file_sha256_prefix": "bbdfc722034fdec2",
+   "output_file_bytes_equal_stored_original": false,
+   "seconds": 9.9,
    "http": {
     "upload": 201,
     "enhance": 202,
@@ -489,8 +501,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 625440,
-     "processing_duration_ms": 8901,
-     "task_id": "06448b80d8de43dca0d239e15d52d3b8",
+     "processing_duration_ms": 9715,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+nafnet_sidd",
       "identity_status": "verified",
@@ -547,7 +559,7 @@
           "c1_denoising",
           "c2_denoising"
          ],
-         "seconds": 8.43,
+         "seconds": 9.13,
          "models_run": [
           "nafnet_sidd"
          ],
@@ -563,19 +575,19 @@
         "max_candidates": 8,
         "time_budget_seconds": 180.0
        },
-       "seconds": 8.82
+       "seconds": 9.64
       },
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/2/download/",
-     "standardized_download_url": "http://testserver/api/images/2/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/2/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:18:27.345814Z",
-     "finished_at": "2026-10-21T12:18:36.251124Z",
-     "created_at": "2026-10-21T12:18:27.336232Z"
+     "started_at": "2026-10-21T14:01:11.786379Z",
+     "finished_at": "2026-10-21T14:01:21.505832Z",
+     "created_at": "2026-10-21T14:01:11.776657Z"
     },
     "result_detail": {
      "id": 2,
@@ -604,8 +616,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 625440,
-     "processing_duration_ms": 8901,
-     "task_id": "06448b80d8de43dca0d239e15d52d3b8",
+     "processing_duration_ms": 9715,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+nafnet_sidd",
       "identity_status": "verified",
@@ -662,7 +674,7 @@
           "c1_denoising",
           "c2_denoising"
          ],
-         "seconds": 8.43,
+         "seconds": 9.13,
          "models_run": [
           "nafnet_sidd"
          ],
@@ -678,19 +690,19 @@
         "max_candidates": 8,
         "time_budget_seconds": 180.0
        },
-       "seconds": 8.82
+       "seconds": 9.64
       },
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/2/download/",
-     "standardized_download_url": "http://testserver/api/images/2/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/2/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:18:27.345814Z",
-     "finished_at": "2026-10-21T12:18:36.251124Z",
-     "created_at": "2026-10-21T12:18:27.336232Z"
+     "started_at": "2026-10-21T14:01:11.786379Z",
+     "finished_at": "2026-10-21T14:01:21.505832Z",
+     "created_at": "2026-10-21T14:01:11.776657Z"
     },
     "download": 200
    },
@@ -748,7 +760,7 @@
       "nafnet_sidd"
      ],
      "device": "mps",
-     "seconds": 3.578
+     "seconds": 3.077
     },
     {
      "candidate": "c2_denoising",
@@ -760,7 +772,7 @@
       "nafnet_sidd"
      ],
      "device": "mps",
-     "seconds": 6.732
+     "seconds": 2.871
     }
    ],
    "operations_skipped": [],
@@ -786,8 +798,11 @@
     "one_output_file": true,
     "output_size_matches_report": true,
     "no_debug_or_intermediate_files": true,
-    "changed_output_differs_from_input": true
+    "changed_output_differs_from_input": true,
+    "policy_fail_closed_never_limited_unverified": true,
+    "policy_fail_closed_changes_only_a_verified_identity": true
    },
+   "stored_original_sha256_prefix": "b4233e23ecf8ae7b",
    "quality_decision": {
     "decision": "accepted",
     "reasons": [],
@@ -799,7 +814,9 @@
     "face_count": 1,
     "rejection_reason": ""
    },
-   "seconds": 7.3,
+   "output_file_sha256_prefix": "22b6858201e0aa7e",
+   "output_file_bytes_equal_stored_original": false,
+   "seconds": 6.5,
    "http": {
     "upload": 201,
     "enhance": 202,
@@ -835,8 +852,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 216759,
-     "processing_duration_ms": 6515,
-     "task_id": "585d527a1a894ac1b47433bdbafcabae",
+     "processing_duration_ms": 6003,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+nafnet_gopro",
       "identity_status": "verified",
@@ -897,7 +914,7 @@
           "c1_motion_deblurring",
           "c2_motion_deblurring"
          ],
-         "seconds": 5.86,
+         "seconds": 5.58,
          "models_run": [
           "nafnet_gopro"
          ],
@@ -914,19 +931,19 @@
         "max_candidates": 8,
         "time_budget_seconds": 180.0
        },
-       "seconds": 6.4
+       "seconds": 5.9
       },
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/3/download/",
-     "standardized_download_url": "http://testserver/api/images/3/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/3/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:18:50.909836Z",
-     "finished_at": "2026-10-21T12:18:57.430181Z",
-     "created_at": "2026-10-21T12:18:50.898626Z"
+     "started_at": "2026-10-21T14:01:28.708515Z",
+     "finished_at": "2026-10-21T14:01:34.715374Z",
+     "created_at": "2026-10-21T14:01:28.699208Z"
     },
     "result_detail": {
      "id": 3,
@@ -960,8 +977,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 216759,
-     "processing_duration_ms": 6515,
-     "task_id": "585d527a1a894ac1b47433bdbafcabae",
+     "processing_duration_ms": 6003,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+nafnet_gopro",
       "identity_status": "verified",
@@ -1022,7 +1039,7 @@
           "c1_motion_deblurring",
           "c2_motion_deblurring"
          ],
-         "seconds": 5.86,
+         "seconds": 5.58,
          "models_run": [
           "nafnet_gopro"
          ],
@@ -1039,19 +1056,19 @@
         "max_candidates": 8,
         "time_budget_seconds": 180.0
        },
-       "seconds": 6.4
+       "seconds": 5.9
       },
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/3/download/",
-     "standardized_download_url": "http://testserver/api/images/3/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/3/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:18:50.909836Z",
-     "finished_at": "2026-10-21T12:18:57.430181Z",
-     "created_at": "2026-10-21T12:18:50.898626Z"
+     "started_at": "2026-10-21T14:01:28.708515Z",
+     "finished_at": "2026-10-21T14:01:34.715374Z",
+     "created_at": "2026-10-21T14:01:28.699208Z"
     },
     "download": 200
    },
@@ -1109,7 +1126,7 @@
       "nafnet_gopro"
      ],
      "device": "mps",
-     "seconds": 2.455
+     "seconds": 2.336
     },
     {
      "candidate": "c2_motion_deblurring",
@@ -1121,7 +1138,7 @@
       "nafnet_gopro"
      ],
      "device": "mps",
-     "seconds": 2.465
+     "seconds": 2.353
     }
    ],
    "operations_skipped": [
@@ -1153,8 +1170,13 @@
     "one_output_file": true,
     "output_size_matches_report": true,
     "no_debug_or_intermediate_files": true,
-    "preserved_is_pixel_identical_to_input": true
+    "preserved_is_pixel_identical_to_input": true,
+    "policy_fail_closed_never_limited_unverified": true,
+    "policy_fail_closed_changes_only_a_verified_identity": true,
+    "policy_unverified_identity_applied_nothing": true,
+    "policy_failed_closed_ran_no_model": true
    },
+   "stored_original_sha256_prefix": "8a3b7e310d6b3b97",
    "quality_decision": {
     "decision": "needs_review",
     "reasons": [
@@ -1169,7 +1191,9 @@
     "face_count": 1,
     "rejection_reason": ""
    },
-   "seconds": 0.7,
+   "output_file_sha256_prefix": "a2d9fcd80b401659",
+   "output_file_bytes_equal_stored_original": false,
+   "seconds": 0.6,
    "http": {
     "upload": 201,
     "enhance": 202,
@@ -1194,8 +1218,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 124866,
-     "processing_duration_ms": 138,
-     "task_id": "f1e591533d06453699c30fd22846448d",
+     "processing_duration_ms": 136,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -1251,14 +1275,14 @@
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/4/download/",
-     "standardized_download_url": "http://testserver/api/images/4/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/4/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:19:04.009030Z",
-     "finished_at": "2026-10-21T12:19:04.151193Z",
-     "created_at": "2026-10-21T12:19:03.999866Z"
+     "started_at": "2026-10-21T14:01:40.503568Z",
+     "finished_at": "2026-10-21T14:01:40.643143Z",
+     "created_at": "2026-10-21T14:01:40.494359Z"
     },
     "result_detail": {
      "id": 4,
@@ -1281,8 +1305,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 124866,
-     "processing_duration_ms": 138,
-     "task_id": "f1e591533d06453699c30fd22846448d",
+     "processing_duration_ms": 136,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -1338,14 +1362,14 @@
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/4/download/",
-     "standardized_download_url": "http://testserver/api/images/4/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/4/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:19:04.009030Z",
-     "finished_at": "2026-10-21T12:19:04.151193Z",
-     "created_at": "2026-10-21T12:19:03.999866Z"
+     "started_at": "2026-10-21T14:01:40.503568Z",
+     "finished_at": "2026-10-21T14:01:40.643143Z",
+     "created_at": "2026-10-21T14:01:40.494359Z"
     },
     "download": 200
    },
@@ -1420,8 +1444,11 @@
     "one_output_file": true,
     "output_size_matches_report": true,
     "no_debug_or_intermediate_files": true,
-    "preserved_is_pixel_identical_to_input": true
+    "preserved_is_pixel_identical_to_input": true,
+    "policy_fail_closed_never_limited_unverified": true,
+    "policy_fail_closed_changes_only_a_verified_identity": true
    },
+   "stored_original_sha256_prefix": "581c275a977e737e",
    "quality_decision": {
     "decision": "accepted",
     "reasons": [],
@@ -1433,7 +1460,9 @@
     "face_count": 1,
     "rejection_reason": ""
    },
-   "seconds": 0.6,
+   "output_file_sha256_prefix": "15e6c5c352b1a7da",
+   "output_file_bytes_equal_stored_original": false,
+   "seconds": 0.5,
    "http": {
     "upload": 201,
     "enhance": 202,
@@ -1458,8 +1487,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 298880,
-     "processing_duration_ms": 269,
-     "task_id": "d4c239afee984de4bdbe6463d44a68d8",
+     "processing_duration_ms": 206,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "verified",
@@ -1500,19 +1529,19 @@
         "max_candidates": 8,
         "time_budget_seconds": 180.0
        },
-       "seconds": 0.15
+       "seconds": 0.11
       },
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/5/download/",
-     "standardized_download_url": "http://testserver/api/images/5/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/5/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:19:04.865952Z",
-     "finished_at": "2026-10-21T12:19:05.138630Z",
-     "created_at": "2026-10-21T12:19:04.855426Z"
+     "started_at": "2026-10-21T14:01:41.255670Z",
+     "finished_at": "2026-10-21T14:01:41.466333Z",
+     "created_at": "2026-10-21T14:01:41.245617Z"
     },
     "result_detail": {
      "id": 5,
@@ -1535,8 +1564,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 298880,
-     "processing_duration_ms": 269,
-     "task_id": "d4c239afee984de4bdbe6463d44a68d8",
+     "processing_duration_ms": 206,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "verified",
@@ -1577,19 +1606,19 @@
         "max_candidates": 8,
         "time_budget_seconds": 180.0
        },
-       "seconds": 0.15
+       "seconds": 0.11
       },
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/5/download/",
-     "standardized_download_url": "http://testserver/api/images/5/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/5/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:19:04.865952Z",
-     "finished_at": "2026-10-21T12:19:05.138630Z",
-     "created_at": "2026-10-21T12:19:04.855426Z"
+     "started_at": "2026-10-21T14:01:41.255670Z",
+     "finished_at": "2026-10-21T14:01:41.466333Z",
+     "created_at": "2026-10-21T14:01:41.245617Z"
     },
     "download": 200
    },
@@ -1658,8 +1687,11 @@
     "one_output_file": true,
     "output_size_matches_report": true,
     "no_debug_or_intermediate_files": true,
-    "preserved_is_pixel_identical_to_input": true
+    "preserved_is_pixel_identical_to_input": true,
+    "policy_fail_closed_never_limited_unverified": true,
+    "policy_fail_closed_changes_only_a_verified_identity": true
    },
+   "stored_original_sha256_prefix": "abff2e03ffc773a4",
    "quality_decision": {
     "decision": "needs_review",
     "reasons": [
@@ -1673,7 +1705,9 @@
     "face_count": 1,
     "rejection_reason": "face_off_center"
    },
-   "seconds": 5.9,
+   "output_file_sha256_prefix": "d1885e0e72a4e629",
+   "output_file_bytes_equal_stored_original": false,
+   "seconds": 5.5,
    "http": {
     "upload": 201,
     "enhance": 202,
@@ -1707,8 +1741,8 @@
      "output_width": 482,
      "output_height": 640,
      "output_file_size": 204928,
-     "processing_duration_ms": 5394,
-     "task_id": "c7dcfdeaea1a4aa585e0a47ca78755d4",
+     "processing_duration_ms": 5040,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "verified",
@@ -1769,7 +1803,7 @@
           "c1_motion_deblurring",
           "c2_motion_deblurring"
          ],
-         "seconds": 4.99,
+         "seconds": 4.69,
          "models_run": [
           "nafnet_gopro"
          ],
@@ -1786,19 +1820,19 @@
         "max_candidates": 8,
         "time_budget_seconds": 180.0
        },
-       "seconds": 5.27
+       "seconds": 4.94
       },
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/6/download/",
-     "standardized_download_url": "http://testserver/api/images/6/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/6/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:19:05.983808Z",
-     "finished_at": "2026-10-21T12:19:11.381790Z",
-     "created_at": "2026-10-21T12:19:05.973293Z"
+     "started_at": "2026-10-21T14:01:42.272051Z",
+     "finished_at": "2026-10-21T14:01:47.316039Z",
+     "created_at": "2026-10-21T14:01:42.262960Z"
     },
     "result_detail": {
      "id": 6,
@@ -1830,8 +1864,8 @@
      "output_width": 482,
      "output_height": 640,
      "output_file_size": 204928,
-     "processing_duration_ms": 5394,
-     "task_id": "c7dcfdeaea1a4aa585e0a47ca78755d4",
+     "processing_duration_ms": 5040,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "verified",
@@ -1892,7 +1926,7 @@
           "c1_motion_deblurring",
           "c2_motion_deblurring"
          ],
-         "seconds": 4.99,
+         "seconds": 4.69,
          "models_run": [
           "nafnet_gopro"
          ],
@@ -1909,19 +1943,19 @@
         "max_candidates": 8,
         "time_budget_seconds": 180.0
        },
-       "seconds": 5.27
+       "seconds": 4.94
       },
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/6/download/",
-     "standardized_download_url": "http://testserver/api/images/6/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/6/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:19:05.983808Z",
-     "finished_at": "2026-10-21T12:19:11.381790Z",
-     "created_at": "2026-10-21T12:19:05.973293Z"
+     "started_at": "2026-10-21T14:01:42.272051Z",
+     "finished_at": "2026-10-21T14:01:47.316039Z",
+     "created_at": "2026-10-21T14:01:42.262960Z"
     },
     "download": 200
    },
@@ -1983,7 +2017,7 @@
       "nafnet_gopro"
      ],
      "device": "mps",
-     "seconds": 2.355
+     "seconds": 2.314
     },
     {
      "candidate": "c2_motion_deblurring",
@@ -1997,7 +2031,7 @@
       "nafnet_gopro"
      ],
      "device": "mps",
-     "seconds": 2.349
+     "seconds": 2.334
     }
    ],
    "operations_skipped": [

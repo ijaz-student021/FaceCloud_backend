@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "label": "4-review-no-consent",
- "started_at": "2026-10-21T12:17:11+00:00",
+ "started_at": "2026-10-21T13:59:55+00:00",
  "command": [
   "verify_adaptive_api.py",
   "--images",
@@ -16,9 +16,9 @@
   "review"
  ],
  "git": {
-  "commit": "8a700ad5852fd9ad97644d54bba1b49e1e49be58",
+  "commit": "b3aad1421777e4cfaa2e7ddd45351a9fea74f25b",
   "branch": "fix/adaptive-verification-identity-honesty",
-  "dirty": true
+  "dirty": false
  },
  "environment": {
   "python": "3.12.13",
@@ -178,6 +178,7 @@
     "no_debug_or_intermediate_files": true,
     "changed_output_differs_from_input": true
    },
+   "stored_original_sha256_prefix": "f9e6e8fbaae91371",
    "quality_decision": {
     "decision": "needs_review",
     "reasons": [
@@ -192,7 +193,9 @@
     "face_count": 1,
     "rejection_reason": ""
    },
-   "seconds": 5.3,
+   "output_file_sha256_prefix": "0ac9719ff56333ef",
+   "output_file_bytes_equal_stored_original": false,
+   "seconds": 4.7,
    "http": {
     "upload": 201,
     "enhance": 202,
@@ -228,8 +231,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 331898,
-     "processing_duration_ms": 4771,
-     "task_id": "d01ca2b0b54e46c2a30b0c30fe5e5f92",
+     "processing_duration_ms": 4226,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+retinexformer",
       "identity_status": "unavailable",
@@ -293,7 +296,7 @@
           "c1_low_light_enhancement",
           "c2_low_light_enhancement"
          ],
-         "seconds": 4.07,
+         "seconds": 3.72,
          "models_run": [
           "retinexformer"
          ],
@@ -307,19 +310,19 @@
         "max_candidates": 8,
         "time_budget_seconds": 180.0
        },
-       "seconds": 4.61
+       "seconds": 4.09
       },
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/1/download/",
-     "standardized_download_url": "http://testserver/api/images/1/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/1/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:17:16.978507Z",
-     "finished_at": "2026-10-21T12:17:21.757494Z",
-     "created_at": "2026-10-21T12:17:16.966570Z"
+     "started_at": "2026-10-21T14:00:01.274774Z",
+     "finished_at": "2026-10-21T14:00:05.504480Z",
+     "created_at": "2026-10-21T14:00:01.264857Z"
     },
     "result_detail": {
      "id": 1,
@@ -353,8 +356,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 331898,
-     "processing_duration_ms": 4771,
-     "task_id": "d01ca2b0b54e46c2a30b0c30fe5e5f92",
+     "processing_duration_ms": 4226,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+retinexformer",
       "identity_status": "unavailable",
@@ -418,7 +421,7 @@
           "c1_low_light_enhancement",
           "c2_low_light_enhancement"
          ],
-         "seconds": 4.07,
+         "seconds": 3.72,
          "models_run": [
           "retinexformer"
          ],
@@ -432,19 +435,19 @@
         "max_candidates": 8,
         "time_budget_seconds": 180.0
        },
-       "seconds": 4.61
+       "seconds": 4.09
       },
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/1/download/",
-     "standardized_download_url": "http://testserver/api/images/1/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/1/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:17:16.978507Z",
-     "finished_at": "2026-10-21T12:17:21.757494Z",
-     "created_at": "2026-10-21T12:17:16.966570Z"
+     "started_at": "2026-10-21T14:00:01.274774Z",
+     "finished_at": "2026-10-21T14:00:05.504480Z",
+     "created_at": "2026-10-21T14:00:01.264857Z"
     },
     "download": 200
    },
@@ -502,7 +505,7 @@
       "retinexformer"
      ],
      "device": "mps",
-     "seconds": 0.832
+     "seconds": 0.859
     },
     {
      "candidate": "c2_low_light_enhancement",
@@ -514,7 +517,7 @@
       "retinexformer"
      ],
      "device": "mps",
-     "seconds": 0.798
+     "seconds": 0.884
     }
    ],
    "operations_skipped": [
@@ -545,6 +548,7 @@
     "no_debug_or_intermediate_files": true,
     "changed_output_differs_from_input": true
    },
+   "stored_original_sha256_prefix": "3f5fe73e8e11945f",
    "quality_decision": {
     "decision": "accepted",
     "reasons": [],
@@ -556,7 +560,9 @@
     "face_count": 1,
     "rejection_reason": ""
    },
-   "seconds": 7.7,
+   "output_file_sha256_prefix": "bbdfc722034fdec2",
+   "output_file_bytes_equal_stored_original": false,
+   "seconds": 7.8,
    "http": {
     "upload": 201,
     "enhance": 202,
@@ -587,8 +593,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 625440,
-     "processing_duration_ms": 7499,
-     "task_id": "84225a4a5bf84940bb6b1f098c86158e",
+     "processing_duration_ms": 7561,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+nafnet_sidd",
       "identity_status": "unavailable",
@@ -650,7 +656,7 @@
           "c1_denoising",
           "c2_denoising"
          ],
-         "seconds": 7.16,
+         "seconds": 7.21,
          "models_run": [
           "nafnet_sidd"
          ],
@@ -666,19 +672,19 @@
         "max_candidates": 8,
         "time_budget_seconds": 180.0
        },
-       "seconds": 7.42
+       "seconds": 7.48
       },
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/2/download/",
-     "standardized_download_url": "http://testserver/api/images/2/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/2/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:17:24.282542Z",
-     "finished_at": "2026-10-21T12:17:31.785400Z",
-     "created_at": "2026-10-21T12:17:24.272624Z"
+     "started_at": "2026-10-21T14:00:08.115949Z",
+     "finished_at": "2026-10-21T14:00:15.681163Z",
+     "created_at": "2026-10-21T14:00:08.106770Z"
     },
     "result_detail": {
      "id": 2,
@@ -707,8 +713,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 625440,
-     "processing_duration_ms": 7499,
-     "task_id": "84225a4a5bf84940bb6b1f098c86158e",
+     "processing_duration_ms": 7561,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+nafnet_sidd",
       "identity_status": "unavailable",
@@ -770,7 +776,7 @@
           "c1_denoising",
           "c2_denoising"
          ],
-         "seconds": 7.16,
+         "seconds": 7.21,
          "models_run": [
           "nafnet_sidd"
          ],
@@ -786,19 +792,19 @@
         "max_candidates": 8,
         "time_budget_seconds": 180.0
        },
-       "seconds": 7.42
+       "seconds": 7.48
       },
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/2/download/",
-     "standardized_download_url": "http://testserver/api/images/2/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/2/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:17:24.282542Z",
-     "finished_at": "2026-10-21T12:17:31.785400Z",
-     "created_at": "2026-10-21T12:17:24.272624Z"
+     "started_at": "2026-10-21T14:00:08.115949Z",
+     "finished_at": "2026-10-21T14:00:15.681163Z",
+     "created_at": "2026-10-21T14:00:08.106770Z"
     },
     "download": 200
    },
@@ -856,7 +862,7 @@
       "nafnet_sidd"
      ],
      "device": "mps",
-     "seconds": 2.869
+     "seconds": 2.948
     },
     {
      "candidate": "c2_denoising",
@@ -868,7 +874,7 @@
       "nafnet_sidd"
      ],
      "device": "mps",
-     "seconds": 2.901
+     "seconds": 3.005
     }
    ],
    "operations_skipped": [
@@ -901,6 +907,7 @@
     "no_debug_or_intermediate_files": true,
     "changed_output_differs_from_input": true
    },
+   "stored_original_sha256_prefix": "b4233e23ecf8ae7b",
    "quality_decision": {
     "decision": "accepted",
     "reasons": [],
@@ -912,7 +919,9 @@
     "face_count": 1,
     "rejection_reason": ""
    },
-   "seconds": 6.5,
+   "output_file_sha256_prefix": "22b6858201e0aa7e",
+   "output_file_bytes_equal_stored_original": false,
+   "seconds": 6.7,
    "http": {
     "upload": 201,
     "enhance": 202,
@@ -948,8 +957,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 216759,
-     "processing_duration_ms": 6035,
-     "task_id": "7324069b2e90483ca9810dc807a9bf11",
+     "processing_duration_ms": 6213,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+nafnet_gopro",
       "identity_status": "unavailable",
@@ -1010,7 +1019,7 @@
           "c1_motion_deblurring",
           "c2_motion_deblurring"
          ],
-         "seconds": 5.7,
+         "seconds": 5.89,
          "models_run": [
           "nafnet_gopro"
          ],
@@ -1027,19 +1036,19 @@
         "max_candidates": 8,
         "time_budget_seconds": 180.0
        },
-       "seconds": 5.93
+       "seconds": 6.1
       },
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/3/download/",
-     "standardized_download_url": "http://testserver/api/images/3/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/3/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:17:38.680617Z",
-     "finished_at": "2026-10-21T12:17:44.719985Z",
-     "created_at": "2026-10-21T12:17:38.671239Z"
+     "started_at": "2026-10-21T14:00:22.710673Z",
+     "finished_at": "2026-10-21T14:00:28.928562Z",
+     "created_at": "2026-10-21T14:00:22.701476Z"
     },
     "result_detail": {
      "id": 3,
@@ -1073,8 +1082,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 216759,
-     "processing_duration_ms": 6035,
-     "task_id": "7324069b2e90483ca9810dc807a9bf11",
+     "processing_duration_ms": 6213,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+nafnet_gopro",
       "identity_status": "unavailable",
@@ -1135,7 +1144,7 @@
           "c1_motion_deblurring",
           "c2_motion_deblurring"
          ],
-         "seconds": 5.7,
+         "seconds": 5.89,
          "models_run": [
           "nafnet_gopro"
          ],
@@ -1152,19 +1161,19 @@
         "max_candidates": 8,
         "time_budget_seconds": 180.0
        },
-       "seconds": 5.93
+       "seconds": 6.1
       },
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/3/download/",
-     "standardized_download_url": "http://testserver/api/images/3/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/3/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:17:38.680617Z",
-     "finished_at": "2026-10-21T12:17:44.719985Z",
-     "created_at": "2026-10-21T12:17:38.671239Z"
+     "started_at": "2026-10-21T14:00:22.710673Z",
+     "finished_at": "2026-10-21T14:00:28.928562Z",
+     "created_at": "2026-10-21T14:00:22.701476Z"
     },
     "download": 200
    },
@@ -1222,7 +1231,7 @@
       "nafnet_gopro"
      ],
      "device": "mps",
-     "seconds": 2.326
+     "seconds": 2.315
     },
     {
      "candidate": "c2_motion_deblurring",
@@ -1234,7 +1243,7 @@
       "nafnet_gopro"
      ],
      "device": "mps",
-     "seconds": 2.352
+     "seconds": 2.576
     }
    ],
    "operations_skipped": [
@@ -1268,6 +1277,7 @@
     "no_debug_or_intermediate_files": true,
     "changed_output_differs_from_input": true
    },
+   "stored_original_sha256_prefix": "8a3b7e310d6b3b97",
    "quality_decision": {
     "decision": "needs_review",
     "reasons": [
@@ -1282,6 +1292,8 @@
     "face_count": 1,
     "rejection_reason": ""
    },
+   "output_file_sha256_prefix": "b1b8b7a7984fe8d9",
+   "output_file_bytes_equal_stored_original": false,
    "seconds": 8.9,
    "http": {
     "upload": 201,
@@ -1323,8 +1335,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 200852,
-     "processing_duration_ms": 8446,
-     "task_id": "57417f8f11a841c0aec2de94643ceb6b",
+     "processing_duration_ms": 8425,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+retinexformer+nafnet_gopro",
       "identity_status": "unavailable",
@@ -1394,7 +1406,7 @@
           "c1_low_light_enhancement",
           "c2_low_light_enhancement"
          ],
-         "seconds": 2.08,
+         "seconds": 2.09,
          "models_run": [
           "retinexformer"
          ],
@@ -1414,7 +1426,7 @@
           "c3_motion_deblurring",
           "c4_motion_deblurring"
          ],
-         "seconds": 5.77,
+         "seconds": 5.79,
          "models_run": [
           "nafnet_gopro"
          ],
@@ -1432,19 +1444,19 @@
         "max_candidates": 8,
         "time_budget_seconds": 180.0
        },
-       "seconds": 8.32
+       "seconds": 8.31
       },
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/4/download/",
-     "standardized_download_url": "http://testserver/api/images/4/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/4/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:17:50.417484Z",
-     "finished_at": "2026-10-21T12:17:58.868453Z",
-     "created_at": "2026-10-21T12:17:50.406976Z"
+     "started_at": "2026-10-21T14:00:34.878588Z",
+     "finished_at": "2026-10-21T14:00:43.310075Z",
+     "created_at": "2026-10-21T14:00:34.865734Z"
     },
     "result_detail": {
      "id": 4,
@@ -1483,8 +1495,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 200852,
-     "processing_duration_ms": 8446,
-     "task_id": "57417f8f11a841c0aec2de94643ceb6b",
+     "processing_duration_ms": 8425,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+retinexformer+nafnet_gopro",
       "identity_status": "unavailable",
@@ -1554,7 +1566,7 @@
           "c1_low_light_enhancement",
           "c2_low_light_enhancement"
          ],
-         "seconds": 2.08,
+         "seconds": 2.09,
          "models_run": [
           "retinexformer"
          ],
@@ -1574,7 +1586,7 @@
           "c3_motion_deblurring",
           "c4_motion_deblurring"
          ],
-         "seconds": 5.77,
+         "seconds": 5.79,
          "models_run": [
           "nafnet_gopro"
          ],
@@ -1592,19 +1604,19 @@
         "max_candidates": 8,
         "time_budget_seconds": 180.0
        },
-       "seconds": 8.32
+       "seconds": 8.31
       },
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/4/download/",
-     "standardized_download_url": "http://testserver/api/images/4/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/4/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:17:50.417484Z",
-     "finished_at": "2026-10-21T12:17:58.868453Z",
-     "created_at": "2026-10-21T12:17:50.406976Z"
+     "started_at": "2026-10-21T14:00:34.878588Z",
+     "finished_at": "2026-10-21T14:00:43.310075Z",
+     "created_at": "2026-10-21T14:00:34.865734Z"
     },
     "download": 200
    },
@@ -1662,7 +1674,7 @@
       "retinexformer"
      ],
      "device": "mps",
-     "seconds": 1.288
+     "seconds": 1.164
     },
     {
      "candidate": "c2_low_light_enhancement",
@@ -1674,7 +1686,7 @@
       "retinexformer"
      ],
      "device": "mps",
-     "seconds": 0.858
+     "seconds": 0.849
     },
     {
      "candidate": "c3_motion_deblurring",
@@ -1686,7 +1698,7 @@
       "nafnet_gopro"
      ],
      "device": "mps",
-     "seconds": 3.199
+     "seconds": 3.366
     },
     {
      "candidate": "c4_motion_deblurring",
@@ -1698,7 +1710,7 @@
       "nafnet_gopro"
      ],
      "device": "mps",
-     "seconds": 2.333
+     "seconds": 2.372
     }
    ],
    "operations_skipped": [
@@ -1733,6 +1745,7 @@
     "no_debug_or_intermediate_files": true,
     "preserved_is_pixel_identical_to_input": true
    },
+   "stored_original_sha256_prefix": "581c275a977e737e",
    "quality_decision": {
     "decision": "accepted",
     "reasons": [],
@@ -1744,6 +1757,8 @@
     "face_count": 1,
     "rejection_reason": ""
    },
+   "output_file_sha256_prefix": "15e6c5c352b1a7da",
+   "output_file_bytes_equal_stored_original": false,
    "seconds": 0.5,
    "http": {
     "upload": 201,
@@ -1769,8 +1784,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 298880,
-     "processing_duration_ms": 157,
-     "task_id": "0aa6c1e7830349a48058f7860103b203",
+     "processing_duration_ms": 159,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -1821,14 +1836,14 @@
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/5/download/",
-     "standardized_download_url": "http://testserver/api/images/5/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/5/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:18:07.808185Z",
-     "finished_at": "2026-10-21T12:18:07.968893Z",
-     "created_at": "2026-10-21T12:18:07.798918Z"
+     "started_at": "2026-10-21T14:00:52.334799Z",
+     "finished_at": "2026-10-21T14:00:52.498319Z",
+     "created_at": "2026-10-21T14:00:52.325654Z"
     },
     "result_detail": {
      "id": 5,
@@ -1851,8 +1866,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 298880,
-     "processing_duration_ms": 157,
-     "task_id": "0aa6c1e7830349a48058f7860103b203",
+     "processing_duration_ms": 159,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -1903,14 +1918,14 @@
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/5/download/",
-     "standardized_download_url": "http://testserver/api/images/5/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/5/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:18:07.808185Z",
-     "finished_at": "2026-10-21T12:18:07.968893Z",
-     "created_at": "2026-10-21T12:18:07.798918Z"
+     "started_at": "2026-10-21T14:00:52.334799Z",
+     "finished_at": "2026-10-21T14:00:52.498319Z",
+     "created_at": "2026-10-21T14:00:52.325654Z"
     },
     "download": 200
    },
@@ -1986,6 +2001,7 @@
     "no_debug_or_intermediate_files": true,
     "changed_output_differs_from_input": true
    },
+   "stored_original_sha256_prefix": "abff2e03ffc773a4",
    "quality_decision": {
     "decision": "needs_review",
     "reasons": [
@@ -1999,7 +2015,9 @@
     "face_count": 1,
     "rejection_reason": "face_off_center"
    },
-   "seconds": 5.6,
+   "output_file_sha256_prefix": "03dbe072528ac246",
+   "output_file_bytes_equal_stored_original": false,
+   "seconds": 5.5,
    "http": {
     "upload": 201,
     "enhance": 202,
@@ -2035,8 +2053,8 @@
      "output_width": 482,
      "output_height": 640,
      "output_file_size": 262945,
-     "processing_duration_ms": 5141,
-     "task_id": "25439c027b5b4ccda6a18c5e4af28d9a",
+     "processing_duration_ms": 5060,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+nafnet_gopro",
       "identity_status": "unavailable",
@@ -2099,7 +2117,7 @@
           "c1_motion_deblurring",
           "c2_motion_deblurring"
          ],
-         "seconds": 4.77,
+         "seconds": 4.73,
          "models_run": [
           "nafnet_gopro"
          ],
@@ -2116,19 +2134,19 @@
         "max_candidates": 8,
         "time_budget_seconds": 180.0
        },
-       "seconds": 5.01
+       "seconds": 4.94
       },
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/6/download/",
-     "standardized_download_url": "http://testserver/api/images/6/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/6/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:18:08.818548Z",
-     "finished_at": "2026-10-21T12:18:13.963824Z",
-     "created_at": "2026-10-21T12:18:08.809226Z"
+     "started_at": "2026-10-21T14:00:53.303057Z",
+     "finished_at": "2026-10-21T14:00:58.367117Z",
+     "created_at": "2026-10-21T14:00:53.293933Z"
     },
     "result_detail": {
      "id": 6,
@@ -2162,8 +2180,8 @@
      "output_width": 482,
      "output_height": 640,
      "output_file_size": 262945,
-     "processing_duration_ms": 5141,
-     "task_id": "25439c027b5b4ccda6a18c5e4af28d9a",
+     "processing_duration_ms": 5060,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+nafnet_gopro",
       "identity_status": "unavailable",
@@ -2226,7 +2244,7 @@
           "c1_motion_deblurring",
           "c2_motion_deblurring"
          ],
-         "seconds": 4.77,
+         "seconds": 4.73,
          "models_run": [
           "nafnet_gopro"
          ],
@@ -2243,19 +2261,19 @@
         "max_candidates": 8,
         "time_budget_seconds": 180.0
        },
-       "seconds": 5.01
+       "seconds": 4.94
       },
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/6/download/",
-     "standardized_download_url": "http://testserver/api/images/6/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/6/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:18:08.818548Z",
-     "finished_at": "2026-10-21T12:18:13.963824Z",
-     "created_at": "2026-10-21T12:18:08.809226Z"
+     "started_at": "2026-10-21T14:00:53.303057Z",
+     "finished_at": "2026-10-21T14:00:58.367117Z",
+     "created_at": "2026-10-21T14:00:53.293933Z"
     },
     "download": 200
    },
@@ -2316,7 +2334,7 @@
       "nafnet_gopro"
      ],
      "device": "mps",
-     "seconds": 2.349
+     "seconds": 2.394
     },
     {
      "candidate": "c2_motion_deblurring",
@@ -2328,7 +2346,7 @@
       "nafnet_gopro"
      ],
      "device": "mps",
-     "seconds": 2.4
+     "seconds": 2.442
     }
    ],
    "operations_skipped": [

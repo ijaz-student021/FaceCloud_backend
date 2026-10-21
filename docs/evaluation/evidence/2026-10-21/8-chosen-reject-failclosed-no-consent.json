@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "label": "8-chosen-reject-failclosed-no-consent",
- "started_at": "2026-10-21T13:17:05+00:00",
+ "started_at": "2026-10-21T14:02:52+00:00",
  "command": [
   "verify_adaptive_api.py",
   "--images",
@@ -18,7 +18,7 @@
   "fail_closed"
  ],
  "git": {
-  "commit": "0f3ebed11eab625589e5499c9c4071a75e94f2a2",
+  "commit": "b3aad1421777e4cfaa2e7ddd45351a9fea74f25b",
   "branch": "fix/adaptive-verification-identity-honesty",
   "dirty": false
  },
@@ -195,7 +195,7 @@
     "face_count": 1,
     "rejection_reason": ""
    },
-   "seconds": 0.5,
+   "seconds": 0.4,
    "http": {
     "upload": 201,
     "enhance": 400,
@@ -283,7 +283,7 @@
      "output_height": 640,
      "output_file_size": 754719,
      "processing_duration_ms": 204,
-     "task_id": "88906ca196604ff58198d75865a45fa4",
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -336,19 +336,19 @@
         "max_candidates": 8,
         "time_budget_seconds": 180.0
        },
-       "seconds": 0.16
+       "seconds": 0.15
       },
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/2/download/",
-     "standardized_download_url": "http://testserver/api/images/2/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/1/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T13:17:10.533508Z",
-     "finished_at": "2026-10-21T13:17:10.741717Z",
-     "created_at": "2026-10-21T13:17:10.524296Z"
+     "started_at": "2026-10-21T14:02:58.032638Z",
+     "finished_at": "2026-10-21T14:02:58.243263Z",
+     "created_at": "2026-10-21T14:02:58.023256Z"
     },
     "result_detail": {
      "id": 1,
@@ -372,7 +372,7 @@
      "output_height": 640,
      "output_file_size": 754719,
      "processing_duration_ms": 204,
-     "task_id": "88906ca196604ff58198d75865a45fa4",
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -425,19 +425,19 @@
         "max_candidates": 8,
         "time_budget_seconds": 180.0
        },
-       "seconds": 0.16
+       "seconds": 0.15
       },
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/2/download/",
-     "standardized_download_url": "http://testserver/api/images/2/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/1/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T13:17:10.533508Z",
-     "finished_at": "2026-10-21T13:17:10.741717Z",
-     "created_at": "2026-10-21T13:17:10.524296Z"
+     "started_at": "2026-10-21T14:02:58.032638Z",
+     "finished_at": "2026-10-21T14:02:58.243263Z",
+     "created_at": "2026-10-21T14:02:58.023256Z"
     },
     "download": 200
    },
@@ -572,8 +572,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 178700,
-     "processing_duration_ms": 154,
-     "task_id": "309d2f01cf9d4118b8cd2011e31ad10a",
+     "processing_duration_ms": 157,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -631,14 +631,14 @@
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/3/download/",
-     "standardized_download_url": "http://testserver/api/images/3/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/2/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T13:17:11.531722Z",
-     "finished_at": "2026-10-21T13:17:11.689973Z",
-     "created_at": "2026-10-21T13:17:11.522703Z"
+     "started_at": "2026-10-21T14:02:59.027650Z",
+     "finished_at": "2026-10-21T14:02:59.188087Z",
+     "created_at": "2026-10-21T14:02:59.018384Z"
     },
     "result_detail": {
      "id": 2,
@@ -670,8 +670,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 178700,
-     "processing_duration_ms": 154,
-     "task_id": "309d2f01cf9d4118b8cd2011e31ad10a",
+     "processing_duration_ms": 157,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -729,14 +729,14 @@
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/3/download/",
-     "standardized_download_url": "http://testserver/api/images/3/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/2/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T13:17:11.531722Z",
-     "finished_at": "2026-10-21T13:17:11.689973Z",
-     "created_at": "2026-10-21T13:17:11.522703Z"
+     "started_at": "2026-10-21T14:02:59.027650Z",
+     "finished_at": "2026-10-21T14:02:59.188087Z",
+     "created_at": "2026-10-21T14:02:59.018384Z"
     },
     "download": 200
    },
@@ -918,8 +918,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 298880,
-     "processing_duration_ms": 153,
-     "task_id": "025b9b913ecf4f6ba2c47b41b565ad6c",
+     "processing_duration_ms": 159,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -970,14 +970,14 @@
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/5/download/",
-     "standardized_download_url": "http://testserver/api/images/5/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/3/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T13:17:12.681773Z",
-     "finished_at": "2026-10-21T13:17:12.838742Z",
-     "created_at": "2026-10-21T13:17:12.672483Z"
+     "started_at": "2026-10-21T14:03:00.182867Z",
+     "finished_at": "2026-10-21T14:03:00.346003Z",
+     "created_at": "2026-10-21T14:03:00.173595Z"
     },
     "result_detail": {
      "id": 3,
@@ -1000,8 +1000,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 298880,
-     "processing_duration_ms": 153,
-     "task_id": "025b9b913ecf4f6ba2c47b41b565ad6c",
+     "processing_duration_ms": 159,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -1052,14 +1052,14 @@
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/5/download/",
-     "standardized_download_url": "http://testserver/api/images/5/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/3/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T13:17:12.681773Z",
-     "finished_at": "2026-10-21T13:17:12.838742Z",
-     "created_at": "2026-10-21T13:17:12.672483Z"
+     "started_at": "2026-10-21T14:03:00.182867Z",
+     "finished_at": "2026-10-21T14:03:00.346003Z",
+     "created_at": "2026-10-21T14:03:00.173595Z"
     },
     "download": 200
    },
@@ -1191,8 +1191,8 @@
      "output_width": 482,
      "output_height": 640,
      "output_file_size": 204928,
-     "processing_duration_ms": 164,
-     "task_id": "72e95d6f3ffc4906a8468246a12a2657",
+     "processing_duration_ms": 158,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -1251,14 +1251,14 @@
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/6/download/",
-     "standardized_download_url": "http://testserver/api/images/6/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/4/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T13:17:13.601906Z",
-     "finished_at": "2026-10-21T13:17:13.770083Z",
-     "created_at": "2026-10-21T13:17:13.592870Z"
+     "started_at": "2026-10-21T14:03:01.189485Z",
+     "finished_at": "2026-10-21T14:03:01.351393Z",
+     "created_at": "2026-10-21T14:03:01.180261Z"
     },
     "result_detail": {
      "id": 4,
@@ -1290,8 +1290,8 @@
      "output_width": 482,
      "output_height": 640,
      "output_file_size": 204928,
-     "processing_duration_ms": 164,
-     "task_id": "72e95d6f3ffc4906a8468246a12a2657",
+     "processing_duration_ms": 158,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -1350,14 +1350,14 @@
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/6/download/",
-     "standardized_download_url": "http://testserver/api/images/6/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/4/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T13:17:13.601906Z",
-     "finished_at": "2026-10-21T13:17:13.770083Z",
-     "created_at": "2026-10-21T13:17:13.592870Z"
+     "started_at": "2026-10-21T14:03:01.189485Z",
+     "finished_at": "2026-10-21T14:03:01.351393Z",
+     "created_at": "2026-10-21T14:03:01.180261Z"
     },
     "download": 200
    },

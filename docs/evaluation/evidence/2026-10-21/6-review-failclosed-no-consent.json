@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "label": "6-review-failclosed-no-consent",
- "started_at": "2026-10-21T12:19:19+00:00",
+ "started_at": "2026-10-21T14:01:54+00:00",
  "command": [
   "verify_adaptive_api.py",
   "--images",
@@ -18,9 +18,9 @@
   "fail_closed"
  ],
  "git": {
-  "commit": "8a700ad5852fd9ad97644d54bba1b49e1e49be58",
+  "commit": "b3aad1421777e4cfaa2e7ddd45351a9fea74f25b",
   "branch": "fix/adaptive-verification-identity-honesty",
-  "dirty": true
+  "dirty": false
  },
  "environment": {
   "python": "3.12.13",
@@ -178,8 +178,14 @@
     "one_output_file": true,
     "output_size_matches_report": true,
     "no_debug_or_intermediate_files": true,
-    "preserved_is_pixel_identical_to_input": true
+    "preserved_is_pixel_identical_to_input": true,
+    "policy_fail_closed_never_limited_unverified": true,
+    "policy_fail_closed_changes_only_a_verified_identity": true,
+    "policy_unverified_identity_applied_nothing": true,
+    "policy_failed_closed_ran_no_model": true,
+    "policy_no_consent_means_no_change": true
    },
+   "stored_original_sha256_prefix": "f9e6e8fbaae91371",
    "quality_decision": {
     "decision": "needs_review",
     "reasons": [
@@ -194,6 +200,8 @@
     "face_count": 1,
     "rejection_reason": ""
    },
+   "output_file_sha256_prefix": "11832e4598ab7c9f",
+   "output_file_bytes_equal_stored_original": false,
    "seconds": 0.7,
    "http": {
     "upload": 201,
@@ -224,8 +232,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 452230,
-     "processing_duration_ms": 253,
-     "task_id": "3729a87b98c54218a365419e43757659",
+     "processing_duration_ms": 241,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -279,19 +287,19 @@
         "max_candidates": 8,
         "time_budget_seconds": 180.0
        },
-       "seconds": 0.16
+       "seconds": 0.15
       },
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/1/download/",
-     "standardized_download_url": "http://testserver/api/images/1/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/1/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:19:24.460625Z",
-     "finished_at": "2026-10-21T12:19:24.717959Z",
-     "created_at": "2026-10-21T12:19:24.451313Z"
+     "started_at": "2026-10-21T14:01:59.499075Z",
+     "finished_at": "2026-10-21T14:01:59.743978Z",
+     "created_at": "2026-10-21T14:01:59.489865Z"
     },
     "result_detail": {
      "id": 1,
@@ -319,8 +327,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 452230,
-     "processing_duration_ms": 253,
-     "task_id": "3729a87b98c54218a365419e43757659",
+     "processing_duration_ms": 241,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -374,19 +382,19 @@
         "max_candidates": 8,
         "time_budget_seconds": 180.0
        },
-       "seconds": 0.16
+       "seconds": 0.15
       },
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/1/download/",
-     "standardized_download_url": "http://testserver/api/images/1/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/1/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:19:24.460625Z",
-     "finished_at": "2026-10-21T12:19:24.717959Z",
-     "created_at": "2026-10-21T12:19:24.451313Z"
+     "started_at": "2026-10-21T14:01:59.499075Z",
+     "finished_at": "2026-10-21T14:01:59.743978Z",
+     "created_at": "2026-10-21T14:01:59.489865Z"
     },
     "download": 200
    },
@@ -465,8 +473,14 @@
     "one_output_file": true,
     "output_size_matches_report": true,
     "no_debug_or_intermediate_files": true,
-    "preserved_is_pixel_identical_to_input": true
+    "preserved_is_pixel_identical_to_input": true,
+    "policy_fail_closed_never_limited_unverified": true,
+    "policy_fail_closed_changes_only_a_verified_identity": true,
+    "policy_unverified_identity_applied_nothing": true,
+    "policy_failed_closed_ran_no_model": true,
+    "policy_no_consent_means_no_change": true
    },
+   "stored_original_sha256_prefix": "3f5fe73e8e11945f",
    "quality_decision": {
     "decision": "accepted",
     "reasons": [],
@@ -478,6 +492,8 @@
     "face_count": 1,
     "rejection_reason": ""
    },
+   "output_file_sha256_prefix": "cd902e383211c4ec",
+   "output_file_bytes_equal_stored_original": false,
    "seconds": 0.3,
    "http": {
     "upload": 201,
@@ -503,8 +519,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 754719,
-     "processing_duration_ms": 112,
-     "task_id": "483cc7606f15489b98a4f9929d8b563b",
+     "processing_duration_ms": 117,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -562,14 +578,14 @@
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/2/download/",
-     "standardized_download_url": "http://testserver/api/images/2/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/2/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:19:25.278862Z",
-     "finished_at": "2026-10-21T12:19:25.395021Z",
-     "created_at": "2026-10-21T12:19:25.268273Z"
+     "started_at": "2026-10-21T14:02:00.287165Z",
+     "finished_at": "2026-10-21T14:02:00.408304Z",
+     "created_at": "2026-10-21T14:02:00.277179Z"
     },
     "result_detail": {
      "id": 2,
@@ -592,8 +608,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 754719,
-     "processing_duration_ms": 112,
-     "task_id": "483cc7606f15489b98a4f9929d8b563b",
+     "processing_duration_ms": 117,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -651,14 +667,14 @@
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/2/download/",
-     "standardized_download_url": "http://testserver/api/images/2/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/2/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:19:25.278862Z",
-     "finished_at": "2026-10-21T12:19:25.395021Z",
-     "created_at": "2026-10-21T12:19:25.268273Z"
+     "started_at": "2026-10-21T14:02:00.287165Z",
+     "finished_at": "2026-10-21T14:02:00.408304Z",
+     "created_at": "2026-10-21T14:02:00.277179Z"
     },
     "download": 200
    },
@@ -737,8 +753,14 @@
     "one_output_file": true,
     "output_size_matches_report": true,
     "no_debug_or_intermediate_files": true,
-    "preserved_is_pixel_identical_to_input": true
+    "preserved_is_pixel_identical_to_input": true,
+    "policy_fail_closed_never_limited_unverified": true,
+    "policy_fail_closed_changes_only_a_verified_identity": true,
+    "policy_unverified_identity_applied_nothing": true,
+    "policy_failed_closed_ran_no_model": true,
+    "policy_no_consent_means_no_change": true
    },
+   "stored_original_sha256_prefix": "b4233e23ecf8ae7b",
    "quality_decision": {
     "decision": "accepted",
     "reasons": [],
@@ -750,6 +772,8 @@
     "face_count": 1,
     "rejection_reason": ""
    },
+   "output_file_sha256_prefix": "4b35298543e5f692",
+   "output_file_bytes_equal_stored_original": false,
    "seconds": 0.6,
    "http": {
     "upload": 201,
@@ -784,8 +808,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 178700,
-     "processing_duration_ms": 151,
-     "task_id": "f0a69ca0030040b2992feb9b6b3c7b17",
+     "processing_duration_ms": 161,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -843,14 +867,14 @@
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/3/download/",
-     "standardized_download_url": "http://testserver/api/images/3/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/3/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:19:26.171042Z",
-     "finished_at": "2026-10-21T12:19:26.326355Z",
-     "created_at": "2026-10-21T12:19:26.161805Z"
+     "started_at": "2026-10-21T14:02:01.279278Z",
+     "finished_at": "2026-10-21T14:02:01.443911Z",
+     "created_at": "2026-10-21T14:02:01.269455Z"
     },
     "result_detail": {
      "id": 3,
@@ -882,8 +906,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 178700,
-     "processing_duration_ms": 151,
-     "task_id": "f0a69ca0030040b2992feb9b6b3c7b17",
+     "processing_duration_ms": 161,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -941,14 +965,14 @@
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/3/download/",
-     "standardized_download_url": "http://testserver/api/images/3/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/3/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:19:26.171042Z",
-     "finished_at": "2026-10-21T12:19:26.326355Z",
-     "created_at": "2026-10-21T12:19:26.161805Z"
+     "started_at": "2026-10-21T14:02:01.279278Z",
+     "finished_at": "2026-10-21T14:02:01.443911Z",
+     "created_at": "2026-10-21T14:02:01.269455Z"
     },
     "download": 200
    },
@@ -1027,8 +1051,14 @@
     "one_output_file": true,
     "output_size_matches_report": true,
     "no_debug_or_intermediate_files": true,
-    "preserved_is_pixel_identical_to_input": true
+    "preserved_is_pixel_identical_to_input": true,
+    "policy_fail_closed_never_limited_unverified": true,
+    "policy_fail_closed_changes_only_a_verified_identity": true,
+    "policy_unverified_identity_applied_nothing": true,
+    "policy_failed_closed_ran_no_model": true,
+    "policy_no_consent_means_no_change": true
    },
+   "stored_original_sha256_prefix": "8a3b7e310d6b3b97",
    "quality_decision": {
     "decision": "needs_review",
     "reasons": [
@@ -1043,6 +1073,8 @@
     "face_count": 1,
     "rejection_reason": ""
    },
+   "output_file_sha256_prefix": "a2d9fcd80b401659",
+   "output_file_bytes_equal_stored_original": false,
    "seconds": 0.6,
    "http": {
     "upload": 201,
@@ -1073,8 +1105,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 124866,
-     "processing_duration_ms": 127,
-     "task_id": "5a59c38e5bd44cbe82cbe89a8f0559b5",
+     "processing_duration_ms": 126,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -1133,14 +1165,14 @@
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/4/download/",
-     "standardized_download_url": "http://testserver/api/images/4/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/4/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:19:27.081149Z",
-     "finished_at": "2026-10-21T12:19:27.211765Z",
-     "created_at": "2026-10-21T12:19:27.071846Z"
+     "started_at": "2026-10-21T14:02:02.238104Z",
+     "finished_at": "2026-10-21T14:02:02.367717Z",
+     "created_at": "2026-10-21T14:02:02.229210Z"
     },
     "result_detail": {
      "id": 4,
@@ -1168,8 +1200,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 124866,
-     "processing_duration_ms": 127,
-     "task_id": "5a59c38e5bd44cbe82cbe89a8f0559b5",
+     "processing_duration_ms": 126,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -1228,14 +1260,14 @@
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/4/download/",
-     "standardized_download_url": "http://testserver/api/images/4/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/4/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:19:27.081149Z",
-     "finished_at": "2026-10-21T12:19:27.211765Z",
-     "created_at": "2026-10-21T12:19:27.071846Z"
+     "started_at": "2026-10-21T14:02:02.238104Z",
+     "finished_at": "2026-10-21T14:02:02.367717Z",
+     "created_at": "2026-10-21T14:02:02.229210Z"
     },
     "download": 200
    },
@@ -1314,8 +1346,13 @@
     "one_output_file": true,
     "output_size_matches_report": true,
     "no_debug_or_intermediate_files": true,
-    "preserved_is_pixel_identical_to_input": true
+    "preserved_is_pixel_identical_to_input": true,
+    "policy_fail_closed_never_limited_unverified": true,
+    "policy_fail_closed_changes_only_a_verified_identity": true,
+    "policy_unverified_identity_applied_nothing": true,
+    "policy_no_consent_means_no_change": true
    },
+   "stored_original_sha256_prefix": "581c275a977e737e",
    "quality_decision": {
     "decision": "accepted",
     "reasons": [],
@@ -1327,6 +1364,8 @@
     "face_count": 1,
     "rejection_reason": ""
    },
+   "output_file_sha256_prefix": "15e6c5c352b1a7da",
+   "output_file_bytes_equal_stored_original": false,
    "seconds": 0.4,
    "http": {
     "upload": 201,
@@ -1352,8 +1391,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 298880,
-     "processing_duration_ms": 155,
-     "task_id": "e6b8f3f2abe349aeb02d0ef34a03fdce",
+     "processing_duration_ms": 156,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -1404,14 +1443,14 @@
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/5/download/",
-     "standardized_download_url": "http://testserver/api/images/5/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/5/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:19:27.817125Z",
-     "finished_at": "2026-10-21T12:19:27.975565Z",
-     "created_at": "2026-10-21T12:19:27.808057Z"
+     "started_at": "2026-10-21T14:02:02.966418Z",
+     "finished_at": "2026-10-21T14:02:03.126664Z",
+     "created_at": "2026-10-21T14:02:02.957344Z"
     },
     "result_detail": {
      "id": 5,
@@ -1434,8 +1473,8 @@
      "output_width": 480,
      "output_height": 640,
      "output_file_size": 298880,
-     "processing_duration_ms": 155,
-     "task_id": "e6b8f3f2abe349aeb02d0ef34a03fdce",
+     "processing_duration_ms": 156,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -1486,14 +1525,14 @@
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/5/download/",
-     "standardized_download_url": "http://testserver/api/images/5/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/5/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:19:27.817125Z",
-     "finished_at": "2026-10-21T12:19:27.975565Z",
-     "created_at": "2026-10-21T12:19:27.808057Z"
+     "started_at": "2026-10-21T14:02:02.966418Z",
+     "finished_at": "2026-10-21T14:02:03.126664Z",
+     "created_at": "2026-10-21T14:02:02.957344Z"
     },
     "download": 200
    },
@@ -1567,8 +1606,14 @@
     "one_output_file": true,
     "output_size_matches_report": true,
     "no_debug_or_intermediate_files": true,
-    "preserved_is_pixel_identical_to_input": true
+    "preserved_is_pixel_identical_to_input": true,
+    "policy_fail_closed_never_limited_unverified": true,
+    "policy_fail_closed_changes_only_a_verified_identity": true,
+    "policy_unverified_identity_applied_nothing": true,
+    "policy_failed_closed_ran_no_model": true,
+    "policy_no_consent_means_no_change": true
    },
+   "stored_original_sha256_prefix": "abff2e03ffc773a4",
    "quality_decision": {
     "decision": "needs_review",
     "reasons": [
@@ -1582,6 +1627,8 @@
     "face_count": 1,
     "rejection_reason": "face_off_center"
    },
+   "output_file_sha256_prefix": "d1885e0e72a4e629",
+   "output_file_bytes_equal_stored_original": false,
    "seconds": 0.6,
    "http": {
     "upload": 201,
@@ -1616,8 +1663,8 @@
      "output_width": 482,
      "output_height": 640,
      "output_file_size": 204928,
-     "processing_duration_ms": 160,
-     "task_id": "754e53bd791440d6bf7df03abe0dda73",
+     "processing_duration_ms": 159,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -1676,14 +1723,14 @@
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/6/download/",
-     "standardized_download_url": "http://testserver/api/images/6/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/6/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:19:28.720984Z",
-     "finished_at": "2026-10-21T12:19:28.885390Z",
-     "created_at": "2026-10-21T12:19:28.711740Z"
+     "started_at": "2026-10-21T14:02:03.872429Z",
+     "finished_at": "2026-10-21T14:02:04.035280Z",
+     "created_at": "2026-10-21T14:02:03.863436Z"
     },
     "result_detail": {
      "id": 6,
@@ -1715,8 +1762,8 @@
      "output_width": 482,
      "output_height": 640,
      "output_file_size": 204928,
-     "processing_duration_ms": 160,
-     "task_id": "754e53bd791440d6bf7df03abe0dda73",
+     "processing_duration_ms": 159,
+     "task_id": "<redacted>",
      "applied_parameters": {
       "algorithm": "adaptive_v1+original_preserved",
       "identity_status": "unavailable",
@@ -1775,14 +1822,14 @@
       "trimmed": true
      },
      "failure_reason": "",
-     "original_download_url": "http://testserver/api/images/6/download/",
-     "standardized_download_url": "http://testserver/api/images/6/preprocessing/download/",
+     "original_download_url": "<redacted>",
+     "standardized_download_url": "<redacted>",
      "download_url": "<redacted>",
-     "editor_url": "http://testserver/api/enhancements/results/6/edits/",
+     "editor_url": "<redacted>",
      "current_edit": null,
-     "started_at": "2026-10-21T12:19:28.720984Z",
-     "finished_at": "2026-10-21T12:19:28.885390Z",
-     "created_at": "2026-10-21T12:19:28.711740Z"
+     "started_at": "2026-10-21T14:02:03.872429Z",
+     "finished_at": "2026-10-21T14:02:04.035280Z",
+     "created_at": "2026-10-21T14:02:03.863436Z"
     },
     "download": 200
    },

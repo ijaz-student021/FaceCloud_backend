@@ -1,8 +1,8 @@
 # 2026-10-21: adaptive API verification, very dark photographs, and identity that cannot be verified
 
 Status: branch `fix/adaptive-verification-identity-honesty`, made from `origin/main` at `8a700ad58`. **Not pushed, not merged, no default changed.**
-The evidence below was produced by this branch's code before it was committed (the JSON therefore says `"dirty": true`); the commit that carries it contains
-exactly that code. Nothing here is a claim of production readiness.
+All eight evidence files below were produced by the commit `b3aad14` of this branch from a clean working tree (`git.dirty: false`); later commits add only tests, documentation and the evidence itself.
+Nothing here is a claim of production readiness.
 
 ## 1. What this changes
 
@@ -60,8 +60,8 @@ consent/acknowledgement flow exists; switch on `review` only with a moderator wo
 
 ## 4. Evidence
 
-Six runs of the same two photographs and the same six synthetic cases, on the same machine, differing only in the flags in the heading of each column
-(`--consent`, `--quality-underexposed`, `--identity-policy`). Every case passed every check in every run (`all_checks_pass: true`, exit status 0).
+Runs 1-6: the same two photographs and the same six synthetic cases, on the same machine, differing only in the flags in the heading of each column
+(`--consent`, `--quality-underexposed`, `--identity-policy`). Runs 7 and 8, the chosen combination, are in section 8. Every case passed every check in every run (`all_checks_pass: true`, exit status 0).
 
 Classification of each case:
 
@@ -208,19 +208,19 @@ really used are recorded inside its own evidence file (`settings`), and are, fro
 
 | # | run | `QUALITY_UNDEREXPOSED_FACE_ACTION` | `ENHANCEMENT_IDENTITY_UNVERIFIED_POLICY` | `BIOMETRIC_CONSENT_REQUIRED` | consent requested / effective | code the run used |
 |---|---|---|---|---|---|---|
-| 1 | `1-default-consent` | `reject` | `limited` | `True` | granted / True | `8a700ad58` (uncommitted changes) |
-| 2 | `2-default-no-consent` | `reject` | `limited` | `True` | absent / False | `8a700ad58` (uncommitted changes) |
-| 3 | `3-review-consent` | `review` | `limited` | `True` | granted / True | `8a700ad58` (uncommitted changes) |
-| 4 | `4-review-no-consent` | `review` | `limited` | `True` | absent / False | `8a700ad58` (uncommitted changes) |
-| 5 | `5-review-failclosed-consent` | `review` | `fail_closed` | `True` | granted / True | `8a700ad58` (uncommitted changes) |
-| 6 | `6-review-failclosed-no-consent` | `review` | `fail_closed` | `True` | absent / False | `8a700ad58` (uncommitted changes) |
-| 7 | `7-chosen-reject-failclosed-consent` | `reject` | `fail_closed` | `True` | granted / True | `0f3ebed11` |
-| 8 | `8-chosen-reject-failclosed-no-consent` | `reject` | `fail_closed` | `True` | absent / False | `0f3ebed11` |
+| 1 | `1-default-consent` | `reject` | `limited` | `True` | granted / True | `b3aad14` |
+| 2 | `2-default-no-consent` | `reject` | `limited` | `True` | absent / False | `b3aad14` |
+| 3 | `3-review-consent` | `review` | `limited` | `True` | granted / True | `b3aad14` |
+| 4 | `4-review-no-consent` | `review` | `limited` | `True` | absent / False | `b3aad14` |
+| 5 | `5-review-failclosed-consent` | `review` | `fail_closed` | `True` | granted / True | `b3aad14` |
+| 6 | `6-review-failclosed-no-consent` | `review` | `fail_closed` | `True` | absent / False | `b3aad14` |
+| 7 | `7-chosen-reject-failclosed-consent` | `reject` | `fail_closed` | `True` | granted / True | `b3aad14` |
+| 8 | `8-chosen-reject-failclosed-no-consent` | `reject` | `fail_closed` | `True` | absent / False | `b3aad14` |
 
 So runs 1-4 ran `limited`: with consent absent (run 2) the engine could not verify identity and, under `limited`, applied the operations that do not synthesise a face (3 `partially_enhanced`).
-Runs 5 and 6 ran `fail_closed` (all six originals kept in run 6). Runs 1-6 were made before the first commit, from the working tree of `8a700ad58` plus the uncommitted
-changes, hence "uncommitted changes"; runs 7 and 8 were made from a clean tree at the commit shown. The environment of every run was only `DJANGO_DEBUG`, a throwaway SQLite database and
-`LOG_LEVEL`; runs 1-6 found the model files through a `.runtime` link inside the working tree, runs 7-8 through absolute paths in environment variables (so the tree stayed clean); no `.env` was read.
+Runs 5 and 6 ran `fail_closed` (all six originals kept in run 6). All eight evidence files were generated on 2026-10-21 from the clean commit `b3aad14` (`git.dirty: false`; the first versions of runs 1-6
+were made from an uncommitted tree and were replaced, after the evidence review, by these; every HTTP status, label, identity mode, quality decision and metric is identical between the two versions, only the timings differ).
+The environment of every run was only `DJANGO_DEBUG`, a throwaway SQLite database and `LOG_LEVEL`, plus absolute paths of the model files in environment variables; no `.env` was read.
 
 One more default that matters for "consent absent": **`BIOMETRIC_CONSENT_REQUIRED` defaults to `False` in the code** (production refuses to start unless it is `True`). With it `False`, an account
 without recorded consent is still allowed biometric processing, so the identity check runs and "consent absent" behaves like "consent given". The script therefore forces it to `True` in every run.
