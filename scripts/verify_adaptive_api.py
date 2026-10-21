@@ -31,6 +31,9 @@ The consent switch matters: with ``--consent absent`` the user has no biometric 
 verify identity and says so; the default grants consent, as a real account that agreed would have. The settings that decide what happens to a very
 dark photograph and to unverifiable identity are explicit flags, defaulting to the project defaults (``reject`` and ``limited``).
 
+For an ``original_preserved`` result the stored upload is checked byte for byte (SHA-256 before and after) and the returned file pixel for pixel (decoded arrays equal); whether the
+returned file's bytes also equal the upload's is recorded (``output_file_bytes_equal_stored_original``) but is not a check, because the service re-encodes its output.
+
 Evidence (nothing in it is a photograph): ``evidence.json`` has the commit and branch, the command line, the environment, every setting the run forced, the
 checkpoint files with their SHA-256 and whether they match the pinned value, the size and a short hash of each source photograph, and for each case the HTTP
 statuses, the API responses (download links redacted; the bulky measurement reports inside ``applied_parameters`` are left out unless ``--full-responses``),
@@ -421,6 +424,7 @@ def main():
                 upload = client.post("/api/images/upload/single/", {"file": SimpleUploadedFile(f"{name}.png", encoded, "image/png")}, format="multipart")
                 image = ImageUpload.objects.filter(owner=user).latest("id")
                 original_before = stored_original_digest(image)
+                row["stored_original_sha256_prefix"] = original_before[:16]
                 quality = ImageQualityDecision.objects.filter(image=image).first()
                 face_check = FaceValidationResult.objects.filter(image=image).first()
                 row["quality_decision"] = {
@@ -439,7 +443,10 @@ def main():
                     if detail.get("download_url"):
                         download = client.get(urlparse(detail["download_url"]).path)
                         if download.status_code == 200:
-                            output = cv2.imdecode(np.frombuffer(b"".join(download.streaming_content), np.uint8), cv2.IMREAD_COLOR)
+                            payload = b"".join(download.streaming_content)
+                            output = cv2.imdecode(np.frombuffer(payload, np.uint8), cv2.IMREAD_COLOR)
+                            row["output_file_sha256_prefix"] = sha256_bytes(payload)[:16]
+                            row["output_file_bytes_equal_stored_original"] = sha256_bytes(payload) == original_before
                 row["seconds"] = round(time.perf_counter() - started, 1)
                 shape = (lambda body: redact(body)) if arguments.full_responses else (lambda body: redact(trim_response(body)))
                 row["http"] = {"upload": upload.status_code, "enhance": queued.status_code, "enhance_body": shape(enhance_body),
