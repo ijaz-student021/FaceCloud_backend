@@ -20,7 +20,7 @@ Conventions:
   `{count, next, previous, results}`.
 * Without `page` or `page_size` a list returns the old plain array. That form
   is unbounded and kept only so the current screens keep working.
-* Notifications, my images, collages, failed batches and event photos were
+* Notifications, my images, failed batches and event photos were
   already paginated and are unchanged.
 * `/api/system/images/` is always paginated.
 * **Action:** move each list consumer to `page`, then treat the plain-array

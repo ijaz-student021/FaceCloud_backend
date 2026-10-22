@@ -17,7 +17,7 @@ from uploads.models import ImageUpload, UploadBatch
 
 from .checks import privacy_configuration_check
 from .cleanup import (
-    MEDIA_SUBDIRECTORIES, cleanup_orphan_media, cleanup_stale_temp_archives,
+    ACTIVE_MEDIA_SUBDIRECTORIES, MEDIA_SUBDIRECTORIES, RETIRED_MEDIA_SUBDIRECTORIES, cleanup_orphan_media, cleanup_stale_temp_archives,
     cleanup_temporary_files, orphan_media_files, referenced_media_names, stale_temp_archives,
 )
 from .models import PrivacyRequest
@@ -183,6 +183,18 @@ class OrphanMediaTests(TestCase):
         self.assertTrue(default_storage.exists(self.export.export_file.name))
         self.assertTrue(ImageUpload.objects.filter(pk=self.image.pk).exists())
 
+    def test_files_a_removed_feature_left_on_disk_are_cleared_as_orphans(self):
+        """Photo collages were removed; an old deployment still has users/<id>/collages/*.jpg that nothing references."""
+        leftover = self._orphan(f"users/{self.user.pk}/collages/0123456789abcdef.jpg")
+        recent = self._orphan(f"users/{self.user.pk}/collages/just-now.jpg", hours_old=1)
+
+        self.assertEqual({name for name, _size in orphan_media_files()}, {leftover})
+        cleanup_orphan_media(delete=True)
+
+        self.assertFalse(default_storage.exists(leftover))
+        self.assertTrue(default_storage.exists(recent))
+        self.assertTrue(default_storage.exists(self.image.original_file.name))
+
     def test_files_left_behind_by_a_deleted_account_are_found(self):
         orphan = self._orphan(f"users/{self.user.pk}/enhanced/left-behind.jpg")
         self.user.delete()
@@ -307,7 +319,8 @@ class MediaLayoutCoverageTests(SimpleTestCase):
             for field in model._meta.get_fields():
                 if isinstance(field, models.FileField):
                     used.add(field.generate_filename(sample_instance(model), "x.jpg").replace("\\", "/").split("/")[2])
-        self.assertEqual(used, set(MEDIA_SUBDIRECTORIES))
+        self.assertEqual(used, set(ACTIVE_MEDIA_SUBDIRECTORIES))
+        self.assertFalse(used & set(RETIRED_MEDIA_SUBDIRECTORIES), "a retired folder is written to again")
 
 
 class CleanupConfigurationChecks(SimpleTestCase):

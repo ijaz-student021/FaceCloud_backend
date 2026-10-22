@@ -7,7 +7,6 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
 
-from identities.models import IdentityGroup
 from uploads.models import ImageUpload, UploadBatch
 
 from .testing import grant_face_consent, withdraw_face_consent
@@ -44,25 +43,8 @@ class ConsentRequiredCodeTests(TestCase):
             "detail": ["Biometric consent is required before face search."], "code": "consent_required",
         })
 
-    def test_person_collage_without_consent(self):
-        group = IdentityGroup.objects.create(
-            owner=self.user, display_name="Someone", member_count=0, protected_centroid=b"c",
-            embedding_dimension=3, provider="test", policy_version="v1",
-        )
-        response = self.client.post(
-            reverse("collage-list"), {"source_type": "person", "group_id": group.pk}, format="json",
-        )
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json(), {
-            "detail": "Biometric consent is required to make a collage of a person.", "code": "consent_required",
-        })
-
     def test_other_validation_errors_carry_no_consent_code(self):
         grant_face_consent(self.user)
         response = self.client.post(reverse("identities:visual-search"), {}, format="multipart")
         self.assertEqual(response.status_code, 400)
         self.assertNotIn("code", response.json())
-
-    def test_event_collages_are_not_consent_gated(self):
-        response = self.client.post(reverse("collage-list"), {"source_type": "event", "event_id": 999}, format="json")
-        self.assertNotIn("consent_required", response.content.decode())
