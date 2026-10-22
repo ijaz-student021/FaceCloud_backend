@@ -77,6 +77,7 @@ INSTALLED_APPS = [
     "reports",
     "downloads",
     "notifications",
+    "albums",
     "operations",
     "activity",
     "privacy",
@@ -470,6 +471,11 @@ IDENTITY_GUARD_MAX_FACES = env.int("IDENTITY_GUARD_MAX_FACES", default=5)
 # Person folders: at most this many faces of one photograph are grouped (the largest ones); a crowd of sixty does not stall the queue. The rest are recorded as
 # skipped (reason too_many_faces) in the analysis evidence, and the photograph is still accepted and enhanced.
 IDENTITY_MAX_FACES_PER_IMAGE = env.int("IDENTITY_MAX_FACES_PER_IMAGE", default=20)
+# Albums (albums/): how many a person may have, and how many photographs one album may hold.
+ALBUM_MAX_PER_USER = env.int("ALBUM_MAX_PER_USER", default=500)
+ALBUM_MAX_IMAGES = env.int("ALBUM_MAX_IMAGES", default=10000)
+if ALBUM_MAX_PER_USER < 1 or ALBUM_MAX_IMAGES < 1:
+    raise ImproperlyConfigured("ALBUM_MAX_PER_USER and ALBUM_MAX_IMAGES must be at least 1.")
 if IDENTITY_MAX_FACES_PER_IMAGE < 1:
     raise ImproperlyConfigured("IDENTITY_MAX_FACES_PER_IMAGE must be at least 1.")
 IDENTITY_GUARD_MAX_EDGE = env.int("IDENTITY_GUARD_MAX_EDGE", default=1024)
@@ -1181,6 +1187,7 @@ REST_FRAMEWORK = {
         "image_upload": "100/hour",
         "image_delete": "300/hour",
         "image_favorite": "1200/hour",
+        "album": "1200/hour",
         "zip_upload": "20/hour",
         "image_preprocess": "100/hour",
         "report_generation": "60/hour",
@@ -1339,7 +1346,7 @@ LOG_FILE = env("LOG_FILE", default="")
 _APP_LOGGERS = (
     "accounts", "activity", "collages", "config", "contact", "downloads", "duplicates", "enhancement", "events", "identities", "moderation",
     "notifications", "operations", "organizations", "privacy", "quality_control", "reports", "security", "sharing", "thumbnails", "uploads",
-    "validation",
+    "validation", "albums",
 )
 _LOG_HANDLERS = ["console"] + (["file"] if LOG_FILE else [])
 LOGGING = {

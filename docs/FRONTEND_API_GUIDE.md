@@ -506,6 +506,27 @@ face is small is no longer **rejected**: it is kept (`needs_review` in the face 
   one is **409**, an expired one **410** (regenerate it first). Share links
   count toward the same per-user limit as image links.
 
+## 5-albums. Albums (new)
+
+An album is a collection the person makes by hand ("Eid 2026"): a title, a description, a cover and the photographs they put in. A photograph can be in any number of albums; deleting a
+photograph takes it out of its albums; **deleting an album never deletes photographs**. Everything is owner-scoped (another person's album is a `404`).
+
+```text
+GET    /api/albums/?q=&image=&page=&page_size=      list, most recently changed first (image=<id>: only albums that contain it: "already in 2 albums")
+POST   /api/albums/   {title, description?, image_ids?: [..up to 200]}  -> 201 album + added_ids, not_found_ids
+GET    /api/albums/{id}/                            PATCH /api/albums/{id}/ {title?, description?}        DELETE /api/albums/{id}/  -> 204
+GET    /api/albums/{id}/images/?page=&page_size=    the photographs, newest added first, as the same rows the gallery lists (status, thumbnail, is_favorite, ...)
+POST   /api/albums/{id}/images/        {image_ids: [..up to 200]}  -> {added_ids, already_in_album_ids, not_found_ids, photo_count}   (idempotent)
+POST   /api/albums/{id}/images/remove/ {image_ids: [..]}           -> {removed_ids, not_in_album_ids, photo_count}
+PUT    /api/albums/{id}/cover/  {image_id}       DELETE -> automatic cover again
+GET    /api/images/my/?album=<id>               the gallery filtered to one album (combines with the other filters)
+```
+
+An album is `{id, title, description, photo_count, cover_image, cover_thumbnail_url, created_at, updated_at}`. The cover is the one chosen, else the first photograph added (`null` for an empty album);
+it goes back to automatic when its photograph leaves the album. `photo_count` counts photographs that are still stored. The title is trimmed (1 to 120 characters). Limits: `ALBUM_MAX_PER_USER`
+(500) albums per person and `ALBUM_MAX_IMAGES` (10,000) photographs per album, each a `400` with a plain sentence. `GET /api/search/?q=` gained **`albums`** (albums whose title contains `q`).
+A photograph id that is not the person's, does not exist or was refused at upload is never added; it comes back in `not_found_ids`.
+
 ## 5a. Duplicates
 
 `GET /api/duplicates/results/` and `/images/{image_id}/matches/` list suspected

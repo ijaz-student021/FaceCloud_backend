@@ -319,6 +319,14 @@ class MyImageListView(generics.ListAPIView):
                 raise ValidationError({"upload_type": "Use single, multiple, or zip."})
             queryset = queryset.filter(batch__upload_type=upload_type)
 
+        album = self.request.query_params.get("album")
+        if album:
+            if not album.isdigit():
+                raise ValidationError({"album": "Album must be a positive integer."})
+            from albums.models import AlbumImage
+
+            queryset = queryset.filter(Exists(AlbumImage.objects.filter(album_id=int(album), album__owner=self.request.user, image_id=OuterRef("pk"))))
+
         # ?person=<folder id>, repeated for photographs that contain ALL of those people (a photograph with both Ayesha and Bilal).
         for person in self.request.query_params.getlist("person"):
             if not person.isdigit():

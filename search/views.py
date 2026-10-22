@@ -6,6 +6,8 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from albums.serializers import AlbumSerializer
+from albums.views import albums_for
 from identities.models import IdentityGroup
 from identities.people import people_queryset
 from identities.serializers import PersonChipSerializer
@@ -57,6 +59,7 @@ class SearchResponseSerializer(serializers.Serializer):
     images = SearchImageSerializer(many=True)
     groups = SearchGroupSerializer(many=True)
     people = PersonChipSerializer(many=True)
+    albums = AlbumSerializer(many=True)
     jobs = SearchJobSerializer(many=True)
 
 
@@ -116,5 +119,6 @@ class SearchView(APIView):
             "images": images,
             "groups": SearchGroupSerializer(groups, many=True).data,
             "people": PersonChipSerializer(people, many=True, context={"request": request}).data,
+            "albums": AlbumSerializer(albums_for(user).filter(title__icontains=query).order_by("-updated_at", "-pk")[:limit], many=True, context={"request": request}).data,
             "jobs": SearchJobSerializer(jobs, many=True).data,
         })
