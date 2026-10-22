@@ -76,6 +76,20 @@ def notify_quality_result(decision):
         return notification
     if decision.status != decision.Status.COMPLETED:
         return None
+    from quality_control.effective import effective_decision, tips_for
+
+    # Where no moderator can decide a "needs review" verdict (a personal workspace) the photograph is accepted, with a tip, not "needs review".
+    if decision.decision == decision.Decision.NEEDS_REVIEW and effective_decision(image, decision.decision) == "accepted":
+        tips = tips_for(decision.rejection_reasons)
+        notification, _ = create_user_notification(
+            **common,
+            event_type=UserNotification.EventType.PHOTO_ACCEPTED,
+            idempotency_key=f"image:{image.pk}:quality:accepted",
+            title="Photo accepted",
+            message=f"{image.original_name} was accepted." + (f" Tip: {tips[0]}" if tips else ""),
+            severity=UserNotification.Severity.SUCCESS,
+        )
+        return notification
     if decision.decision == decision.Decision.ACCEPTED:
         event_type = UserNotification.EventType.PHOTO_ACCEPTED
         title = "Photo accepted"

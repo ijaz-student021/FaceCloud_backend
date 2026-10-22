@@ -13,6 +13,7 @@ from django.utils import timezone
 
 from enhancement.models import EnhancementStatus, ImageEnhancementResult
 from enhancement.outcome import result_outcome
+from quality_control.effective import effective_decision
 from reports.models import ProcessingReport
 from reports.renderers import render_report
 from reports.services import build_report_payload
@@ -85,7 +86,7 @@ def _images_for_package(package):
             owner_id=package.owner_id,
             batch_id=package.batch_id,
         )
-        .select_related("preprocessing_result", "quality_decision")
+        .select_related("preprocessing_result", "quality_decision", "batch__organization")
         .prefetch_related(Prefetch(
             "enhancement_results",
             queryset=enhancements,
@@ -145,7 +146,7 @@ def build_package_archive(package):
         )
         if package.package_type == DownloadPackage.PackageType.ACCEPTED_RESULTS:
             quality = getattr(image, "quality_decision", None)
-            if not quality or quality.status != "completed" or quality.decision != "accepted":
+            if not quality or quality.status != "completed" or effective_decision(image, quality.decision) != "accepted":
                 continue
             if enhancement is None:
                 # The enhanced version of every accepted photograph that has one, and the original for the rest (an automatic enhancement that was skipped or

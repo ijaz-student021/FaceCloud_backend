@@ -173,7 +173,9 @@ def process_quality_decision(decision_id):
         result.processing_duration_ms = max(1, round((time.perf_counter() - started) * 1000))
         result.finished_at = timezone.now()
         result.save()
-        if decision == "needs_review":
+        from quality_control.effective import moderator_can_decide
+
+        if decision == "needs_review" and moderator_can_decide(result.image):      # a personal workspace has no moderator: nothing to queue
             from moderation.services import create_review_for_quality_decision
             create_review_for_quality_decision(result)
         # Person folders follow the verdict: queued here, in the same transaction as the decision, so the photograph's progress never shows it finished in

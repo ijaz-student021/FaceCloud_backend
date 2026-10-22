@@ -284,6 +284,18 @@ rejected photo can still be shown in the list with its reason.
 `/api/duplicates/images/{image_id}/`. A decision is `accepted`, `rejected` or
 `needs_review`, with human-readable reasons to show the user.
 
+**"In review" only where someone can review (changed).** `needs_review` means a person has to look at the photograph. In an **organization** that is a moderator, and nothing changes
+there. In the person's **own workspace** nobody can ever decide it, so it is no longer shown as a state: such a photograph is **`accepted`, with tips**. Concretely, for a photograph in a
+personal workspace whose checks doubted it:
+
+- `display_status` (everywhere: `GET /api/images/my/`, batch responses, progress) is `accepted`, the batch progress `counts` count it as `accepted`, the batch is `completed` (not `partial`
+  because of it), `GET /api/images/my/?status=needs_review` does not list it and `?status=accepted` does, the dashboard counts it as accepted, the `accepted_results` ZIP includes it, the
+  notification is "Photo accepted" with a tip, and no moderator review is opened for it.
+- The quality decision (`GET /api/quality/images/{id}/`, and `quality_decision` on every photograph row) keeps **`decision` exactly as the checks found it** (it is the evidence) and gains
+  **`effective_decision`** (what it means for the person: `accepted`), **`review_required`** (true only for a `needs_review` in an organization) and **`tips`** (plain sentences such as
+  "This photo is a little dark; more light gives better results."). Show `tips`, never the word "review", when `review_required` is false.
+- A **rejected** photograph is never softened (very dark, blown out, corrupt). The same photograph filed under an organization still shows `needs_review` and `review_required: true`.
+
 ## 4. Enhancement
 
 ```text

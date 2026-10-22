@@ -7,6 +7,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from enhancement.models import EnhancementStatus, ImageEnhancementResult
+from quality_control.effective import effective_q
 
 from .models import DownloadEvent, DownloadPackage
 
@@ -36,19 +37,19 @@ def ensure_package_ready(batch, package_type):
         )
     if package_type == DownloadPackage.PackageType.ACCEPTED_RESULTS:
         available = ImageEnhancementResult.objects.filter(
+            effective_q("accepted", decision_path="image__quality_decision__decision", batch_path="image__batch"),
             owner_id=batch.owner_id,
             image__batch=batch,
             image__quality_decision__status="completed",
-            image__quality_decision__decision="accepted",
             status=EnhancementStatus.COMPLETED,
         ).exists()
         if not available:
             # Photos that passed the checks but were never enhanced can be fixed by the caller:
             # POST /api/enhancements/batches/{id}/ and ask again.
             awaiting = batch.images.filter(
+                effective_q("accepted"),
                 owner_id=batch.owner_id,
                 quality_decision__status="completed",
-                quality_decision__decision="accepted",
             ).count()
             if awaiting and batch.auto_enhance:
                 return  # an automatic enhancement was asked for and none finished (skipped or failed): the package carries the originals

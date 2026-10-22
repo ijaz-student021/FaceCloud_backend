@@ -7,6 +7,7 @@ from django.db.models.functions import TruncDate
 from django.utils import timezone
 
 from enhancement.models import EnhancementStatus, ImageEnhancementResult
+from quality_control.effective import effective_q
 from uploads.models import ImagePreprocessingResult, ImageUpload, UploadBatch
 from validation.models import FaceValidationResult
 from quality_control.models import ImageQualityDecision
@@ -93,7 +94,7 @@ def build_user_dashboard(user):
     start = today - timedelta(days=6)
     uploads_by_day = _daily_counts(images.filter(created_at__date__gte=start), "created_at")
     accepted_by_day = _daily_counts(
-        quality_results.filter(decision="accepted", updated_at__date__gte=start),
+        quality_results.filter(effective_q("accepted", decision_path="decision", batch_path="image__batch"), updated_at__date__gte=start),
         "updated_at",
         distinct_field="image_id",
     )
@@ -134,12 +135,12 @@ def build_user_dashboard(user):
             "total_images": images.count(),
             "upload_batches": UploadBatch.objects.filter(owner=user).count(),
             "enhanced_images": completed.values("image_id").distinct().count(),
-            "accepted_images": quality_results.filter(decision="accepted").count(),
+            "accepted_images": quality_results.filter(effective_q("accepted", decision_path="decision", batch_path="image__batch")).count(),
             "rejected_images": (
                 images.filter(status="rejected").count()
                 + quality_results.filter(decision="rejected", image__status="uploaded").count()
             ),
-            "needs_review_images": quality_results.filter(decision="needs_review").count(),
+            "needs_review_images": quality_results.filter(effective_q("needs_review", decision_path="decision", batch_path="image__batch")).count(),
             "average_quality_score": round(
                 sum(
                     score for score in quality_results.values_list("overall_score", flat=True)

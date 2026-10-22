@@ -15,6 +15,8 @@ from enhancement.models import ImageEnhancementResult
 from identities.models import IdentityFace, IdentityMembership
 
 from .deletion import delete_images
+from quality_control.effective import effective_q
+
 from .display_status import with_status_relations
 from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
 from .progress import batch_progress_payload
@@ -244,7 +246,7 @@ def my_images_queryset(user):
     return (
         ImageUpload.objects.filter(owner=user)
         .select_related(
-            "batch", "preprocessing_result", "face_validation",
+            "batch__organization", "preprocessing_result", "face_validation",
             "quality_decision", "duplicate_analysis",
             "identity_analysis",
         )
@@ -325,7 +327,8 @@ class MyImageListView(generics.ListAPIView):
                     Q(status="rejected") | Q(quality_decision__decision="rejected")
                 )
             elif selected_status in {"accepted", "needs_review"}:
-                queryset = queryset.filter(quality_decision__decision=selected_status)
+                # The effective verdict: "needs_review" only where a moderator can decide, and a personal photograph that was doubted counts as accepted.
+                queryset = queryset.filter(effective_q(selected_status))
             elif selected_status == "quality_processing":
                 queryset = queryset.filter(quality_decision__status__in=["pending", "queued", "processing"])
             elif selected_status == "quality_failed":

@@ -65,7 +65,9 @@ def _state_for_image(image):
         if quality.status == "completed":
             if identity and identity.status == "needs_review":
                 return "completed", "needs_review", 100.0, "", ""
-            decision = quality.decision or "needs_review"
+            from quality_control.effective import effective_decision
+
+            decision = effective_decision(image, quality.decision or "needs_review")      # a personal workspace has no moderator: accepted, not "needs_review"
             return "completed", decision, 100.0, "", ""
         return "quality_analysis", "processing" if quality.status == "processing" else "queued", 52.0, "", ""
 
@@ -158,7 +160,7 @@ def _progress_records(batch):
 
     return (
         batch.image_progress.select_related(
-            "image", "image__batch", "image__preprocessing_result", "image__face_validation", "image__quality_decision", "image__identity_analysis",
+            "image", "image__batch__organization", "image__preprocessing_result", "image__face_validation", "image__quality_decision", "image__identity_analysis",
             "image__auto_enhancement",
         )
         .prefetch_related(Prefetch(
