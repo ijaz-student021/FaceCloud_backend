@@ -7,6 +7,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from identities.models import IdentityGroup
+from identities.people import people_queryset
+from identities.serializers import PersonChipSerializer
 from uploads.models import UploadBatch
 from uploads.serializers import MyImageSerializer
 from uploads.views import my_images_queryset
@@ -54,6 +56,7 @@ class SearchResponseSerializer(serializers.Serializer):
     query = serializers.CharField()
     images = SearchImageSerializer(many=True)
     groups = SearchGroupSerializer(many=True)
+    people = PersonChipSerializer(many=True)
     jobs = SearchJobSerializer(many=True)
 
 
@@ -106,9 +109,12 @@ class SearchView(APIView):
         jobs = UploadBatch.objects.filter(
             Q(display_name__icontains=query) | Q(original_archive_name__icontains=query), owner=user,
         ).order_by("-created_at", "-pk")[:limit]
+        # The same folders as ``groups``, as tappable chips: a face, a name and how many photographs (a folder with no photographs left is not a person to show).
+        people = people_queryset(user, query=query)[:limit]
         return Response({
             "query": query,
             "images": images,
             "groups": SearchGroupSerializer(groups, many=True).data,
+            "people": PersonChipSerializer(people, many=True, context={"request": request}).data,
             "jobs": SearchJobSerializer(jobs, many=True).data,
         })

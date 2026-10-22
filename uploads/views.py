@@ -2,7 +2,7 @@ from django.conf import settings
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from django.db.models import OuterRef, Prefetch, Q, Subquery
+from django.db.models import Exists, OuterRef, Prefetch, Q, Subquery
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import generics, permissions, serializers, status
@@ -318,6 +318,17 @@ class MyImageListView(generics.ListAPIView):
             if upload_type not in {"single", "multiple", "zip"}:
                 raise ValidationError({"upload_type": "Use single, multiple, or zip."})
             queryset = queryset.filter(batch__upload_type=upload_type)
+
+        # ?person=<folder id>, repeated for photographs that contain ALL of those people (a photograph with both Ayesha and Bilal).
+        for person in self.request.query_params.getlist("person"):
+            if not person.isdigit():
+                raise ValidationError({"person": "Person must be a positive integer."})
+            from identities.models import IdentityMembership
+
+            queryset = queryset.filter(Exists(IdentityMembership.objects.filter(
+                identity_face__image_id=OuterRef("pk"), identity_group_id=int(person), identity_group__owner=self.request.user,
+                state__in=["auto_matched", "new_group", "confirmed"],
+            )))
 
         favorite = self.request.query_params.get("favorite", "").strip().lower()
         if favorite:

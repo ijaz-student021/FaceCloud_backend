@@ -107,6 +107,8 @@ CATALOGUE = {
     "images_favorite_update": ("Mark a photo as a favourite", "Idempotent. The photo gets `is_favorite: true` and a `favorited_at` time. Only the caller's own stored photographs; anything else is a 404."),
     "images_favorite_destroy": ("Remove the favourite mark", "Idempotent. The photo gets `is_favorite: false`. Only the caller's own stored photographs; anything else is a 404."),
     "images_favorites_create": ("Mark or unmark several photos", "Up to 200 ids and `favorite: true|false`. Ids that are not the caller's, or do not exist, are returned in `not_found_ids` and nothing is done for them."),
+    "identities_people_list": ("List the people as chips", "The caller's person folders that hold at least one photograph, most photographs first, each with an avatar address: what a search bar offers before anything is typed. `q` filters by name, `limit` (default 12, at most 50), `include_unnamed=false` hides folders that still have their automatic name."),
+    "identities_groups_avatar_retrieve": ("Get a person's avatar", "A square JPEG crop of the best face of the folder (`?size=96|192|384`). Fetch it with the Authorization header, like a thumbnail. 404 when the folder has no face that can be cropped."),
     "images_download_retrieve": ("Download the original image", "Streams the original upload after an ownership check. Encrypted at rest; decrypted on the way out."),
     "images_thumbnail_retrieve": ("Get a thumbnail", ""),
     "images_preprocess_create": ("Run preprocessing again", "Re-creates the standardized image used as the enhancement input."),

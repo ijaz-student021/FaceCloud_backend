@@ -1,8 +1,8 @@
 from django.db.models import Exists, F, OuterRef, Prefetch, Subquery
-from django.http import FileResponse
+from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -25,8 +25,10 @@ from .management import (delete_empty_group, merge_groups, move_membership,
                          remove_membership, rename_group, set_profile_membership)
 from .models import (IdentityAnalysis, IdentityChange, IdentityGroup,
                      IdentityGroupExport, IdentityMembership)
+from .avatars import AVATAR_SIZES, DEFAULT_AVATAR_SIZE, AvatarUnavailable, best_face, render_avatar
 from .image_serializers import IdentityGroupImageSerializer
-from .serializers import (IdentityAnalysisSerializer, IdentityExportShareRequestSerializer, IdentityAnalyzeRequestSerializer,
+from .people import DEFAULT_LIMIT, MAX_LIMIT, people_queryset
+from .serializers import (PersonChipSerializer, IdentityAnalysisSerializer, IdentityExportShareRequestSerializer, IdentityAnalyzeRequestSerializer,
                           IdentityChangeSerializer,
                           IdentityGroupExportRequestSerializer,
                           IdentityGroupExportSerializer, IdentityGroupSerializer,
@@ -123,6 +125,60 @@ class IdentityGroupListView(generics.ListAPIView):
         return IdentityGroup.objects.filter(
             owner=self.request.user, state=IdentityGroup.State.ACTIVE,
         ).prefetch_related(_member_prefetch())
+
+
+class IdentityPeopleView(APIView):
+    """The people of the library as chips (a face, a name, a count), most photographs first: what a search bar offers before anything is typed."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        operation_id="identities_people_list",
+        parameters=[
+            OpenApiParameter("q", str, required=False, description="Names containing this text (case-insensitive)."),
+            OpenApiParameter("limit", int, required=False, description=f"How many people; default {DEFAULT_LIMIT}, at most {MAX_LIMIT}."),
+            OpenApiParameter("include_unnamed", bool, required=False, description="false hides folders that still have their automatic name; default true."),
+        ],
+        responses={200: PersonChipSerializer(many=True), 400: OpenApiTypes.OBJECT},
+    )
+    def get(self, request):
+        raw = request.query_params.get("limit", "")
+        if raw and (not raw.isdigit() or int(raw) < 1):
+            raise ValidationError({"limit": "Limit must be a positive whole number."})
+        limit = min(int(raw), MAX_LIMIT) if raw else DEFAULT_LIMIT
+        unnamed = request.query_params.get("include_unnamed", "true").strip().lower()
+        if unnamed not in {"true", "false", "1", "0"}:
+            raise ValidationError({"include_unnamed": "Use true or false."})
+        people = people_queryset(request.user, query=request.query_params.get("q", "").strip(), include_unnamed=unnamed in {"true", "1"})[:limit]
+        return Response(PersonChipSerializer(people, many=True, context={"request": request}).data)
+
+
+class IdentityGroupAvatarView(APIView):
+    """A square crop of the best face of one person folder, as a JPEG (``?size=96|192|384``)."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        operation_id="identities_groups_avatar_retrieve",
+        parameters=[OpenApiParameter("size", int, required=False, description="96 (default), 192 or 384 pixels.")],
+        responses={(200, "image/jpeg"): OpenApiTypes.BINARY, 400: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT},
+    )
+    def get(self, request, pk):
+        group = get_object_or_404(IdentityGroup.objects.filter(owner=request.user), pk=pk)
+        raw = request.query_params.get("size", "")
+        if raw and (not raw.isdigit() or int(raw) not in AVATAR_SIZES):
+            raise ValidationError({"size": f"Use one of {', '.join(str(size) for size in AVATAR_SIZES)}."})
+        size = int(raw) if raw else DEFAULT_AVATAR_SIZE
+        face = best_face(group)
+        if face is None:
+            raise Http404("This person has no face to show yet.")
+        try:
+            payload = render_avatar(face, size)
+        except AvatarUnavailable as error:
+            raise Http404(str(error)) from error
+        response = HttpResponse(payload, content_type="image/jpeg")
+        response["Cache-Control"] = "private, max-age=3600"
+        return response
 
 
 class IdentityGroupDetailView(generics.RetrieveAPIView):

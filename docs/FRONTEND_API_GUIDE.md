@@ -395,6 +395,21 @@ faces or when one face was small), and it appears in **each** person's folder. F
 ("2 faces are too small to place in a person folder..."); at most `IDENTITY_MAX_FACES_PER_IMAGE` (20) faces of one photograph are placed, the largest first. A photograph whose only
 face is small is no longer **rejected**: it is kept (`needs_review` in the face check, so "accepted with a tip" in a personal workspace) and simply not placed in a folder.
 
+**People you can tap (new): avatars, chips, search.**
+
+- `GET /api/identities/people/?q=&limit=&include_unnamed=` returns the person folders as **chips**, most photographs first: `[{id, display_name, is_named, photo_count, avatar_url}]`. Folders with
+  no photograph and inactive ones are not listed. `q` filters by name, `limit` defaults to 12 (at most 50, larger is capped), `include_unnamed=false` hides folders that still have their automatic
+  name. `is_named: false` means the folder is still "Person 001": show an "Add a name" prompt (`POST /api/identities/groups/{id}/rename/`). Call it with no `q` for what a search bar offers before
+  anything is typed.
+- `GET /api/identities/groups/{id}/avatar/?size=96|192|384` is a **square JPEG crop of the person's best face** (bright enough first, then the detector's confidence, then size), with a margin so the
+  head shows. Fetch it with the Authorization header and a blob URL, like a thumbnail (`Cache-Control: private, max-age=3600`). `404` while the folder has no face that can be cropped, `400` for another size.
+  The folder objects (`/api/identities/groups/`, `/{id}/`) gained `avatar_url` (null while there is no face). Nothing new is analysed: the crop uses the face box and the standardized picture the
+  analysis already stored, under the person's consent; withdrawing consent with erasure removes the folders and so their avatars.
+- `GET /api/search/?q=` gained **`people`** (the same chip objects, for folders whose name contains `q`) next to the existing `groups` (unchanged).
+- `GET /api/images/my/?person=<folder id>` lists the photographs that contain that person; **repeat the parameter for photographs that contain all of those people**
+  (`?person=3&person=7`). Only faces placed in the folder count (a suggested face waits for a decision and does not); another person's folder id gives an empty list; a non-number is a `400`.
+  It combines with every other filter (`favorite`, `status`, `batch`, ...). Measured cost of one avatar: 6 to 52 ms from a JPEG standardized picture (1 to 12 megapixels), up to 270 ms from a 12 MP PNG.
+
 - **Consent first.** Face grouping only runs for users who granted biometric
   consent. `GET /api/privacy/consents/` returns the current state and policy
   version; `POST /api/privacy/consents/ {granted, policy_version}` grants or
