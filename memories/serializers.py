@@ -1,4 +1,3 @@
-from drf_spectacular.utils import extend_schema_field, inline_serializer
 from rest_framework import serializers
 
 PERSON_PREVIEW = 4
