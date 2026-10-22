@@ -477,6 +477,10 @@ ALBUM_MAX_PER_USER = env.int("ALBUM_MAX_PER_USER", default=500)
 ALBUM_MAX_IMAGES = env.int("ALBUM_MAX_IMAGES", default=10000)
 if ALBUM_MAX_PER_USER < 1 or ALBUM_MAX_IMAGES < 1:
     raise ImproperlyConfigured("ALBUM_MAX_PER_USER and ALBUM_MAX_IMAGES must be at least 1.")
+# Trash (uploads/trash.py): a photograph moved to the trash is deleted for good by the daily task uploads.purge_trash after this many days.
+TRASH_RETENTION_DAYS = env.int("TRASH_RETENTION_DAYS", default=30)
+if not 1 <= TRASH_RETENTION_DAYS <= 3650:
+    raise ImproperlyConfigured("TRASH_RETENTION_DAYS must be between 1 and 3650.")
 if IDENTITY_MAX_FACES_PER_IMAGE < 1:
     raise ImproperlyConfigured("IDENTITY_MAX_FACES_PER_IMAGE must be at least 1.")
 IDENTITY_GUARD_MAX_EDGE = env.int("IDENTITY_GUARD_MAX_EDGE", default=1024)
@@ -1048,6 +1052,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "downloads.cleanup_expired",
         "schedule": crontab(minute=5),
     },
+    "purge-trash": {
+        "task": "uploads.purge_trash",
+        "schedule": crontab(minute=30, hour=3),
+    },
     "expire-collages": {
         "task": "collages.cleanup_expired",
         "schedule": crontab(minute=25),
@@ -1188,6 +1196,7 @@ REST_FRAMEWORK = {
         "image_upload": "100/hour",
         "image_delete": "300/hour",
         "image_favorite": "1200/hour",
+        "image_trash": "600/hour",
         "album": "1200/hour",
         "memories": "600/hour",
         "zip_upload": "20/hour",

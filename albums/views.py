@@ -19,8 +19,9 @@ from .serializers import (
     AddResultSerializer, AlbumPatchSerializer, AlbumSerializer, AlbumWriteSerializer, CoverRequestSerializer, ImageIdsSerializer, RemoveResultSerializer,
 )
 
-# What "a photograph that is in the album" means: still stored. One place, so a rule about which photographs are visible changes here only.
-VISIBLE = Q(items__image__status="uploaded")
+# What "a photograph that is in the album" means: still stored and not in the trash (it keeps its place while trashed and comes back with it). One place, so a rule
+# about which photographs are visible changes here only.
+VISIBLE = Q(items__image__status="uploaded", items__image__trashed_at__isnull=True)
 
 
 class AlbumPagination(PageNumberPagination):
@@ -31,7 +32,7 @@ class AlbumPagination(PageNumberPagination):
 
 def albums_for(user):
     """The caller's albums with ``photo_count`` and the ids the cover is chosen from, in one query."""
-    first = AlbumImage.objects.filter(album=OuterRef("pk"), image__status="uploaded").order_by("added_at", "pk").values("image_id")[:1]
+    first = AlbumImage.objects.filter(album=OuterRef("pk"), image__status="uploaded", image__trashed_at__isnull=True).order_by("added_at", "pk").values("image_id")[:1]
     chosen = ImageUpload.objects.filter(pk=OuterRef("cover_image_id"), status="uploaded").values("pk")[:1]
     return Album.objects.filter(owner=user).annotate(
         photo_count=Count("items", filter=VISIBLE, distinct=True), first_image_id=Subquery(first), visible_cover_id=Subquery(chosen),
@@ -179,7 +180,7 @@ class AlbumCoverView(APIView):
         payload = CoverRequestSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         image_id = payload.validated_data["image_id"]
-        if not AlbumImage.objects.filter(album=album, image_id=image_id, image__status="uploaded").exists():
+        if not AlbumImage.objects.filter(album=album, image_id=image_id, image__status="uploaded", image__trashed_at__isnull=True).exists():
             raise ValidationError({"image_id": "That photograph is not in this album."})
         album.cover_image_id = image_id
         album.save(update_fields=["cover_image", "updated_at"])

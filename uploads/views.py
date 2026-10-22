@@ -457,7 +457,7 @@ class ImageBulkDeleteView(APIView):
         payload = BulkDeleteRequestSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         wanted = list(dict.fromkeys(payload.validated_data["image_ids"]))
-        images = list(ImageUpload.objects.filter(owner=request.user, pk__in=wanted))
+        images = list(ImageUpload.all_objects.filter(owner=request.user, pk__in=wanted))   # permanent: reaches the trash too
         found = {image.pk for image in images}
         summary = delete_images(images)
         return Response({
@@ -588,7 +588,7 @@ class ImagePreprocessingDetailView(APIView):
     @extend_schema(responses={200: ImagePreprocessingResultSerializer})
     def get(self, request, pk):
         result = get_object_or_404(
-            ImagePreprocessingResult.objects.filter(owner=request.user).select_related("image"),
+            ImagePreprocessingResult.objects.filter(owner=request.user, image__trashed_at__isnull=True).select_related("image"),
             image_id=pk,
         )
         return Response(ImagePreprocessingResultSerializer(result, context={"request": request}).data)
@@ -600,7 +600,7 @@ class ImagePreprocessingDownloadView(APIView):
     @extend_schema(responses={200: OpenApiTypes.BINARY, 404: OpenApiTypes.OBJECT})
     def get(self, request, pk):
         result = get_object_or_404(
-            ImagePreprocessingResult.objects.filter(owner=request.user, status="completed"),
+            ImagePreprocessingResult.objects.filter(owner=request.user, status="completed", image__trashed_at__isnull=True),
             image_id=pk,
         )
         if not result.processed_file:

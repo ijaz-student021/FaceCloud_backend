@@ -91,7 +91,7 @@ class AdminImageSerializer(serializers.ModelSerializer):
         model = ImageUpload
         fields = [
             "id", "original_name", "owner", "organization_id", "batch", "status", "rejection_reason",
-            "file_extension", "mime_type", "file_size", "width", "height", "created_at",
+            "file_extension", "mime_type", "file_size", "width", "height", "created_at", "trashed_at",
             "quality", "latest_enhancement",
         ]
         read_only_fields = fields
@@ -143,7 +143,7 @@ class AdminImageDetailSerializer(AdminImageSerializer):
 
 
 def _base_queryset():
-    return ImageUpload.objects.select_related("owner", "batch", "quality_decision").prefetch_related(
+    return ImageUpload.all_objects.select_related("owner", "batch", "quality_decision").prefetch_related(
         Prefetch("enhancement_results", queryset=ImageEnhancementResult.objects.order_by("-created_at"),
                  to_attr="latest_enhancements"),
     ).order_by("-created_at", "-pk")

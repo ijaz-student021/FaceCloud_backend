@@ -92,12 +92,15 @@ def cleanup_stale_temp_archives(*, dry_run=False, directory=None, max_age_hours=
 
 
 def referenced_media_names():
-    """Every file name any model in the project points at, discovered dynamically."""
+    """Every file name any model in the project points at, discovered dynamically.
+
+    Through the **base** manager: a model whose default manager hides rows (a photograph in the trash) still owns its files, and the sweep must never take them.
+    """
     names = set()
     for model in apps.get_models():
         for field in model._meta.get_fields():
             if isinstance(field, models.FileField):
-                stored = model._default_manager.exclude(**{field.name: ""}).values_list(field.name, flat=True)
+                stored = model._base_manager.exclude(**{field.name: ""}).values_list(field.name, flat=True)
                 names.update(name for name in stored.iterator() if name)
     return names
 

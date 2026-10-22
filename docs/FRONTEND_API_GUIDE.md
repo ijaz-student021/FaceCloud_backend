@@ -548,6 +548,34 @@ GET /api/memories/{id}/            -> the card + images: [..gallery rows of its 
   have no `taken_at` until the operator runs `python manage.py backfill_taken_at` (it reads the stored originals, changes nothing else, and is safe to run again). EXIF has no time zone unless
   `OffsetTime` is present, so the stored time is the wall-clock time taken as UTC: it is right to the day, which is what a memory needs.
 
+## 5-trash. Trash (new)
+
+Deleting with an undo. A photograph moved to the trash is gone from **every** other screen at once (My Images, search, albums, person folders and their counts, memories, events, the
+editor, reports, duplicates, shares) and can be restored for `retention_days` (30 by default); a daily job then deletes it for good. The existing permanent deletes
+(`DELETE /api/images/{id}/`, `POST /api/images/bulk-delete/`) are **unchanged and immediate**: offer both ("Move to trash" as the normal action, "Delete forever" in the trash).
+
+```text
+POST   /api/images/trash/             {image_ids: [..up to 200]}  -> {trashed_ids, skipped: [{id, reason}], not_found_ids, retention_days}
+GET    /api/images/trash/?search=&page=&page_size=                -> paged rows {id, original_name, thumbnail_url, width, height, file_size, is_favorite, taken_at, created_at, trashed_at, purge_at, days_left}
+POST   /api/images/trash/restore/     {image_ids: [..]}           -> {restored_ids, not_found_ids, folders_restored}
+POST   /api/images/trash/empty/       {confirm: true}             -> {deleted, remaining}        (500 per call: repeat while remaining > 0)
+DELETE /api/images/trash/{id}/                                    -> 204 (permanent); 404 when it is not in your trash
+GET    /api/images/trash/{id}/thumbnail/                          -> image/jpeg (fetch with the Authorization header, like any thumbnail)
+```
+
+- **`skipped`** are photographs that cannot be moved right now and nothing was done for them: `still_processing` (their checks or an enhancement are still running: say "try again in a
+  moment") and `in_review` (an organization moderator has not decided it yet: offer "Delete forever" or wait). The others in the same request **are** moved. A photograph in a personal
+  workspace is never `in_review` (see section 3).
+- **`not_found_ids`**: not yours, not a stored photograph (a refused upload), unknown, or already in the trash.
+- A trashed photograph answers **404** at every ordinary address (`/api/images/{id}/`, `/thumbnail/`, `/download/`, its checks, its enhancement results, its share link answers 410 until it is restored). Use the
+  trash's own thumbnail address for the trash screen; `thumbnail_url` in the trash rows already points to it.
+- **Restore** puts back the favourite mark, the album places and, when the folder still exists and is not a different one now, the person-folder membership (a folder the trash left empty and archived
+  becomes active again). A face that was placed in another folder meanwhile stays there. Nothing about the checks' results changes.
+- **Counts.** Every figure elsewhere drops by the trashed photographs (album `photo_count` and cover, person `photo_count`, dashboard totals). The dashboard summary also has `trash_images` and
+  `trash_bytes`, and `storage_bytes` **still includes** the trash (the files are still stored). The data export (`GET /api/privacy/export/`) lists trashed photographs with their `trashed_at`.
+- **Not in the trash view:** photographs that were refused at upload, and ones permanently deleted.
+- The retention is the server setting `TRASH_RETENTION_DAYS`; show `days_left` from each row, not a fixed 30.
+
 ## 5a. Duplicates
 
 `GET /api/duplicates/results/` and `/images/{image_id}/matches/` list suspected

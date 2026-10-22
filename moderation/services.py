@@ -516,8 +516,8 @@ def cancel_batch_for_organization(*, batch, actor, request=None):
 
 
 def organization_reviews(organization, scope=None):
-    """The organization's reviews, without those of members ``scope`` (a ``DataScope``) says the viewer may not see."""
-    reviews = ModeratorReview.objects.filter(organization=organization)
+    """The organization's reviews, without those of members ``scope`` (a ``DataScope``) says the viewer may not see, and without those of photographs in the trash."""
+    reviews = ModeratorReview.objects.filter(organization=organization, image__trashed_at__isnull=True)
     return scope.exclude(reviews, "image__owner_id") if scope is not None else reviews
 
 

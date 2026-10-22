@@ -59,7 +59,7 @@ class IdentityImageAnalysisView(APIView):
 
     @extend_schema(responses={200: IdentityAnalysisSerializer})
     def get(self, request, image_id):
-        analysis = get_object_or_404(IdentityAnalysis.objects.filter(owner=request.user), image_id=image_id)
+        analysis = get_object_or_404(IdentityAnalysis.objects.filter(owner=request.user, image__trashed_at__isnull=True), image_id=image_id)
         return Response(IdentityAnalysisSerializer(analysis).data)
 
     @extend_schema(

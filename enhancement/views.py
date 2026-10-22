@@ -4,6 +4,7 @@ import uuid
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.db.models import Prefetch
 from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -69,6 +70,11 @@ WATERMARK_PARAMETERS = [
     OpenApiParameter("watermark_opacity", OpenApiTypes.FLOAT, description="0.1 to 1.0, default 0.5."),
     OpenApiParameter("watermark_text", OpenApiTypes.STR, description="Text for watermark=custom (40 Latin characters at most)."),
 ]
+
+
+def _visible_results():
+    """A batch job's results, without those of photographs in the trash."""
+    return Prefetch("results", queryset=ImageEnhancementResult.objects.filter(image__trashed_at__isnull=True))
 
 
 def _watermark_spec(request):
@@ -218,7 +224,7 @@ class EnhancementResultListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return ImageEnhancementResult.objects.filter(owner=self.request.user).select_related(
+        return ImageEnhancementResult.objects.filter(owner=self.request.user, image__trashed_at__isnull=True).select_related(
             "image", "batch_job"
         ).prefetch_related("edit_versions")
 
@@ -229,7 +235,7 @@ class EnhancementResultDetailView(generics.RetrieveAPIView):
 
     def get_queryset(self):
         return ImageEnhancementResult.objects.filter(
-            owner=self.request.user
+            owner=self.request.user, image__trashed_at__isnull=True
         ).prefetch_related("edit_versions")
 
 
@@ -238,7 +244,7 @@ class EnhancementJobListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return EnhancementBatchJob.objects.filter(owner=self.request.user).prefetch_related("results")
+        return EnhancementBatchJob.objects.filter(owner=self.request.user).prefetch_related(_visible_results())
 
 
 class EnhancementJobDetailView(generics.RetrieveAPIView):
@@ -246,7 +252,7 @@ class EnhancementJobDetailView(generics.RetrieveAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return EnhancementBatchJob.objects.filter(owner=self.request.user).prefetch_related("results")
+        return EnhancementBatchJob.objects.filter(owner=self.request.user).prefetch_related(_visible_results())
 
 
 class EnhancementDownloadView(APIView):
@@ -258,7 +264,7 @@ class EnhancementDownloadView(APIView):
     )
     def get(self, request, pk):
         result = get_object_or_404(
-            ImageEnhancementResult.objects.filter(owner=request.user, status=EnhancementStatus.COMPLETED),
+            ImageEnhancementResult.objects.filter(owner=request.user, status=EnhancementStatus.COMPLETED, image__trashed_at__isnull=True),
             pk=pk,
         )
         if not result.enhanced_file:
@@ -300,7 +306,7 @@ class EnhancementWatermarkPreviewView(APIView):
     )
     def get(self, request, pk):
         result = get_object_or_404(
-            ImageEnhancementResult.objects.filter(owner=request.user, status=EnhancementStatus.COMPLETED),
+            ImageEnhancementResult.objects.filter(owner=request.user, status=EnhancementStatus.COMPLETED, image__trashed_at__isnull=True),
             pk=pk,
         )
         if not result.enhanced_file:
@@ -338,7 +344,7 @@ class EnhancementComparisonView(APIView):
     )
     def get(self, request, pk):
         result = get_object_or_404(
-            ImageEnhancementResult.objects.filter(owner=request.user).select_related(
+            ImageEnhancementResult.objects.filter(owner=request.user, image__trashed_at__isnull=True).select_related(
                 "image", "preprocessing_result"
             ),
             pk=pk,
@@ -419,6 +425,7 @@ class GalleryEditListCreateView(APIView):
             ImageEnhancementResult.objects.filter(
                 owner=request.user,
                 status=EnhancementStatus.COMPLETED,
+                image__trashed_at__isnull=True,
             ).select_related("preprocessing_result"),
             pk=result_id,
         )
@@ -488,7 +495,7 @@ class GalleryEditDetailView(APIView):
 
     def _edit(self, request, pk):
         return get_object_or_404(
-            ImageEditVersion.objects.filter(owner=request.user), pk=pk
+            ImageEditVersion.objects.filter(owner=request.user, enhancement_result__image__trashed_at__isnull=True), pk=pk
         )
 
     @extend_schema(responses={200: ImageEditVersionSerializer})
@@ -525,6 +532,7 @@ class GalleryEditActivateView(APIView):
             ImageEditVersion.objects.filter(
                 owner=request.user,
                 status=EnhancementStatus.COMPLETED,
+                enhancement_result__image__trashed_at__isnull=True,
             ),
             pk=pk,
         )
@@ -552,6 +560,7 @@ class GalleryEditDownloadView(APIView):
             ImageEditVersion.objects.filter(
                 owner=request.user,
                 status=EnhancementStatus.COMPLETED,
+                enhancement_result__image__trashed_at__isnull=True,
             ).select_related("enhancement_result__image"),
             pk=pk,
         )
@@ -649,7 +658,7 @@ class ModelComparisonListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return ModelComparison.objects.filter(owner=self.request.user)
+        return ModelComparison.objects.filter(owner=self.request.user, image__trashed_at__isnull=True)
 
 
 class ModelComparisonDetailView(generics.RetrieveDestroyAPIView):
@@ -657,7 +666,7 @@ class ModelComparisonDetailView(generics.RetrieveDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return ModelComparison.objects.filter(owner=self.request.user).prefetch_related("outputs")
+        return ModelComparison.objects.filter(owner=self.request.user, image__trashed_at__isnull=True).prefetch_related("outputs")
 
 
 class ModelComparisonPreviewView(APIView):
@@ -688,7 +697,7 @@ class ModelComparisonReportView(APIView):
     def get(self, request, pk):
         comparison = get_object_or_404(
             ModelComparison.objects.filter(
-                owner=request.user, status=EnhancementStatus.COMPLETED,
+                owner=request.user, status=EnhancementStatus.COMPLETED, image__trashed_at__isnull=True,
             ).prefetch_related("outputs"),
             pk=pk,
         )
@@ -705,7 +714,7 @@ class EditPreviewListCreateView(APIView):
 
     def _result(self, request, result_id):
         return get_object_or_404(
-            ImageEnhancementResult.objects.filter(owner=request.user, status=EnhancementStatus.COMPLETED),
+            ImageEnhancementResult.objects.filter(owner=request.user, status=EnhancementStatus.COMPLETED, image__trashed_at__isnull=True),
             pk=result_id,
         )
 
@@ -752,7 +761,7 @@ class EditPreviewDetailView(APIView):
 
     def _preview(self, request, pk):
         return get_object_or_404(
-            EditPreview.objects.filter(owner=request.user).select_related("source", "enhancement_result", "owner"),
+            EditPreview.objects.filter(owner=request.user, enhancement_result__image__trashed_at__isnull=True).select_related("source", "enhancement_result", "owner"),
             pk=pk,
         )
 
@@ -774,7 +783,7 @@ class EditPreviewImageView(APIView):
     @extend_schema(responses={(200, "image/jpeg"): OpenApiTypes.BINARY, (200, "image/png"): OpenApiTypes.BINARY,
                               404: OpenApiTypes.OBJECT})
     def get(self, request, pk):
-        preview = get_object_or_404(EditPreview.objects.filter(owner=request.user), pk=pk)
+        preview = get_object_or_404(EditPreview.objects.filter(owner=request.user, enhancement_result__image__trashed_at__isnull=True), pk=pk)
         content_type = "image/png" if preview.output_format == "png" else "image/jpeg"
         response = FileResponse(preview.file.open("rb"), content_type=content_type)
         response["Cache-Control"] = "private, max-age=3600"
@@ -795,7 +804,7 @@ class EditPreviewSaveView(APIView):
     )
     def post(self, request, pk):
         preview = get_object_or_404(
-            EditPreview.objects.filter(owner=request.user).select_related("source", "enhancement_result"), pk=pk,
+            EditPreview.objects.filter(owner=request.user, enhancement_result__image__trashed_at__isnull=True).select_related("source", "enhancement_result"), pk=pk,
         )
         result = preview.enhancement_result
         if result.status != EnhancementStatus.COMPLETED:

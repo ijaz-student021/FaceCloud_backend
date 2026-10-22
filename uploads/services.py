@@ -180,7 +180,7 @@ def delete_batch(batch):
     from .deletion import delete_images
 
     with transaction.atomic():
-        delete_images(batch.images.all())
+        delete_images(ImageUpload.all_objects.filter(batch=batch))   # the batch's photographs in the trash go with it
         batch.delete()
 
 
