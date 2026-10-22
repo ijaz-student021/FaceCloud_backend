@@ -264,6 +264,12 @@ person folder the photo was in** (`member_count`, and the folder no longer match
 (their secure links then answer 410; the owner can build new ones). A folder left empty stays until its owner
 deletes it, and its `cover_images` is empty. Deleting an upload batch (`DELETE /api/images/batches/{id}/`) does the same.
 
+**Favourites (new).** `PUT /api/images/{id}/favorite/` marks one of the person's own photographs (answer `{id, is_favorite: true, favorited_at}`), `DELETE` takes the mark off
+(`is_favorite: false`); both are idempotent and a photograph that is not theirs, does not exist or was refused at upload is a `404`. `POST /api/images/favorites/
+{image_ids: [..up to 200], favorite: true|false}` does many and answers `{favorite, updated_ids, not_found_ids}` (nothing is done for the ids in `not_found_ids`).
+`GET /api/images/my/?favorite=true` lists only the favourites (`false` the others; it combines with every other filter), and every photograph row and batch image carries `is_favorite`.
+Marking a favourite never changes the photograph's other timestamps.
+
 **Thumbnails.** Never draw a gallery from `download_url`: originals can be
 hundreds of megabytes. Each image in the list carries `thumbnail_url`, which
 serves a small JPEG (`GET /api/images/{id}/thumbnail/`, optional `?size=256`

@@ -2,6 +2,8 @@ from django.urls import path
 
 from .views import (
     ImageBulkDeleteView,
+    ImageBulkFavoriteView,
+    ImageFavoriteView,
     ImageDownloadView,
     ImagePreprocessView,
     ImagePreprocessingDetailView,
@@ -31,6 +33,8 @@ urlpatterns = [
     path("batches/<int:batch_id>/retry/", UploadBatchRetryView.as_view(), name="upload-batch-retry"),
     path("batches/<int:batch_id>/cancel/", UploadBatchCancelView.as_view(), name="upload-batch-cancel"),
     path("bulk-delete/", ImageBulkDeleteView.as_view(), name="image-bulk-delete"),
+    path("favorites/", ImageBulkFavoriteView.as_view(), name="image-bulk-favorite"),
+    path("<int:pk>/favorite/", ImageFavoriteView.as_view(), name="image-favorite"),
     path("my/", MyImageListView.as_view(), name="my-image-list"),
     path("", ImageUploadListView.as_view(), name="image-upload-list"),
     path("<int:pk>/download/", ImageDownloadView.as_view(), name="image-upload-download"),

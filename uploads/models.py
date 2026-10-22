@@ -105,11 +105,15 @@ class ImageUpload(models.Model):
     checksum_sha256 = models.CharField(max_length=64, blank=True, db_index=True)
     status = models.CharField(max_length=12, choices=STATUS_CHOICES)
     rejection_reason = models.TextField(blank=True)
+    # A photograph the person marked as a favourite (PUT /api/images/{id}/favorite/). Set by queryset update, so it never moves updated_at.
+    is_favorite = models.BooleanField(default=False)
+    favorited_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [models.Index(fields=["owner", "is_favorite"], name="upload_owner_favorite_idx")]
 
 
 class ImagePreprocessingResult(models.Model):

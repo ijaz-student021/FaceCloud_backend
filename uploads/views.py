@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from django.db.models import OuterRef, Prefetch, Q, Subquery
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
@@ -318,6 +319,12 @@ class MyImageListView(generics.ListAPIView):
                 raise ValidationError({"upload_type": "Use single, multiple, or zip."})
             queryset = queryset.filter(batch__upload_type=upload_type)
 
+        favorite = self.request.query_params.get("favorite", "").strip().lower()
+        if favorite:
+            if favorite not in {"true", "false", "1", "0"}:
+                raise ValidationError({"favorite": "Use true or false."})
+            queryset = queryset.filter(is_favorite=favorite in {"true", "1"})
+
         selected_status = self.request.query_params.get("status", "").strip().lower()
         if selected_status and selected_status != "all":
             if selected_status not in self.valid_statuses:
@@ -424,6 +431,65 @@ class ImageBulkDeleteView(APIView):
             "not_found_ids": [pk for pk in wanted if pk not in found],
             **{key: value for key, value in summary.items() if key != "deleted"},
         })
+
+
+class FavoriteResultSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    is_favorite = serializers.BooleanField()
+    favorited_at = serializers.DateTimeField(allow_null=True)
+
+
+class ImageFavoriteView(APIView):
+    """Mark one of your photographs as a favourite (``PUT``) or take the mark off (``DELETE``). Both are idempotent."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "image_favorite"
+
+    def _set(self, request, pk, favorite):
+        photo = get_object_or_404(ImageUpload.objects.filter(owner=request.user, status="uploaded"), pk=pk)
+        if photo.is_favorite != favorite:
+            ImageUpload.objects.filter(pk=photo.pk).update(is_favorite=favorite, favorited_at=timezone.now() if favorite else None)
+        photo.refresh_from_db(fields=["is_favorite", "favorited_at"])
+        return Response({"id": photo.pk, "is_favorite": photo.is_favorite, "favorited_at": photo.favorited_at})
+
+    @extend_schema(request=None, responses={200: FavoriteResultSerializer, 404: OpenApiTypes.OBJECT})
+    def put(self, request, pk):
+        return self._set(request, pk, True)
+
+    @extend_schema(request=None, responses={200: FavoriteResultSerializer, 404: OpenApiTypes.OBJECT})
+    def delete(self, request, pk):
+        return self._set(request, pk, False)
+
+
+class BulkFavoriteRequestSerializer(serializers.Serializer):
+    image_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), min_length=1, max_length=BULK_DELETE_LIMIT, allow_empty=False,
+        help_text=f"Up to {BULK_DELETE_LIMIT} photo ids.",
+    )
+    favorite = serializers.BooleanField(help_text="true to mark them as favourites, false to take the mark off.")
+
+
+class BulkFavoriteResultSerializer(serializers.Serializer):
+    favorite = serializers.BooleanField()
+    updated_ids = serializers.ListField(child=serializers.IntegerField(), help_text="Photos that now have the requested state (including ones that already had it).")
+    not_found_ids = serializers.ListField(child=serializers.IntegerField(), help_text="Ids that are not yours, do not exist or are not stored photographs; nothing was done for them.")
+
+
+class ImageBulkFavoriteView(APIView):
+    """Mark or unmark several of your photographs at once."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "image_favorite"
+
+    @extend_schema(request=BulkFavoriteRequestSerializer, responses={200: BulkFavoriteResultSerializer, 400: OpenApiTypes.OBJECT})
+    def post(self, request):
+        payload = BulkFavoriteRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        wanted = list(dict.fromkeys(payload.validated_data["image_ids"]))
+        favorite = payload.validated_data["favorite"]
+        found = set(ImageUpload.objects.filter(owner=request.user, status="uploaded", pk__in=wanted).values_list("pk", flat=True))
+        ImageUpload.objects.filter(pk__in=found).exclude(is_favorite=favorite).update(is_favorite=favorite, favorited_at=timezone.now() if favorite else None)
+        return Response({"favorite": favorite, "updated_ids": [pk for pk in wanted if pk in found], "not_found_ids": [pk for pk in wanted if pk not in found]})
 
 
 class ImageDownloadView(APIView):
