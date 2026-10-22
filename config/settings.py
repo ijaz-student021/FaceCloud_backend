@@ -467,6 +467,11 @@ IDENTITY_GUARD_STRENGTHS = tuple(
     )
 )
 IDENTITY_GUARD_MAX_FACES = env.int("IDENTITY_GUARD_MAX_FACES", default=5)
+# Person folders: at most this many faces of one photograph are grouped (the largest ones); a crowd of sixty does not stall the queue. The rest are recorded as
+# skipped (reason too_many_faces) in the analysis evidence, and the photograph is still accepted and enhanced.
+IDENTITY_MAX_FACES_PER_IMAGE = env.int("IDENTITY_MAX_FACES_PER_IMAGE", default=20)
+if IDENTITY_MAX_FACES_PER_IMAGE < 1:
+    raise ImproperlyConfigured("IDENTITY_MAX_FACES_PER_IMAGE must be at least 1.")
 IDENTITY_GUARD_MAX_EDGE = env.int("IDENTITY_GUARD_MAX_EDGE", default=1024)
 IDENTITY_GUARD_MIN_FACE_EDGE = env.int("IDENTITY_GUARD_MIN_FACE_EDGE", default=40)
 

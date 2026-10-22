@@ -86,6 +86,26 @@ def image_reason_codes(image):
     return codes
 
 
+def face_tips(image):
+    """Tips about the faces of a photograph that was accepted: how many are too small to be grouped (a group photograph), and the cap of grouped faces."""
+    from django.conf import settings
+
+    validation = getattr(image, "face_validation", None)
+    faces = list(getattr(validation, "faces", None) or []) if validation is not None else []
+    if len(faces) < 2 or validation.decision != "accepted":
+        return []
+    from validation.services import MIN_GROUP_FACE_AREA_RATIO, _face_is_usable
+
+    usable = [face for face in faces if all(key in face for key in ("area_ratio", "width", "height")) and _face_is_usable(face, MIN_GROUP_FACE_AREA_RATIO)]
+    tips = []
+    small = len(faces) - len(usable)
+    if small:
+        tips.append(f"{small} {'face is' if small == 1 else 'faces are'} too small to place in a person folder; a closer shot would include {'it' if small == 1 else 'them'}.")
+    if len(usable) > settings.IDENTITY_MAX_FACES_PER_IMAGE:
+        tips.append(f"This photo has many faces; the {settings.IDENTITY_MAX_FACES_PER_IMAGE} largest are placed in person folders.")
+    return tips
+
+
 def moderated_q(batch_path="batch"):
     """A database condition for "filed under an organization that is not personal" (a moderator can decide it); ``batch_path`` is how the model reaches its batch."""
     return Q(**{f"{batch_path}__organization__isnull": False}) & Q(**{f"{batch_path}__organization__is_personal": False})

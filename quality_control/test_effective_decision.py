@@ -25,7 +25,7 @@ from uploads.models import ImagePreprocessingResult, ImageUpload, UploadBatch
 from uploads.progress import batch_progress_payload
 from validation.models import FaceValidationResult
 
-from .effective import TIP_SENTENCES, effective_decision, effective_q, image_reason_codes, moderator_can_decide, review_required, tips_for
+from .effective import TIP_SENTENCES, effective_decision, effective_q, face_tips, image_reason_codes, moderator_can_decide, review_required, tips_for
 from .models import ImageQualityDecision
 
 User = get_user_model()
@@ -212,6 +212,33 @@ class EverythingThatShowsTheVerdictTests(EffectiveDecisionBase):
 
         with self.assertRaises(PackageNotReadyError):
             ensure_package_ready(team_batch, "accepted_results")
+
+
+class FaceTipsTests(EffectiveDecisionBase):
+    def test_a_group_photograph_with_small_faces_gets_a_tip_counting_them(self):
+        image = self.photo(self.batch("personal"), "accepted")
+        faces = [{"area_ratio": 0.05, "width": 100, "height": 100}] * 3 + [{"area_ratio": 0.002, "width": 20, "height": 20}] * 2
+        FaceValidationResult.objects.filter(image=image).update(faces=faces, face_count=5, decision="accepted")
+        tips = face_tips(ImageUpload.objects.get(pk=image.pk))
+        self.assertEqual(tips, ["2 faces are too small to place in a person folder; a closer shot would include them."])
+        body = self.api().get(reverse("quality:image-quality", kwargs={"image_id": image.pk})).json()
+        self.assertEqual(body["tips"], tips)
+
+    def test_one_small_face_is_singular_and_a_crowd_mentions_the_cap(self):
+        image = self.photo(self.batch("personal"), "accepted")
+        big = {"area_ratio": 0.05, "width": 100, "height": 100}
+        FaceValidationResult.objects.filter(image=image).update(faces=[big, {"area_ratio": 0.002, "width": 20, "height": 20}], face_count=2)
+        self.assertEqual(face_tips(ImageUpload.objects.get(pk=image.pk)), ["1 face is too small to place in a person folder; a closer shot would include it."])
+        with override_settings(IDENTITY_MAX_FACES_PER_IMAGE=2):
+            FaceValidationResult.objects.filter(image=image).update(faces=[big, big, big], face_count=3)
+            self.assertEqual(face_tips(ImageUpload.objects.get(pk=image.pk)), ["This photo has many faces; the 2 largest are placed in person folders."])
+
+    def test_a_single_face_or_a_photograph_without_faces_has_no_face_tip(self):
+        image = self.photo(self.batch("personal"), "accepted")
+        FaceValidationResult.objects.filter(image=image).update(faces=[{"area_ratio": 0.05, "width": 100, "height": 100}], face_count=1)
+        self.assertEqual(face_tips(ImageUpload.objects.get(pk=image.pk)), [])
+        FaceValidationResult.objects.filter(image=image).update(faces=[], face_count=0)
+        self.assertEqual(face_tips(ImageUpload.objects.get(pk=image.pk)), [])
 
 
 class TheTaskTests(EffectiveDecisionBase):

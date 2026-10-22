@@ -331,6 +331,9 @@ def process_identity_analysis(analysis_id):
             if not grouped:
                 skipped.append({"face_index": index, **why})           # too small or too unsure to be a person: no folder
                 continue
+            if len(prepared) >= settings.IDENTITY_MAX_FACES_PER_IMAGE:
+                skipped.append({"face_index": index, "reason": "too_many_faces", "limit": settings.IDENTITY_MAX_FACES_PER_IMAGE})      # the faces are sorted largest first
+                continue
             if _batch_cancellation_requested(analysis.image.batch_id):
                 IdentityAnalysis.objects.filter(pk=analysis_id).update(
                     status=IdentityAnalysis.Status.CANCELLED,

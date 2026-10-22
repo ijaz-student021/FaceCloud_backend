@@ -21,9 +21,11 @@ class ImageQualityDecisionSerializer(serializers.ModelSerializer):
         return review_required(obj.image, obj.decision)
 
     def get_tips(self, obj) -> list[str]:
-        from .effective import image_reason_codes, tips_for
+        from .effective import face_tips, image_reason_codes, tips_for
 
-        return tips_for(image_reason_codes(obj.image)) if obj.decision in ("accepted", "needs_review") else []
+        if obj.decision not in ("accepted", "needs_review"):
+            return []
+        return tips_for(image_reason_codes(obj.image)) + face_tips(obj.image)
 
     class Meta:
         model = ImageQualityDecision

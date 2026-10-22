@@ -384,6 +384,11 @@ Faces are grouped into "person folders". A photo with no detectable face is
 analysed as `completed` with `face_count` 0 (not `failed`), so do not show an
 error for it.
 
+**Group photographs (changed).** A photograph with several people is accepted when at least one face is big enough to use, however many faces it has (it used to go to review above five
+faces or when one face was small), and it appears in **each** person's folder. Faces too small to place in a folder are skipped, and the photograph's quality `tips` say how many
+("2 faces are too small to place in a person folder..."); at most `IDENTITY_MAX_FACES_PER_IMAGE` (20) faces of one photograph are placed, the largest first. A photograph whose only
+face is small is no longer **rejected**: it is kept (`needs_review` in the face check, so "accepted with a tip" in a personal workspace) and simply not placed in a folder.
+
 - **Consent first.** Face grouping only runs for users who granted biometric
   consent. `GET /api/privacy/consents/` returns the current state and policy
   version; `POST /api/privacy/consents/ {granted, policy_version}` grants or
