@@ -225,7 +225,11 @@ def model_rule(cfg):
         restricted.append("ArcFace / InsightFace weights (non-commercial)")
     if cfg.get("FACE_DETECTOR_PROVIDER") == "retinaface_v1":
         restricted.append("RetinaFace weights (terms not verified)")
-    if cfg.get("ENHANCEMENT_RENDER_POLICY", "lightweight_v1") != "lightweight_v1" and cfg.get("ZERO_DCE_ENABLED"):
+    # The policy of a person's own request, and the one automatic enhancement runs under (it is on by default): either one lets Zero-DCE run.
+    policies = {cfg.get("ENHANCEMENT_RENDER_POLICY", "lightweight_v1")}
+    if cfg.get("AUTO_ENHANCEMENT_ENABLED", False):
+        policies.add(cfg.get("AUTO_ENHANCEMENT_RENDER_POLICY", "lightweight_v1"))
+    if policies != {"lightweight_v1"} and cfg.get("ZERO_DCE_ENABLED"):
         restricted.append("Zero-DCE (licence not on file)")
     if restricted and not cfg.get("NONCOMMERCIAL_MODELS_ACKNOWLEDGED"):
         problems.append(

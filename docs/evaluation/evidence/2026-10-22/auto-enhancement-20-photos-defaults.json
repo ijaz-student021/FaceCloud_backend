@@ -1,0 +1,446 @@
+{
+ "config": "defaults",
+ "auto": "on",
+ "photos": 20,
+ "seconds_to_finish_whole_batch": 85.3,
+ "batch_status": "partial",
+ "enhancement_finished": true,
+ "processing_mode": "inline",
+ "notifications_batch_enhanced": [
+  "10 photos enhanced (8 kept as uploaded because enhancing them would not have helped)."
+ ],
+ "per_photo_notifications": 0,
+ "settings": {
+  "CELERY_TASK_ALWAYS_EAGER": true,
+  "CELERY_TASK_EAGER_PROPAGATES": false,
+  "IMAGE_ENCRYPTION_ENABLED": false,
+  "STORAGE_BACKEND": "filesystem",
+  "ADAPTIVE_DEBUG_ARTIFACTS": false,
+  "MAX_ACTIVE_ENHANCEMENTS_PER_USER": 100
+ },
+ "rows": [
+  {
+   "photo": "01_clean_480.png",
+   "upload_status": "uploaded",
+   "face_check": "accepted",
+   "quality": "accepted",
+   "quality_reasons": [],
+   "auto_record": "started",
+   "result_status": "completed",
+   "outcome": "original_preserved",
+   "summary": "The photograph did not need enhancement, so it was left as it is.",
+   "operations": [],
+   "models_in_accepted_stages": [],
+   "models_tried": [],
+   "result_seconds": 0.3,
+   "policy": "adaptive_v1",
+   "enhancement_in_answer": "completed"
+  },
+  {
+   "photo": "02_clean_640.png",
+   "upload_status": "uploaded",
+   "face_check": "needs_review",
+   "quality": "needs_review",
+   "quality_reasons": [
+    "face_validation_required"
+   ],
+   "auto_record": "started",
+   "result_status": "completed",
+   "outcome": "original_preserved",
+   "summary": "The photograph did not need enhancement, so it was left as it is.",
+   "operations": [],
+   "models_in_accepted_stages": [],
+   "models_tried": [],
+   "result_seconds": 0.35,
+   "policy": "adaptive_v1",
+   "enhancement_in_answer": "completed"
+  },
+  {
+   "photo": "03_clean_768.jpg",
+   "upload_status": "uploaded",
+   "face_check": "needs_review",
+   "quality": "needs_review",
+   "quality_reasons": [
+    "face_validation_required"
+   ],
+   "auto_record": "started",
+   "result_status": "completed",
+   "outcome": "original_preserved",
+   "summary": "The original photograph was kept: it has defocus blur, which cannot be recovered reliably; a degraded face that this server's enabled models cannot correct.",
+   "operations": [],
+   "models_in_accepted_stages": [],
+   "models_tried": [],
+   "result_seconds": 0.21,
+   "policy": "adaptive_v1",
+   "enhancement_in_answer": "completed"
+  },
+  {
+   "photo": "04_clean_flipped.png",
+   "upload_status": "uploaded",
+   "face_check": "accepted",
+   "quality": "accepted",
+   "quality_reasons": [],
+   "auto_record": "started",
+   "result_status": "completed",
+   "outcome": "original_preserved",
+   "summary": "The photograph did not need enhancement, so it was left as it is.",
+   "operations": [],
+   "models_in_accepted_stages": [],
+   "models_tried": [],
+   "result_seconds": 0.25,
+   "policy": "adaptive_v1",
+   "enhancement_in_answer": "completed"
+  },
+  {
+   "photo": "05_clean_small_300.png",
+   "upload_status": "uploaded",
+   "face_check": "accepted",
+   "quality": "accepted",
+   "quality_reasons": [],
+   "auto_record": "started",
+   "result_status": "completed",
+   "outcome": "enhanced",
+   "summary": "Enhanced: enlarged the photograph.",
+   "operations": [
+    "super_resolution"
+   ],
+   "models_in_accepted_stages": [
+    "realesrgan"
+   ],
+   "models_tried": [
+    "realesrgan"
+   ],
+   "result_seconds": 10.11,
+   "policy": "adaptive_v1",
+   "enhancement_in_answer": "completed"
+  },
+  {
+   "photo": "06_clean_jpeg_q40.jpg",
+   "upload_status": "uploaded",
+   "face_check": "accepted",
+   "quality": "accepted",
+   "quality_reasons": [],
+   "auto_record": "started",
+   "result_status": "completed",
+   "outcome": "original_preserved",
+   "summary": "The photograph did not need enhancement, so it was left as it is.",
+   "operations": [],
+   "models_in_accepted_stages": [],
+   "models_tried": [],
+   "result_seconds": 0.1,
+   "policy": "adaptive_v1",
+   "enhancement_in_answer": "completed"
+  },
+  {
+   "photo": "07_noisy_sigma10.png",
+   "upload_status": "uploaded",
+   "face_check": "accepted",
+   "quality": "accepted",
+   "quality_reasons": [],
+   "auto_record": "started",
+   "result_status": "completed",
+   "outcome": "enhanced",
+   "summary": "Enhanced: reduced noise.",
+   "operations": [
+    "denoising"
+   ],
+   "models_in_accepted_stages": [
+    "opencv_nlm"
+   ],
+   "models_tried": [
+    "opencv_nlm"
+   ],
+   "result_seconds": 1.3,
+   "policy": "adaptive_v1",
+   "enhancement_in_answer": "completed"
+  },
+  {
+   "photo": "08_noisy_sigma18.png",
+   "upload_status": "uploaded",
+   "face_check": "accepted",
+   "quality": "accepted",
+   "quality_reasons": [],
+   "auto_record": "started",
+   "result_status": "completed",
+   "outcome": "enhanced",
+   "summary": "Enhanced: reduced noise.",
+   "operations": [
+    "denoising"
+   ],
+   "models_in_accepted_stages": [
+    "opencv_nlm"
+   ],
+   "models_tried": [
+    "opencv_nlm"
+   ],
+   "result_seconds": 0.92,
+   "policy": "adaptive_v1",
+   "enhancement_in_answer": "completed"
+  },
+  {
+   "photo": "09_noisy_sigma25.png",
+   "upload_status": "uploaded",
+   "face_check": "accepted",
+   "quality": "accepted",
+   "quality_reasons": [],
+   "auto_record": "started",
+   "result_status": "completed",
+   "outcome": "partially_enhanced",
+   "summary": "Enhanced: reduced noise. Not fully corrected: A degraded face remains that could not be restored safely. Noise remains.",
+   "operations": [
+    "denoising"
+   ],
+   "models_in_accepted_stages": [
+    "opencv_nlm"
+   ],
+   "models_tried": [
+    "opencv_nlm"
+   ],
+   "result_seconds": 0.9,
+   "policy": "adaptive_v1",
+   "enhancement_in_answer": "completed"
+  },
+  {
+   "photo": "10_noisy_dim.png",
+   "upload_status": "uploaded",
+   "face_check": "accepted",
+   "quality": "accepted",
+   "quality_reasons": [],
+   "auto_record": "started",
+   "result_status": "completed",
+   "outcome": "original_preserved",
+   "summary": "The photograph did not need enhancement, so it was left as it is.",
+   "operations": [],
+   "models_in_accepted_stages": [],
+   "models_tried": [],
+   "result_seconds": 0.14,
+   "policy": "adaptive_v1",
+   "enhancement_in_answer": "completed"
+  },
+  {
+   "photo": "11_motion_blur_15.png",
+   "upload_status": "uploaded",
+   "face_check": "accepted",
+   "quality": "accepted",
+   "quality_reasons": [],
+   "auto_record": "started",
+   "result_status": "completed",
+   "outcome": "partially_enhanced",
+   "summary": "Enhanced: reduced motion blur. Not fully corrected: A degraded face remains that could not be restored safely. The face is still blurred; the deblurring model was unavailable or its result was not safe to use.",
+   "operations": [
+    "motion_deblurring"
+   ],
+   "models_in_accepted_stages": [
+    "nafnet_gopro"
+   ],
+   "models_tried": [
+    "nafnet_gopro"
+   ],
+   "result_seconds": 8.34,
+   "policy": "adaptive_v1",
+   "enhancement_in_answer": "completed"
+  },
+  {
+   "photo": "12_motion_blur_25.png",
+   "upload_status": "uploaded",
+   "face_check": "accepted",
+   "quality": "accepted",
+   "quality_reasons": [],
+   "auto_record": "started",
+   "result_status": "completed",
+   "outcome": "partially_enhanced",
+   "summary": "Enhanced: reduced motion blur. Not fully corrected: A degraded face remains that could not be restored safely. The face is still blurred; the deblurring model was unavailable or its result was not safe to use.",
+   "operations": [
+    "motion_deblurring"
+   ],
+   "models_in_accepted_stages": [
+    "nafnet_gopro"
+   ],
+   "models_tried": [
+    "nafnet_gopro"
+   ],
+   "result_seconds": 7.83,
+   "policy": "adaptive_v1",
+   "enhancement_in_answer": "completed"
+  },
+  {
+   "photo": "13_defocus_5.png",
+   "upload_status": "uploaded",
+   "face_check": "accepted",
+   "quality": "accepted",
+   "quality_reasons": [],
+   "auto_record": "started",
+   "result_status": "completed",
+   "outcome": "partially_enhanced",
+   "summary": "Enhanced: reduced motion blur. Not fully corrected: A degraded face remains that could not be restored safely. Defocus blur cannot be recovered reliably. The face is still blurred; the deblurring model was unavailable or its result was not safe to use.",
+   "operations": [
+    "motion_deblurring"
+   ],
+   "models_in_accepted_stages": [
+    "nafnet_gopro"
+   ],
+   "models_tried": [
+    "nafnet_gopro"
+   ],
+   "result_seconds": 5.29,
+   "policy": "adaptive_v1",
+   "enhancement_in_answer": "completed"
+  },
+  {
+   "photo": "14_defocus_8.png",
+   "upload_status": "uploaded",
+   "face_check": "accepted",
+   "quality": "accepted",
+   "quality_reasons": [],
+   "auto_record": "started",
+   "result_status": "completed",
+   "outcome": "partially_enhanced",
+   "summary": "Enhanced: reduced motion blur. Not fully corrected: A degraded face remains that could not be restored safely. Defocus blur cannot be recovered reliably. The face is still blurred; the deblurring model was unavailable or its result was not safe to use.",
+   "operations": [
+    "motion_deblurring"
+   ],
+   "models_in_accepted_stages": [
+    "nafnet_gopro"
+   ],
+   "models_tried": [
+    "nafnet_gopro"
+   ],
+   "result_seconds": 5.13,
+   "policy": "adaptive_v1",
+   "enhancement_in_answer": "completed"
+  },
+  {
+   "photo": "15_dim_x0.55.png",
+   "upload_status": "uploaded",
+   "face_check": "accepted",
+   "quality": "accepted",
+   "quality_reasons": [],
+   "auto_record": "started",
+   "result_status": "completed",
+   "outcome": "original_preserved",
+   "summary": "The original photograph was kept: it has a degraded face that this server's enabled models cannot correct.",
+   "operations": [],
+   "models_in_accepted_stages": [],
+   "models_tried": [],
+   "result_seconds": 0.14,
+   "policy": "adaptive_v1",
+   "enhancement_in_answer": "completed"
+  },
+  {
+   "photo": "16_dim_x0.40.png",
+   "upload_status": "uploaded",
+   "face_check": "accepted",
+   "quality": "needs_review",
+   "quality_reasons": [
+    "underexposed"
+   ],
+   "auto_record": "started",
+   "result_status": "completed",
+   "outcome": "original_preserved",
+   "summary": "No enhancement passed the safety checks, so the original photograph was kept.",
+   "operations": [],
+   "models_in_accepted_stages": [],
+   "models_tried": [
+    "opencv_exposure",
+    "zero_dce"
+   ],
+   "result_seconds": 0.99,
+   "policy": "adaptive_v1",
+   "enhancement_in_answer": "completed"
+  },
+  {
+   "photo": "17_dim_x0.30.png",
+   "upload_status": "uploaded",
+   "face_check": "accepted",
+   "quality": "needs_review",
+   "quality_reasons": [
+    "underexposed"
+   ],
+   "auto_record": "started",
+   "result_status": "completed",
+   "outcome": "partially_enhanced",
+   "summary": "Enhanced: brightened the dark subject. Not fully corrected: A degraded face remains that could not be restored safely.",
+   "operations": [
+    "low_light_enhancement"
+   ],
+   "models_in_accepted_stages": [
+    "zero_dce"
+   ],
+   "models_tried": [
+    "zero_dce"
+   ],
+   "result_seconds": 0.72,
+   "policy": "adaptive_v1",
+   "enhancement_in_answer": "completed"
+  },
+  {
+   "photo": "18_very_dark_x0.15.png",
+   "upload_status": "uploaded",
+   "face_check": "needs_review",
+   "quality": "rejected",
+   "quality_reasons": [
+    "severe_underexposure",
+    "contrast_too_low",
+    "face_validation_required"
+   ],
+   "auto_record": null,
+   "result_status": null,
+   "outcome": null,
+   "summary": null,
+   "operations": null,
+   "models_in_accepted_stages": [],
+   "models_tried": [],
+   "result_seconds": null,
+   "policy": null,
+   "enhancement_in_answer": "not_applicable"
+  },
+  {
+   "photo": "19_very_dark_x0.10.png",
+   "upload_status": "uploaded",
+   "face_check": "needs_review",
+   "quality": "rejected",
+   "quality_reasons": [
+    "severe_underexposure",
+    "contrast_too_low",
+    "face_validation_required"
+   ],
+   "auto_record": null,
+   "result_status": null,
+   "outcome": null,
+   "summary": null,
+   "operations": null,
+   "models_in_accepted_stages": [],
+   "models_tried": [],
+   "result_seconds": null,
+   "policy": null,
+   "enhancement_in_answer": "not_applicable"
+  },
+  {
+   "photo": "20_no_face_scene.png",
+   "upload_status": "uploaded",
+   "face_check": "needs_review",
+   "quality": "needs_review",
+   "quality_reasons": [
+    "borderline_resolution",
+    "face_validation_required"
+   ],
+   "auto_record": "started",
+   "result_status": "completed",
+   "outcome": "enhanced",
+   "summary": "Enhanced: enlarged the photograph.",
+   "operations": [
+    "super_resolution"
+   ],
+   "models_in_accepted_stages": [
+    "realesrgan"
+   ],
+   "models_tried": [
+    "nafnet_gopro",
+    "realesrgan"
+   ],
+   "result_seconds": 33.96,
+   "policy": "adaptive_v1",
+   "enhancement_in_answer": "completed"
+  }
+ ]
+}

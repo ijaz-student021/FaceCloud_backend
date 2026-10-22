@@ -386,6 +386,16 @@ addresses and the media directory to be written down rather than left at their d
    `gunicorn config.wsgi -c gunicorn.conf.py` so credential-bearing URLs
    (share-link tokens, email-change verification links) are redacted from its
    access log.
+8. **Automatic enhancement and the licence of Zero-DCE.** Photographs that pass the
+   checks are enhanced after upload by default (`AUTO_ENHANCEMENT_ENABLED`), under
+   `AUTO_ENHANCEMENT_RENDER_POLICY=adaptive_v1`, which can use Zero-DCE (licence not
+   on file) while `ZERO_DCE_ENABLED` is on. The guard counts that policy, so a server
+   with the defaults refuses to start until the owner decides: set
+   `ZERO_DCE_ENABLED=False`, or `NONCOMMERCIAL_MODELS_ACKNOWLEDGED=True` once the
+   licence position is settled
+   ([`docs/model-licenses/model-set-2026-10.md`](docs/model-licenses/model-set-2026-10.md)).
+   `AUTO_ENHANCEMENT_ENABLED=False` switches the feature off. Run the worker with
+   the beat process: it releases photographs that waited for a free enhancement slot.
 
 Then run `python manage.py check --deploy` for Django's own checks.
 

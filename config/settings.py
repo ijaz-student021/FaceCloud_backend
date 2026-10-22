@@ -291,6 +291,22 @@ NAFNET_DEBLUR_ENABLED = env.bool("NAFNET_DEBLUR_ENABLED", default=True)
 # restoration chain (the adaptive engine) when this server can run it, and left to the lightweight pipeline otherwise, with the reason
 # recorded in the result (hd_unavailable_reason). False keeps every photograph on the policy's own pipeline.
 ENHANCEMENT_RESTORATION_ESCALATION = env.bool("ENHANCEMENT_RESTORATION_ESCALATION", default=True)
+
+# Automatic enhancement after upload (enhancement/auto.py): a photograph that passes the checks is enhanced without anyone asking.
+# AUTO_ENHANCEMENT_ENABLED: the operator's switch; False stops every automatic enhancement (a person's own request still works).
+# AUTO_ENHANCEMENT_RENDER_POLICY: the rendering policy those runs use, so they can be the adaptive engine ("original preserved" when nothing safe helps)
+#   while a person's own request keeps ENHANCEMENT_RENDER_POLICY. No model setting changes: the policy only decides which already-enabled stages may run.
+# AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES: a photograph waits this long for a free slot (ensure_enhancement_capacity) before it is skipped, never failed.
+AUTO_ENHANCEMENT_ENABLED = env.bool("AUTO_ENHANCEMENT_ENABLED", default=True)
+AUTO_ENHANCEMENT_RENDER_POLICY = env("AUTO_ENHANCEMENT_RENDER_POLICY", default="adaptive_v1")
+if AUTO_ENHANCEMENT_RENDER_POLICY not in ("lightweight_v1", "balanced_v1", "learned_v1", "adaptive_v1"):
+    raise ImproperlyConfigured(
+        "AUTO_ENHANCEMENT_RENDER_POLICY must be lightweight_v1, balanced_v1, learned_v1 or adaptive_v1, "
+        f"not {AUTO_ENHANCEMENT_RENDER_POLICY!r}."
+    )
+AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES = env.int("AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES", default=180)
+if AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES < 1:
+    raise ImproperlyConfigured("AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES must be at least 1.")
 # Thresholds of the restoration chain (read when the adaptive engine starts a run; docs/deployment/restoration-chain.md):
 # ADAPTIVE_FACE_BLUR_HIGH: a face whose detail (Laplacian variance of the face resized to 128 px; sharp faces about 119, p10 81) is below
 #   this counts as strongly blurred and is deblurred even when the frame reads sharp or as defocus.
@@ -992,6 +1008,10 @@ ACCOUNT_INVITATION_TTL_HOURS = env.int("ACCOUNT_INVITATION_TTL_HOURS", default=7
 # (scripts/run_beat.ps1 or `celery -A config beat`). Every entry is safe to run
 # repeatedly and does nothing when the feature it serves is switched off.
 CELERY_BEAT_SCHEDULE = {
+    "release-waiting-auto-enhancements": {
+        "task": "enhancement.release_waiting_auto",
+        "schedule": crontab(minute="*/2"),
+    },
     "reap-stuck-jobs": {
         "task": "operations.reap_stuck_jobs",
         "schedule": crontab(minute="*/5"),

@@ -332,6 +332,39 @@ def notify_enhancement_result(result):
     return None
 
 
+def notify_batch_enhanced(batch_id, counts):
+    """Once per batch, when its automatic enhancements are all finished: "3 photos enhanced". Never one per photograph (enhancement/auto.py)."""
+    from uploads.models import UploadBatch
+
+    batch = UploadBatch.objects.select_related("owner").filter(pk=batch_id).first()
+    if batch is None:
+        return None
+    enhanced, kept, failed, skipped = (int(counts.get(key, 0)) for key in ("enhanced", "kept", "failed", "skipped"))
+    message = f"{enhanced} photo{'s' if enhanced != 1 else ''} enhanced"
+    details = []
+    if kept:
+        details.append(f"{kept} kept as uploaded because enhancing them would not have helped")
+    if failed:
+        details.append(f"{failed} could not be enhanced")
+    if skipped:
+        details.append(f"{skipped} not enhanced")
+    if details:
+        message += " (" + "; ".join(details) + ")"
+    notification, _ = create_user_notification(
+        recipient=batch.owner,
+        event_type=UserNotification.EventType.BATCH_ENHANCED,
+        idempotency_key=f"batch:{batch.pk}:enhanced",
+        title="Photos enhanced",
+        message=message + ".",
+        severity=UserNotification.Severity.WARNING if failed else UserNotification.Severity.SUCCESS,
+        resource_type="batch",
+        resource_id=batch.pk,
+        action_path=JOBS_PATH,
+        metadata={"batch_id": batch.pk, "enhanced": enhanced, "kept": kept, "failed": failed, "skipped": skipped, "total": int(counts.get("total", 0))},
+    )
+    return notification
+
+
 def notify_batch_completed(batch_id, counts=None):
     from uploads.models import UploadBatch
 

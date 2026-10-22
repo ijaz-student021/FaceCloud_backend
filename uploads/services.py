@@ -75,7 +75,7 @@ def _finalize_batch(batch):
 
 
 @transaction.atomic
-def create_image_batch(owner, upload_type, files, organization=None):
+def create_image_batch(owner, upload_type, files, organization=None, auto_enhance=False):
     if not files:
         raise ValidationError("At least one image file is required.")
     from django.conf import settings
@@ -83,7 +83,7 @@ def create_image_batch(owner, upload_type, files, organization=None):
         raise ValidationError(f"A batch cannot contain more than {settings.MAX_UPLOAD_BATCH_FILES} images.")
     from organizations.services import get_default_organization
     batch = UploadBatch.objects.create(
-        owner=owner, upload_type=upload_type, organization=organization or get_default_organization(owner),
+        owner=owner, upload_type=upload_type, organization=organization or get_default_organization(owner), auto_enhance=bool(auto_enhance),
     )
     from notifications.events import notify_upload_received
     transaction.on_commit(
@@ -131,7 +131,7 @@ def create_image_batch(owner, upload_type, files, organization=None):
 
 
 @transaction.atomic
-def create_zip_batch(owner, uploaded_zip, organization=None):
+def create_zip_batch(owner, uploaded_zip, organization=None, auto_enhance=False):
     members = validate_zip_archive(uploaded_zip)
     from organizations.services import get_default_organization
     batch = UploadBatch.objects.create(
@@ -139,6 +139,7 @@ def create_zip_batch(owner, uploaded_zip, organization=None):
         upload_type="zip",
         original_archive_name=safe_original_name(uploaded_zip.name),
         organization=organization or get_default_organization(owner),
+        auto_enhance=bool(auto_enhance),
     )
     from notifications.events import notify_upload_received
 
@@ -267,6 +268,10 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
             # Person folders follow the quality verdict (identities/verdict.py); one that is already decided and was never grouped is grouped now.
             from identities.verdict import group_after_verdict
             group_after_verdict(image_upload)
+        if hasattr(image_upload, "quality_decision"):
+            # Already decided and never enhanced automatically (a retry, a re-analysis): started now if its verdict allows it, and never twice.
+            from enhancement.auto import enhance_after_verdict
+            enhance_after_verdict(image_upload)
         return existing, False
 
     started = time.perf_counter()

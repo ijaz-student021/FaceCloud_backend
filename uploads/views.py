@@ -47,10 +47,27 @@ ORGANIZATION_FIELD = {"type": "integer", "description": (
 )}
 
 
+AUTO_ENHANCE_FIELD = {"type": "boolean", "description": (
+    "Optional. true or false: whether the photographs of this upload that pass the checks are enhanced automatically. Absent means the account setting "
+    "(`auto_enhance` of `GET /api/notifications/preferences/`, on unless the person turned it off)."
+)}
+
+
 def _upload_organization(request):
     from organizations.services import resolve_upload_organization
 
     return resolve_upload_organization(request.user, request.data.get("organization_id"))
+
+
+def _upload_auto_enhance(request):
+    """Whether this upload is enhanced automatically: its own ``auto_enhance`` field, else the account setting (``enhancement/auto.py``)."""
+    from enhancement.auto import parse_auto_enhance, resolve_auto_enhance
+
+    try:
+        requested = parse_auto_enhance(request.data.get("auto_enhance"))
+    except ValueError as error:
+        raise ValidationError({"auto_enhance": str(error)}) from error
+    return resolve_auto_enhance(request.user, requested)
 
 
 def _images_with_status():
@@ -70,7 +87,7 @@ class SingleImageUploadView(APIView):
 
     @extend_schema(
         request={"multipart/form-data": {"type": "object", "properties": {
-            "file": {"type": "string", "format": "binary"}, "organization_id": ORGANIZATION_FIELD,
+            "file": {"type": "string", "format": "binary"}, "organization_id": ORGANIZATION_FIELD, "auto_enhance": AUTO_ENHANCE_FIELD,
         }}},
         responses={201: UploadBatchCreatedSerializer},
     )
@@ -78,7 +95,9 @@ class SingleImageUploadView(APIView):
         files = _all_request_files(request)
         if len(files) != 1:
             raise ValidationError({"file": "Select exactly one image for single-image upload."})
-        batch = create_image_batch(request.user, "single", files, organization=_upload_organization(request))
+        batch = create_image_batch(
+            request.user, "single", files, organization=_upload_organization(request), auto_enhance=_upload_auto_enhance(request),
+        )
         return _batch_response(request, batch)
 
 
@@ -90,6 +109,7 @@ class MultipleImageUploadView(APIView):
     @extend_schema(
         request={"multipart/form-data": {"type": "object", "properties": {
             "files": {"type": "array", "items": {"type": "string", "format": "binary"}}, "organization_id": ORGANIZATION_FIELD,
+            "auto_enhance": AUTO_ENHANCE_FIELD,
         }}},
         responses={201: UploadBatchCreatedSerializer},
     )
@@ -99,7 +119,9 @@ class MultipleImageUploadView(APIView):
             raise ValidationError({"files": "Select at least two images for multiple-image upload."})
         if len(files) != len(_all_request_files(request)):
             raise ValidationError({"files": "Submit all images using the repeated 'files' field."})
-        batch = create_image_batch(request.user, "multiple", files, organization=_upload_organization(request))
+        batch = create_image_batch(
+            request.user, "multiple", files, organization=_upload_organization(request), auto_enhance=_upload_auto_enhance(request),
+        )
         batch = enqueue_batch_preprocessing(batch)
         return _batch_response(request, batch)
 
@@ -111,7 +133,7 @@ class ZipImageUploadView(APIView):
 
     @extend_schema(
         request={"multipart/form-data": {"type": "object", "properties": {
-            "file": {"type": "string", "format": "binary"}, "organization_id": ORGANIZATION_FIELD,
+            "file": {"type": "string", "format": "binary"}, "organization_id": ORGANIZATION_FIELD, "auto_enhance": AUTO_ENHANCE_FIELD,
         }}},
         responses={201: UploadBatchCreatedSerializer},
     )
@@ -120,7 +142,9 @@ class ZipImageUploadView(APIView):
         if len(files) != 1:
             raise ValidationError({"file": "Select exactly one ZIP archive."})
         uploaded_zip = files[0]
-        batch = create_zip_batch(request.user, uploaded_zip, organization=_upload_organization(request))
+        batch = create_zip_batch(
+            request.user, uploaded_zip, organization=_upload_organization(request), auto_enhance=_upload_auto_enhance(request),
+        )
         batch = enqueue_batch_preprocessing(batch)
         return _batch_response(request, batch)
 

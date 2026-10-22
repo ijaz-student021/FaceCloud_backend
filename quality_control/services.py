@@ -180,6 +180,10 @@ def process_quality_decision(decision_id):
         # between (accepted: now; rejected: never; needs_review: now in a personal workspace, else after a moderator approves it). Never raises.
         from identities.verdict import group_after_verdict
         group_after_verdict(result.image, verdict=decision)
+        # The photograph is enhanced automatically on the same terms (enhancement/auto.py): accepted now, rejected never, needs_review now in a personal
+        # workspace, else after a moderator approves it. Same transaction as the decision, never raises, and never makes a second enhancement.
+        from enhancement.auto import enhance_after_verdict
+        enhance_after_verdict(result.image, verdict=decision)
         return result
     except Exception as error:
         result.status = ImageQualityDecision.Status.FAILED
