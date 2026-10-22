@@ -9,6 +9,7 @@ from duplicates.models import DuplicateAnalysis
 from duplicates.serializers import DuplicateAnalysisSerializer
 from enhancement.serializers import ImageEnhancementResultSerializer
 from identities.serializers import IdentityAnalysisSerializer
+from places.serializers import PlaceBriefSerializer
 from quality_control.serializers import ImageQualityDecisionSerializer
 from validation.serializers import FaceValidationResultSerializer
 
@@ -93,13 +94,22 @@ class MyImageSerializer(ImageUploadSerializer):
     duplicate_analysis = serializers.SerializerMethodField()
     identity_analysis = serializers.SerializerMethodField()
     identity_groups = serializers.SerializerMethodField()
+    place = serializers.SerializerMethodField(help_text="Where it was taken, by name (null if unknown or place names are off). Never coordinates: those are on /api/images/{id}/location/.")
+    has_location = serializers.SerializerMethodField(help_text="Whether the photograph has a position of its own (see /api/images/{id}/location/).")
 
     class Meta(ImageUploadSerializer.Meta):
         fields = ImageUploadSerializer.Meta.fields + [
             "batch_display_name", "upload_type", "display_status",
             "latest_enhancement", "face_validation", "quality_decision",
-            "duplicate_analysis", "identity_analysis", "identity_groups", "updated_at",
+            "duplicate_analysis", "identity_analysis", "identity_groups", "place", "has_location", "updated_at",
         ]
+
+    @extend_schema_field(PlaceBriefSerializer(allow_null=True))
+    def get_place(self, obj):
+        return PlaceBriefSerializer(obj.place).data if obj.place_id else None
+
+    def get_has_location(self, obj) -> bool:
+        return obj.gps_lat is not None and obj.gps_lon is not None
 
     @staticmethod
     def _latest_result(obj):

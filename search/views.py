@@ -13,6 +13,8 @@ from albums.views import albums_for
 from identities.models import IdentityGroup
 from identities.people import people_queryset
 from identities.serializers import PersonChipSerializer
+from places.queries import places_for
+from places.serializers import PlaceSerializer
 from uploads.models import UploadBatch
 from uploads.serializers import MyImageSerializer
 from uploads.views import my_images_queryset
@@ -70,6 +72,7 @@ class SearchResponseSerializer(serializers.Serializer):
     groups = SearchGroupSerializer(many=True)
     people = PersonChipSerializer(many=True)
     albums = AlbumSerializer(many=True)
+    places = PlaceSerializer(many=True)
     jobs = SearchJobSerializer(many=True)
 
 
@@ -130,6 +133,7 @@ class SearchView(APIView):
             "groups": SearchGroupSerializer(groups, many=True).data,
             "people": PersonChipSerializer(people, many=True, context={"request": request}).data,
             "albums": AlbumSerializer(albums_for(user).filter(title__icontains=query).order_by("-updated_at", "-pk")[:limit], many=True, context={"request": request}).data,
+            "places": PlaceSerializer(places_for(user).filter(name__icontains=query)[:limit], many=True, context={"request": request}).data,
             "jobs": SearchJobSerializer(jobs, many=True).data,
         }
         if semantic.enabled():

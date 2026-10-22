@@ -79,6 +79,7 @@ INSTALLED_APPS = [
     "notifications",
     "albums",
     "memories",
+    "places",
     "operations",
     "activity",
     "privacy",
@@ -481,6 +482,16 @@ if ALBUM_MAX_PER_USER < 1 or ALBUM_MAX_IMAGES < 1:
 TRASH_RETENTION_DAYS = env.int("TRASH_RETENTION_DAYS", default=30)
 if not 1 <= TRASH_RETENTION_DAYS <= 3650:
     raise ImproperlyConfigured("TRASH_RETENTION_DAYS must be between 1 and 3650.")
+# Places (places/): where a photograph was taken. LOCATION_ENABLED switches reading GPS from uploads on or off (nothing is read when it is off). Place names come from an
+# OFFLINE gazetteer in LOCATION_GAZETTEER_DIR (GeoNames cities1000.txt, CC BY 4.0; scripts/fetch_gazetteer.py downloads it and prints its SHA-256); no coordinate is ever sent
+# to another service. Names stay off until LOCATION_GAZETTEER_SHA256 matches the file and the owner has approved docs/model-licenses/location-gazetteer.md.
+LOCATION_ENABLED = env.bool("LOCATION_ENABLED", default=True)
+LOCATION_GAZETTEER_DIR = env("LOCATION_GAZETTEER_DIR", default=str(BASE_DIR / ".runtime" / "data" / "geonames"))
+LOCATION_GAZETTEER_SHA256 = env("LOCATION_GAZETTEER_SHA256", default="")
+LOCATION_LICENSE_RECORD_PATH = env("LOCATION_LICENSE_RECORD_PATH", default=str(BASE_DIR / "docs" / "model-licenses" / "location-gazetteer.md"))
+LOCATION_MAX_DISTANCE_KM = env.float("LOCATION_MAX_DISTANCE_KM", default=50.0)
+if not 1.0 <= LOCATION_MAX_DISTANCE_KM <= 500.0:
+    raise ImproperlyConfigured("LOCATION_MAX_DISTANCE_KM must be between 1 and 500.")
 # Search by what is in the photograph (search/semantic/): "beach", "red car", "birthday cake". OFF by default, and it needs the optional libraries
 # (requirements-semantic.txt) and the approved model files in SEMANTIC_SEARCH_MODEL_DIR; the weights are checked against SEMANTIC_SEARCH_MODEL_SHA256 before they
 # are loaded, and nothing is downloaded at run time. The model, its licence and the measured quality are recorded in docs/model-licenses/semantic-search-model.md
@@ -1221,6 +1232,7 @@ REST_FRAMEWORK = {
         "image_favorite": "1200/hour",
         "image_trash": "600/hour",
         "semantic_search": "600/hour",
+        "places": "1200/hour",
         "album": "1200/hour",
         "memories": "600/hour",
         "zip_upload": "20/hour",
@@ -1381,7 +1393,7 @@ LOG_FILE = env("LOG_FILE", default="")
 _APP_LOGGERS = (
     "accounts", "activity", "collages", "config", "contact", "downloads", "duplicates", "enhancement", "events", "identities", "moderation",
     "notifications", "operations", "organizations", "privacy", "quality_control", "reports", "security", "sharing", "thumbnails", "uploads",
-    "validation", "albums", "memories",
+    "validation", "albums", "memories", "places", "search",
 )
 _LOG_HANDLERS = ["console"] + (["file"] if LOG_FILE else [])
 LOGGING = {

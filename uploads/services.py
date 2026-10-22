@@ -56,6 +56,9 @@ def _save_valid_image(batch, owner, uploaded_file, original_name=None):
         if image.original_file:
             image.original_file.storage.delete(image.original_file.name)
         raise
+    if image.gps_lat is not None:
+        from places.service import attach_place
+        attach_place(image)                                       # a named place when the offline gazetteer is installed and approved; never raises
     return image
 
 

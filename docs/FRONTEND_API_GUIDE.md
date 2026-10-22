@@ -576,6 +576,32 @@ GET    /api/images/trash/{id}/thumbnail/                          -> image/jpeg 
 - **Not in the trash view:** photographs that were refused at upload, and ones permanently deleted.
 - The retention is the server setting `TRASH_RETENTION_DAYS`; show `days_left` from each row, not a fixed 30.
 
+## 5-places. Places: where a photograph was taken (new)
+
+"Places" groups the person's own photographs by where they were taken ("Lahore", "Murree", "Paris"). The position comes from the photograph's own EXIF GPS block when it has one, is read on the
+server, and **no coordinate ever leaves it**. Names come from an offline file; until the server has installed and approved it, photographs keep a position but get no named place.
+
+```text
+GET    /api/places/?q=&country=PK&limit=24   -> {attribution, names_available, places: [{id, name, region, country, country_code, photo_count, cover_thumbnail_url, latitude, longitude}]}   most photographs first
+GET    /api/places/{id}/                      -> one of those (404 if you have no photograph there)
+GET    /api/images/my/?place=<id>             the gallery filtered to one place;  ?country=PK  to one country (two letters)
+GET    /api/images/{id}/location/             -> {latitude, longitude, place: {id, name, region, country, country_code} | null}   (404 if it has none); the photograph's owner only
+DELETE /api/images/{id}/location/             -> 204   take the location off this photograph
+POST   /api/images/location/remove/  {image_ids: [..up to 200]} -> {removed_ids, without_location_ids, not_found_ids}
+```
+
+- **Photograph rows** (`GET /api/images/my/`, albums, memories) gained `place` (`{id, name, region, country, country_code}` or `null`) and `has_location` (true when it has a position). They never carry
+  coordinates; only `GET /api/images/{id}/location/` does, and only for the owner. Moderators, administrators, share links, ZIPs and organization exports carry none.
+- **`latitude` and `longitude` on a place are the place's own centre**, not any photograph's position. Draw a map pin for a photograph from its own `/location/` call, never from the places list.
+- **You must show the credit** in `attribution` ("Place names: GeoNames ... CC BY 4.0") wherever place names are shown, for example under the Places screen.
+- `names_available: false` means this server has no approved place-name file: hide the Places strip (the list is empty) rather than show an empty screen. Photographs still have `has_location`.
+- **Remove a location** with `DELETE` or the bulk `POST`. It is gone from FaceCloud's records and views and is never read again, but it is **not** removed from the stored original file: say
+  so in the confirmation ("removes it from your library; the downloaded original may still contain it").
+- A photograph in the trash is in no place count and has no location endpoint until it is restored. `GET /api/search/?q=` gained `places` (places whose name contains `q`).
+- Naming is by the nearest listed town within 50 km (a suburb or village next to a city is named after the city; in very large cities a district may be named: "Paris 16 Passy"). A position far from
+  any settlement (open sea, desert) has coordinates but no place. Photographs uploaded before this feature appear after the operator runs `python manage.py backfill_location`.
+- Rate limit: 1200 requests per hour per user.
+
 ## 5a. Duplicates
 
 `GET /api/duplicates/results/` and `/images/{image_id}/matches/` list suspected

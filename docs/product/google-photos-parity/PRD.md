@@ -144,7 +144,7 @@ Acceptance criteria are what the tests and the measurement check. API shapes are
 
 ## 8. Out of scope now (future work, for the report)
 
-Object/scene tags shown as text, shared albums and partner sharing, place names (no location data is read), "Ask Photos"-style questions, Best Take, Magic Eraser, Urdu queries, video.
+Object/scene tags shown as text, shared albums and partner sharing, a map view (places are built; see [PRD_LOCATION.md](PRD_LOCATION.md)), "Ask Photos"-style questions, Best Take, Magic Eraser, Urdu queries, video.
 
 ## 9. Results (2026-10-22)
 

@@ -102,7 +102,7 @@ class SearchTests(TestCase):
         body = self.search(q="beach").json()
 
         self.assertEqual(body["query"], "beach")
-        self.assertEqual(set(body), {"query", "images", "groups", "people", "albums", "jobs"})            # "people" was added next to "groups"; nothing was removed
+        self.assertEqual(set(body), {"query", "images", "groups", "people", "albums", "places", "jobs"})   # "people", "albums" and "places" were added; nothing was removed
         self.assertEqual(
             set(body["images"][0]), {"id", "name", "thumbnail_url", "status", "created_at"},
         )

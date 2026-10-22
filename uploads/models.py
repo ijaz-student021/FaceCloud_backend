@@ -131,6 +131,12 @@ class ImageUpload(models.Model):
     favorited_at = models.DateTimeField(null=True, blank=True)
     # When the photograph was taken (EXIF DateTimeOriginal, read at upload by uploads/capture.py); null when the file has none. ``captured_at`` falls back to the upload time.
     taken_at = models.DateTimeField(null=True, blank=True)
+    # Where it was taken (uploads/capture.py reads the EXIF GPS block at upload; rounded to 4 decimals, about 11 m). Only its owner ever sees the coordinates (places/views.py);
+    # ``place`` is the named place from the offline gazetteer. ``location_checked_at`` says the file was looked at (or its location removed), so a backfill never repeats or undoes it.
+    gps_lat = models.FloatField(null=True, blank=True)
+    gps_lon = models.FloatField(null=True, blank=True)
+    place = models.ForeignKey("places.Place", null=True, blank=True, on_delete=models.SET_NULL, related_name="images")
+    location_checked_at = models.DateTimeField(null=True, blank=True)
     # When the person moved the photograph to the trash (uploads/trash.py); null for every photograph that is not in it. It is purged TRASH_RETENTION_DAYS later.
     trashed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -145,6 +151,7 @@ class ImageUpload(models.Model):
             models.Index(fields=["owner", "is_favorite"], name="upload_owner_favorite_idx"),
             models.Index(fields=["owner", "taken_at"], name="upload_owner_taken_idx"),
             models.Index(fields=["owner", "trashed_at"], name="upload_owner_trashed_idx"),
+            models.Index(fields=["owner", "place"], name="upload_owner_place_idx"),
         ]
 
     @property

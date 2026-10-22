@@ -39,6 +39,7 @@ Status definitions:
 | Albums, favourites | Complete backend; frontend integration remains |
 | Memories (on this day, events, people) and capture dates | Complete backend; frontend integration remains |
 | Trash with 30-day restore | Complete backend; every listing audited by a test; frontend integration remains |
+| Places: where a photograph was taken (GPS read locally, offline place names, owner-only coordinates) | Complete backend; place names wait for the owner's approval of the GeoNames licence record; frontend integration remains |
 | Search by what is in the photograph | Backend and plumbing complete, **off by default**; waits for the owner to approve the model's licence record |
 | Live camera detection and enhancement | Planned |
 | Frontend dashboards | Planned for frontend integration |
@@ -46,6 +47,7 @@ Status definitions:
 ### Detailed documentation available
 
 - [Remaining user-dashboard features and implementation order](USER_DASHBOARD_REMAINING_FEATURES.md)
+- [Places (feature 9): PRD](product/google-photos-parity/PRD_LOCATION.md)
 - [Google-Photos parity pack: PRD, implementation plan and frontend prompts](product/google-photos-parity/PRD.md) ([plan](product/google-photos-parity/IMPLEMENTATION_PLAN.md), [frontend prompts](product/google-photos-parity/FRONTEND_PROMPTS.md))
 - [Features 01–03: Authentication, accounts, authorization, and audit](features/01-authentication-and-authorization.md)
 - [Features 04–08: Image uploads, batches, secure storage, and cleanup](features/02-image-upload-and-secure-storage.md)

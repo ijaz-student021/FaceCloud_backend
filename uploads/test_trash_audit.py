@@ -44,6 +44,7 @@ from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
 TARGET_PK = 987654
 MARKER = "zz-trash-marker"
 ORG_PK = TARGET_PK + 2
+COORDINATE = 31.5497          # a position only the photograph's owner may see (places/views.py)
 ORG_MARKER = "zz-org-marker"
 # Addresses that are allowed to name a trashed photograph: the trash itself; the data export, which must hold everything the service holds about the person
 # (tested below); and the two histories, which record what happened (a download, an upload) and stay true after the photograph is trashed.
@@ -83,6 +84,8 @@ class TrashAuditTests(FolderFixtures, TestCase):
         decision = self.org_target.quality_decision
         ModeratorReview.objects.create(organization=self.team, image=self.org_target, source="quality", quality_decision=decision, status="approved")
         self.populate(self.target)
+        ImageUpload.objects.filter(pk=ORG_PK).update(gps_lat=COORDINATE, gps_lon=74.3436, location_checked_at=timezone.now())
+        ImageUpload.objects.filter(pk=TARGET_PK).update(gps_lat=COORDINATE, gps_lon=74.3436, location_checked_at=timezone.now())
         self.token = self.populate_share(self.target)
         ModeratorReview.objects.create(
             organization=self.team, image=self.in_review, source="quality", quality_decision=self.in_review.quality_decision, status="pending",
@@ -153,7 +156,7 @@ class TrashAuditTests(FolderFixtures, TestCase):
             client.force_authenticate(user)
         return client
 
-    def crawl(self, client, paths, ids, *, tokens=(), pk=TARGET_PK, marker=MARKER):
+    def crawl(self, client, paths, ids, *, tokens=(), pk=TARGET_PK, marker=MARKER, watch=("address", "name", "pk")):
         """``{address: (status, leaks)}`` for every GET path with every candidate; ``leaks`` says how the photograph (``pk``, named ``marker``) showed up."""
         found = {}
         candidates = [str(pk) for pk in sorted(ids)] + list(tokens)
@@ -170,15 +173,15 @@ class TrashAuditTests(FolderFixtures, TestCase):
                     raise AssertionError(f"throttled: {address}")
                 leaks = []
                 if response.status_code == 200 and not address.startswith(EXEMPT) and not address.endswith(EXEMPT_ENDINGS):
-                    if f"/{pk}/" in address or address.endswith(f"/{pk}"):
+                    if ("address" in watch) and (f"/{pk}/" in address or address.endswith(f"/{pk}")):
                         leaks.append("address")
                     if getattr(response, "streaming", False):
                         body = ""
                     else:
                         body = response.content.decode("utf-8", errors="ignore")
-                    if marker in body and not address.startswith(EXEMPT) and not address.endswith(EXEMPT_ENDINGS):
+                    if "name" in watch and marker in body and not address.startswith(EXEMPT) and not address.endswith(EXEMPT_ENDINGS):
                         leaks.append("name")
-                    if re.search(rf"(?<![\w.]){pk}(?![\w.])", body) and not address.startswith(EXEMPT) and not address.endswith(EXEMPT_ENDINGS):
+                    if "pk" in watch and re.search(rf"(?<![\w.]){pk}(?![\w.])", body) and not address.startswith(EXEMPT) and not address.endswith(EXEMPT_ENDINGS):
                         leaks.append("pk")
                 if leaks:
                     found[address] = (response.status_code, leaks)
@@ -235,3 +238,23 @@ class TrashAuditTests(FolderFixtures, TestCase):
         self.assertEqual(self.client_for(self.owner).post("/api/images/trash/", {"image_ids": [ORG_PK]}, format="json").json()["trashed_ids"], [ORG_PK])
         after = self.crawl(admin, paths, self.ids | {self.team.pk}, pk=ORG_PK, marker=ORG_MARKER)
         self.assertEqual(after, {}, f"the organization's admin still sees it ({len(after)}; before: {len(before)}):\n{json.dumps(sorted(after), indent=1)}")
+
+    def test_a_photographs_coordinates_are_shown_by_no_other_endpoint_than_the_owners_location_and_export(self):
+        paths = get_paths()
+        found = self.crawl(self.client_for(self.owner), paths, self.ids, marker=str(COORDINATE), watch=("name",))
+        allowed = {address for address in found if address.endswith("/location/") or address.startswith("/api/privacy/export/")}
+        self.assertEqual(sorted(set(found) - allowed), [], "the owner's other endpoints show coordinates")
+        self.assertTrue(any(address.endswith("/location/") for address in allowed), "the location endpoint should have shown them")
+
+    def test_the_organizations_admin_never_sees_a_members_coordinates(self):
+        paths = get_paths()
+        found = self.crawl(self.client_for(self.boss), paths, self.ids | {self.team.pk}, marker=str(COORDINATE), watch=("name",))
+        self.assertEqual(found, {}, f"the organization admin can read a member's coordinates at: {sorted(found)}")
+
+    def test_the_public_share_of_a_photograph_carries_no_gps_in_its_file(self):
+        from PIL import Image as PillowImage
+
+        response = APIClient().get(f"/api/shares/public/{self.token}/")
+        self.assertEqual(response.status_code, 200)
+        body = b"".join(response.streaming_content) if response.streaming else response.content
+        self.assertEqual(dict(PillowImage.open(io.BytesIO(body)).getexif().get_ifd(0x8825)), {})

@@ -271,7 +271,7 @@ def build_privacy_export(user):
     images = collect(
         "images",
         ImageUpload.all_objects.filter(owner=user).order_by("-created_at"),         # everything held about the person, the trash included
-        ("id", "original_name", "file_size", "width", "height", "status", "created_at", "trashed_at"),
+        ("id", "original_name", "file_size", "width", "height", "status", "created_at", "trashed_at", "gps_lat", "gps_lon"),
     )
     enhancement_rows = collect(
         "enhancements",
