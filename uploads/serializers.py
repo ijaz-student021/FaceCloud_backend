@@ -50,7 +50,7 @@ class ImageUploadSerializer(serializers.ModelSerializer):
         fields = [
             "id", "batch", "original_name", "file_extension", "mime_type",
             "file_size", "width", "height", "checksum_sha256", "status",
-            "rejection_reason", "download_url", "thumbnail_url", "preprocessing", "is_favorite", "created_at",
+            "rejection_reason", "download_url", "thumbnail_url", "preprocessing", "is_favorite", "taken_at", "created_at",
         ]
 
     def get_download_url(self, obj) -> str | None:

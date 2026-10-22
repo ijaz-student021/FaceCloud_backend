@@ -319,6 +319,21 @@ class MyImageListView(generics.ListAPIView):
                 raise ValidationError({"upload_type": "Use single, multiple, or zip."})
             queryset = queryset.filter(batch__upload_type=upload_type)
 
+        taken_from = self.request.query_params.get("taken_from", "").strip()
+        taken_to = self.request.query_params.get("taken_to", "").strip()
+        if taken_from or taken_to:
+            from django.db.models.functions import Coalesce
+
+            from memories.services import parse_date
+
+            queryset = queryset.annotate(captured=Coalesce("taken_at", "created_at"))
+            for name, value, lookup in (("taken_from", taken_from, "captured__date__gte"), ("taken_to", taken_to, "captured__date__lte")):
+                if value:
+                    parsed = parse_date(value)
+                    if parsed is None:
+                        raise ValidationError({name: "Use a date like 2026-10-22."})
+                    queryset = queryset.filter(**{lookup: parsed})
+
         album = self.request.query_params.get("album")
         if album:
             if not album.isdigit():

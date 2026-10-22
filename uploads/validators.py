@@ -7,6 +7,8 @@ from django.conf import settings
 from PIL import Image, UnidentifiedImageError
 from rest_framework.exceptions import ValidationError
 
+from .capture import capture_time
+
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".gif"}
 FORMAT_DETAILS = {
     "JPEG": (".jpg", "image/jpeg"),
@@ -75,6 +77,16 @@ def validate_image_file(uploaded_file, original_name=None):
     finally:
         uploaded_file.seek(0)
 
+    # The capture time, from a fresh open: reading EXIF before verify() breaks it for PNG, and after verify() the first handle is unusable.
+    taken_at = None
+    try:
+        with Image.open(uploaded_file) as reopened:
+            taken_at = capture_time(reopened)
+    except Exception:
+        taken_at = None
+    finally:
+        uploaded_file.seek(0)
+
     digest = hashlib.sha256()
     for chunk in iter(lambda: uploaded_file.read(1024 * 1024), b""):
         digest.update(chunk)
@@ -87,6 +99,7 @@ def validate_image_file(uploaded_file, original_name=None):
         "width": width,
         "height": height,
         "checksum_sha256": digest.hexdigest(),
+        "taken_at": taken_at,
     }
 
 

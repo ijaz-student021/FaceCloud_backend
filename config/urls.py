@@ -42,6 +42,7 @@ urlpatterns = [
     path("api/downloads/", include("downloads.urls")),
     path("api/notifications/", include("notifications.urls")),
     path("api/albums/", include("albums.urls")),
+    path("api/memories/", include("memories.urls")),
     path("api/privacy/", include("privacy.urls")),
     path("api/shares/", include("sharing.urls")),
     path("api/events/", include("events.urls")),

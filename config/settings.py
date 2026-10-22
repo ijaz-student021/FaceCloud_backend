@@ -78,6 +78,7 @@ INSTALLED_APPS = [
     "downloads",
     "notifications",
     "albums",
+    "memories",
     "operations",
     "activity",
     "privacy",
@@ -1188,6 +1189,7 @@ REST_FRAMEWORK = {
         "image_delete": "300/hour",
         "image_favorite": "1200/hour",
         "album": "1200/hour",
+        "memories": "600/hour",
         "zip_upload": "20/hour",
         "image_preprocess": "100/hour",
         "report_generation": "60/hour",
@@ -1346,7 +1348,7 @@ LOG_FILE = env("LOG_FILE", default="")
 _APP_LOGGERS = (
     "accounts", "activity", "collages", "config", "contact", "downloads", "duplicates", "enhancement", "events", "identities", "moderation",
     "notifications", "operations", "organizations", "privacy", "quality_control", "reports", "security", "sharing", "thumbnails", "uploads",
-    "validation", "albums",
+    "validation", "albums", "memories",
 )
 _LOG_HANDLERS = ["console"] + (["file"] if LOG_FILE else [])
 LOGGING = {

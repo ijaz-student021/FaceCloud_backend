@@ -527,6 +527,27 @@ it goes back to automatic when its photograph leaves the album. `photo_count` co
 (500) albums per person and `ALBUM_MAX_IMAGES` (10,000) photographs per album, each a `400` with a plain sentence. `GET /api/search/?q=` gained **`albums`** (albums whose title contains `q`).
 A photograph id that is not the person's, does not exist or was refused at upload is never added; it comes back in `not_found_ids`.
 
+## 5-memories. Memories and capture dates (new)
+
+A **memory** is a few of the best photographs of a moment, chosen for the person: "2 years ago today", "Moments from 12 Oct", "With Ayesha". Nothing is stored: it is worked out from the
+person's own photographs when it is asked for (so it is always current and never shows a deleted or rejected photograph), in tens of milliseconds even for 20,000 photographs.
+
+```text
+GET /api/memories/?limit=10        -> [{id, kind, title, subtitle, start, end, photo_count, cover_thumbnail_url, preview_thumbnail_urls: [..4], filter: {..}}]
+GET /api/memories/{id}/            -> the card + images: [..gallery rows of its best photographs (up to 24), oldest first]      (404: the id no longer exists)
+```
+
+- `kind` is `on_this_day` (id `otd:<year>`: at least 3 photographs taken on today's date in an earlier year, at most 3 such years), `event` (id `event:<first photograph id>`: at least 5 photographs
+  in the last 180 days with gaps under 6 hours; newest first, at most 6) or `person` (id `person:<folder id>:<YYYY-MM>`: a **named** person with at least 10 photographs, at most 3; unnamed
+  folders have no memory). Ids stay the same for the same photographs; an event id changes if an earlier photograph joins the event, so **take ids from the list**, and treat a 404 as "gone".
+- The **cover** is the best photograph and `preview_thumbnail_urls` the best four (favourites first, then the higher quality score, then one with a face, then the earlier one). A photograph that
+  duplicates one already chosen, or was taken within a minute of one, is skipped, so a burst of ten shots gives one. `limit` defaults to 10 (at most 30).
+- `photo_count` is every photograph of the moment; to show them all, call `GET /api/images/my/` with the card's **`filter`** (`taken_from`/`taken_to` dates, or `person`).
+- **Capture dates.** Photographs now carry `taken_at` (the EXIF capture time, read at upload; `null` when the file has none, then the upload time is used on timelines). `GET /api/images/my/` accepts
+  `taken_from=YYYY-MM-DD` and `taken_to=YYYY-MM-DD` (inclusive, on the capture date, or the upload date when there is no EXIF time; anything else is a 400). Photographs uploaded before this change
+  have no `taken_at` until the operator runs `python manage.py backfill_taken_at` (it reads the stored originals, changes nothing else, and is safe to run again). EXIF has no time zone unless
+  `OffsetTime` is present, so the stored time is the wall-clock time taken as UTC: it is right to the day, which is what a memory needs.
+
 ## 5a. Duplicates
 
 `GET /api/duplicates/results/` and `/images/{image_id}/matches/` list suspected

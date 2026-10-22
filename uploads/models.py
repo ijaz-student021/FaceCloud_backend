@@ -108,12 +108,22 @@ class ImageUpload(models.Model):
     # A photograph the person marked as a favourite (PUT /api/images/{id}/favorite/). Set by queryset update, so it never moves updated_at.
     is_favorite = models.BooleanField(default=False)
     favorited_at = models.DateTimeField(null=True, blank=True)
+    # When the photograph was taken (EXIF DateTimeOriginal, read at upload by uploads/capture.py); null when the file has none. ``captured_at`` falls back to the upload time.
+    taken_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["-created_at"]
-        indexes = [models.Index(fields=["owner", "is_favorite"], name="upload_owner_favorite_idx")]
+        indexes = [
+            models.Index(fields=["owner", "is_favorite"], name="upload_owner_favorite_idx"),
+            models.Index(fields=["owner", "taken_at"], name="upload_owner_taken_idx"),
+        ]
+
+    @property
+    def captured_at(self):
+        """When the photograph belongs on a timeline: when it was taken, else when it was uploaded."""
+        return self.taken_at or self.created_at
 
 
 class ImagePreprocessingResult(models.Model):
