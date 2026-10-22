@@ -272,6 +272,8 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
             # Already decided and never enhanced automatically (a retry, a re-analysis): started now if its verdict allows it, and never twice.
             from enhancement.auto import enhance_after_verdict
             enhance_after_verdict(image_upload)
+            from search.semantic.service import index_after_verdict
+            index_after_verdict(image_upload)
         return existing, False
 
     started = time.perf_counter()

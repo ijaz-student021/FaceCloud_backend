@@ -481,6 +481,25 @@ if ALBUM_MAX_PER_USER < 1 or ALBUM_MAX_IMAGES < 1:
 TRASH_RETENTION_DAYS = env.int("TRASH_RETENTION_DAYS", default=30)
 if not 1 <= TRASH_RETENTION_DAYS <= 3650:
     raise ImproperlyConfigured("TRASH_RETENTION_DAYS must be between 1 and 3650.")
+# Search by what is in the photograph (search/semantic/): "beach", "red car", "birthday cake". OFF by default, and it needs the optional libraries
+# (requirements-semantic.txt) and the approved model files in SEMANTIC_SEARCH_MODEL_DIR; the weights are checked against SEMANTIC_SEARCH_MODEL_SHA256 before they
+# are loaded, and nothing is downloaded at run time. The model, its licence and the measured quality are recorded in docs/model-licenses/semantic-search-model.md
+# and docs/evaluation/2026-10-22-semantic-search.md. English queries only. SEMANTIC_SEARCH_MIN_SCORE is the lowest cosine similarity a result may have.
+SEMANTIC_SEARCH_ENABLED = env.bool("SEMANTIC_SEARCH_ENABLED", default=False)
+SEMANTIC_SEARCH_MODEL_NAME = env("SEMANTIC_SEARCH_MODEL_NAME", default="ViT-B-16-SigLIP")
+SEMANTIC_SEARCH_MODEL_DIR = env("SEMANTIC_SEARCH_MODEL_DIR", default=str(BASE_DIR / ".runtime" / "models" / "siglip-vit-b-16"))
+SEMANTIC_SEARCH_MODEL_SHA256 = env("SEMANTIC_SEARCH_MODEL_SHA256", default="")
+SEMANTIC_SEARCH_LICENSE_RECORD_PATH = env("SEMANTIC_SEARCH_LICENSE_RECORD_PATH", default=str(BASE_DIR / "docs" / "model-licenses" / "semantic-search-model.md"))
+SEMANTIC_SEARCH_DEVICE = env("SEMANTIC_SEARCH_DEVICE", default="auto")          # auto (cuda, else mps, else cpu), or cpu / cuda / mps
+SEMANTIC_SEARCH_MIN_SCORE = env.float("SEMANTIC_SEARCH_MIN_SCORE", default=0.10)
+SEMANTIC_SEARCH_DEFAULT_RESULTS = env.int("SEMANTIC_SEARCH_DEFAULT_RESULTS", default=24)
+SEMANTIC_SEARCH_MAX_RESULTS = env.int("SEMANTIC_SEARCH_MAX_RESULTS", default=100)
+if SEMANTIC_SEARCH_DEVICE not in ("auto", "cpu", "cuda", "mps"):
+    raise ImproperlyConfigured("SEMANTIC_SEARCH_DEVICE must be auto, cpu, cuda or mps.")
+if not -1.0 <= SEMANTIC_SEARCH_MIN_SCORE <= 1.0:
+    raise ImproperlyConfigured("SEMANTIC_SEARCH_MIN_SCORE must be between -1 and 1.")
+if not 1 <= SEMANTIC_SEARCH_DEFAULT_RESULTS <= SEMANTIC_SEARCH_MAX_RESULTS:
+    raise ImproperlyConfigured("SEMANTIC_SEARCH_DEFAULT_RESULTS must be at least 1 and no more than SEMANTIC_SEARCH_MAX_RESULTS.")
 if IDENTITY_MAX_FACES_PER_IMAGE < 1:
     raise ImproperlyConfigured("IDENTITY_MAX_FACES_PER_IMAGE must be at least 1.")
 IDENTITY_GUARD_MAX_EDGE = env.int("IDENTITY_GUARD_MAX_EDGE", default=1024)
@@ -1052,6 +1071,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "downloads.cleanup_expired",
         "schedule": crontab(minute=5),
     },
+    "index-semantic-search": {
+        "task": "search.index_pending",
+        "schedule": crontab(minute="*/15"),
+    },
     "purge-trash": {
         "task": "uploads.purge_trash",
         "schedule": crontab(minute=30, hour=3),
@@ -1197,6 +1220,7 @@ REST_FRAMEWORK = {
         "image_delete": "300/hour",
         "image_favorite": "1200/hour",
         "image_trash": "600/hour",
+        "semantic_search": "600/hour",
         "album": "1200/hour",
         "memories": "600/hour",
         "zip_upload": "20/hour",

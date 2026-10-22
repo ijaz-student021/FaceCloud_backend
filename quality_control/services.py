@@ -186,6 +186,9 @@ def process_quality_decision(decision_id):
         # workspace, else after a moderator approves it. Same transaction as the decision, never raises, and never makes a second enhancement.
         from enhancement.auto import enhance_after_verdict
         enhance_after_verdict(result.image, verdict=decision)
+        # Search by what is in the photograph indexes it once the verdict is committed (only when that feature is switched on; accepted photographs only).
+        from search.semantic.service import index_after_verdict
+        index_after_verdict(result.image)
         return result
     except Exception as error:
         result.status = ImageQualityDecision.Status.FAILED

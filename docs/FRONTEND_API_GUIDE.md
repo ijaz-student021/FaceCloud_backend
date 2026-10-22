@@ -1123,6 +1123,27 @@ never blank. Single and multiple uploads that were never renamed have no name to
 search; they appear as `Upload <id>` wherever they are listed but are not found
 by that label. Rate limit: 600 requests per hour per user.
 
+## 8c. Search by what is in the photograph (new, off by default)
+
+"beach", "red car", "birthday cake": a model looks at each accepted photograph once and ranks the person's own photographs against the words. **English queries only.** It is
+switched off on a server until its owner has approved the model (`docs/model-licenses/semantic-search-model.md`), so the screen must work without it.
+
+```text
+GET /api/search/photos/?q=<2-200 characters>&limit=<n>
+  -> 200 {enabled: true,  query, language: "en", model: "ViT-B-16-SigLIP", results: [{score: 0.2143, photo: {..the same row as GET /api/images/my/..}}, ...]}   best first
+  -> 200 {enabled: false, query, language: "en", model: null, results: []}                                  the server has the feature off: hide the box, show nothing
+  -> 503 {detail, code: "semantic_search_unavailable"}                                                       switched on but its model cannot be used: say "not available right now"
+  -> 400 q shorter than 2 or longer than 200 characters, or a bad limit
+```
+
+- `GET /api/search/` (the top-bar search) gains a `photos` list (`id, name, thumbnail_url, status, created_at, score`) **only** when the feature is on and working; its other keys are
+  unchanged. Use it to show "photos that look like this" under the name matches.
+- Only the person's own photographs that are accepted (in a personal workspace that includes the ones the checks had a doubt about) and not in the trash. A photograph appears once it has been indexed:
+  a few seconds after its checks finish, longer in a busy queue; a photograph from before the feature was switched on appears after the operator runs `python manage.py index_semantic_search`.
+- `score` is a cosine similarity, not a percentage: show the order, not the number. A server-side minimum drops weak matches, so a query can honestly return fewer results than `limit`, or none.
+- The words are not stored or logged. The vectors describe whole pictures (not faces), are kept apart from face data, and are deleted with the photograph.
+- Rate limit: 600 requests per hour per user.
+
 ## 9. Privacy screens
 
 - Consent: section 5.
