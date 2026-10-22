@@ -1,10 +1,11 @@
 # Search by what is in the photograph: model and licence record
 
-Owner approval: pending
+Owner approval: approved
 
-> Change the line above to `Owner approval: approved` only after you have read this record and decided that this model may be used. Until then
-> `python manage.py check` refuses `SEMANTIC_SEARCH_ENABLED=True` (`search.E005`). This file is the engineering record of what was checked; it is not legal advice
-> and it makes no licence decision for the project owner.
+> Recorded 2026-10-22 from the project owner's own statement in the working session ("model ko approved ha"): the owner decided; this record only writes it down.
+> The line above is what `python manage.py check` reads: anything other than `approved` makes it refuse `SEMANTIC_SEARCH_ENABLED=True` (`search.E005`), and the checksum
+> of the configured weights must be listed in this file (`search.E004`). If the model, its checksum or its source changes, change that line back to `pending` until the
+> owner decides again. This file is the engineering record of what was checked; it is not legal advice.
 
 Checked on 2026-10-22. Every statement below was read from the source named next to it on that day; what could not be checked is listed at the end.
 
