@@ -3,6 +3,8 @@
 Companion of [PRD.md](PRD.md). Branch `feat/google-photos-parity`, on top of PR #110 (which contains #108) with the #111 face-check fix cherry-picked. **One commit per feature**, each tested on SQLite
 and PostgreSQL before the next starts, one pull request at the end (a feature can be dropped by reverting its commit). Written 2026-10-22.
 
+**Status, 2026-10-22: all eight features are implemented** (order as built: F1, F2, F5, F3, F4, F7, F6, F8; the plan's table below is the order they were started in). Results and what was not measured: PRD section 9. Where the build differed from the plan: trash blocks photographs that are still being processed or waiting for a moderator (decided during F6 to avoid half-processed rows), the search-by-meaning model was chosen from a licence check (SigLIP, not OpenAI CLIP) and cannot start until the owner approves its record, and a latent database-rule bug in `remove_photo_from_folders` was fixed on the way.
+
 ## 1. Order and why
 
 | Step | Feature | Why here |

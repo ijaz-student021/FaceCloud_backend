@@ -145,3 +145,28 @@ Acceptance criteria are what the tests and the measurement check. API shapes are
 ## 8. Out of scope now (future work, for the report)
 
 Object/scene tags shown as text, shared albums and partner sharing, place names (no location data is read), "Ask Photos"-style questions, Best Take, Magic Eraser, Urdu queries, video.
+
+## 9. Results (2026-10-22)
+
+All eight features are implemented on the branch `feat/google-photos-parity`, one commit each, with tests on SQLite and on PostgreSQL. Numbers are from this machine (Apple M1) and from the
+evidence files named; "not measured" says what a claim does not cover.
+
+| # | Feature | Result | Evidence | Not measured or known limits |
+|---|---|---|---|---|
+| 1 | Review only where someone can review | Done. In a personal workspace a stored `needs_review` is shown as accepted with tips; `decision` is unchanged; organizations behave as before. | `quality_control/test_effective_decision.py`; mutation: removing the rule fails 12 of its tests | No frontend change was made; a client that keys on `needs_review` for personal photographs must read `effective_decision` |
+| 2 | Group photographs and small faces | Done. D1-D3 in force. | `docs/evaluation/2026-10-22-group-photographs.md`: 11 composites through the real endpoints, 7 of 11 reviewed or rejected before, none after | Composites of LFW faces, not real group photographs; the 20-face cap did not bind in that data |
+| 3 | People as avatars, chips, person filter | Done. | `identities/test_people_avatars.py`; an avatar costs 6-52 ms from a JPEG and up to 270 ms from a 12 MP PNG | Avatar quality depends on the stored face box; not measured with large libraries |
+| 4 | Albums | Done, D5 limits enforced. | `albums/test_albums.py` | - |
+| 5 | Favourites | Done. | `uploads/test_favorites.py` | - |
+| 7 | Memories and capture dates | Done. Cards: on this day, events, people. | `uploads/test_capture.py`, `memories/test_memories.py`; building a person's memories: 4 ms for 1,000 photographs, 56 ms for 20,000 (SQLite) | Thresholds (3, 5, 10 photographs; 6 h gaps) are product choices, not tuned; EXIF has no time zone, so the camera's local time is read as UTC (right to the day) |
+| 6 | Trash with 30-day restore | Done. | `uploads/test_trash.py`, `uploads/test_trash_audit.py`; the audit crawls every GET path as owner, organization admin and public, before and after, and found 15 addresses to patch; it finds the photograph in 30+ places before the trash | The crawl covers GET paths; write actions on a trashed photograph's derived rows go through the same patched lookups but each was not separately tested; a photograph still being processed or waiting for a moderator cannot be trashed; admin lists and analytics deliberately include the trash |
+| 8 | Search by what is in the photograph | Done as plumbing plus a measured model, **off by default**. | `docs/evaluation/2026-10-22-semantic-search.md`: 3,669 photographs, first result right for 36 of 37 breed words and for dog and cat; `docs/model-licenses/semantic-search-model.md` | English only; scenes, attributes and a personal library were not measured; the licence record says `Owner approval: pending` and the feature cannot start until the owner changes it; PostgreSQL ranking speed not measured |
+
+Suites on the code commits (2026-10-22, local): **2937 tests, OK on SQLite (45 skipped) and OK on PostgreSQL 18 (40 skipped)**; ruff, bandit (medium and high), `makemigrations --check` and `spectacular --validate --fail-on-warn` clean. CI is the final judge and was not run before the push.
+
+### Decisions that are still the owner's
+
+1. **Approve (or refuse) the search-by-meaning model**: read `docs/model-licenses/semantic-search-model.md`; the feature stays off until its `Owner approval:` line says `approved`.
+2. **The order of the open pull requests** (#109 collages removal, #110 automatic enhancement, #111 face-check fix, and this one, whose base is `feat/auto-enhance-after-upload`).
+3. **Retention** (`TRASH_RETENTION_DAYS=30`), the **20-face cap**, and the **album limits** are settings; change them if the numbers are wrong for the product.
+4. Unchanged from before this pack: whether automatic enhancement should apply `level=high`/`dynamic`, and whether to start a Celery worker in `.env`.
