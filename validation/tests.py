@@ -260,6 +260,43 @@ class FaceValidationTests(APITestCase):
         )
 
     @patch("validation.services._detect")
+    def test_a_portrait_with_the_face_in_the_upper_part_of_the_picture_is_accepted(self, detector):
+        """A head-and-shoulders portrait: the face's centre is about 21% from the top. The earlier rule (centre within 0.28 of the middle) sent every such photograph to review."""
+        detector.return_value = (np.array([[130, 8, 120, 150]]), [0.9])
+        result = validate_image_faces(self.image)
+        self.assertEqual((result.decision, result.rejection_reason), ("accepted", ""))
+        self.assertLess((8 + 75) / 400, 0.22)                         # the face centre really is high in the frame: the old rule refused this
+
+    @patch("validation.services._detect")
+    def test_where_the_face_sits_does_not_matter_while_it_is_inside_the_frame(self, detector):
+        for box in ((24, 24, 120, 150), (256, 24, 120, 150), (24, 226, 120, 150), (256, 226, 120, 150), (4, 100, 120, 150), (276, 100, 120, 150)):
+            with self.subTest(box=box):
+                detector.return_value = (np.array([box]), [0.9])
+                result = validate_image_faces(self.image)
+                self.assertEqual((result.decision, result.rejection_reason), ("accepted", ""), result.message)
+
+    @patch("validation.services._detect")
+    def test_a_face_touching_or_cut_by_an_edge_still_goes_to_review(self, detector):
+        for name, box in (("top", (130, 0, 120, 150)), ("just inside the margin, top", (130, 3, 120, 150)), ("left", (0, 100, 120, 150)),
+                          ("right", (280, 100, 120, 150)), ("bottom", (130, 260, 120, 150)), ("cut off at the right", (330, 100, 120, 150))):
+            with self.subTest(case=name):
+                detector.return_value = (np.array([box]), [0.9])
+                result = validate_image_faces(self.image)
+                self.assertEqual((result.decision, result.rejection_reason), ("needs_review", "face_off_center"), result.message)
+                self.assertEqual(result.message, "A face was detected near the image boundary. Manual review is required.")
+
+    def test_the_edge_rule_in_isolation_on_a_frame_that_is_not_square(self):
+        from .services import face_touches_edge
+
+        photo = {"x": 186, "y": 66, "width": 164, "height": 218}      # the 670 x 890 photograph this was found with: face centre 20% from the top
+        self.assertFalse(face_touches_edge(photo, 670, 890))
+        self.assertTrue(face_touches_edge({**photo, "y": 5}, 670, 890))                # 5 px is under 1% of 890
+        self.assertFalse(face_touches_edge({**photo, "y": 9}, 670, 890))
+        self.assertTrue(face_touches_edge({**photo, "x": 500}, 670, 890))              # runs past the right edge
+        self.assertFalse(face_touches_edge({"x": 4, "y": 100, "width": 100, "height": 100}, 400, 400))     # exactly on the margin is not inside it
+        self.assertTrue(face_touches_edge({"x": 3, "y": 100, "width": 100, "height": 100}, 400, 400))
+
+    @patch("validation.services._detect")
     def test_no_face_requires_review_and_three_to_five_faces_are_allowed(self, detector):
         detector.return_value = (np.empty((0, 4), dtype=int), [])
         review = validate_image_faces(self.image)

@@ -14,7 +14,8 @@ stored idempotently in PostgreSQL.
 
 - `accepted`: one suitable portrait face or a valid group containing up to five visible faces.
 - `rejected`: a clear violation such as a single primary face that is too small.
-- `needs_review`: no suitable frontal face or a face near the boundary.
+- `needs_review`: no suitable frontal face, or a face cut off by or touching an edge of the picture (within 1% of it). Where the face sits otherwise does not matter:
+  a head-and-shoulders portrait, with the face in the upper part, is accepted.
 - `failed`: validation could not complete safely.
 
 Results contain face count, detector score and its confidence type, bounding
