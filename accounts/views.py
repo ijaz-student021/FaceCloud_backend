@@ -38,6 +38,8 @@ from .sessions import revoke as revoke_session
 from .sessions import revoke_all as revoke_all_sessions
 from .sessions import session_for_token
 from .serializers import (
+    MAX_PASSWORD_LENGTH,
+    TOO_LONG_PASSWORD,
     AdminUserDetailSerializer,
     AdminUserCreateSerializer,
     AdminUserSerializer,
@@ -1187,7 +1189,7 @@ class InvitationTokenSerializer(serializers.Serializer):
 
 class InvitationAcceptSerializer(InvitationTokenSerializer):
     username = serializers.CharField(max_length=150)
-    password = serializers.CharField(write_only=True, trim_whitespace=False)
+    password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=MAX_PASSWORD_LENGTH, error_messages=TOO_LONG_PASSWORD)
 
 
 class InvitationPreviewSerializer(serializers.Serializer):

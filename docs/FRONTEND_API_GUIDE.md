@@ -44,6 +44,8 @@ one helper that accepts both shapes.
 Registration is a two-step flow. No account exists until the link in the
 verification email is opened.
 
+**Length limits on the public forms.** A login identifier (`identifier`, `username` or `email`) and any email on a public form (sign-up, password reset) may be at most **254** characters, a password at most **1024**, a reset or invitation token at most 256. A longer value is a `400` with the field named and a plain sentence (for example `{"identifier": ["This is too long: use at most 254 characters."]}`), never a 500. Use `maxlength` on those inputs.
+
 ```text
 POST /api/auth/register/            {full_name, email, password, password_confirm?, username?}
    -> 202 {registration_id, ...}    (an email with a link is sent)
