@@ -973,6 +973,9 @@ hide these routes, but never rely on that for security.
 | Image Monitoring | `GET /api/system/images/`, `.../{id}/`, `.../{id}/preview/` |
 | Users, Moderators | `GET/POST /api/user/admin/users/`, `PATCH /api/user/admin/users/{id}/` |
 
+
+`GET /api/system/health/` runs its seven checks at the same time and waits at most 2 seconds for all of them, so with a service down it still answers in about 2 seconds (it used to take 6 to 18) with all seven services listed; a check that has not answered by then is reported with `code: "timeout"` (`down` for the database, cache/broker and storage, `degraded` for the others). The finished answer is kept for 5 seconds, so `checked_at` can be up to 5 seconds old and several screens asking at once cost one round of checks. The shape, and the 503 when a required service is down, are unchanged.
+
 **Analytics `overview`** (additive; every existing key is unchanged). All counts are for the chosen window (default 30 days) unless said otherwise:
 
 ```json

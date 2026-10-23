@@ -914,6 +914,12 @@ if CELERY_BROKER_TRANSPORT_OPTIONS["visibility_timeout"] <= CELERY_TASK_TIME_LIM
     )
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 SYSTEM_HEALTH_TIMEOUT_SECONDS = env.float("SYSTEM_HEALTH_TIMEOUT_SECONDS", default=1.0)
+# GET /api/system/health/ runs its checks at the same time and waits at most this long for all of them (a check still running is reported as a timeout), and keeps the finished answer for
+# SYSTEM_HEALTH_CACHE_SECONDS (0 turns that off). With a service down the answer used to take 6 to 18 seconds.
+SYSTEM_HEALTH_DEADLINE_SECONDS = env.float("SYSTEM_HEALTH_DEADLINE_SECONDS", default=2.0)
+SYSTEM_HEALTH_CACHE_SECONDS = env.float("SYSTEM_HEALTH_CACHE_SECONDS", default=5.0)
+if SYSTEM_HEALTH_DEADLINE_SECONDS <= 0 or SYSTEM_HEALTH_CACHE_SECONDS < 0:
+    raise ImproperlyConfigured("SYSTEM_HEALTH_DEADLINE_SECONDS must be above 0 and SYSTEM_HEALTH_CACHE_SECONDS cannot be negative.")
 FACECLOUD_VERSION = env("FACECLOUD_VERSION", default="dev")
 # Send the model-loading tasks to their own queue (empty = the default queue, as before); see config/celery_routes.py.
 ENHANCEMENT_QUEUE_NAME = env("ENHANCEMENT_QUEUE_NAME", default="")
