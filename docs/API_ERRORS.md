@@ -10,7 +10,7 @@ and 429 responses are added to every operation in the OpenAPI schema
 | Status | Body | When |
 |---|---|---|
 | 400 | `{"field": ["message", ...], ...}` | Request validation failed. Keys are field names. |
-| 400 | `{"detail": ["message"], "code": "consent_required"}` | A face-recognition feature was refused because the person has not given consent (identity analysis, face search, person collage). Match on `code`. |
+| 400 | `{"detail": ["message"], "code": "consent_required"}` | A face-recognition feature was refused because the person has not given consent (identity analysis, face search). Match on `code`. |
 | 400 | `{"detail": ["message"]}` | A rule raised inside a serializer (login failures, password reset link, batch has nothing to enhance). Note `detail` is a **list** here. |
 | 401 | `{"detail": "message"}` | No credentials, or the account was rejected (see below). |
 | 401 | `{"detail": "...", "code": "token_not_valid", "messages": [...]}` | The token is malformed, expired or blacklisted. |
