@@ -166,8 +166,16 @@ POST /api/images/upload/single/    multipart, field: file
 POST /api/images/upload/multiple/  multipart, field: files (repeat the field)
 POST /api/images/upload/zip/       multipart, field: file
    -> 201 a batch: {id, status, total_files, accepted_files, rejected_files,
-                    processing_status, processing_mode, images: [...], ...}
+                    processing_status, processing_mode, auto_enhance, images: [...], ...}
 ```
+
+**Automatic enhancement (new).** A photograph that passes the checks is now **enhanced without anyone asking**: `accepted` at once, `rejected` never, and
+`needs_review` at once in a personal workspace or after a moderator approves it in an organization. Every upload request takes an optional form field
+**`auto_enhance`** (`true` or `false`; anything else is a 400 `{"auto_enhance": ...}`); absent means the account setting, which is on unless the person turned it off
+(section 8: `GET/PATCH /api/notifications/preferences/` carries `auto_enhance`). The answer is stored on the batch and returned as `auto_enhance`. Offer it as a checkbox
+on the upload page ("Enhance my photos automatically"), pre-set from the preference. It adds nothing to what a person can still do by hand: `POST /api/enhancements/...`
+works as before, and a photograph that already has a result is never enhanced a second time. Every photograph in the answer carries `enhancement` (below), so **in
+`inline` mode the finished results are already in the upload answer**; with a worker they are `queued` and move as you poll.
 
 **`processing_mode`** (new, upload answers only): `"background"` when a Celery worker does the work, `"inline"` when the background jobs run inside this very request
 (`CELERY_TASK_ALWAYS_EAGER` is on, normally a development server without a worker). In `inline` mode the answer already holds the finished batch and **there is no
@@ -195,9 +203,23 @@ extension must match its real content, and the size and pixel limits in
 GET /api/images/batches/{batch_id}/progress/
    -> {batch_id, status, stage, progress_percentage, counts,
        estimated_completion_at, cancellation_requested, retry_count,
+       auto_enhance, enhancement_finished,
        images: [{image_id, filename, stage, status, display_status,
-                 progress_percentage, failure_stage, failure_reason, ...}]}
+                 progress_percentage, failure_stage, failure_reason,
+                 enhancement: {status, outcome, summary, waiting_for, skipped_reason}, ...}]}
 ```
+
+- **Enhancement is a stage of the batch.** Each image (in the progress and in every batch response) has `enhancement`:
+  - `status`: `queued`, `processing`, `completed`, `skipped`, `failed` or `not_applicable` (the upload turned it off, or the photograph was rejected by the checks).
+  - `waiting_for` (only while `queued` and not yet started): `quality_verdict` (its checks have not decided), `moderator_approval` (an organization's moderator has to
+    approve it first) or `capacity` (the person already has the most enhancements running; it starts as they finish). Draw those as "waiting", never as done.
+  - `outcome` and `summary` (once it ended): `enhanced`, `partially_enhanced` or `original_preserved` (a clean photograph: nothing safe would help, so the
+    original is kept; **this is a success**, say "no change needed", not "failed"), or `failed`; `summary` is one plain sentence safe to show.
+  - `skipped_reason` (when `skipped`): `capacity` (no free slot for too long), `cancelled`, `already_requested`, `not_possible` or `error`. A skipped photograph is
+    never failed and its upload is untouched.
+  The batch is **not `completed` before its enhancements finished or were skipped** (`enhancement_finished` says so); a photograph that waits for a moderator does not
+  hold the batch back, because that can take days. A failed enhancement is that photograph's `failure_stage: "enhancement"` (status `failed`), the original stays,
+  and `POST /api/images/batches/{id}/retry/` runs it again. The person gets **one** notification per batch, `batch_enhanced` ("3 photos enhanced"), none per photograph.
 
 - **Person folders come after the quality verdict.** A photograph is filed into a person folder only once its quality check has decided: an `accepted` photo
   at once, a `rejected` one never, and one that `needs_review` only after a moderator approves it (at once when it is in a personal workspace, where no
@@ -271,6 +293,10 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}     -> 201
 
 - `level`: `auto` (default), `low`, `medium`, `high`.
 - `style`: `natural` (default), `dynamic`, `ai_max`.
+- **Automatic results** (section 3) are ordinary results: `GET /api/enhancements/results/{id}/` and the lists, with a new field `trigger`: `auto` (started after the upload
+  passed the checks) or `manual` (the person asked). An automatic one runs level `auto`, style `natural`. Its `applied_parameters.render_policy.name` is the policy it
+  used (the adaptive engine by default), which can differ from a manual request's. Automatic ones count towards the same limit of enhancements in progress, so
+  `POST /api/enhancements/images/{id}/` can answer 429 while a large upload is still being enhanced: say "wait for the running enhancements" and try again.
 - `applied_parameters.no_correction_needed` is `true` when the photo had nothing to
   correct and was left as it is; say that rather than showing an identical
   before/after as an enhancement.
@@ -502,13 +528,18 @@ POST .../{id}/regenerate/                                     after expiry or fa
 Statuses: `queued, generating, ready, failed` (packages also `expired`).
 Asking for a package that cannot be made yet is a **409** whose body is
 `{"detail": "<sentence>", "code": "<code>", ...}`; branch on `code`:
-`enhancement_required` (photos passed the checks but were never enhanced; also
+`enhancement_required` (photos passed the checks, the upload did not ask for automatic enhancement and nobody enhanced any; also
 `accepted_images: n`; call `POST /api/enhancements/batches/{id}/`, wait, then ask
-again), `no_accepted_images` (nothing passed, nothing to enhance),
+again; an upload that did ask for it never answers this), `no_accepted_images` (nothing passed, nothing to enhance),
 `batch_still_processing`, `batch_empty`. Downloading before `ready` returns
 **409**; after expiry **410**. Packages
 (`package_type`: `accepted_results` or `complete_batch`) expire after a
 configurable time, so show an expiry and offer "regenerate".
+
+**What `accepted_results` holds (changed).** For each accepted photograph, its **enhanced** version (folder `enhanced/`) when it has one, and its **original** (folder
+`original/`) when it does not (an automatic enhancement that was skipped or failed). `manifest.json` says which, file by file: each entry of `files` has `version`
+(`enhanced` or `original`), and an enhanced one has `enhancement_outcome` (`enhanced`, `partially_enhanced`, `original_preserved`) while an original has a `reason`;
+`summary` has `enhanced_files` and `original_files`. Earlier the package held only the enhanced photographs and listed the others under `skipped_files`.
 
 **What a processing report contains** (`payload`, and the JSON file). A **batch** report's `summary` is
 `{total_images, accepted_uploads, rejected_uploads, processing_status, status_counts, total_input_size}` plus three fields:
@@ -895,9 +926,16 @@ title "Some of your person folders may be the same person", `message` "N of your
 `resource_type` `batch`, `resource_id` the batch, `action_path` `/dashboard/groups`, `metadata.batch_id`, `metadata.folder_count`, `metadata.suggested_merge_count`).
 It is in-app only, sent once per batch and only when N is more than 0, and it follows the `person_group_created` preference.
 
-**Preferences** (`GET/PATCH /api/notifications/preferences/`) are seven switches, all booleans, a PATCH may send any of them: `photo_accepted`,
-`photo_rejected`, `batch_upload_finished`, `person_group_created`, `email_notifications` (off by default), `live_session_alerts` (off by default) and
-`moderator_review_updates` (on by default; **new in this response**: show it on the settings screen of owners and moderators only). With
+When a batch's automatic enhancements are all finished the owner receives `batch_enhanced` (severity `success`, or `warning` when some failed, title "Photos enhanced",
+`message` "3 photos enhanced." with, when there is something to add, "(1 kept as uploaded because enhancing them would not have helped; 1 could not be enhanced)",
+`resource_type` `batch`, `resource_id` the batch, `action_path` `/dashboard/jobs`, `metadata.batch_id`, `enhanced`, `kept`, `failed`, `skipped`, `total`). It is in-app only, sent
+**once per batch** (never per photograph), and follows the `batch_upload_finished` preference.
+
+**Preferences** (`GET/PATCH /api/notifications/preferences/`) are eight switches, all booleans, a PATCH may send any of them: `photo_accepted`,
+`photo_rejected`, `batch_upload_finished`, `person_group_created`, `email_notifications` (off by default), `live_session_alerts` (off by default),
+`moderator_review_updates` (on by default; show it on the settings screen of owners and moderators only) and **`auto_enhance`** (on by default; **new**: the account's
+setting for automatic enhancement after upload, which a form field on one upload can override; it is the only switch here that is not about notifications, kept in
+this endpoint because it is the account's existing preferences endpoint, so show it as "Enhance my photos automatically" on the account's settings screen). With
 `moderator_review_updates` off a moderator or owner is no longer told that a review was assigned to them, escalated or overdue, or that a batch failed;
 the reviews themselves are unaffected. Everything else in the response is unchanged.
 

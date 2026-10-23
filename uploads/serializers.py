@@ -164,16 +164,35 @@ class MyImageSerializer(ImageUploadSerializer):
         return image_display_status(obj)
 
 
+ENHANCEMENT_STAGE = inline_serializer("EnhancementStage", {
+    "status": serializers.CharField(help_text="queued, processing, completed, skipped, failed or not_applicable."),
+    "outcome": serializers.CharField(allow_null=True, help_text="enhanced, partially_enhanced, original_preserved or failed; null until the enhancement has ended."),
+    "summary": serializers.CharField(help_text="One plain sentence on the outcome, safe to show a person; empty until it has ended."),
+    "waiting_for": serializers.CharField(help_text="While queued and not yet started: quality_verdict, moderator_approval or capacity; otherwise empty."),
+    "skipped_reason": serializers.CharField(help_text="When skipped: capacity, cancelled, already_requested, not_possible or error; otherwise empty."),
+})
+
+
 class BatchImageSerializer(ImageUploadSerializer):
-    """A photo inside a batch response: the upload facts plus the same status word My Images shows."""
+    """A photo inside a batch response: the upload facts plus the same status word My Images shows, and its enhancement stage."""
 
     display_status = serializers.SerializerMethodField()
+    enhancement = serializers.SerializerMethodField(help_text=(
+        "The automatic enhancement of this photograph: where it is (status, waiting_for) and how it ended (outcome, summary). 'not_applicable' when the upload "
+        "turned it off or the photograph was rejected by the checks."
+    ))
 
     class Meta(ImageUploadSerializer.Meta):
-        fields = ImageUploadSerializer.Meta.fields + ["display_status"]
+        fields = ImageUploadSerializer.Meta.fields + ["display_status", "enhancement"]
 
     def get_display_status(self, obj) -> str:
         return image_display_status(obj)
+
+    @extend_schema_field(ENHANCEMENT_STAGE)
+    def get_enhancement(self, obj):
+        from enhancement.auto import enhancement_state
+
+        return enhancement_state(obj)
 
 
 class UploadBatchSerializer(serializers.ModelSerializer):
@@ -182,14 +201,14 @@ class UploadBatchSerializer(serializers.ModelSerializer):
     class Meta:
         model = UploadBatch
         fields = [
-            "id", "upload_type", "original_archive_name", "display_name", "status", "total_files",
+            "id", "upload_type", "original_archive_name", "display_name", "status", "total_files", "auto_enhance",
             "accepted_files", "rejected_files", "total_size", "processing_status",
             "processed_files", "processing_failed_files", "processing_task_id",
             "processing_error", "processing_started_at", "processing_finished_at",
             "created_at", "updated_at", "images",
         ]
         read_only_fields = [
-            "upload_type", "original_archive_name", "status", "total_files", "accepted_files",
+            "upload_type", "original_archive_name", "status", "total_files", "auto_enhance", "accepted_files",
             "rejected_files", "total_size", "processing_status", "processed_files",
             "processing_failed_files", "processing_task_id", "processing_error",
             "processing_started_at", "processing_finished_at", "created_at", "updated_at", "images",

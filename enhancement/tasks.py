@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import uuid
 
@@ -16,6 +17,7 @@ from django.conf import settings
 from .models import (
     EnhancementBatchJob,
     EnhancementStatus,
+    EnhancementTrigger,
     ImageEditVersion,
     ImageEnhancementResult,
     ModelComparison,
@@ -155,7 +157,9 @@ def _publish_outcome(result):
 
     if result.status not in FINISHED_STATUSES:
         return
-    notify_enhancement_result(result)
+    automatic = result.trigger == EnhancementTrigger.AUTO
+    if not automatic:
+        notify_enhancement_result(result)       # an automatic one tells the owner once per batch instead (enhancement.auto.notify_batch_if_finished)
     event = f"enhancement_{result.status}"
     already = ActivityEvent.objects.filter(
         user=result.owner, category="processing", event=event,
@@ -169,6 +173,30 @@ def _publish_outcome(result):
             object_type="ImageEnhancementResult", object_id=result.pk,
         )
     sync_image_progress(result.image_id)
+    if automatic:
+        from .auto import after_result
+
+        after_result(result)
+
+
+def _run_policy(result):
+    """An automatic enhancement runs under AUTO_ENHANCEMENT_RENDER_POLICY; a person's own request keeps ENHANCEMENT_RENDER_POLICY."""
+    if result.trigger == EnhancementTrigger.AUTO:
+        from . import policy
+
+        return policy.use_policy(settings.AUTO_ENHANCEMENT_RENDER_POLICY)
+    return contextlib.nullcontext()
+
+
+@shared_task(
+    bind=True,
+    name="enhancement.release_waiting_auto",
+)
+def release_waiting_auto(self):
+    """Start the automatic enhancements that waited for a free slot (every few minutes; also done whenever one of them ends)."""
+    from .auto import release_waiting
+
+    return {"started": release_waiting()}
 
 
 @shared_task(
@@ -210,9 +238,10 @@ def _enhance_image(task, result_id, claim_waits, resume_claim):
             return {"result_id": result_id, "status": "superseded"}
     token = uuid.uuid4().hex
     try:
-        result = process_enhancement_result(
-            result, claim_owner=_claim_owner(task, claim_waits), token=token, resume_token=resume_claim,
-        )
+        with _run_policy(result):
+            result = process_enhancement_result(
+                result, claim_owner=_claim_owner(task, claim_waits), token=token, resume_token=resume_claim,
+            )
         finished = True
     except ResultInProgress as busy:
         # Another execution holds a live claim: a duplicate delivery, or a task

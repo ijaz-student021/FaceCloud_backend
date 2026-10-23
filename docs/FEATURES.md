@@ -1083,6 +1083,29 @@ guarantee for embeddings/centroids, both implemented as described:
   to extend yet, and adding one is a separate decision, not implied by this.
   Never a platform-wide search across accounts.
 
+### Feature 51: Automatic enhancement after upload — Done (backend)
+
+The core of the product: a photograph that passes the checks is enhanced **without anyone asking**, safely, and exactly once.
+
+- **When** (`enhancement/auto.py`, started from the same three places that queue the person folders): `accepted` at once; `rejected` (at upload, by the face
+  check or by quality) never; `needs_review` at once in a personal workspace and after a moderator approves it in an organization. A photograph that already has a
+  result of any kind, or a record, is left alone, so a retry or a re-analysis never makes a second enhancement.
+- **How:** level `auto`, style `natural`, under `AUTO_ENHANCEMENT_RENDER_POLICY` (default `adaptive_v1`: analyser, router, candidates, validator; a clean photograph
+  ends as `original_preserved`, which is a successful outcome). A person's own request keeps `ENHANCEMENT_RENDER_POLICY`. No model setting changes; the production
+  guard counts the new policy, so Zero-DCE under it still needs `NONCOMMERCIAL_MODELS_ACKNOWLEDGED`.
+- **Off switches:** `AUTO_ENHANCEMENT_ENABLED` (operator); `auto_enhance` on the account (`PATCH /api/notifications/preferences/`, on by default); `auto_enhance=true|false` on
+  any of the three upload endpoints (absent = the account setting). The answer is stored on the batch.
+- **Capacity:** `ensure_enhancement_capacity` is respected. A photograph over the limit waits and starts as slots free up (when an enhancement ends, and every
+  two minutes by the scheduler), or is skipped as `capacity` after `AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES`. Nothing here ever fails an upload.
+- **Progress:** each photograph reports `enhancement: {status, outcome, summary, waiting_for, skipped_reason}`; the batch is not `completed` before its enhancements
+  finished or were skipped (a photograph waiting for a moderator does not hold it back). `enhancement_finished` and `auto_enhance` are on the batch progress.
+- **Notification:** `batch_enhanced`, once per batch ("N photos enhanced"), none per photograph.
+- **Package:** `accepted_results` holds the enhanced version of each accepted photograph that has one and the original for the rest; the manifest says which.
+- **Failure:** a failed automatic enhancement leaves the original untouched and shows as that photograph's `enhancement` stage failing; the existing retry
+  (`POST /api/images/batches/{id}/retry/`) runs it again.
+
+Facial data usage: none new. The enhancement engine's own identity check (SFace, consent-gated) is unchanged; this feature only decides when an enhancement starts.
+
 ## 14. Optional future extensions
 
 The following items remain outside the required core until the preceding features are complete:

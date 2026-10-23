@@ -49,6 +49,12 @@ def _state_for_image(image):
             return "completed", "cancelled", 100.0, "enhancement", enhancement.failure_reason
         return "enhancement", "processing" if enhancement.status == "processing" else "queued", 75.0, "", ""
 
+    # An automatic enhancement that is waiting for a free slot has no result yet, but the photograph is not finished (enhancement/auto.py).
+    from enhancement.auto import waiting_in_queue
+
+    if waiting_in_queue(image):
+        return "enhancement", "queued", 80.0, "", ""
+
     try:
         quality = image.quality_decision
     except Exception:
@@ -152,7 +158,8 @@ def _progress_records(batch):
 
     return (
         batch.image_progress.select_related(
-            "image", "image__preprocessing_result", "image__face_validation", "image__quality_decision", "image__identity_analysis",
+            "image", "image__batch", "image__preprocessing_result", "image__face_validation", "image__quality_decision", "image__identity_analysis",
+            "image__auto_enhancement",
         )
         .prefetch_related(Prefetch(
             "image__enhancement_results",
@@ -171,11 +178,17 @@ def batch_progress_payload(batch):
     records = list(_progress_records(batch))
     durations = [(item.finished_at - item.started_at).total_seconds() for item in records if item.started_at and item.finished_at]
     remaining = summary["counts"]["queued"] + summary["counts"]["processing"]
+    from enhancement.auto import WAIT_FOR_MODERATOR, enhancement_state
     from identities.suggestions import suggested_pairs_of_batch
     from identities.verdict import batch_grouping_finished, grouping_status
 
     personal = batch.organization is None or batch.organization.is_personal
     grouping_finished = batch_grouping_finished(batch)
+    enhancement = {item.image_id: enhancement_state(item.image, personal=personal) for item in records}
+    # Finished when no photograph is still queued or running its enhancement; one waiting for a moderator does not hold the batch back (it can take days).
+    enhancement_finished = all(
+        state["status"] not in ("queued", "processing") or state["waiting_for"] == WAIT_FOR_MODERATOR for state in enhancement.values()
+    )
     eta = timezone.now() + timedelta(seconds=(sum(durations) / len(durations)) * remaining) if durations and remaining else None
     return {
         "batch_id": batch.pk, "upload_type": batch.upload_type,
@@ -185,6 +198,10 @@ def batch_progress_payload(batch):
         "estimated_completion_at": eta,
         # Person folders are made after each photograph's quality verdict, so a photograph can still be waiting for them when its checks are done.
         "identity_grouping_finished": grouping_finished,
+        # Whether the batch asked for automatic enhancement, and whether every photograph that will be enhanced has been (or was skipped): the batch is not
+        # "completed" before that. Per photograph: ``images[].enhancement``.
+        "auto_enhance": batch.auto_enhance,
+        "enhancement_finished": enhancement_finished,
         # Pairs of folders that this batch put photographs in and that look like one person (0 until the batch has been fully grouped); the list is
         # GET /api/identities/groups/suggested-merges/.
         "suggested_merge_count": len(suggested_pairs_of_batch(batch)) if grouping_finished else 0,
@@ -196,6 +213,7 @@ def batch_progress_payload(batch):
             "failure_stage": item.failure_stage, "failure_reason": item.failure_reason,
             "retry_count": item.retry_count, "updated_at": item.updated_at,
             "identity_grouping": grouping_status(item.image, personal=personal),
+            "enhancement": enhancement[item.image_id],
         } for item in records],
         "updated_at": batch.progress_updated_at,
     }

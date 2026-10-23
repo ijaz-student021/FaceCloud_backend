@@ -8,7 +8,7 @@ def with_status_relations(queryset):
     """Load everything ``image_display_status`` reads, so a page of photos costs a fixed number of queries."""
     from enhancement.models import ImageEnhancementResult
 
-    return queryset.select_related("preprocessing_result", "face_validation", "quality_decision").prefetch_related(
+    return queryset.select_related("preprocessing_result", "face_validation", "quality_decision", "auto_enhancement").prefetch_related(
         Prefetch(
             "enhancement_results",
             queryset=ImageEnhancementResult.objects.order_by("-created_at"),

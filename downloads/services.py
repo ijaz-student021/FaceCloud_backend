@@ -50,6 +50,8 @@ def ensure_package_ready(batch, package_type):
                 quality_decision__status="completed",
                 quality_decision__decision="accepted",
             ).count()
+            if awaiting and batch.auto_enhance:
+                return  # an automatic enhancement was asked for and none finished (skipped or failed): the package carries the originals
             if awaiting:
                 raise PackageNotReadyError(
                     "The accepted photos have not been enhanced yet. Enhance the batch, then ask for the package again.",

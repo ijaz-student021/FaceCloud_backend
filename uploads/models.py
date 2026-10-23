@@ -76,6 +76,11 @@ class UploadBatch(models.Model):
     processing_finished_at = models.DateTimeField(null=True, blank=True)
     current_stage = models.CharField(max_length=24, choices=STAGE_CHOICES, default="uploaded")
     cancellation_requested = models.BooleanField(default=False)
+    # Whether the photographs that pass the checks are enhanced without anyone asking (enhancement/auto.py). Decided once, when the batch is uploaded: the
+    # form field auto_enhance, else the account setting. False for a batch made any other way, and for every batch that existed before this setting did.
+    auto_enhance = models.BooleanField(default=False)
+    # Set once, when the batch's automatic enhancements are all finished and the owner has been told ("N photos enhanced"): the owner is told once.
+    auto_enhance_notified_at = models.DateTimeField(null=True, blank=True)
     retry_count = models.PositiveSmallIntegerField(default=0)
     progress_updated_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

@@ -4,6 +4,7 @@ from rest_framework import serializers
 from . import comparison as comparison_engine
 from . import watermark as wm
 from .controls import INTENTS, ControlsSerializer
+from .outcome import result_outcome, result_summary
 from .models import (
     AdvisorRecommendation,
     AdvisorRun,
@@ -210,7 +211,7 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
         model = ImageEnhancementResult
         fields = [
             "id", "image", "batch_job", "requested_level", "applied_level",
-            "requested_style", "status", "enhancement_outcome", "enhancement_summary",
+            "requested_style", "trigger", "status", "enhancement_outcome", "enhancement_summary",
             "applied_stages", "skipped_stages", "hd_unavailable_reason",
             "identity_status", "identity_check_bypassed", "identity_notice",
             "output_name", "output_format", "output_width", "output_height",
@@ -229,18 +230,10 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
         return identity_fields(parameters.get("identity_verification"), parameters.get("identity_status"))
 
     def get_enhancement_outcome(self, obj) -> str | None:
-        if obj.status == "failed":
-            return "failed"
-        parameters = obj.applied_parameters if isinstance(obj.applied_parameters, dict) else {}
-        adaptive = parameters.get("adaptive")
-        return adaptive.get("outcome") if isinstance(adaptive, dict) else None
+        return result_outcome(obj)
 
     def get_enhancement_summary(self, obj) -> str:
-        if obj.status == "failed":
-            return "The photograph could not be enhanced. Your original photograph is unchanged."
-        parameters = obj.applied_parameters if isinstance(obj.applied_parameters, dict) else {}
-        adaptive = parameters.get("adaptive")
-        return str(adaptive.get("summary", "")) if isinstance(adaptive, dict) else ""
+        return result_summary(obj)
 
     def _stages(self, obj):
         from .restoration import describe_stages

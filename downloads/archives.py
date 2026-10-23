@@ -12,6 +12,7 @@ from django.db.models import Prefetch
 from django.utils import timezone
 
 from enhancement.models import EnhancementStatus, ImageEnhancementResult
+from enhancement.outcome import result_outcome
 from reports.models import ProcessingReport
 from reports.renderers import render_report
 from reports.services import build_report_payload
@@ -118,7 +119,7 @@ def build_package_archive(package):
     candidates = []
     skipped = []
 
-    def add_candidate(image, kind, folder, file_field, display_name):
+    def add_candidate(image, kind, folder, file_field, display_name, **details):
         size = _stored_size(file_field)
         if size is None:
             skipped.append({
@@ -134,6 +135,7 @@ def build_package_archive(package):
             "archive_path": archive_path,
             "size": size,
             "file_field": file_field,
+            **details,
         })
 
     for image in images:
@@ -146,15 +148,17 @@ def build_package_archive(package):
             if not quality or quality.status != "completed" or quality.decision != "accepted":
                 continue
             if enhancement is None:
-                skipped.append({
-                    "image_id": image.pk,
-                    "resource_type": "enhanced",
-                    "reason": "Accepted image has no completed enhancement",
-                })
+                # The enhanced version of every accepted photograph that has one, and the original for the rest (an automatic enhancement that was skipped or
+                # failed, or a photograph nobody enhanced): the manifest says which each file is.
+                add_candidate(
+                    image, "original", "original", image.original_file, image.original_name,
+                    version="original", reason="No completed enhancement: the original is included instead",
+                )
                 continue
             add_candidate(
                 image, "enhanced", "enhanced", enhancement.enhanced_file,
                 enhancement.output_name or f"enhanced-{image.original_name}",
+                version="enhanced", enhancement_outcome=result_outcome(enhancement),
             )
             continue
 
@@ -180,7 +184,7 @@ def build_package_archive(package):
 
     if package.package_type == DownloadPackage.PackageType.ACCEPTED_RESULTS and not candidates:
         raise PackageBuildError(
-            "The batch has no accepted enhanced images ready for download."
+            "The batch has no accepted images ready for download."
         )
 
     report_content, report_content_type, report_extension = _report_bytes(package)
@@ -212,6 +216,13 @@ def build_package_archive(package):
         "summary": {
             "included_images": len({item["image_id"] for item in candidates}),
             "included_files": len(candidates),
+            **(
+                {
+                    "enhanced_files": sum(1 for item in candidates if item.get("version") == "enhanced"),
+                    "original_files": sum(1 for item in candidates if item.get("version") == "original"),
+                }
+                if package.package_type == DownloadPackage.PackageType.ACCEPTED_RESULTS else {}
+            ),
             "skipped_files": len(skipped),
             "uncompressed_bytes": projected_bytes,
         },
