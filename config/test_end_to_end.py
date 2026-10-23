@@ -1,7 +1,7 @@
 """One realistic pass through the whole product, over the real HTTP API.
 
 Registration by emailed link, login, upload, progress polling, thumbnails, an
-encrypted round trip, events, enhancement, a collage and notifications, in the
+encrypted round trip, events, enhancement and notifications, in the
 order a frontend would call them. Background jobs run in-process
 (``CELERY_TASK_ALWAYS_EAGER``) against a throwaway database, so it needs no
 Redis and never touches development data.
@@ -126,14 +126,7 @@ class EndToEndFlowTests(TransactionTestCase):
         enhanced = self.body(self.call("get", result["download_url"], 200))
         self.assertGreater(luminance(enhanced), luminance(originals[DARK_PHOTOS[0].name]) + 20)
 
-        # 7. Make a collage from the event and check the file.
-        started = self.call("post", "/api/collages/", 202, data={"source_type": "event", "event_id": event["id"]}, format="json")
-        collage = self.call("get", f"/api/collages/{started.data['id']}/", 200).data
-        self.assertEqual(collage["status"], "ready", collage.get("failure_reason"))
-        picture = cv2.imdecode(np.frombuffer(self.body(self.call("get", collage["download_url"], 200)), dtype=np.uint8), cv2.IMREAD_COLOR)
-        self.assertEqual(picture.shape[:2], (1200, 1600))
-
-        # 8. The user was told the batch finished, and only ever sees their own data.
+        # 7. The user was told the batch finished, and only ever sees their own data.
         notifications = self.call("get", "/api/notifications/", 200).data
         kinds = {item["event_type"] for item in notifications["results"]}
         self.assertIn("batch_completed", kinds)

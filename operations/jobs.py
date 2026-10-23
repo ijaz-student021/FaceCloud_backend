@@ -99,11 +99,6 @@ JOB_KINDS = (
         finished_field=None, label="Download package", stage="download_package", batch_path="batch",
     ),
     JobKind(
-        "collage", "collages.Collage",
-        queued=("queued",), processing=("generating",), failed="failed",
-        finished_field=None, label="Collage", stage="collage",
-    ),
-    JobKind(
         "report", "reports.ProcessingReport",
         queued=("queued",), processing=("generating",), failed="failed",
         finished_field=None, label="Processing report", stage="report", batch_path="batch",

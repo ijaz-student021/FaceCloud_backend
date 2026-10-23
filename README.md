@@ -26,7 +26,7 @@ feature catalogue and status table; this README does not duplicate it.
 |---|---|
 | Accounts | Pending registration with email-link verification, JWT login with refresh rotation, per-account login backoff, password reset, logout from all devices, admin / moderator / user roles, suspension, audit trail |
 | Uploads | Single, multiple and ZIP upload; content-based validation of JPG, PNG, WebP, BMP, TIFF and static GIF; ZIP-slip and ZIP-bomb protection; UUID storage paths; owner-only access |
-| Gallery | Automatic event/timeline grouping of a user's photos, face-aware collages from an event or a person (asynchronous, consent-gated for person collages), and cached, encrypted JPEG thumbnails so a gallery never loads full originals |
+| Gallery | Automatic event/timeline grouping of a user's photos, and cached, encrypted JPEG thumbnails so a gallery never loads full originals |
 | Quality control | Sharpness, exposure, contrast, noise and resolution scoring with explainable accept / review / reject decisions |
 | Enhancement | **Default policy `lightweight_v1`: OpenCV and Pillow only; the learned models are installed but off** (see [docs/enhancement/optional-models.md](docs/enhancement/optional-models.md)). Model set: Retinexformer / Zero-DCE (low light), NAFNet-SIDD (denoise), NAFNet-GoPro (deblur), CodeFormer / GFPGAN (faces, identity-gated), Real-ESRGAN (super-resolution), YuNet + SFace by default (RetinaFace and ArcFace selectable). Guarded adaptive pipeline, an **adaptive engine** (`adaptive_v1`: analyse, route, validate candidates against identity and quality gates, return one image or keep the original; [docs/enhancement/adaptive-engine.md](docs/enhancement/adaptive-engine.md)), style presets, and editor sliders (tone controls plus model-backed low light, noise reduction, deblur and face restoration) with bounded previews and saved versions |
 | Identity | YuNet face detection, SFace embeddings, identity grouping, a guard that rejects enhancements that change who a face looks like, ZIP export per identity, consent-gated search by photo |
@@ -98,7 +98,6 @@ moderation/        organization-scoped review queue, decisions, reports, batch a
 privacy/           consent, erasure, retention, personal and organization export, cleanup
 sharing/           expiring, revocable share links
 events/            automatic event/timeline grouping of a user's photos
-collages/          face-aware photo collages from an event or a person
 thumbnails/        cached, encrypted-at-rest JPEG previews of uploaded photos
 reports/  downloads/  notifications/  activity/  operations/
 scripts/           worker launcher, dataset audit, model training and export
@@ -243,7 +242,7 @@ python manage.py test                        # everything, before a commit
 
 `config/test_end_to_end.py` is one realistic pass through the whole product over
 the real HTTP API (sign up by emailed code, log in, upload, progress, thumbnails,
-encrypted downloads, events, enhancement, collage, notifications, isolation from
+encrypted downloads, events, enhancement, notifications, isolation from
 another user). It runs the background jobs in-process, needs no Redis, and uses a
 throwaway database. It needs the sample photos in `Dataset/` and `People/`, so it
 is skipped when they are missing and by the quick loop above:
@@ -380,7 +379,7 @@ Then run `python manage.py check --deploy` for Django's own checks.
 
 - [`docs/FEATURES.md`](docs/FEATURES.md): feature catalogue and status
 - [`docs/SECURITY_AND_PERFORMANCE_REVIEW.md`](docs/SECURITY_AND_PERFORMANCE_REVIEW.md): dependency audit, static analysis and performance findings, and how to repeat them
-- [`docs/FRONTEND_API_GUIDE.md`](docs/FRONTEND_API_GUIDE.md): how a frontend uses the API (auth, upload and polling, thumbnails, enhancement, people, events, collages, sharing, organizations, moderator area, notifications)
+- [`docs/FRONTEND_API_GUIDE.md`](docs/FRONTEND_API_GUIDE.md): how a frontend uses the API (auth, upload and polling, thumbnails, enhancement, people, events, sharing, organizations, moderator area, notifications)
 - [`docs/DATASET_TERMS.md`](docs/DATASET_TERMS.md): the third-party face dataset we were granted, its conditions and how the project keeps to them
 - [`docs/GPU_SESSION_RUNBOOK.md`](docs/GPU_SESSION_RUNBOOK.md): preparing, running and deciding a GPU evaluation session (preflight, model manifest, stage comparison)
 - [`docs/API_ERRORS.md`](docs/API_ERRORS.md): error shapes the frontend can rely on

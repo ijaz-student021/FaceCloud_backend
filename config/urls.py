@@ -44,7 +44,6 @@ urlpatterns = [
     path("api/privacy/", include("privacy.urls")),
     path("api/shares/", include("sharing.urls")),
     path("api/events/", include("events.urls")),
-    path("api/collages/", include("collages.urls")),
     path("api/system/", include("operations.urls")),
     path("api/search/", include("search.urls")),
     path("api/organizations/", include("organizations.urls")),
