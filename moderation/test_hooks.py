@@ -12,7 +12,7 @@ from duplicates.models import DuplicateAnalysis, DuplicateMatch
 from duplicates.services import _create_match
 from identities.models import IdentityAnalysis
 from identities.services import process_identity_analysis
-from organizations.services import create_personal_organization
+from organizations.services import create_organization, create_personal_organization
 from quality_control.models import ImageQualityDecision
 from quality_control.services import process_quality_decision
 from uploads.models import ImagePreprocessingResult, ImageUpload, UploadBatch
@@ -29,7 +29,8 @@ class QualityReviewHookTests(TestCase):
         self.owner = User.objects.create_user(
             username="quality-owner", email="quality-owner@example.com", password="Password!123",
         )
-        self.organization = create_personal_organization(self.owner)
+        # A real organization: a personal workspace has no moderator, so it opens no review (see moderation/test_personal_reviews.py).
+        self.organization = create_organization(name="Quality Co", owner=self.owner)
         batch = UploadBatch.objects.create(owner=self.owner, upload_type="single", organization=self.organization)
         self.image = ImageUpload.objects.create(
             owner=self.owner, batch=batch, original_name="face.jpg", status="uploaded",
@@ -57,6 +58,17 @@ class QualityReviewHookTests(TestCase):
         ):
             process_quality_decision(self.decision.pk)
 
+    def test_a_personal_workspace_opens_no_review_because_nobody_can_decide_it(self):
+        personal = create_personal_organization(User.objects.create_user(username="solo", email="solo@example.com", password="Password!123"))
+        self.image.batch.organization = personal
+        self.image.batch.save(update_fields=["organization"])
+
+        self._run("needs_review")
+
+        self.assertFalse(ModeratorReview.objects.filter(quality_decision=self.decision).exists())
+        self.decision.refresh_from_db()
+        self.assertEqual(self.decision.decision, "needs_review")                       # the stored verdict is still what the checks found
+
     def test_a_needs_review_quality_decision_creates_a_moderator_review(self):
         self._run("needs_review")
 
@@ -76,7 +88,7 @@ class DuplicateReviewHookTests(TestCase):
         self.owner = User.objects.create_user(
             username="dup-owner", email="dup-owner@example.com", password="Password!123",
         )
-        self.organization = create_personal_organization(self.owner)
+        self.organization = create_organization(name="Duplicate Co", owner=self.owner)
         batch = UploadBatch.objects.create(owner=self.owner, upload_type="multiple", organization=self.organization)
         self.source_image = ImageUpload.objects.create(
             owner=self.owner, batch=batch, original_name="a.jpg", status="uploaded",
@@ -120,7 +132,7 @@ class IdentityReviewHookTests(TestCase):
         self.owner = User.objects.create_user(
             username="identity-owner", email="identity-owner@example.com", password="Password!123",
         )
-        self.organization = create_personal_organization(self.owner)
+        self.organization = create_organization(name="Identity Co", owner=self.owner)
         batch = UploadBatch.objects.create(owner=self.owner, upload_type="single", organization=self.organization)
         self.image = ImageUpload.objects.create(
             owner=self.owner, batch=batch, original_name="face.jpg", status="uploaded",

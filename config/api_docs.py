@@ -298,7 +298,7 @@ CATALOGUE = {
     "system_queue_retrieve": ("Queue status", "Active and stale background work per job type."),
     "system_analytics_retrieve": ("Platform analytics", "Platform-wide totals, rates and charts."),
     "system_audit_retrieve": ("Platform audit feed", "A combined, platform-wide feed of authentication and activity events."),
-    "system_moderation_retrieve": ("Platform moderation overview", "Platform-wide moderation totals and organizations needing attention."),
+    "system_moderation_retrieve": ("Platform moderation overview", "Platform-wide moderation totals and organizations needing attention. Personal workspaces are not included: they have no moderator, so no review is opened there."),
     "system_images_list": ("List every user's images", "Newest first."),
     "system_images_retrieve": ("Get any image", ""),
     "system_images_preview_retrieve": ("Preview any image", ""),

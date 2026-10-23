@@ -1024,6 +1024,8 @@ kind `upload_batch` is described exactly like the failed-batch list above, inclu
 escalated, stale_open, overdue, oldest_open_at}` and `moderator_workload[]` is `{moderator_id, username, assigned_open, decided_total}`. A batch that failed in an
 organization is in the failed-batch list (and the organization's moderators and owners are notified, `moderator_batch_failed`).
 
+**Personal workspaces are not monitored.** A person with no team has a personal workspace, which has no moderator: a photograph the checks are unsure about opens no review there (the owner decides; the photograph stays usable), and personal workspaces are left out of `totals`, `organizations_needing_attention` and `moderator_workload`. `python manage.py close_personal_reviews` (dry run; `--apply` to change) closes the pending reviews that were opened there before this was fixed, with the reason "No moderator in a personal workspace" and no deciding moderator.
+
 **Audit search.** `GET /api/system/audit/?q=` keeps only rows whose actor's name (username, or the identifier typed at a failed
 sign-in), event (its stored name, or the sentence the screen shows: "signed in" finds `login`) or category (its name or label, for example
 "accounts") contains the text, case-insensitively, up to 100 characters (longer is a 400). It combines with `?category=`, `?source=`, `?user=`
