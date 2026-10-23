@@ -90,6 +90,27 @@ class UploadBatch(models.Model):
         ordering = ["-created_at"]
 
 
+class ImageUploadQuerySet(models.QuerySet):
+    def in_trash(self):
+        return self.filter(trashed_at__isnull=False)
+
+    def not_in_trash(self):
+        return self.filter(trashed_at__isnull=True)
+
+
+class VisibleImageManager(models.Manager.from_queryset(ImageUploadQuerySet)):
+    """The default manager: photographs that are **not** in the trash.
+
+    Everything that lists, counts, searches or opens a photograph goes through ``ImageUpload.objects`` (and the reverse ``batch.images``), so a photograph in
+    the trash disappears from all of it without each place having to remember. The code that must see trashed photographs (the trash itself, the purge,
+    the orphan-file sweep, the data export) asks for ``ImageUpload.all_objects`` by name. Django's own base manager (used for foreign keys and cascades) is
+    not filtered, so deleting an account or a batch still reaches trashed rows.
+    """
+
+    def get_queryset(self):
+        return super().get_queryset().filter(trashed_at__isnull=True)
+
+
 class ImageUpload(models.Model):
     STATUS_CHOICES = [("uploaded", "Uploaded"), ("rejected", "Rejected")]
 
@@ -105,8 +126,53 @@ class ImageUpload(models.Model):
     checksum_sha256 = models.CharField(max_length=64, blank=True, db_index=True)
     status = models.CharField(max_length=12, choices=STATUS_CHOICES)
     rejection_reason = models.TextField(blank=True)
+    # A photograph the person marked as a favourite (PUT /api/images/{id}/favorite/). Set by queryset update, so it never moves updated_at.
+    is_favorite = models.BooleanField(default=False)
+    favorited_at = models.DateTimeField(null=True, blank=True)
+    # When the photograph was taken (EXIF DateTimeOriginal, read at upload by uploads/capture.py); null when the file has none. ``captured_at`` falls back to the upload time.
+    taken_at = models.DateTimeField(null=True, blank=True)
+    # Where it was taken (uploads/capture.py reads the EXIF GPS block at upload; rounded to 4 decimals, about 11 m). Only its owner ever sees the coordinates (places/views.py);
+    # ``place`` is the named place from the offline gazetteer. ``location_checked_at`` says the file was looked at (or its location removed), so a backfill never repeats or undoes it.
+    gps_lat = models.FloatField(null=True, blank=True)
+    gps_lon = models.FloatField(null=True, blank=True)
+    place = models.ForeignKey("places.Place", null=True, blank=True, on_delete=models.SET_NULL, related_name="images")
+    location_checked_at = models.DateTimeField(null=True, blank=True)
+    # When the person moved the photograph to the trash (uploads/trash.py); null for every photograph that is not in it. It is purged TRASH_RETENTION_DAYS later.
+    trashed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = VisibleImageManager()
+    all_objects = ImageUploadQuerySet.as_manager()
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["owner", "is_favorite"], name="upload_owner_favorite_idx"),
+            models.Index(fields=["owner", "taken_at"], name="upload_owner_taken_idx"),
+            models.Index(fields=["owner", "trashed_at"], name="upload_owner_trashed_idx"),
+            models.Index(fields=["owner", "place"], name="upload_owner_place_idx"),
+        ]
+
+    @property
+    def captured_at(self):
+        """When the photograph belongs on a timeline: when it was taken, else when it was uploaded."""
+        return self.taken_at or self.created_at
+
+
+class TrashEntry(models.Model):
+    """What moving a photograph to the trash changed, so restoring it can put it back exactly.
+
+    ``memberships`` is ``{membership id: state it had}`` for the person-folder memberships the trash set to ``removed``; ``archived_groups`` lists the folders the
+    trash left empty and archived. Everything else (favourite, album places, the files, the checks' results) is simply untouched by the trash. The entry goes with
+    the photograph when it is purged.
+    """
+
+    image = models.OneToOneField(ImageUpload, on_delete=models.CASCADE, related_name="trash_entry")
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="trash_entries")
+    memberships = models.JSONField(default=dict, blank=True)
+    archived_groups = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["-created_at"]

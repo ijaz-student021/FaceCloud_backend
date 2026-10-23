@@ -20,6 +20,14 @@ MIN_FACE_AREA_RATIO = 0.06
 MIN_GROUP_FACE_AREA_RATIO = 0.012
 
 
+def face_touches_edge(face, width, height, margin=None):
+    """Whether the face's box is cut off by, or within ``EDGE_MARGIN_RATIO`` of, an edge of the picture (``width`` x ``height``, the same frame as the box)."""
+    margin = EDGE_MARGIN_RATIO if margin is None else margin
+    left, top = face["x"], face["y"]
+    right, bottom = left + face["width"], top + face["height"]
+    return left < margin * width or top < margin * height or right > (1 - margin) * width or bottom > (1 - margin) * height
+
+
 def _face_is_usable(face, min_ratio):
     """Whether a face is big enough to enhance.
 
@@ -38,8 +46,11 @@ def _face_is_usable(face, min_ratio):
         return True
     shortest_edge = min(face["width"], face["height"])
     return shortest_edge >= settings.FACE_MIN_EDGE_PIXELS
-MAX_SUPPORTED_FACES = 5
-CENTER_TOLERANCE = 0.28
+MAX_SUPPORTED_FACES = 5      # no longer a limit for accepting a photograph; kept because older code and data refer to it
+# A face is "near the image boundary" (reason ``face_off_center``, kept for compatibility) when its box comes within this share of the frame of any edge: it is
+# cut off or touching the edge. Where it sits is not a problem: a head-and-shoulders portrait has the face in the upper part of the picture (its centre about 20%
+# from the top), which an earlier rule on the distance of the face's centre from the frame's centre sent to review, though the face is well inside the frame.
+EDGE_MARGIN_RATIO = 0.01
 HAAR_DETECTOR_NAME = "opencv_haar_frontalface"
 HAAR_DETECTOR_VERSION = "1"
 HEURISTIC_CONFIDENCE_TYPE = "internal_heuristic_not_probability"
@@ -526,37 +537,30 @@ def validate_image_faces(image_upload):
         decision = FaceValidationResult.Decision.NEEDS_REVIEW
         reason = "no_face_detected"
         message = "No confident frontal face was detected. Manual review is required."
-    elif len(faces) > MAX_SUPPORTED_FACES:
-        decision = FaceValidationResult.Decision.NEEDS_REVIEW
-        reason = "large_group_detected"
-        message = "More than five faces were detected. Manual review is required."
     elif len(faces) >= 2:
-        if any(not _face_is_usable(face, MIN_GROUP_FACE_AREA_RATIO) for face in faces):
+        # A group photograph (any number of people) is accepted when at least one face is big enough to use; the faces too small to group are skipped, not a reason to hold
+        # the photograph back (a person far away in a family photo is still a good photograph). Only a photograph where no face is usable is sent to review.
+        usable = [face for face in faces if _face_is_usable(face, MIN_GROUP_FACE_AREA_RATIO)]
+        small = len(faces) - len(usable)
+        if not usable:
             decision = FaceValidationResult.Decision.NEEDS_REVIEW
             reason = "group_face_too_small"
-            message = "A group image was detected, but one or more faces are too small for reliable processing."
+            message = f"A group image with {len(faces)} faces was detected, but none is big enough to use."
         else:
             decision = FaceValidationResult.Decision.ACCEPTED
-            message = f"A valid group image containing {len(faces)} people was detected."
+            message = f"A group image containing {len(faces)} people was detected." + (f" {small} too small to group {'is' if small == 1 else 'are'} skipped." if small else "")
     elif not _face_is_usable(faces[0], MIN_FACE_AREA_RATIO):
-        decision = FaceValidationResult.Decision.REJECTED
+        # Not rejected: a person far away in a landscape is still a photograph worth keeping. Rejection is for photographs that are unusable as images (quality check).
+        decision = FaceValidationResult.Decision.NEEDS_REVIEW
         reason = "face_too_small"
-        message = "The detected face is too small for reliable enhancement."
+        message = "The detected face is small, so it is not placed in a person folder."
+    elif face_touches_edge(faces[0], width, height):
+        decision = FaceValidationResult.Decision.NEEDS_REVIEW
+        reason = "face_off_center"
+        message = "A face was detected near the image boundary. Manual review is required."
     else:
-        face = faces[0]
-        face_center_x = face["x"] + face["width"] / 2
-        face_center_y = face["y"] + face["height"] / 2
-        off_center = (
-            abs(face_center_x / width - 0.5) > CENTER_TOLERANCE
-            or abs(face_center_y / height - 0.5) > CENTER_TOLERANCE
-        )
-        if off_center:
-            decision = FaceValidationResult.Decision.NEEDS_REVIEW
-            reason = "face_off_center"
-            message = "A face was detected near the image boundary. Manual review is required."
-        else:
-            decision = FaceValidationResult.Decision.ACCEPTED
-            message = "Exactly one suitable frontal face was detected."
+        decision = FaceValidationResult.Decision.ACCEPTED
+        message = "Exactly one suitable frontal face was detected."
 
     result, _created = FaceValidationResult.objects.update_or_create(
         image=image_upload,

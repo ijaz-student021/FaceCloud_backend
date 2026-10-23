@@ -1,7 +1,8 @@
 from django.conf import settings
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
-from django.db.models import OuterRef, Prefetch, Q, Subquery
+from django.utils import timezone
+from django.db.models import Exists, OuterRef, Prefetch, Q, Subquery
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import generics, permissions, serializers, status
@@ -15,6 +16,8 @@ from enhancement.models import ImageEnhancementResult
 from identities.models import IdentityFace, IdentityMembership
 
 from .deletion import delete_images
+from quality_control.effective import effective_q
+
 from .display_status import with_status_relations
 from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
 from .progress import batch_progress_payload
@@ -244,9 +247,9 @@ def my_images_queryset(user):
     return (
         ImageUpload.objects.filter(owner=user)
         .select_related(
-            "batch", "preprocessing_result", "face_validation",
+            "batch__organization", "preprocessing_result", "face_validation",
             "quality_decision", "duplicate_analysis",
-            "identity_analysis",
+            "identity_analysis", "place",
         )
         .prefetch_related(
             Prefetch(
@@ -316,6 +319,57 @@ class MyImageListView(generics.ListAPIView):
                 raise ValidationError({"upload_type": "Use single, multiple, or zip."})
             queryset = queryset.filter(batch__upload_type=upload_type)
 
+        taken_from = self.request.query_params.get("taken_from", "").strip()
+        taken_to = self.request.query_params.get("taken_to", "").strip()
+        if taken_from or taken_to:
+            from django.db.models.functions import Coalesce
+
+            from memories.services import parse_date
+
+            queryset = queryset.annotate(captured=Coalesce("taken_at", "created_at"))
+            for name, value, lookup in (("taken_from", taken_from, "captured__date__gte"), ("taken_to", taken_to, "captured__date__lte")):
+                if value:
+                    parsed = parse_date(value)
+                    if parsed is None:
+                        raise ValidationError({name: "Use a date like 2026-10-22."})
+                    queryset = queryset.filter(**{lookup: parsed})
+
+        album = self.request.query_params.get("album")
+        if album:
+            if not album.isdigit():
+                raise ValidationError({"album": "Album must be a positive integer."})
+            from albums.models import AlbumImage
+
+            queryset = queryset.filter(Exists(AlbumImage.objects.filter(album_id=int(album), album__owner=self.request.user, image_id=OuterRef("pk"))))
+
+        # ?person=<folder id>, repeated for photographs that contain ALL of those people (a photograph with both Ayesha and Bilal).
+        for person in self.request.query_params.getlist("person"):
+            if not person.isdigit():
+                raise ValidationError({"person": "Person must be a positive integer."})
+            from identities.models import IdentityMembership
+
+            queryset = queryset.filter(Exists(IdentityMembership.objects.filter(
+                identity_face__image_id=OuterRef("pk"), identity_group_id=int(person), identity_group__owner=self.request.user,
+                state__in=["auto_matched", "new_group", "confirmed"],
+            )))
+
+        place = self.request.query_params.get("place")
+        if place:
+            if not place.isdigit():
+                raise ValidationError({"place": "Place must be a positive integer."})
+            queryset = queryset.filter(place_id=int(place))
+        country = self.request.query_params.get("country", "").strip()
+        if country:
+            if len(country) != 2 or not country.isalpha():
+                raise ValidationError({"country": "Use a two-letter country code."})
+            queryset = queryset.filter(place__country_code=country.upper())
+
+        favorite = self.request.query_params.get("favorite", "").strip().lower()
+        if favorite:
+            if favorite not in {"true", "false", "1", "0"}:
+                raise ValidationError({"favorite": "Use true or false."})
+            queryset = queryset.filter(is_favorite=favorite in {"true", "1"})
+
         selected_status = self.request.query_params.get("status", "").strip().lower()
         if selected_status and selected_status != "all":
             if selected_status not in self.valid_statuses:
@@ -325,7 +379,8 @@ class MyImageListView(generics.ListAPIView):
                     Q(status="rejected") | Q(quality_decision__decision="rejected")
                 )
             elif selected_status in {"accepted", "needs_review"}:
-                queryset = queryset.filter(quality_decision__decision=selected_status)
+                # The effective verdict: "needs_review" only where a moderator can decide, and a personal photograph that was doubted counts as accepted.
+                queryset = queryset.filter(effective_q(selected_status))
             elif selected_status == "quality_processing":
                 queryset = queryset.filter(quality_decision__status__in=["pending", "queued", "processing"])
             elif selected_status == "quality_failed":
@@ -413,7 +468,7 @@ class ImageBulkDeleteView(APIView):
         payload = BulkDeleteRequestSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         wanted = list(dict.fromkeys(payload.validated_data["image_ids"]))
-        images = list(ImageUpload.objects.filter(owner=request.user, pk__in=wanted))
+        images = list(ImageUpload.all_objects.filter(owner=request.user, pk__in=wanted))   # permanent: reaches the trash too
         found = {image.pk for image in images}
         summary = delete_images(images)
         return Response({
@@ -421,6 +476,65 @@ class ImageBulkDeleteView(APIView):
             "not_found_ids": [pk for pk in wanted if pk not in found],
             **{key: value for key, value in summary.items() if key != "deleted"},
         })
+
+
+class FavoriteResultSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    is_favorite = serializers.BooleanField()
+    favorited_at = serializers.DateTimeField(allow_null=True)
+
+
+class ImageFavoriteView(APIView):
+    """Mark one of your photographs as a favourite (``PUT``) or take the mark off (``DELETE``). Both are idempotent."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "image_favorite"
+
+    def _set(self, request, pk, favorite):
+        photo = get_object_or_404(ImageUpload.objects.filter(owner=request.user, status="uploaded"), pk=pk)
+        if photo.is_favorite != favorite:
+            ImageUpload.objects.filter(pk=photo.pk).update(is_favorite=favorite, favorited_at=timezone.now() if favorite else None)
+        photo.refresh_from_db(fields=["is_favorite", "favorited_at"])
+        return Response({"id": photo.pk, "is_favorite": photo.is_favorite, "favorited_at": photo.favorited_at})
+
+    @extend_schema(request=None, responses={200: FavoriteResultSerializer, 404: OpenApiTypes.OBJECT})
+    def put(self, request, pk):
+        return self._set(request, pk, True)
+
+    @extend_schema(request=None, responses={200: FavoriteResultSerializer, 404: OpenApiTypes.OBJECT})
+    def delete(self, request, pk):
+        return self._set(request, pk, False)
+
+
+class BulkFavoriteRequestSerializer(serializers.Serializer):
+    image_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), min_length=1, max_length=BULK_DELETE_LIMIT, allow_empty=False,
+        help_text=f"Up to {BULK_DELETE_LIMIT} photo ids.",
+    )
+    favorite = serializers.BooleanField(help_text="true to mark them as favourites, false to take the mark off.")
+
+
+class BulkFavoriteResultSerializer(serializers.Serializer):
+    favorite = serializers.BooleanField()
+    updated_ids = serializers.ListField(child=serializers.IntegerField(), help_text="Photos that now have the requested state (including ones that already had it).")
+    not_found_ids = serializers.ListField(child=serializers.IntegerField(), help_text="Ids that are not yours, do not exist or are not stored photographs; nothing was done for them.")
+
+
+class ImageBulkFavoriteView(APIView):
+    """Mark or unmark several of your photographs at once."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "image_favorite"
+
+    @extend_schema(request=BulkFavoriteRequestSerializer, responses={200: BulkFavoriteResultSerializer, 400: OpenApiTypes.OBJECT})
+    def post(self, request):
+        payload = BulkFavoriteRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        wanted = list(dict.fromkeys(payload.validated_data["image_ids"]))
+        favorite = payload.validated_data["favorite"]
+        found = set(ImageUpload.objects.filter(owner=request.user, status="uploaded", pk__in=wanted).values_list("pk", flat=True))
+        ImageUpload.objects.filter(pk__in=found).exclude(is_favorite=favorite).update(is_favorite=favorite, favorited_at=timezone.now() if favorite else None)
+        return Response({"favorite": favorite, "updated_ids": [pk for pk in wanted if pk in found], "not_found_ids": [pk for pk in wanted if pk not in found]})
 
 
 class ImageDownloadView(APIView):
@@ -485,7 +599,7 @@ class ImagePreprocessingDetailView(APIView):
     @extend_schema(responses={200: ImagePreprocessingResultSerializer})
     def get(self, request, pk):
         result = get_object_or_404(
-            ImagePreprocessingResult.objects.filter(owner=request.user).select_related("image"),
+            ImagePreprocessingResult.objects.filter(owner=request.user, image__trashed_at__isnull=True).select_related("image"),
             image_id=pk,
         )
         return Response(ImagePreprocessingResultSerializer(result, context={"request": request}).data)
@@ -497,7 +611,7 @@ class ImagePreprocessingDownloadView(APIView):
     @extend_schema(responses={200: OpenApiTypes.BINARY, 404: OpenApiTypes.OBJECT})
     def get(self, request, pk):
         result = get_object_or_404(
-            ImagePreprocessingResult.objects.filter(owner=request.user, status="completed"),
+            ImagePreprocessingResult.objects.filter(owner=request.user, status="completed", image__trashed_at__isnull=True),
             image_id=pk,
         )
         if not result.processed_file:

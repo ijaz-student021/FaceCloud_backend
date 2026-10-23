@@ -56,6 +56,9 @@ def _save_valid_image(batch, owner, uploaded_file, original_name=None):
         if image.original_file:
             image.original_file.storage.delete(image.original_file.name)
         raise
+    if image.gps_lat is not None:
+        from places.service import attach_place
+        attach_place(image)                                       # a named place when the offline gazetteer is installed and approved; never raises
     return image
 
 
@@ -180,7 +183,7 @@ def delete_batch(batch):
     from .deletion import delete_images
 
     with transaction.atomic():
-        delete_images(batch.images.all())
+        delete_images(ImageUpload.all_objects.filter(batch=batch))   # the batch's photographs in the trash go with it
         batch.delete()
 
 
@@ -272,6 +275,8 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
             # Already decided and never enhanced automatically (a retry, a re-analysis): started now if its verdict allows it, and never twice.
             from enhancement.auto import enhance_after_verdict
             enhance_after_verdict(image_upload)
+            from search.semantic.service import index_after_verdict
+            index_after_verdict(image_upload)
         return existing, False
 
     started = time.perf_counter()

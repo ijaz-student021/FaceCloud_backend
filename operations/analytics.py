@@ -192,7 +192,7 @@ def _storage_capacity_bytes():
 
 def _storage_growth_by_month(owner_id):
     """Cumulative stored bytes (originals plus enhanced outputs) at the end of each month that has uploads."""
-    images = ImageUpload.objects.all()
+    images = ImageUpload.all_objects.all()                     # the platform's storage and uploads include photographs people have moved to their trash
     enhancements = ImageEnhancementResult.objects.all()
     if owner_id is not None:
         images, enhancements = images.filter(owner_id=owner_id), enhancements.filter(owner_id=owner_id)
@@ -218,7 +218,7 @@ def build_platform_overview(*, window_from, window_to, owner_id=None):
     window = Q(created_at__gte=window_from, created_at__lte=window_to)
     span = window_to - window_from
     previous = Q(created_at__gte=window_from - span, created_at__lt=window_from)
-    images_all = ImageUpload.objects.all()
+    images_all = ImageUpload.all_objects.all()                 # what was uploaded, whatever happened to it since
     enhancements_all = ImageEnhancementResult.objects.all()
     sessions_all = CameraSession.objects.all()
     if owner_id is not None:
@@ -296,7 +296,7 @@ def build_admin_analytics(*, date_from=None, date_to=None, status=None, model=No
     window = Q(created_at__gte=window_from, created_at__lte=window_to)
 
     batches = UploadBatch.objects.filter(window)
-    images = ImageUpload.objects.filter(window)
+    images = ImageUpload.all_objects.filter(window)            # what was uploaded, whatever happened to it since
     enhancements = ImageEnhancementResult.objects.filter(window)
     quality_decisions = ImageQualityDecision.objects.filter(window)
     if owner_id is not None:

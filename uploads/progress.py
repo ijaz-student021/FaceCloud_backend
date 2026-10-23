@@ -65,7 +65,9 @@ def _state_for_image(image):
         if quality.status == "completed":
             if identity and identity.status == "needs_review":
                 return "completed", "needs_review", 100.0, "", ""
-            decision = quality.decision or "needs_review"
+            from quality_control.effective import effective_decision
+
+            decision = effective_decision(image, quality.decision or "needs_review")      # a personal workspace has no moderator: accepted, not "needs_review"
             return "completed", decision, 100.0, "", ""
         return "quality_analysis", "processing" if quality.status == "processing" else "queued", 52.0, "", ""
 
@@ -115,7 +117,7 @@ def recompute_batch_progress(batch_id):
     batch = UploadBatch.objects.get(pk=batch_id)
     for image in batch.images.all():
         ensure_image_progress(image)
-    records = batch.image_progress.all()
+    records = batch.image_progress.filter(image__trashed_at__isnull=True)       # a photograph in the trash is not part of the batch while it is there
     total = records.count()
     counts = {name: records.filter(status=name).count() for name in [
         "queued", "processing", "accepted", "rejected", "needs_review",
@@ -157,8 +159,8 @@ def _progress_records(batch):
     from enhancement.models import ImageEnhancementResult
 
     return (
-        batch.image_progress.select_related(
-            "image", "image__batch", "image__preprocessing_result", "image__face_validation", "image__quality_decision", "image__identity_analysis",
+        batch.image_progress.filter(image__trashed_at__isnull=True).select_related(
+            "image", "image__batch__organization", "image__preprocessing_result", "image__face_validation", "image__quality_decision", "image__identity_analysis",
             "image__auto_enhancement",
         )
         .prefetch_related(Prefetch(

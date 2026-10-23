@@ -17,7 +17,7 @@ class ImageFaceValidationView(APIView):
     @extend_schema(responses={200: FaceValidationResultSerializer})
     def get(self, request, image_id):
         result = get_object_or_404(
-            FaceValidationResult.objects.filter(owner=request.user), image_id=image_id,
+            FaceValidationResult.objects.filter(owner=request.user, image__trashed_at__isnull=True), image_id=image_id,
         )
         return Response(FaceValidationResultSerializer(result).data)
 

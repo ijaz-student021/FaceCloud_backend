@@ -60,13 +60,17 @@ def preprocess_batch_task(self, batch_id):
         .values_list("pk", flat=True)
     )
     out_of_time = False
+    skipped = 0
     for image_id in image_ids:
         if UploadBatch.objects.filter(pk=batch_id, cancellation_requested=True).exists():
             UploadBatch.objects.filter(pk=batch_id).update(
                 processing_status="cancelled", processing_finished_at=timezone.now(),
             )
             return {"batch_id": batch_id, "status": "cancelled"}
-        image = ImageUpload.objects.get(pk=image_id)
+        image = ImageUpload.all_objects.filter(pk=image_id).first()
+        if image is None or image.trashed_at is not None:
+            skipped += 1                                            # deleted, or moved to the trash, since this run began: nothing to prepare
+            continue
         existing = ImagePreprocessingResult.objects.filter(image=image).first()
         if existing and existing.status == "completed":
             continue
@@ -96,9 +100,10 @@ def preprocess_batch_task(self, batch_id):
     completed = ImagePreprocessingResult.objects.filter(
         image__batch_id=batch_id,
         image__status="uploaded",
+        image__trashed_at__isnull=True,
         status="completed",
     ).count()
-    total = len(image_ids)
+    total = len(image_ids) - skipped
     failed = max(total - completed, 0)
     if completed == total and total:
         final_status = "completed"
@@ -124,3 +129,11 @@ def preprocess_batch_task(self, batch_id):
         "processed_files": completed,
         "failed_files": failed,
     }
+
+
+@shared_task(name="uploads.purge_trash", acks_late=True)
+def purge_trash_task():
+    """Daily: delete for good the photographs that have been in the trash longer than ``TRASH_RETENTION_DAYS``. Safe to run again; it does nothing when the trash is empty."""
+    from .trash import purge_expired
+
+    return {"purged": purge_expired()}

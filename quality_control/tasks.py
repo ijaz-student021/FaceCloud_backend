@@ -37,8 +37,9 @@ def analyze_image_quality_task(self, decision_id):
     from uploads.progress import sync_image_progress
     notify_quality_result(result)
     from activity.services import record_activity_event
+    from quality_control.effective import effective_decision
     record_activity_event(
-        result.owner, "processing", f"quality_{result.decision or result.status}",
+        result.owner, "processing", f"quality_{effective_decision(result.image, result.decision) or result.status}",
         object_type="ImageUpload", object_id=result.image_id,
     )
     sync_image_progress(result.image_id)

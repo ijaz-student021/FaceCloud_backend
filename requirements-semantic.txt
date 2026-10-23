@@ -1,0 +1,19 @@
+# The optional libraries for search by what is in the photograph (SEMANTIC_SEARCH_ENABLED=True). Not needed, and not imported, while the switch is off.
+#
+# Install into the worker's environment, after PyTorch and torchvision (which the enhancement models already need):
+#
+#   pip install -r requirements-semantic.txt
+#
+# Then put the approved model files in SEMANTIC_SEARCH_MODEL_DIR (docs/model-licenses/semantic-search-model.md says which, from where, and their SHA-256).
+# Versions are the ones the evaluation in docs/evaluation/2026-10-22-semantic-search.md was run with. The model is loaded from that folder only: nothing
+# is downloaded at run time (set HF_HUB_OFFLINE=1 to make sure).
+open_clip_torch==3.3.0
+transformers==5.20.2
+tokenizers==0.23.3
+sentencepiece==0.2.2
+protobuf==7.36.2
+timm==1.0.30
+ftfy==6.3.1
+regex==2026.9.29
+safetensors==0.8.0
+huggingface_hub==2.2.0

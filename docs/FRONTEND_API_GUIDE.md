@@ -264,6 +264,12 @@ person folder the photo was in** (`member_count`, and the folder no longer match
 (their secure links then answer 410; the owner can build new ones). A folder left empty stays until its owner
 deletes it, and its `cover_images` is empty. Deleting an upload batch (`DELETE /api/images/batches/{id}/`) does the same.
 
+**Favourites (new).** `PUT /api/images/{id}/favorite/` marks one of the person's own photographs (answer `{id, is_favorite: true, favorited_at}`), `DELETE` takes the mark off
+(`is_favorite: false`); both are idempotent and a photograph that is not theirs, does not exist or was refused at upload is a `404`. `POST /api/images/favorites/
+{image_ids: [..up to 200], favorite: true|false}` does many and answers `{favorite, updated_ids, not_found_ids}` (nothing is done for the ids in `not_found_ids`).
+`GET /api/images/my/?favorite=true` lists only the favourites (`false` the others; it combines with every other filter), and every photograph row and batch image carries `is_favorite`.
+Marking a favourite never changes the photograph's other timestamps.
+
 **Thumbnails.** Never draw a gallery from `download_url`: originals can be
 hundreds of megabytes. Each image in the list carries `thumbnail_url`, which
 serves a small JPEG (`GET /api/images/{id}/thumbnail/`, optional `?size=256`
@@ -283,6 +289,18 @@ rejected photo can still be shown in the list with its reason.
 `/api/quality/images/{image_id}/`, `/api/validation/images/{image_id}/`,
 `/api/duplicates/images/{image_id}/`. A decision is `accepted`, `rejected` or
 `needs_review`, with human-readable reasons to show the user.
+
+**"In review" only where someone can review (changed).** `needs_review` means a person has to look at the photograph. In an **organization** that is a moderator, and nothing changes
+there. In the person's **own workspace** nobody can ever decide it, so it is no longer shown as a state: such a photograph is **`accepted`, with tips**. Concretely, for a photograph in a
+personal workspace whose checks doubted it:
+
+- `display_status` (everywhere: `GET /api/images/my/`, batch responses, progress) is `accepted`, the batch progress `counts` count it as `accepted`, the batch is `completed` (not `partial`
+  because of it), `GET /api/images/my/?status=needs_review` does not list it and `?status=accepted` does, the dashboard counts it as accepted, the `accepted_results` ZIP includes it, the
+  notification is "Photo accepted" with a tip, and no moderator review is opened for it.
+- The quality decision (`GET /api/quality/images/{id}/`, and `quality_decision` on every photograph row) keeps **`decision` exactly as the checks found it** (it is the evidence) and gains
+  **`effective_decision`** (what it means for the person: `accepted`), **`review_required`** (true only for a `needs_review` in an organization) and **`tips`** (plain sentences such as
+  "This photo is a little dark; more light gives better results."). Show `tips`, never the word "review", when `review_required` is false.
+- A **rejected** photograph is never softened (very dark, blown out, corrupt). The same photograph filed under an organization still shows `needs_review` and `review_required: true`.
 
 ## 4. Enhancement
 
@@ -371,6 +389,26 @@ values for the full-resolution server render.
 Faces are grouped into "person folders". A photo with no detectable face is
 analysed as `completed` with `face_count` 0 (not `failed`), so do not show an
 error for it.
+
+**Group photographs (changed).** A photograph with several people is accepted when at least one face is big enough to use, however many faces it has (it used to go to review above five
+faces or when one face was small), and it appears in **each** person's folder. Faces too small to place in a folder are skipped, and the photograph's quality `tips` say how many
+("2 faces are too small to place in a person folder..."); at most `IDENTITY_MAX_FACES_PER_IMAGE` (20) faces of one photograph are placed, the largest first. A photograph whose only
+face is small is no longer **rejected**: it is kept (`needs_review` in the face check, so "accepted with a tip" in a personal workspace) and simply not placed in a folder.
+
+**People you can tap (new): avatars, chips, search.**
+
+- `GET /api/identities/people/?q=&limit=&include_unnamed=` returns the person folders as **chips**, most photographs first: `[{id, display_name, is_named, photo_count, avatar_url}]`. Folders with
+  no photograph and inactive ones are not listed. `q` filters by name, `limit` defaults to 12 (at most 50, larger is capped), `include_unnamed=false` hides folders that still have their automatic
+  name. `is_named: false` means the folder is still "Person 001": show an "Add a name" prompt (`POST /api/identities/groups/{id}/rename/`). Call it with no `q` for what a search bar offers before
+  anything is typed.
+- `GET /api/identities/groups/{id}/avatar/?size=96|192|384` is a **square JPEG crop of the person's best face** (bright enough first, then the detector's confidence, then size), with a margin so the
+  head shows. Fetch it with the Authorization header and a blob URL, like a thumbnail (`Cache-Control: private, max-age=3600`). `404` while the folder has no face that can be cropped, `400` for another size.
+  The folder objects (`/api/identities/groups/`, `/{id}/`) gained `avatar_url` (null while there is no face). Nothing new is analysed: the crop uses the face box and the standardized picture the
+  analysis already stored, under the person's consent; withdrawing consent with erasure removes the folders and so their avatars.
+- `GET /api/search/?q=` gained **`people`** (the same chip objects, for folders whose name contains `q`) next to the existing `groups` (unchanged).
+- `GET /api/images/my/?person=<folder id>` lists the photographs that contain that person; **repeat the parameter for photographs that contain all of those people**
+  (`?person=3&person=7`). Only faces placed in the folder count (a suggested face waits for a decision and does not); another person's folder id gives an empty list; a non-number is a `400`.
+  It combines with every other filter (`favorite`, `status`, `batch`, ...). Measured cost of one avatar: 6 to 52 ms from a JPEG standardized picture (1 to 12 megapixels), up to 270 ms from a 12 MP PNG.
 
 - **Consent first.** Face grouping only runs for users who granted biometric
   consent. `GET /api/privacy/consents/` returns the current state and policy
@@ -467,6 +505,102 @@ error for it.
   expired. Only a `ready`, unexpired export can be shared: a queued/generating
   one is **409**, an expired one **410** (regenerate it first). Share links
   count toward the same per-user limit as image links.
+
+## 5-albums. Albums (new)
+
+An album is a collection the person makes by hand ("Eid 2026"): a title, a description, a cover and the photographs they put in. A photograph can be in any number of albums; deleting a
+photograph takes it out of its albums; **deleting an album never deletes photographs**. Everything is owner-scoped (another person's album is a `404`).
+
+```text
+GET    /api/albums/?q=&image=&page=&page_size=      list, most recently changed first (image=<id>: only albums that contain it: "already in 2 albums")
+POST   /api/albums/   {title, description?, image_ids?: [..up to 200]}  -> 201 album + added_ids, not_found_ids
+GET    /api/albums/{id}/                            PATCH /api/albums/{id}/ {title?, description?}        DELETE /api/albums/{id}/  -> 204
+GET    /api/albums/{id}/images/?page=&page_size=    the photographs, newest added first, as the same rows the gallery lists (status, thumbnail, is_favorite, ...)
+POST   /api/albums/{id}/images/        {image_ids: [..up to 200]}  -> {added_ids, already_in_album_ids, not_found_ids, photo_count}   (idempotent)
+POST   /api/albums/{id}/images/remove/ {image_ids: [..]}           -> {removed_ids, not_in_album_ids, photo_count}
+PUT    /api/albums/{id}/cover/  {image_id}       DELETE -> automatic cover again
+GET    /api/images/my/?album=<id>               the gallery filtered to one album (combines with the other filters)
+```
+
+An album is `{id, title, description, photo_count, cover_image, cover_thumbnail_url, created_at, updated_at}`. The cover is the one chosen, else the first photograph added (`null` for an empty album);
+it goes back to automatic when its photograph leaves the album. `photo_count` counts photographs that are still stored. The title is trimmed (1 to 120 characters). Limits: `ALBUM_MAX_PER_USER`
+(500) albums per person and `ALBUM_MAX_IMAGES` (10,000) photographs per album, each a `400` with a plain sentence. `GET /api/search/?q=` gained **`albums`** (albums whose title contains `q`).
+A photograph id that is not the person's, does not exist or was refused at upload is never added; it comes back in `not_found_ids`.
+
+## 5-memories. Memories and capture dates (new)
+
+A **memory** is a few of the best photographs of a moment, chosen for the person: "2 years ago today", "Moments from 12 Oct", "With Ayesha". Nothing is stored: it is worked out from the
+person's own photographs when it is asked for (so it is always current and never shows a deleted or rejected photograph), in tens of milliseconds even for 20,000 photographs.
+
+```text
+GET /api/memories/?limit=10        -> [{id, kind, title, subtitle, start, end, photo_count, cover_thumbnail_url, preview_thumbnail_urls: [..4], filter: {..}}]
+GET /api/memories/{id}/            -> the card + images: [..gallery rows of its best photographs (up to 24), oldest first]      (404: the id no longer exists)
+```
+
+- `kind` is `on_this_day` (id `otd:<year>`: at least 3 photographs taken on today's date in an earlier year, at most 3 such years), `event` (id `event:<first photograph id>`: at least 5 photographs
+  in the last 180 days with gaps under 6 hours; newest first, at most 6) or `person` (id `person:<folder id>:<YYYY-MM>`: a **named** person with at least 10 photographs, at most 3; unnamed
+  folders have no memory). Ids stay the same for the same photographs; an event id changes if an earlier photograph joins the event, so **take ids from the list**, and treat a 404 as "gone".
+- The **cover** is the best photograph and `preview_thumbnail_urls` the best four (favourites first, then the higher quality score, then one with a face, then the earlier one). A photograph that
+  duplicates one already chosen, or was taken within a minute of one, is skipped, so a burst of ten shots gives one. `limit` defaults to 10 (at most 30).
+- `photo_count` is every photograph of the moment; to show them all, call `GET /api/images/my/` with the card's **`filter`** (`taken_from`/`taken_to` dates, or `person`).
+- **Capture dates.** Photographs now carry `taken_at` (the EXIF capture time, read at upload; `null` when the file has none, then the upload time is used on timelines). `GET /api/images/my/` accepts
+  `taken_from=YYYY-MM-DD` and `taken_to=YYYY-MM-DD` (inclusive, on the capture date, or the upload date when there is no EXIF time; anything else is a 400). Photographs uploaded before this change
+  have no `taken_at` until the operator runs `python manage.py backfill_taken_at` (it reads the stored originals, changes nothing else, and is safe to run again). EXIF has no time zone unless
+  `OffsetTime` is present, so the stored time is the wall-clock time taken as UTC: it is right to the day, which is what a memory needs.
+
+## 5-trash. Trash (new)
+
+Deleting with an undo. A photograph moved to the trash is gone from **every** other screen at once (My Images, search, albums, person folders and their counts, memories, events, the
+editor, reports, duplicates, shares) and can be restored for `retention_days` (30 by default); a daily job then deletes it for good. The existing permanent deletes
+(`DELETE /api/images/{id}/`, `POST /api/images/bulk-delete/`) are **unchanged and immediate**: offer both ("Move to trash" as the normal action, "Delete forever" in the trash).
+
+```text
+POST   /api/images/trash/             {image_ids: [..up to 200]}  -> {trashed_ids, skipped: [{id, reason}], not_found_ids, retention_days}
+GET    /api/images/trash/?search=&page=&page_size=                -> paged rows {id, original_name, thumbnail_url, width, height, file_size, is_favorite, taken_at, created_at, trashed_at, purge_at, days_left}
+POST   /api/images/trash/restore/     {image_ids: [..]}           -> {restored_ids, not_found_ids, folders_restored}
+POST   /api/images/trash/empty/       {confirm: true}             -> {deleted, remaining}        (500 per call: repeat while remaining > 0)
+DELETE /api/images/trash/{id}/                                    -> 204 (permanent); 404 when it is not in your trash
+GET    /api/images/trash/{id}/thumbnail/                          -> image/jpeg (fetch with the Authorization header, like any thumbnail)
+```
+
+- **`skipped`** are photographs that cannot be moved right now and nothing was done for them: `still_processing` (their checks or an enhancement are still running: say "try again in a
+  moment") and `in_review` (an organization moderator has not decided it yet: offer "Delete forever" or wait). The others in the same request **are** moved. A photograph in a personal
+  workspace is never `in_review` (see section 3).
+- **`not_found_ids`**: not yours, not a stored photograph (a refused upload), unknown, or already in the trash.
+- A trashed photograph answers **404** at every ordinary address (`/api/images/{id}/`, `/thumbnail/`, `/download/`, its checks, its enhancement results, its share link answers 410 until it is restored). Use the
+  trash's own thumbnail address for the trash screen; `thumbnail_url` in the trash rows already points to it.
+- **Restore** puts back the favourite mark, the album places and, when the folder still exists and is not a different one now, the person-folder membership (a folder the trash left empty and archived
+  becomes active again). A face that was placed in another folder meanwhile stays there. Nothing about the checks' results changes.
+- **Counts.** Every figure elsewhere drops by the trashed photographs (album `photo_count` and cover, person `photo_count`, dashboard totals). The dashboard summary also has `trash_images` and
+  `trash_bytes`, and `storage_bytes` **still includes** the trash (the files are still stored). The data export (`GET /api/privacy/export/`) lists trashed photographs with their `trashed_at`.
+- **Not in the trash view:** photographs that were refused at upload, and ones permanently deleted.
+- The retention is the server setting `TRASH_RETENTION_DAYS`; show `days_left` from each row, not a fixed 30.
+
+## 5-places. Places: where a photograph was taken (new)
+
+"Places" groups the person's own photographs by where they were taken ("Lahore", "Murree", "Paris"). The position comes from the photograph's own EXIF GPS block when it has one, is read on the
+server, and **no coordinate ever leaves it**. Names come from an offline file; until the server has installed and approved it, photographs keep a position but get no named place.
+
+```text
+GET    /api/places/?q=&country=PK&limit=24   -> {attribution, names_available, places: [{id, name, region, country, country_code, photo_count, cover_thumbnail_url, latitude, longitude}]}   most photographs first
+GET    /api/places/{id}/                      -> one of those (404 if you have no photograph there)
+GET    /api/images/my/?place=<id>             the gallery filtered to one place;  ?country=PK  to one country (two letters)
+GET    /api/images/{id}/location/             -> {latitude, longitude, place: {id, name, region, country, country_code} | null}   (404 if it has none); the photograph's owner only
+DELETE /api/images/{id}/location/             -> 204   take the location off this photograph
+POST   /api/images/location/remove/  {image_ids: [..up to 200]} -> {removed_ids, without_location_ids, not_found_ids}
+```
+
+- **Photograph rows** (`GET /api/images/my/`, albums, memories) gained `place` (`{id, name, region, country, country_code}` or `null`) and `has_location` (true when it has a position). They never carry
+  coordinates; only `GET /api/images/{id}/location/` does, and only for the owner. Moderators, administrators, share links, ZIPs and organization exports carry none.
+- **`latitude` and `longitude` on a place are the place's own centre**, not any photograph's position. Draw a map pin for a photograph from its own `/location/` call, never from the places list.
+- **You must show the credit** in `attribution` ("Place names: GeoNames ... CC BY 4.0") wherever place names are shown, for example under the Places screen.
+- `names_available: false` means this server has no approved place-name file: hide the Places strip (the list is empty) rather than show an empty screen. Photographs still have `has_location`.
+- **Remove a location** with `DELETE` or the bulk `POST`. It is gone from FaceCloud's records and views and is never read again, but it is **not** removed from the stored original file: say
+  so in the confirmation ("removes it from your library; the downloaded original may still contain it").
+- A photograph in the trash is in no place count and has no location endpoint until it is restored. `GET /api/search/?q=` gained `places` (places whose name contains `q`).
+- Naming is by the nearest listed town within 50 km (a suburb or village next to a city is named after the city; in very large cities a district may be named: "Paris 16 Passy"). A position far from
+  any settlement (open sea, desert) has coordinates but no place. Photographs uploaded before this feature appear after the operator runs `python manage.py backfill_location`.
+- Rate limit: 1200 requests per hour per user.
 
 ## 5a. Duplicates
 
@@ -1014,6 +1148,27 @@ shows: the chosen name, else the ZIP's file name, else `Upload <id>`, so a row i
 never blank. Single and multiple uploads that were never renamed have no name to
 search; they appear as `Upload <id>` wherever they are listed but are not found
 by that label. Rate limit: 600 requests per hour per user.
+
+## 8c. Search by what is in the photograph (new, off by default)
+
+"beach", "red car", "birthday cake": a model looks at each accepted photograph once and ranks the person's own photographs against the words. **English queries only.** It is
+switched off on a server until its owner has approved the model (`docs/model-licenses/semantic-search-model.md`), so the screen must work without it.
+
+```text
+GET /api/search/photos/?q=<2-200 characters>&limit=<n>
+  -> 200 {enabled: true,  query, language: "en", model: "ViT-B-16-SigLIP", results: [{score: 0.2143, photo: {..the same row as GET /api/images/my/..}}, ...]}   best first
+  -> 200 {enabled: false, query, language: "en", model: null, results: []}                                  the server has the feature off: hide the box, show nothing
+  -> 503 {detail, code: "semantic_search_unavailable"}                                                       switched on but its model cannot be used: say "not available right now"
+  -> 400 q shorter than 2 or longer than 200 characters, or a bad limit
+```
+
+- `GET /api/search/` (the top-bar search) gains a `photos` list (`id, name, thumbnail_url, status, created_at, score`) **only** when the feature is on and working; its other keys are
+  unchanged. Use it to show "photos that look like this" under the name matches.
+- Only the person's own photographs that are accepted (in a personal workspace that includes the ones the checks had a doubt about) and not in the trash. A photograph appears once it has been indexed:
+  a few seconds after its checks finish, longer in a busy queue; a photograph from before the feature was switched on appears after the operator runs `python manage.py index_semantic_search`.
+- `score` is a cosine similarity, not a percentage: show the order, not the number. A server-side minimum drops weak matches, so a query can honestly return fewer results than `limit`, or none.
+- The words are not stored or logged. The vectors describe whole pictures (not faces), are kept apart from face data, and are deleted with the photograph.
+- Rate limit: 600 requests per hour per user.
 
 ## 9. Privacy screens
 

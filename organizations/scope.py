@@ -119,7 +119,7 @@ def visible_audit_events(queryset, organization, scope):
     about_hidden = (
         Q(target_type="ModeratorReview", target_id__in=ModeratorReview.objects.filter(organization=organization, image__owner_id__in=hidden).values("pk"))
         | Q(target_type="UploadBatch", target_id__in=UploadBatch.objects.filter(organization=organization, owner_id__in=hidden).values("pk"))
-        | Q(target_type="ImageUpload", target_id__in=ImageUpload.objects.filter(batch__organization=organization, owner_id__in=hidden).values("pk"))
+        | Q(target_type="ImageUpload", target_id__in=ImageUpload.all_objects.filter(batch__organization=organization, owner_id__in=hidden).values("pk"))
         | Q(target_type="IdentityGroup", target_id__in=IdentityGroup.objects.filter(owner_id__in=hidden).values("pk"))
         | Q(target_type="OrganizationMembership", target_id__in=OrganizationMembership.objects.filter(organization=organization, user_id__in=hidden).values("pk"))
         | Q(target_type="OrganizationInvitation", target_id__in=organization.invitations.filter(invited_by_id__in=other_moderators).values("pk"))

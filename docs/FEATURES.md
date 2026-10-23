@@ -33,12 +33,22 @@ Status definitions:
 | Secure image and batch downloads | Complete backend; frontend integration remains |
 | Admin analytics and administrative management | Complete backend; frontend dashboards remain |
 | In-app and email notifications | Complete backend baseline; frontend integration remains |
+| Review only where someone can review (no "In review" in a personal workspace) | Complete backend; see the Google-Photos parity pack |
+| Group photographs and small faces accepted, up to 20 faces grouped | Complete backend; measured on 11 composites |
+| People as avatars and chips, person filter on My Images | Complete backend; frontend integration remains |
+| Albums, favourites | Complete backend; frontend integration remains |
+| Memories (on this day, events, people) and capture dates | Complete backend; frontend integration remains |
+| Trash with 30-day restore | Complete backend; every listing audited by a test; frontend integration remains |
+| Places: where a photograph was taken (GPS read locally, offline place names, owner-only coordinates) | Complete backend; place names wait for the owner's approval of the GeoNames licence record; frontend integration remains |
+| Search by what is in the photograph | Backend and plumbing complete, **off by default**; waits for the owner to approve the model's licence record |
 | Live camera detection and enhancement | Planned |
 | Frontend dashboards | Planned for frontend integration |
 
 ### Detailed documentation available
 
 - [Remaining user-dashboard features and implementation order](USER_DASHBOARD_REMAINING_FEATURES.md)
+- [Places (feature 9): PRD](product/google-photos-parity/PRD_LOCATION.md)
+- [Google-Photos parity pack: PRD, implementation plan and frontend prompts](product/google-photos-parity/PRD.md) ([plan](product/google-photos-parity/IMPLEMENTATION_PLAN.md), [frontend prompts](product/google-photos-parity/FRONTEND_PROMPTS.md))
 - [Features 01–03: Authentication, accounts, authorization, and audit](features/01-authentication-and-authorization.md)
 - [Features 04–08: Image uploads, batches, secure storage, and cleanup](features/02-image-upload-and-secure-storage.md)
 - [Feature 09: Image preprocessing and standardization](features/09-image-preprocessing-and-standardization.md)

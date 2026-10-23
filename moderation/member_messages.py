@@ -23,7 +23,7 @@ REASON_SENTENCES = {
     "overall_score_below_acceptance": "The overall quality of your photo is below what the service needs.",
     "no_face_detected": "No clear face was found in your photo. Use a photo where the face is clearly visible and facing the camera.",
     "large_group_detected": "Your photo has more than five faces, which is too many to process reliably.",
-    "face_off_center": "The face is too close to the edge of your photo. Centre it in the frame.",
+    "face_off_center": "The face is cut off by, or too close to, the edge of your photo. Leave some space around it.",
     "face_validation_rejected": "The face check could not accept your photo.",
     "face_validation_required": "The face check was not sure about your photo.",
     "detector_failed": "The face check could not run on your photo. Try uploading it again.",
