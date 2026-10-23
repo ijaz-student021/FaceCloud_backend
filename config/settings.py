@@ -658,7 +658,10 @@ QUALITY_REJECT_SHARPNESS = env.float("QUALITY_REJECT_SHARPNESS", default=20.0)
 QUALITY_REVIEW_SHARPNESS = env.float("QUALITY_REVIEW_SHARPNESS", default=60.0)
 QUALITY_REJECT_MIN_EDGE = env.int("QUALITY_REJECT_MIN_EDGE", default=240)
 QUALITY_REVIEW_MIN_EDGE = env.int("QUALITY_REVIEW_MIN_EDGE", default=480)
-QUALITY_REJECT_MIN_LUMINANCE = env.float("QUALITY_REJECT_MIN_LUMINANCE", default=25.0)
+# A dark photograph is lifted by the low-light enhancement, not refused: it is refused only when it has no usable signal, which is a mean brightness below QUALITY_REJECT_MIN_LUMINANCE
+# (about 6 of 255: practically black) or almost no contrast (QUALITY_REJECT_CONTRAST, scaled down for a dark photograph, see quality_control/services.make_decision). Between that
+# and QUALITY_REVIEW_MIN_LUMINANCE it carries the warning "underexposed".
+QUALITY_REJECT_MIN_LUMINANCE = env.float("QUALITY_REJECT_MIN_LUMINANCE", default=6.0)
 QUALITY_REVIEW_MIN_LUMINANCE = env.float("QUALITY_REVIEW_MIN_LUMINANCE", default=55.0)
 QUALITY_REJECT_MAX_LUMINANCE = env.float("QUALITY_REJECT_MAX_LUMINANCE", default=235.0)
 QUALITY_REVIEW_MAX_LUMINANCE = env.float("QUALITY_REVIEW_MAX_LUMINANCE", default=210.0)

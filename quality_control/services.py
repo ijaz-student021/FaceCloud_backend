@@ -115,6 +115,8 @@ def make_decision(metrics, scores, face_validation):
         reject.append("resolution_too_low")
     elif shortest < settings.QUALITY_REVIEW_MIN_EDGE and not has_face:
         review.append("borderline_resolution")
+    # Darkness alone does not refuse a photograph: the low-light enhancement exists for it. It is refused ("severe_underexposure") only when it is practically black, so there is
+    # nothing to lift; between that and the review line it carries the warning "underexposed".
     if metrics["mean_luminance"] < settings.QUALITY_REJECT_MIN_LUMINANCE:
         reject.append("severe_underexposure")
     elif metrics["mean_luminance"] < settings.QUALITY_REVIEW_MIN_LUMINANCE:
@@ -123,7 +125,10 @@ def make_decision(metrics, scores, face_validation):
         reject.append("severe_overexposure")
     elif metrics["mean_luminance"] > settings.QUALITY_REVIEW_MAX_LUMINANCE:
         review.append("overexposed")
-    if metrics["contrast_stddev"] < settings.QUALITY_REJECT_CONTRAST:
+    # Contrast is measured in grey levels, so a dark photograph has little of it by nature (a quarter of the light is a quarter of the spread). Below the review line the floor shrinks
+    # in proportion to the brightness, continuously, so "almost no contrast" still refuses a dark photograph without refusing one that is merely dark.
+    dark_share = min(1.0, metrics["mean_luminance"] / settings.QUALITY_REVIEW_MIN_LUMINANCE) if settings.QUALITY_REVIEW_MIN_LUMINANCE > 0 else 1.0
+    if metrics["contrast_stddev"] < settings.QUALITY_REJECT_CONTRAST * dark_share:
         reject.append("contrast_too_low")
     elif metrics["contrast_stddev"] < settings.QUALITY_REVIEW_CONTRAST:
         review.append("borderline_contrast")
