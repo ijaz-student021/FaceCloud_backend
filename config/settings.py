@@ -355,6 +355,11 @@ ADAPTIVE_MAX_OUTPUT_EDGE = env.int("ADAPTIVE_MAX_OUTPUT_EDGE", default=4096)
 # not evidence that the photograph is low-resolution, and whole-photograph upscaling costs several times the compute.
 ADAPTIVE_FACE_UPSCALE_BELOW = env.int("ADAPTIVE_FACE_UPSCALE_BELOW", default=0)
 ADAPTIVE_DEBUG_ARTIFACTS = env.bool("ADAPTIVE_DEBUG_ARTIFACTS", default=False)
+# A gentle, bounded "polish" for a photograph on which the engine found nothing to fix (enhancement/adaptive/operations.py, run_polish; OpenCV
+# and NumPy only, no model). OFF unless set to True: with it off (or absent) the engine behaves exactly as before. With it on, the router offers
+# polish only when the analyzer recommends no operation, none was tried, the scene is not a dark one left as photographed and the style is
+# natural or dynamic; the result is kept only if the validator's polish gates pass, otherwise the original pixels are returned.
+ADAPTIVE_POLISH_ENABLED = env.bool("ADAPTIVE_POLISH_ENABLED", default=False)
 # How a low-light lift gets its colour: "chromaticity" (the source's colour ratios in linear light with the network's luminance;
 # measured to keep colour closest to the clean photograph, docs/evaluation/2026-10-15-lowlight-colour.md) or "legacy" (the source's
 # CIELAB chroma scaled by the square root of the lightness gain; measured 20-40 % paler on dark inputs).

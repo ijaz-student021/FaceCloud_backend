@@ -73,6 +73,14 @@ class Limits:
     # enlargement of three 240 px portraits already shifted them by 0.019, 0.026 and 0.037 (measured on real photographs).
     face_landmark_shift_max_upscale: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX", 0.06)))
     upscale_detail_gain_max: float = 3.0
+    # polish (a gentle improvement of a photograph with nothing to fix): it must be clearly the same photograph and measurably better
+    polish_min_gain: float = 1.05                  # the main face's detail, or the frame's contrast (std of luminance), must rise at least 5 percent
+    polish_clip_growth_max: float = 0.5            # percentage points of newly clipped highlight pixels
+    polish_noise_growth_max: float = 1.10          # noise estimate after / before (plus 0.02 of slack on the "moderate = 1.0" scale)
+    polish_delta_e_max: float = 3.0                # mean CIELAB distance from the parent (76, at the 1024 px working scale)
+    polish_face_landmark_shift_max: float = 0.02   # of the face width (the other operations allow 0.04)
+    polish_face_detail_ceiling: float = 175.0      # a sharp face's 90th percentile (face_sharpness.py): polish never pushes a face past it,
+    polish_face_growth_max: float = 1.10           # unless the face was already above it, and then by at most this factor
 
 
 def _gray(image):
@@ -164,6 +172,29 @@ def landmark_shift(faces_before, faces_after, scale=1.0):
     return float(np.mean(shifts)) if shifts else 0.0
 
 
+def local_contrast(image, long_edge=1024, tile=16):
+    """Mean local standard deviation of luminance over ``tile`` x ``tile`` windows at the working scale: what a local-contrast operation changes."""
+    gray = _gray(image).astype(np.float32)
+    scale = long_edge / max(gray.shape[:2])
+    if scale < 1:
+        gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    mean = cv2.blur(gray, (tile, tile))
+    variance = cv2.blur(gray * gray, (tile, tile)) - mean * mean
+    return float(np.sqrt(np.maximum(variance, 0.0)).mean())
+
+
+def mean_delta_e(parent, candidate, long_edge=1024):
+    """Mean CIELAB distance (CIE76) between two same-sized images at the working scale: 0 is the same picture, about 2.3 is a just-noticeable difference."""
+    scale = long_edge / max(parent.shape[:2])
+
+    def lab(image):
+        if scale < 1:
+            image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        return cv2.cvtColor(image.astype(np.float32) / 255.0, cv2.COLOR_BGR2Lab)
+
+    return float(np.sqrt(((lab(parent) - lab(_to_size(candidate, parent.shape))) ** 2).sum(axis=2)).mean())
+
+
 def reference_metrics(clean, image):
     """PSNR, SSIM and (when the optional ``lpips`` package and its weights are available) LPIPS against a clean reference.
 
@@ -205,6 +236,7 @@ class FinalImageQualityValidator:
         """``{accepted, reasons, gates, metrics, improvement, change_cost}`` for one candidate."""
         limits = self.limits
         lowlight = operation == "low_light_enhancement"
+        polish = operation == "polish"
         verdict = {"accepted": False, "reasons": [], "gates": {}, "metrics": {}, "improvement": 0.0, "change_cost": 0.0}
 
         def gate(name, passed, detail, reason=None):
@@ -248,23 +280,29 @@ class FinalImageQualityValidator:
         else:
             overshoot = overshoot_fraction(parent, candidate) if expected_scale == 1 else overshoot_fraction(
                 cv2.resize(parent, (candidate.shape[1], candidate.shape[0]), interpolation=cv2.INTER_CUBIC), candidate)
-            sharpening = operation in ("motion_deblurring", "face_restoration", "super_resolution")
+            sharpening = operation in ("motion_deblurring", "face_restoration", "super_resolution", "polish")
             gate("artifacts", overshoot <= (limits.overshoot_max_sharpening if sharpening else limits.overshoot_max),
                  {"overshoot": round(overshoot, 4)}, "halo_or_ringing")
 
         candidate_report = candidate_report or self.analyzer.analyze(candidate)
         verdict["metrics"]["candidate_conditions"] = candidate_report.conditions
         clip_growth = candidate_report.base["highlight_clipping_percent"] - parent_report.base["highlight_clipping_percent"]
-        gate("highlights", clip_growth <= limits.highlight_clip_growth_max, {"clipping_growth": round(clip_growth, 2)},
-             "highlight_clipping_increased")
+        gate("highlights", clip_growth <= (limits.polish_clip_growth_max if polish else limits.highlight_clip_growth_max),
+             {"clipping_growth": round(clip_growth, 2)}, "highlight_clipping_increased")
         # "level" is the larger of the two noise measures in units of the "moderate" threshold (1.0 = moderate); the 0.25 allowance
         # matches the earlier one level of the 3x3 estimator against its moderate threshold of 4.
         noise_before, noise_after = parent_report.noise["level"], candidate_report.noise["level"]
         allowed = limits.noise_growth_max_lowlight if lowlight else limits.noise_growth_max
         # A lift may take grain up to the "moderate" level (1.0), where the denoise stage that follows takes over; the 3x growth bound
         # still applies beyond it.
-        gate("noise", noise_after <= max(noise_before * allowed, noise_before + 0.25, 1.0 if lowlight else 0.0),
-             {"before": noise_before, "after": noise_after}, "noise_increased")
+        if polish:   # a polish may not add noise beyond 10 percent (and nothing absolute: it is for photographs that have none to spare)
+            gate("noise", noise_after <= noise_before * limits.polish_noise_growth_max + 0.02,
+                 {"before": noise_before, "after": noise_after}, "noise_increased")
+            delta_e = mean_delta_e(parent, candidate)
+            gate("same_photograph", delta_e <= limits.polish_delta_e_max, {"delta_e": round(delta_e, 2)}, "photograph_changed_too_much")
+        else:
+            gate("noise", noise_after <= max(noise_before * allowed, noise_before + 0.25, 1.0 if lowlight else 0.0),
+                 {"before": noise_before, "after": noise_after}, "noise_increased")
 
         self._identity_gate(verdict, candidate, candidate_report, operation)
         improvement = self._improvement(verdict, operation, parent, candidate, parent_report, candidate_report, expected_scale)
@@ -282,6 +320,8 @@ class FinalImageQualityValidator:
         scale = candidate_report.width / self.original_report.width if self.original_report.width else 1.0
         shift = landmark_shift(self.original_report.faces, candidate_report.faces, scale)
         shift_max = self.limits.face_landmark_shift_max_upscale if operation == "super_resolution" else self.limits.face_landmark_shift_max
+        if operation == "polish":
+            shift_max = self.limits.polish_face_landmark_shift_max
         landmarks_ok = shift is not None and shift <= shift_max
         status = {"passed": landmarks_ok, "landmark_shift": None if shift is None else round(shift, 4)}
         if not landmarks_ok:
@@ -364,6 +404,28 @@ class FinalImageQualityValidator:
             gate("improves_defect", gain >= limits.face_min_detail_gain and ceiling <= limits.face_max_detail,
                  {"detail_gain": round(gain, 3), "detail_after": round(ceiling, 1)}, "face_not_clearer_or_detail_invented")
             return float(np.clip((gain - 1.0) / 2.0, 0, 1))
+        if operation == "polish":
+            face_before, face_after = before.main_face, after.main_face
+            face_gain = None
+            if face_before is not None and face_after is not None and face_before.detail and face_after.detail:
+                face_gain = face_after.detail / face_before.detail
+            local_gain = local_contrast(candidate) / max(local_contrast(parent), 1e-6)
+            global_gain = after.base["contrast_stddev"] / max(before.base["contrast_stddev"], 1e-6)
+            frame_gain = structure_energy(candidate) / max(structure_energy(parent), 1e-6)
+            # "Improves" is judged on the main face's detail and on the frame's contrast (its standard deviation), never on local contrast:
+            # a local-contrast operation always raises that, so it would pass itself. A photograph that is already balanced and sharp
+            # gains less than 5 percent on both, and stays as it is.
+            gains = [value for value in (face_gain, global_gain) if value is not None]
+            improves = max(gains) >= limits.polish_min_gain
+            nothing_worse = (face_gain is None or face_gain >= 1.0) and local_gain >= 1.0 and global_gain >= 1.0 and frame_gain >= 1.0
+            ceiling = limits.polish_face_detail_ceiling
+            face_ok = face_gain is None or face_after.detail <= max(ceiling, face_before.detail * limits.polish_face_growth_max)
+            detail = {"face_detail_gain": None if face_gain is None else round(face_gain, 3), "local_contrast_gain": round(local_gain, 3),
+                      "frame_contrast_gain": round(global_gain, 3), "frame_sharpness_gain": round(frame_gain, 3)}
+            reason = ("no_measurable_improvement" if not improves else "something_got_worse" if not nothing_worse
+                      else "face_over_sharpened")
+            gate("improves_defect", improves and nothing_worse and face_ok, detail, reason)
+            return float(np.clip((max(gains) - 1.0) / 0.25, 0, 1))
         if operation == "super_resolution":
             detail = edge_energy(candidate) / max(edge_energy(cv2.resize(parent, (candidate.shape[1], candidate.shape[0]),
                                                                            interpolation=cv2.INTER_CUBIC)), 1e-6)
