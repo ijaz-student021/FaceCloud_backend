@@ -38,7 +38,32 @@ class CoverImageSerializer(serializers.Serializer):
     thumbnail_url = serializers.CharField()
 
 
+def avatar_path(group_id):
+    return f"/api/identities/groups/{group_id}/avatar/"
+
+
+class PersonChipSerializer(serializers.Serializer):
+    """One person as a chip: a round face, a name and how many photographs."""
+
+    id = serializers.IntegerField()
+    display_name = serializers.CharField()
+    is_named = serializers.SerializerMethodField(help_text="False while the folder still has its automatic name (Person 001): show it as 'Add a name'.")
+    photo_count = serializers.IntegerField(help_text="Distinct photographs of this person (faces placed in the folder).")
+    avatar_url = serializers.SerializerMethodField(help_text="A square crop of the person's best face: GET it with the Authorization header, like a thumbnail. ?size=96, 192 or 384.")
+
+    def get_is_named(self, obj) -> bool:
+        from .people import is_named
+
+        return is_named(obj)
+
+    def get_avatar_url(self, obj) -> str:
+        request = self.context.get("request")
+        path = avatar_path(obj.pk)
+        return request.build_absolute_uri(path) if request else path
+
+
 class IdentityGroupSerializer(serializers.ModelSerializer):
+    avatar_url = serializers.SerializerMethodField(help_text="A square crop of the person's best face (null while no face is placed in the folder). See GET /api/identities/groups/{id}/avatar/.")
     preview_image = serializers.SerializerMethodField()
     cover_images = serializers.SerializerMethodField()
     matching_confidence = serializers.SerializerMethodField()
@@ -50,9 +75,16 @@ class IdentityGroupSerializer(serializers.ModelSerializer):
     class Meta:
         model = IdentityGroup
         fields = (
-            "id", "display_name", "state", "member_count", "confirmed_count", "suggested_count", "preview_image",
+            "id", "display_name", "state", "member_count", "confirmed_count", "suggested_count", "avatar_url", "preview_image",
             "cover_images", "matching_confidence", "created_at", "updated_at",
         )
+
+    def get_avatar_url(self, obj) -> str | None:
+        if not any(member.state in CONFIRMED_STATES for member in active_memberships_of(obj)):
+            return None
+        request = self.context.get("request")
+        path = avatar_path(obj.pk)
+        return request.build_absolute_uri(path) if request else path
 
     def get_confirmed_count(self, obj) -> int:
         return sum(1 for member in active_memberships_of(obj) if member.state in CONFIRMED_STATES)
@@ -112,6 +144,22 @@ class IdentityRenameSerializer(serializers.Serializer):
 class IdentityMergeSerializer(serializers.Serializer):
     source_group_id = serializers.IntegerField(min_value=1)
     reason = serializers.CharField(max_length=240, required=False, allow_blank=True, default="")
+
+
+class SuggestedMergeFolderSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    display_name = serializers.CharField()
+    member_count = serializers.IntegerField()
+
+
+class SuggestedMergeSerializer(serializers.Serializer):
+    """Two of the owner's own folders that look like one person. Merge with ``POST /api/identities/groups/{target_group}/merge/`` and ``{"source_group_id": source_group}``."""
+
+    source_group = serializers.IntegerField(help_text="The folder to merge away: the one with fewer photographs (the newer on a tie).")
+    target_group = serializers.IntegerField(help_text="The folder to keep.")
+    similarity = serializers.FloatField(help_text="How alike their average faces are, 0 to 1 (cosine similarity).")
+    source = SuggestedMergeFolderSerializer()
+    target = SuggestedMergeFolderSerializer()
 
 
 class IdentityMoveSerializer(serializers.Serializer):

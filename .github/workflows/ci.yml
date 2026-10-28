@@ -124,6 +124,8 @@ jobs:
       BIOMETRIC_CONSENT_REQUIRED: "True"
       FACIAL_DATA_RETENTION_DAYS: "365"
       IMAGE_ENCRYPTION_ENABLED: "True"
+      # Automatic enhancement after upload is on by default and would use Zero-DCE (licence not on file); a correct environment has decided that.
+      ZERO_DCE_ENABLED: "False"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

@@ -147,12 +147,17 @@ def _folder_is_empty(group):
     return not group.memberships.filter(state__in=[*_confirmed_states(), IdentityMembership.State.NEEDS_REVIEW]).exists()
 
 
+FOLDER_EMPTY_REASON = "The folder was left empty."
+TRASH_EMPTY_REASON = "The folder was left empty by moving its last photo to the trash."          # uploads/trash.py puts the folder back when a photograph returns
+
+
 @transaction.atomic
-def remove_photo_from_folders(image, *, reason="The photo was rejected by the checks."):
+def remove_photo_from_folders(image, *, reason="The photo was rejected by the checks.", archive_reason=FOLDER_EMPTY_REASON):
     """Take a photograph out of every person folder: its memberships become REMOVED, the folders are refreshed and a folder left empty is archived.
 
     A folder the owner named themselves is only refreshed (it is theirs to delete). Each change is written to the folder's history and to the owner's
-    activity log, and the folder keeps its id, so a link to it still resolves. Returns ``{"memberships": n, "archived": [folder ids]}``.
+    activity log, and the folder keeps its id, so a link to it still resolves. A moderator review of the photograph's identity that is still open is closed
+    (``moderation.services.close_open_identity_reviews``). Returns ``{"memberships": n, "archived": [folder ids], "closed_reviews": n}``.
     """
     from activity.services import record_activity_event
 
@@ -170,7 +175,9 @@ def remove_photo_from_folders(image, *, reason="The photo was rejected by the ch
         if group is not None and group.profile_membership_id == membership.pk:
             group.profile_membership = None
             group.save(update_fields=["profile_membership", "updated_at"])
-        membership.state = IdentityMembership.State.REMOVED
+        # A suggestion with no folder (``needs_review``, group optional) cannot become ``removed``: the database requires a folder for that state. ``rejected`` is
+        # the inactive state that needs none.
+        membership.state = IdentityMembership.State.REMOVED if group is not None else IdentityMembership.State.REJECTED
         membership.save(update_fields=["state", "updated_at"])
         if group is not None:
             groups[group.pk] = group
@@ -187,14 +194,17 @@ def remove_photo_from_folders(image, *, reason="The photo was rejected by the ch
             archived.append(group.pk)
             IdentityChange.objects.create(
                 owner=group.owner, actor=None, group=group, action=IdentityChange.Action.ARCHIVED,
-                before={"state": IdentityGroup.State.ACTIVE}, after={"state": group.state}, reason="The folder was left empty.",
+                before={"state": IdentityGroup.State.ACTIVE}, after={"state": group.state}, reason=archive_reason,
             )
-    if memberships:
+    from moderation.services import close_open_identity_reviews
+
+    closed = close_open_identity_reviews(image)          # a review of a membership that no longer exists has nothing left to decide
+    if memberships or closed:
         record_activity_event(
             image.owner, "group", "photo_removed_from_folders", object_type="ImageUpload", object_id=image.pk,
-            details={"memberships": len(memberships), "archived_folders": archived, "reason": reason},
+            details={"memberships": len(memberships), "archived_folders": archived, "closed_reviews": closed, "reason": reason},
         )
-    return {"memberships": len(memberships), "archived": archived}
+    return {"memberships": len(memberships), "archived": archived, "closed_reviews": closed}
 
 
 def group_member_photos(group):
@@ -326,6 +336,9 @@ def process_identity_analysis(analysis_id):
             grouped, why = face_grouping_check(face, len(detected))
             if not grouped:
                 skipped.append({"face_index": index, **why})           # too small or too unsure to be a person: no folder
+                continue
+            if len(prepared) >= settings.IDENTITY_MAX_FACES_PER_IMAGE:
+                skipped.append({"face_index": index, "reason": "too_many_faces", "limit": settings.IDENTITY_MAX_FACES_PER_IMAGE})      # the faces are sorted largest first
                 continue
             if _batch_cancellation_requested(analysis.image.batch_id):
                 IdentityAnalysis.objects.filter(pk=analysis_id).update(

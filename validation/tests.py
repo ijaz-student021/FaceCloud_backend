@@ -259,6 +259,39 @@ class FaceValidationTests(APITestCase):
             result.faces[0]["full_resolution_box"]["boundary_clipped"]
         )
 
+    @staticmethod
+    def faces(count, size, per_row=6):
+        """``count`` boxes of ``size`` x ``size`` in a 400 x 400 frame, laid out in rows and clear of the edges."""
+        return np.array([[20 + (i % per_row) * 62, 20 + (i // per_row) * 62, size, size] for i in range(count)])
+
+    @patch("validation.services._detect")
+    def test_a_group_photograph_is_accepted_whatever_the_number_of_faces(self, detector):
+        for count in (2, 3, 5, 6, 8, 12, 20):
+            with self.subTest(faces=count):
+                detector.return_value = (self.faces(count, 50, per_row=6), [0.9] * count)
+                result = validate_image_faces(self.image)
+                self.assertEqual((result.decision, result.rejection_reason, result.face_count), ("accepted", "", count), result.message)
+
+    @patch("validation.services._detect")
+    def test_a_group_photograph_with_some_tiny_faces_is_accepted_and_says_how_many_are_skipped(self, detector):
+        boxes = np.concatenate([self.faces(4, 50), np.array([[300, 300, 20, 20], [340, 300, 20, 20]])])
+        detector.return_value = (boxes, [0.9] * 6)
+        result = validate_image_faces(self.image)
+        self.assertEqual((result.decision, result.rejection_reason), ("accepted", ""))
+        self.assertIn("2 too small to group are skipped", result.message)
+
+    @patch("validation.services._detect")
+    def test_a_group_photograph_where_no_face_is_big_enough_still_goes_to_review(self, detector):
+        detector.return_value = (self.faces(3, 20), [0.9] * 3)
+        result = validate_image_faces(self.image)
+        self.assertEqual((result.decision, result.rejection_reason), ("needs_review", "group_face_too_small"))
+
+    @patch("validation.services._detect")
+    def test_a_single_small_face_is_reviewed_not_rejected(self, detector):
+        detector.return_value = (np.array([[180, 180, 40, 40]]), [0.9])
+        result = validate_image_faces(self.image)
+        self.assertEqual((result.decision, result.rejection_reason), ("needs_review", "face_too_small"))
+
     @patch("validation.services._detect")
     def test_a_portrait_with_the_face_in_the_upper_part_of_the_picture_is_accepted(self, detector):
         """A head-and-shoulders portrait: the face's centre is about 21% from the top. The earlier rule (centre within 0.28 of the middle) sent every such photograph to review."""

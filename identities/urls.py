@@ -7,20 +7,24 @@ from .views import (IdentityAssignmentReviewView, IdentityChangeListView,
                     IdentityGroupExportListCreateView,
                     IdentityGroupExportRegenerateView,
                     IdentityGroupExportShareView,
-                    IdentityGroupImagesView,
+                    IdentityGroupAvatarView, IdentityGroupImagesView,
+                    IdentityPeopleView,
                     IdentityGroupListView, IdentityGroupMergeView,
                     IdentityGroupProfileView, IdentityGroupRenameView,
                     IdentityImageAnalysisView, IdentityMembershipMoveView,
                     IdentityMembershipRemoveView, IdentityReviewListView,
-                    IdentityVisualSearchView)
+                    IdentitySuggestedMergesView, IdentityVisualSearchView)
 
 app_name = "identities"
 urlpatterns = [
     path("images/<int:image_id>/", IdentityImageAnalysisView.as_view(), name="image-analysis"),
     path("search/", IdentityVisualSearchView.as_view(), name="visual-search"),
+    path("people/", IdentityPeopleView.as_view(), name="people"),
     path("groups/", IdentityGroupListView.as_view(), name="group-list"),
+    path("groups/suggested-merges/", IdentitySuggestedMergesView.as_view(), name="group-suggested-merges"),
     path("groups/<int:pk>/", IdentityGroupDetailView.as_view(), name="group-detail"),
     path("groups/<int:pk>/images/", IdentityGroupImagesView.as_view(), name="group-images"),
+    path("groups/<int:pk>/avatar/", IdentityGroupAvatarView.as_view(), name="group-avatar"),
     path("groups/<int:pk>/rename/", IdentityGroupRenameView.as_view(), name="group-rename"),
     path("groups/<int:pk>/merge/", IdentityGroupMergeView.as_view(), name="group-merge"),
     path("groups/<int:pk>/profile/", IdentityGroupProfileView.as_view(), name="group-profile"),

@@ -18,7 +18,7 @@ class ImageQualityView(APIView):
     @extend_schema(responses={200: ImageQualityDecisionSerializer})
     def get(self, request, image_id):
         result = get_object_or_404(
-            ImageQualityDecision.objects.filter(owner=request.user), image_id=image_id,
+            ImageQualityDecision.objects.filter(owner=request.user, image__trashed_at__isnull=True), image_id=image_id,
         )
         return Response(ImageQualityDecisionSerializer(result).data)
 
@@ -36,7 +36,7 @@ class QualityResultListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        queryset = ImageQualityDecision.objects.filter(owner=self.request.user)
+        queryset = ImageQualityDecision.objects.filter(owner=self.request.user, image__trashed_at__isnull=True)
         decision = self.request.query_params.get("decision")
         if decision:
             if decision not in ImageQualityDecision.Decision.values:

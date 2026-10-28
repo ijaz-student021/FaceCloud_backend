@@ -468,7 +468,9 @@ class DashboardSummarySerializer(serializers.Serializer):
     identity_grouped_images = serializers.IntegerField()
     identity_review_items = serializers.IntegerField()
     identity_groups_available = serializers.BooleanField(help_text="False when identity grouping is switched off.")
-    storage_bytes = serializers.IntegerField(help_text="Originals, standardized copies and enhanced outputs.")
+    storage_bytes = serializers.IntegerField(help_text="Originals, standardized copies and enhanced outputs, including those of photographs in the trash (they are still stored).")
+    trash_images = serializers.IntegerField(help_text="Photographs in the trash. They are not counted in any other figure here.")
+    trash_bytes = serializers.IntegerField(help_text="Size of the originals in the trash.")
 
 
 class DashboardDaySerializer(serializers.Serializer):
