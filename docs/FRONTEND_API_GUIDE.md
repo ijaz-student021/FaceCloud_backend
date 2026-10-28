@@ -625,24 +625,11 @@ Photos are grouped into events by upload time. No face data is used.
 - Event ids are not permanent: a photo that is not the first of its event is
   not a valid id. Always take ids from the list response.
 
-## 5c. Collages
+## 5c. Collages (removed)
 
-A collage is a generated JPEG made from an event's photos or one person's photos.
-
-- `POST /api/collages/` with `{"source_type": "event", "event_id": 12, "gap_hours": 6}`
-  or `{"source_type": "person", "group_id": 3}` (optional `title`). Returns `202`
-  with the collage in `queued` state, or `200` with the already-running one:
-  each user can have only one collage in progress.
-- Poll `GET /api/collages/{id}/` until `status` is `ready` (or `failed`, with
-  `failure_reason`). `download_url` then serves the JPEG. Use the same
-  `gap_hours` you used for the events list.
-- `GET /api/collages/` lists them (paginated). `DELETE /api/collages/{id}/` removes one.
-- Needs at least 3 processed photos (a clear `400` otherwise); at most 6 are
-  used, spread across the source.
-- A person collage needs biometric consent. Without it the request is a `400`;
-  the same check runs again when the job starts.
-- A ready collage expires after about 72 hours (`410` on download); create a new one.
-- `manifest.photos[].faces_in_frame` is `false` when faces could not all fit the tile.
+Photo collages no longer exist. `/api/collages/` (list, create, detail, delete, download) answers `404`, the `collage` kind is gone from the failed-jobs
+list (`GET /api/system/failed-jobs/`), and a person collage can no longer be refused for missing consent. Remove the collage screens and buttons; nothing
+replaces them, and events, thumbnails and downloads are unchanged.
 
 ## 6. Reports, packages, sharing
 
@@ -1180,14 +1167,13 @@ GET /api/search/photos/?q=<2-200 characters>&limit=<n>
   templates are never included).
 - **"Consent required" is machine-readable.** When something that needs
   face-recognition consent is refused because the person has not agreed (starting
-  identity analysis `POST /api/identities/images/{id}/`, face search
-  `POST /api/identities/search/`, and a person collage `POST /api/collages/`
-  with `source_type: "person"`), the status stays **400** and the sentence is
+  identity analysis `POST /api/identities/images/{id}/` and face search
+  `POST /api/identities/search/`), the status stays **400** and the sentence is
   unchanged, and the body now carries `"code": "consent_required"`:
   `{"detail": ["Biometric consent is required before face search."], "code":
-  "consent_required"}` (the collage form has `detail` as a plain string). Match on
-  `code`, then send the person to the consent screen. Before this change the two
-  identity endpoints answered with a bare list `["..."]`.
+  "consent_required"}`. Match on `code`, then send the person to the consent
+  screen. Before this change the two identity endpoints answered with a bare
+  list `["..."]`.
 
 ## 10. Admin pages (role `admin` only)
 

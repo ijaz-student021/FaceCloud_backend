@@ -85,7 +85,6 @@ INSTALLED_APPS = [
     "privacy",
     "sharing",
     "events",
-    "collages",
     "thumbnails",
     "organizations",
     "moderation",
@@ -1019,8 +1018,6 @@ if not THUMBNAIL_SIZES or any(not 32 <= size <= 4096 for size in THUMBNAIL_SIZES
 if not 30 <= THUMBNAIL_JPEG_QUALITY <= 95:
     raise ImproperlyConfigured("THUMBNAIL_JPEG_QUALITY must be between 30 and 95.")
 
-# Feature 49: hours a generated collage stays downloadable.
-COLLAGE_TTL_HOURS = env.int("COLLAGE_TTL_HOURS", default=72)
 # Feature 48: hours between two photos that starts a new event in the timeline.
 EVENT_GAP_HOURS = env.float("EVENT_GAP_HOURS", default=6.0)
 ORG_INVITATION_TTL_HOURS = env.int("ORG_INVITATION_TTL_HOURS", default=72)
@@ -1089,10 +1086,6 @@ CELERY_BEAT_SCHEDULE = {
     "purge-trash": {
         "task": "uploads.purge_trash",
         "schedule": crontab(minute=30, hour=3),
-    },
-    "expire-collages": {
-        "task": "collages.cleanup_expired",
-        "schedule": crontab(minute=25),
     },
     "expire-organization-exports": {
         "task": "privacy.cleanup_organization_exports",
@@ -1239,7 +1232,6 @@ REST_FRAMEWORK = {
         "image_preprocess": "100/hour",
         "report_generation": "60/hour",
         "download_package": "30/hour",
-        "collage": "20/hour",
         "thumbnail": "6000/hour",
         "notification_action": "300/hour",
         "admin_analytics": "120/hour",
@@ -1391,7 +1383,7 @@ SECURE_HSTS_PRELOAD = os.environ.get("SECURE_HSTS_PRELOAD", "False").lower() == 
 LOG_LEVEL = env("LOG_LEVEL", default="INFO").upper()
 LOG_FILE = env("LOG_FILE", default="")
 _APP_LOGGERS = (
-    "accounts", "activity", "collages", "config", "contact", "downloads", "duplicates", "enhancement", "events", "identities", "moderation",
+    "accounts", "activity", "config", "contact", "downloads", "duplicates", "enhancement", "events", "identities", "moderation",
     "notifications", "operations", "organizations", "privacy", "quality_control", "reports", "security", "sharing", "thumbnails", "uploads",
     "validation", "albums", "memories", "places", "search",
 )

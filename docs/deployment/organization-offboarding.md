@@ -32,7 +32,7 @@ These facts decide how offboarding has to work. Several are surprising and are t
    matches, identity groups and memberships (no embeddings), moderator reviews, audit events. Each list is capped at `ORGANIZATION_EXPORT_MAX_ROWS` (2000) and carries a `truncated` flag; the file expires after
    `ORGANIZATION_EXPORT_TTL_HOURS` (24 h). It **contains no photographs**. A customer leaving would reasonably expect their photographs back.
 7. **Soft references exist that no foreign key follows.** `ActivityEvent` (`object_type`/`object_id`/`details`), `UserNotification` (`resource_type`/`resource_id`/`metadata`), `DownloadEvent`
-   (`batch_id`/`image_id`/`filename`), `Collage.image_ids` and `IdentityGroupExport.image_ids` (JSON lists of image ids, with ZIP/PNG files that contain the photographs themselves) refer to org-filed
+   (`batch_id`/`image_id`/`filename`), `IdentityGroupExport.image_ids` (JSON list of image ids, with ZIP/PNG files that contain the photographs themselves) refer to org-filed
    photographs by number or inside JSON. They are **not removed by a cascade** and the files behind two of them contain the photographs.
 8. **Backups outlive deletion.** `docs/deployment/VPS_RUNBOOK.md` section 10 keeps database dumps 14 days and media archives 7 days. A purge removes data from the live system immediately and from backups only as they
    rotate. This must be stated to the customer; it is not something code can fix.
@@ -121,7 +121,7 @@ A Celery task, one per organization, idempotent and resumable (it can be run aga
 
 1. **Freeze.** Confirm status is suspended, no legal hold, window elapsed, the slug confirmation matches. Mark the offboarding record `purging`.
 2. **Collect the file names** of everything about to be deleted (all `FileField` values of the rows in the inventory, section 9), into a work list stored on the offboarding record. Files cannot be found again once the rows are gone.
-3. **Soft references first** (they cannot be reached after the images are gone): delete `Collage` and `IdentityGroupExport` rows whose `image_ids` intersect the organization's images (and queue their files); delete
+3. **Soft references first** (they cannot be reached after the images are gone): delete `IdentityGroupExport` rows whose `image_ids` intersect the organization's images (and queue their files); delete
    `ActivityEvent`, `DownloadEvent` and `UserNotification` rows that refer to the organization's batches, images, reviews or `metadata.organization_id`.
 4. **Identity data.** Delete `IdentityChange` rows of the memberships about to go; then for each affected person folder: if it still holds faces from other workspaces, **recompute** it (`identities.services._refresh_group`, as
    `erase_facial_data` does: member count and the encrypted centroid); if it holds nothing, delete it with its history. Biometric rows (`IdentityFace.protected_embedding`, `IdentityGroup.protected_centroid`, `DuplicateAnalysis.face_fingerprints`) go with
@@ -206,7 +206,6 @@ Notation: **ORG** = the organization; **B** = `uploads_uploadbatch` rows with `o
 | `identities_identitygroup` | a person folder (member-owned), **`protected_centroid`** | folders holding at least one face of I | **recompute** if it still holds other faces, **delete** if it ends up empty | none |
 | `identities_identitychange` | history of folder edits (`before` / `after` JSON) | `membership` / `group` are SET_NULL: select by the membership and group ids collected in step 4 | **delete** those rows first | none |
 | `identities_identitygroupexport` | ZIP of a folder's photos; `image_ids` JSON | `image_ids` intersects I, **or** its group is deleted | **delete** | `export_file` (`.../identity-exports/`): **delete** |
-| `collages_collage` | collage of photos; `image_ids` JSON | `image_ids` intersects I | **delete** | `collage_file` (`.../collages/`): **delete** |
 
 ### 9.3 Member-level logs that mention ORG's objects without a foreign key
 
@@ -224,7 +223,7 @@ contain `/api/organizations/<id>/`), `contact_contactmessage`, and every row of 
 
 ## 10. What to test if this is built
 
-* A fixture with an organization of three members, two moderators, photographs (with every derived row and every file), person folders that mix org and personal photographs, a collage and a folder export that include org photographs, share links, notifications and activity rows.
+* A fixture with an organization of three members, two moderators, photographs (with every derived row and every file), person folders that mix org and personal photographs, a folder export that includes org photographs, share links, notifications and activity rows.
 * After the purge: every selector in section 9 returns zero; none of the collected files exists; the personal photographs, their folders (recomputed centroid, correct `member_count`) and files of the same members are **byte-for-byte untouched**; accounts exist; a second organization's data is untouched; the tombstone and the audit trail remain with `ip_address` null.
 * Preconditions: refused while active, without the window elapsed, with a legal hold, with a wrong slug confirmation, by a non-administrator, by the owner alone.
 * Idempotency: killing the job halfway and running it again finishes without error and with the same final counts; running it twice is a no-op.

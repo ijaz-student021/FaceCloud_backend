@@ -14,8 +14,8 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from collages.models import Collage
 from enhancement.models import ImageEnhancementResult
+from identities.models import IdentityGroup, IdentityGroupExport
 from organizations.models import OrganizationMembership
 from organizations.services import create_organization
 from uploads.models import BatchImageProgress, ImagePreprocessingResult, ImageUpload, UploadBatch
@@ -272,13 +272,16 @@ class FailedJobRowTests(Fixture, TestCase):
         self.assertEqual(row["failure_reason"], "Enhancement failed, but no reason was recorded.")
 
     def test_a_job_with_no_batch_shows_the_owners_own_workspace(self):
-        collage = Collage.objects.create(
-            owner=self.owner, source_type="event", source_ref=1, status="failed", failure_reason="The collage could not be made.",
+        group = IdentityGroup.objects.create(
+            owner=self.owner, display_name="Someone", member_count=0, protected_centroid=b"c", embedding_dimension=3, provider="test", policy_version="v1",
         )
-        (row,) = self.rows("collage")
-        self.assertEqual(row["id"], collage.pk)
+        export = IdentityGroupExport.objects.create(
+            owner=self.owner, identity_group=group, status="failed", failure_reason="The export could not be made.",
+        )
+        (row,) = self.rows("identity_export")
+        self.assertEqual(row["id"], export.pk)
         self.assertEqual((row["organization_id"], row["organization_name"]), (self.organization.pk, "Failures Co"))
-        self.assertEqual((row["failure_stage"], row["failure_stage_label"]), ("collage", "Collage"))
+        self.assertEqual((row["failure_stage"], row["failure_stage_label"]), ("identity_export", "Identity export"))
 
     def test_a_failed_upload_batch_here_reads_like_the_failed_batch_list_including_whether_it_can_be_retried(self):
         batch = self.failed_batch(photos=(("quality_analysis", "Quality analysis failed safely."),))

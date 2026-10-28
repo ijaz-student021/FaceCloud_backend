@@ -44,7 +44,6 @@ TAGS = [
     {"name": "duplicates", "description": "Duplicate and near-duplicate detection between the user's photographs."},
     {"name": "reports", "description": "Processing reports for images and batches, generated as downloadable files."},
     {"name": "downloads", "description": "Zip packages of results, built in the background."},
-    {"name": "collages", "description": "Collages built from the user's images."},
     {"name": "events", "description": "Photo events (grouped photographs)."},
     {"name": "camera", "description": "Camera sessions and snapshots the user chose to save."},
     {"name": "shares", "description": "Revocable share links for a result; the public endpoints need no sign-in."},
@@ -229,7 +228,7 @@ CATALOGUE = {
     "duplicates_matches_review_partial_update": ("Review a duplicate match", "Mark a match as a true duplicate or not."),
     "duplicates_results_list": ("List duplicate results", ""),
 
-    # ---- reports / downloads / collages / events / camera -------------------------------------------------------------
+    # ---- reports / downloads / events / camera -------------------------------------------------------------
     "reports_list": ("List processing reports", ""),
     "reports_retrieve": ("Get a report", ""),
     "reports_download_retrieve": ("Download a report", ""),
@@ -243,11 +242,6 @@ CATALOGUE = {
     "downloads_packages_destroy": ("Delete a download package", ""),
     "downloads_packages_download_retrieve": ("Download a package", "Streams the zip once it is ready; packages expire."),
     "downloads_packages_regenerate_create": ("Rebuild a package", ""),
-    "collages_list": ("List collages", ""),
-    "collages_create": ("Create a collage", ""),
-    "collages_retrieve": ("Get a collage", ""),
-    "collages_destroy": ("Delete a collage", ""),
-    "collages_download_retrieve": ("Download a collage", ""),
     "events_list": ("List events", ""),
     "events_retrieve": ("Get an event", ""),
     "events_photos_list": ("List an event's photographs", ""),

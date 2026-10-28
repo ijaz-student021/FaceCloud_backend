@@ -38,11 +38,15 @@ logger = logging.getLogger(__name__)
 TEMP_ARCHIVE_PATTERNS = ("facecloud-package-*.zip", "facecloud-identity-export-*.zip")
 # users/<id>/<one of these>/<uuid>.<ext>; a test ties this list to every FileField
 # so a new upload path cannot silently be treated as orphaned.
-MEDIA_SUBDIRECTORIES = (
+ACTIVE_MEDIA_SUBDIRECTORIES = (
     "originals", "preprocessed", "enhanced", "edited",
     "download-packages", "identity-exports", "reports", "comparisons",
-    "organization-exports", "moderator-reports", "collages", "thumbnails", "avatar", "previews", "organization-logos",
+    "organization-exports", "moderator-reports", "thumbnails", "avatar", "previews", "organization-logos",
 )
+# Folders of features that were removed. No model points at the files in them any more, so the orphan sweep (once its grace period has passed
+# and deletion is enabled) clears what an old deployment still has on disk. Nothing writes to these folders.
+RETIRED_MEDIA_SUBDIRECTORIES = ("collages",)
+MEDIA_SUBDIRECTORIES = ACTIVE_MEDIA_SUBDIRECTORIES + RETIRED_MEDIA_SUBDIRECTORIES
 
 
 def stale_temp_archives(directory=None, max_age_hours=None, now=None):

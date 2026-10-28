@@ -993,64 +993,13 @@ Feature 41's classification, this feature touches none of the three facial-
 data categories, so it requires no biometric consent and works identically
 for an account that has never granted identity-analysis consent at all.
 
-### Feature 49: AI-generated photo collages — Done (backend)
+### Feature 49: AI-generated photo collages — Removed
 
-Auto-generates a collage from a set of photos (an event's photos, or a
-specific person's photos), using face-aware cropping so a collage never
-crops through a detected face.
-
-- Face-centered smart-crop: crop/resize a photo to a target aspect ratio
-  using the image's own `IdentityFace.bounding_box`(es), keeping the
-  detected face(s) inside the frame
-- A small set of fixed collage layouts (3/4/5+ photos)
-- Collage generation as a Celery job (consistent with every other
-  file-producing feature in this codebase -- `downloads`, `reports`,
-  Feature 46's organization export), not a synchronous request
-
-**As shipped** (`collages` app, `/api/collages/`):
-- Sources: an event (Feature 48, by event id and optional `gap_hours`) or a
-  person (an existing active identity group). 3 to 6 photos are used; more are
-  sampled evenly across the source, fewer than 3 is a clear 400. Layouts are
-  fixed for 3, 4, 5 and 6 photos on a 1600x1200 JPEG canvas.
-- Photos are cut from the **standardized (preprocessed) image**, because face
-  boxes are stored in that image's coordinates. Unprocessed photos are skipped.
-- The crop takes the largest window of the tile's shape and slides it so every
-  detected face stays inside; if the faces together cannot fit the tile shape it
-  keeps the largest face and records `faces_in_frame: false` for that photo.
-- The face boxes come from the face-validation result (Haar/YuNet detection),
-  not from `IdentityFace`. It is the same image-metadata class, and it works for
-  every processed photo even while identity analysis (Feature 18) is switched
-  off, so event collages never depend on identity data.
-- One active collage per user; the file expires after `COLLAGE_TTL_HOURS` (72)
-  and the beat task `collages.cleanup_expired` removes it. Stuck jobs are
-  covered by the shared job reaper. Rate limit `collage`: 20/hour.
-- The stored manifest holds only image ids, crop rectangles, `faces_in_frame`
-  and, for a person collage, the group's display name (tests assert no
-  embedding, score, centroid or distance ever appears in it).
-- A person collage requires `biometric_processing_allowed`, checked at request
-  time **and again when the job runs**, so a consent withdrawn in between stops
-  it. It only reads memberships that already exist.
-- Not built: notifications when a collage is ready (poll the detail endpoint),
-  choosing photos by hand, custom layouts, organization collages.
-
-**Facial data usage: mixed, and each part is already covered by an existing
-rule.**
-- The face-aware crop itself reads only `bounding_box`/`landmarks` --
-  **image metadata** under Feature 41's classification ("they locate a face
-  in an image... they cannot recognise a person"), not biometric data, so
-  it needs no consent check of its own.
-- A **person-specific** collage ("make a collage of this person") instead
-  reads `IdentityGroup`/`IdentityMembership` rows, which are biometric data
-  -- but this feature does not need a *new* consent gate for that, because
-  those rows only exist for an owner who already passed the existing
-  identity-analysis consent check (`biometric_processing_allowed`) when the
-  grouping itself ran. The one new obligation is scoping: only ever query a
-  person's *already-existing* group membership, never compute a new
-  embedding or run new face matching as part of collage-building.
-- A generated collage must never overlay or leak biometric identifiers
-  (embeddings, similarity scores) into the output image or its metadata --
-  only the crop coordinates and, for a person collage, the group's display
-  name.
+Photo collages (face-aware collages of an event's or a person's photos) were part of the product and have been removed completely: the `collages` app, the
+`/api/collages/` endpoints, the `collage` job kind in the failed-jobs list, the `COLLAGE_TTL_HOURS` setting, the `collages.cleanup_expired` beat task and the
+`collage` rate limit no longer exist. Migration `privacy.0005_drop_collages` drops the table; generated files left under `users/<id>/collages/` are removed by the
+orphan-file sweep (`privacy.cleanup.RETIRED_MEDIA_SUBDIRECTORIES`). Nothing else changed: event grouping (Feature 48), visual search (Feature 50), enhancement,
+identities and uploads work as before, and no consent rule was relaxed or added.
 
 ### Feature 50: Face-based visual search — Done (backend)
 
