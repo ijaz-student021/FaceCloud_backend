@@ -211,6 +211,9 @@ class ImagePreprocessingResult(models.Model):
     original_file_size = models.PositiveBigIntegerField(default=0)
     processed_file_size = models.PositiveBigIntegerField(default=0)
     had_transparency = models.BooleanField(default=False)
+    # How a very small photograph was enlarged while it was standardized (uploads/enlarge.py): {} when nothing was asked of it, else
+    # {"applied", "from": [w, h], "to": [w, h], "scale", "engine", "fallback_reason", "seconds"}; {"applied": false, "reason": ...} when it failed.
+    enlargement = models.JSONField(default=dict, blank=True)
     processing_duration_ms = models.PositiveIntegerField(default=0)
     failure_reason = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

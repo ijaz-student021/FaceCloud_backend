@@ -357,6 +357,16 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}     -> 201
   `rejection_reasons` no longer contains `severe_blur`, `borderline_blur` or `borderline_resolution` for such a photograph. A photograph
   is still rejected as `resolution_too_low` when its shorter edge is under 240 px, and a photograph with no face and a severely blurred
   frame is still rejected.
+- **Very small photographs are enlarged (new, on unless the operator sets `SMALL_IMAGE_ENLARGE_ENABLED=False`).** A photograph whose shorter
+  edge is under 240 px (`SMALL_IMAGE_ENLARGE_BELOW_EDGE`) and at least 60 px (a smaller picture would stay under the line even at 4 times, so it is left
+  alone and still refused as too small) is enlarged 2 or 4 times while it is standardized, so it is no longer refused for its size and
+  face validation, grouping and enhancement see a usable image. The uploaded original is never changed. `GET /api/images/{id}/preprocessing/` (and the
+  preprocessing result wherever it is embedded) has a new field **`enlargement`**: `{}` when nothing was asked of it, else
+  `{"applied": true, "from": [150, 200], "to": [600, 800], "scale": 4, "engine": "realesrgan_x4plus" | "opencv_lanczos", "fallback_reason": "", "seconds": 1.7}`
+  (`{"applied": false, "reason": ...}` when enlarging failed; the upload still succeeded). The quality decision then measures the *enlarged* copy and says so:
+  `measurements.enlarged_from` is `[width, height]` of the photograph as uploaded (absent otherwise). Show a note such as "This photo was small, so it was
+  enlarged from 150 x 200; enlarging cannot add real detail", and do not present its resolution score as the size it was taken at. A no-face photograph
+  can still be sent to review for blur afterwards (`borderline_blur`): an enlargement is soft, and that is reported, not hidden.
 - **Rejected photos are never enhanced.** `POST /api/enhancements/images/{id}/` answers 400
   ("This photo was rejected by the checks, so it is not enhanced.") for a photo refused at upload or
   rejected by its quality decision or face validation, and `POST /api/enhancements/batches/{id}/`
