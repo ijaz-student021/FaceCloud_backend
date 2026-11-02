@@ -23,7 +23,7 @@ class ImagePreprocessingResultSerializer(serializers.ModelSerializer):
             "id", "image", "status", "requested_format", "requested_name",
             "original_format", "output_format", "output_name", "original_width",
             "original_height", "output_width", "output_height", "original_file_size",
-            "processed_file_size", "had_transparency", "processing_duration_ms",
+            "processed_file_size", "had_transparency", "enlargement", "processing_duration_ms",
             "failure_reason", "download_url", "created_at", "updated_at",
         ]
 
