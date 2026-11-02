@@ -192,6 +192,18 @@ def decide_review(*, review, actor, action, reason="", notes="", group_id=None, 
         ImageQualityDecision.objects.filter(pk=locked.quality_decision_id).update(
             decision=_QUALITY_WRITEBACK[action], updated_at=timezone.now(),
         )
+        # The write above is a queryset update, so it sends no save signal: do what the verdict now means for the person folders explicitly. An approved
+        # photo is grouped now (identities/verdict.py: it was held back for exactly this); a rejected one is out of every folder.
+        if action == "approve":
+            from enhancement.auto import enhance_after_verdict
+            from identities.verdict import group_after_verdict
+
+            group_after_verdict(locked.image, verdict="accepted")
+            enhance_after_verdict(locked.image, verdict="accepted")
+        else:
+            from identities.services import remove_photo_from_folders
+
+            remove_photo_from_folders(locked.image, reason="The photo was rejected by a moderator.")
     elif (
         locked.source == ModeratorReview.Source.DUPLICATE
         and action in _DUPLICATE_WRITEBACK and locked.duplicate_match_id
@@ -222,6 +234,22 @@ def decide_review(*, review, actor, action, reason="", notes="", group_id=None, 
 OPEN_REVIEW_STATUSES = (
     ModeratorReview.Status.PENDING, ModeratorReview.Status.IN_REVIEW, ModeratorReview.Status.ESCALATED,
 )
+PHOTO_REJECTED_REASON = "Photo was rejected"
+
+
+def close_open_identity_reviews(image, reason=PHOTO_REJECTED_REASON):
+    """Close the identity reviews of ``image`` that nobody has decided, because the photograph was rejected: there is nothing left to decide. Returns how many.
+
+    They are closed as ``rejected`` (the suggested folder was not accepted) with ``reason`` as the decision reason and nobody as ``decided_by``, which is how a
+    closing by the system is told from a moderator's decision; the per-moderator figures count only reviews a person decided.
+    """
+    now = timezone.now()
+    return ModeratorReview.objects.filter(
+        image=image, source=ModeratorReview.Source.IDENTITY, status__in=OPEN_REVIEW_STATUSES, decided_at__isnull=True,
+    ).update(
+        status=ModeratorReview.Status.REJECTED, decision_reason=reason, decided_at=now, decided_by=None,
+        claimed_by=None, claimed_at=None, updated_at=now,
+    )
 
 
 def release_open_reviews(*, organization, user):
@@ -490,8 +518,8 @@ def cancel_batch_for_organization(*, batch, actor, request=None):
 
 
 def organization_reviews(organization, scope=None):
-    """The organization's reviews, without those of members ``scope`` (a ``DataScope``) says the viewer may not see."""
-    reviews = ModeratorReview.objects.filter(organization=organization)
+    """The organization's reviews, without those of members ``scope`` (a ``DataScope``) says the viewer may not see, and without those of photographs in the trash."""
+    reviews = ModeratorReview.objects.filter(organization=organization, image__trashed_at__isnull=True)
     return scope.exclude(reviews, "image__owner_id") if scope is not None else reviews
 
 

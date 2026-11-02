@@ -48,6 +48,7 @@ from .models import (
     EnhancementLevel,
     EnhancementStatus,
     EnhancementStyle,
+    EnhancementTrigger,
     ImageEditVersion,
     ImageEnhancementResult,
 )
@@ -2619,7 +2620,7 @@ def ensure_enhancement_capacity(owner, *, batch):
 
 def create_enhancement_result(
     image, requested_level=EnhancementLevel.AUTO, batch_job=None,
-    requested_style=EnhancementStyle.NATURAL,
+    requested_style=EnhancementStyle.NATURAL, trigger=EnhancementTrigger.MANUAL,
 ):
     if image.owner_id != (batch_job.owner_id if batch_job else image.owner_id):
         raise ValidationError("The enhancement owner does not match the image owner.")
@@ -2636,6 +2637,7 @@ def create_enhancement_result(
         batch_job=batch_job,
         requested_level=requested_level,
         requested_style=requested_style,
+        trigger=trigger,
         status=EnhancementStatus.PENDING,
     )
 

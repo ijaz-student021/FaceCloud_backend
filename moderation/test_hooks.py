@@ -29,7 +29,7 @@ class QualityReviewHookTests(TestCase):
         self.owner = User.objects.create_user(
             username="quality-owner", email="quality-owner@example.com", password="Password!123",
         )
-        # A real organization: a personal workspace has no moderator, so it opens no review (see moderation/test_personal_reviews.py).
+        # A real organization: a personal workspace has no moderator, so it opens no review (see test_a_personal_workspace_opens_no_review_because_nobody_can_decide_it below and moderation/test_personal_reviews.py).
         self.organization = create_organization(name="Quality Co", owner=self.owner)
         batch = UploadBatch.objects.create(owner=self.owner, upload_type="single", organization=self.organization)
         self.image = ImageUpload.objects.create(

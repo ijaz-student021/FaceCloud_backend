@@ -7,6 +7,7 @@ from django.db.models.functions import TruncDate
 from django.utils import timezone
 
 from enhancement.models import EnhancementStatus, ImageEnhancementResult
+from quality_control.effective import effective_q
 from uploads.models import ImagePreprocessingResult, ImageUpload, UploadBatch
 from validation.models import FaceValidationResult
 from quality_control.models import ImageQualityDecision
@@ -37,7 +38,7 @@ def _recent_activity(user, limit=10):
             "status": image.status,
             "created_at": image.created_at,
         })
-    for result in ImageEnhancementResult.objects.filter(owner=user).select_related("image").order_by("-updated_at")[:limit]:
+    for result in ImageEnhancementResult.objects.filter(owner=user, image__trashed_at__isnull=True).select_related("image").order_by("-updated_at")[:limit]:
         activities.append({
             "type": f"enhancement_{result.status}",
             "message": f"Enhancement for {result.image.original_name} is {result.status}.",
@@ -46,7 +47,7 @@ def _recent_activity(user, limit=10):
             "status": result.status,
             "created_at": result.updated_at,
         })
-    for result in FaceValidationResult.objects.filter(owner=user).select_related("image").order_by("-updated_at")[:limit]:
+    for result in FaceValidationResult.objects.filter(owner=user, image__trashed_at__isnull=True).select_related("image").order_by("-updated_at")[:limit]:
         activities.append({
             "type": f"face_validation_{result.decision}",
             "message": f"Face validation for {result.image.original_name}: {result.message}",
@@ -55,7 +56,7 @@ def _recent_activity(user, limit=10):
             "status": result.decision,
             "created_at": result.updated_at,
         })
-    for result in ImageQualityDecision.objects.filter(owner=user).select_related("image").order_by("-updated_at")[:limit]:
+    for result in ImageQualityDecision.objects.filter(owner=user, image__trashed_at__isnull=True).select_related("image").order_by("-updated_at")[:limit]:
         activities.append({
             "type": f"quality_{result.decision or result.status}",
             "message": f"Quality decision for {result.image.original_name}: {result.message or result.status}.",
@@ -69,9 +70,9 @@ def _recent_activity(user, limit=10):
 
 def build_user_dashboard(user):
     images = ImageUpload.objects.filter(owner=user)
-    enhancements = ImageEnhancementResult.objects.filter(owner=user)
+    enhancements = ImageEnhancementResult.objects.filter(owner=user, image__trashed_at__isnull=True)
     completed = enhancements.filter(status=EnhancementStatus.COMPLETED)
-    quality_results = ImageQualityDecision.objects.filter(owner=user, status="completed")
+    quality_results = ImageQualityDecision.objects.filter(owner=user, status="completed", image__trashed_at__isnull=True)
     identity_groups = IdentityGroup.objects.filter(owner=user, state=IdentityGroup.State.ACTIVE)
     active = enhancements.filter(status__in=[
         EnhancementStatus.PENDING,
@@ -80,20 +81,23 @@ def build_user_dashboard(user):
     ])
     failed_image_ids = set(enhancements.filter(status=EnhancementStatus.FAILED).values_list("image_id", flat=True))
     failed_image_ids.update(
-        ImagePreprocessingResult.objects.filter(owner=user, status="failed").values_list("image_id", flat=True)
+        ImagePreprocessingResult.objects.filter(owner=user, status="failed", image__trashed_at__isnull=True).values_list("image_id", flat=True)
     )
 
-    original_bytes = images.aggregate(total=Sum("file_size"))["total"] or 0
+    # Storage is what is held, so photographs in the trash count until they are purged (their files are still stored); the trash is reported separately.
+    held = ImageUpload.all_objects.filter(owner=user)
+    trash = held.in_trash()
+    original_bytes = held.aggregate(total=Sum("file_size"))["total"] or 0
     standardized_bytes = ImagePreprocessingResult.objects.filter(owner=user).aggregate(
         total=Sum("processed_file_size")
     )["total"] or 0
-    enhanced_bytes = enhancements.aggregate(total=Sum("output_file_size"))["total"] or 0
+    enhanced_bytes = ImageEnhancementResult.objects.filter(owner=user).aggregate(total=Sum("output_file_size"))["total"] or 0
 
     today = timezone.localdate()
     start = today - timedelta(days=6)
     uploads_by_day = _daily_counts(images.filter(created_at__date__gte=start), "created_at")
     accepted_by_day = _daily_counts(
-        quality_results.filter(decision="accepted", updated_at__date__gte=start),
+        quality_results.filter(effective_q("accepted", decision_path="decision", batch_path="image__batch"), updated_at__date__gte=start),
         "updated_at",
         distinct_field="image_id",
     )
@@ -134,12 +138,12 @@ def build_user_dashboard(user):
             "total_images": images.count(),
             "upload_batches": UploadBatch.objects.filter(owner=user).count(),
             "enhanced_images": completed.values("image_id").distinct().count(),
-            "accepted_images": quality_results.filter(decision="accepted").count(),
+            "accepted_images": quality_results.filter(effective_q("accepted", decision_path="decision", batch_path="image__batch")).count(),
             "rejected_images": (
                 images.filter(status="rejected").count()
                 + quality_results.filter(decision="rejected", image__status="uploaded").count()
             ),
-            "needs_review_images": quality_results.filter(decision="needs_review").count(),
+            "needs_review_images": quality_results.filter(effective_q("needs_review", decision_path="decision", batch_path="image__batch")).count(),
             "average_quality_score": round(
                 sum(
                     score for score in quality_results.values_list("overall_score", flat=True)
@@ -152,19 +156,21 @@ def build_user_dashboard(user):
             ),
             "processing_images": len(set(active.values_list("image_id", flat=True)) | set(
                 ImageQualityDecision.objects.filter(
-                    owner=user, status__in=["pending", "queued", "processing"]
+                    owner=user, status__in=["pending", "queued", "processing"], image__trashed_at__isnull=True
                 ).values_list("image_id", flat=True)
             )),
             "failed_images": len(failed_image_ids | set(
-                ImageQualityDecision.objects.filter(owner=user, status="failed").values_list(
+                ImageQualityDecision.objects.filter(owner=user, status="failed", image__trashed_at__isnull=True).values_list(
                     "image_id", flat=True
                 )
             )),
             "identity_groups": identity_groups.count(),
             "identity_grouped_images": ImageUpload.objects.filter(owner=user, identity_faces__memberships__state__in=["auto_matched", "new_group", "confirmed"]).distinct().count(),
-            "identity_review_items": IdentityAnalysis.objects.filter(owner=user).aggregate(total=Sum("review_count"))["total"] or 0,
+            "identity_review_items": IdentityAnalysis.objects.filter(owner=user, image__trashed_at__isnull=True).aggregate(total=Sum("review_count"))["total"] or 0,
             "identity_groups_available": settings.IDENTITY_PROVIDER != "disabled",
             "storage_bytes": original_bytes + standardized_bytes + enhanced_bytes,
+            "trash_images": trash.count(),
+            "trash_bytes": trash.aggregate(total=Sum("file_size"))["total"] or 0,
         },
         "uploads_last_7_days": chart,
         "recent_uploads": recent_uploads,

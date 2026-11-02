@@ -168,8 +168,21 @@ POST /api/images/upload/single/    multipart, field: file
 POST /api/images/upload/multiple/  multipart, field: files (repeat the field)
 POST /api/images/upload/zip/       multipart, field: file
    -> 201 a batch: {id, status, total_files, accepted_files, rejected_files,
-                    processing_status, images: [...], ...}
+                    processing_status, processing_mode, auto_enhance, images: [...], ...}
 ```
+
+**Automatic enhancement (new).** A photograph that passes the checks is now **enhanced without anyone asking**: `accepted` at once, `rejected` never, and
+`needs_review` at once in a personal workspace or after a moderator approves it in an organization. Every upload request takes an optional form field
+**`auto_enhance`** (`true` or `false`; anything else is a 400 `{"auto_enhance": ...}`); absent means the account setting, which is on unless the person turned it off
+(section 8: `GET/PATCH /api/notifications/preferences/` carries `auto_enhance`). The answer is stored on the batch and returned as `auto_enhance`. Offer it as a checkbox
+on the upload page ("Enhance my photos automatically"), pre-set from the preference. It adds nothing to what a person can still do by hand: `POST /api/enhancements/...`
+works as before, and a photograph that already has a result is never enhanced a second time. Every photograph in the answer carries `enhancement` (below), so **in
+`inline` mode the finished results are already in the upload answer**; with a worker they are `queued` and move as you poll.
+
+**`processing_mode`** (new, upload answers only): `"background"` when a Celery worker does the work, `"inline"` when the background jobs run inside this very request
+(`CELERY_TASK_ALWAYS_EAGER` is on, normally a development server without a worker). In `inline` mode the answer already holds the finished batch and **there is no
+progress to show**: do not draw a progress bar or poll, show the result, and (in development) a one-line hint "background jobs run inside the request: start the
+worker to see progress". `GET /api/system/health/` tells an administrator the same (section 10).
 
 **Submitting to an organization.** All three upload requests take an optional `organization_id` (a form field next to the
 file). Without it the upload stays in the person's own workspace, exactly as before. With the id of an organization the
@@ -192,10 +205,31 @@ extension must match its real content, and the size and pixel limits in
 GET /api/images/batches/{batch_id}/progress/
    -> {batch_id, status, stage, progress_percentage, counts,
        estimated_completion_at, cancellation_requested, retry_count,
+       auto_enhance, enhancement_finished,
        images: [{image_id, filename, stage, status, display_status,
-                 progress_percentage, failure_stage, failure_reason, ...}]}
+                 progress_percentage, failure_stage, failure_reason,
+                 enhancement: {status, outcome, summary, waiting_for, skipped_reason}, ...}]}
 ```
 
+- **Enhancement is a stage of the batch.** Each image (in the progress and in every batch response) has `enhancement`:
+  - `status`: `queued`, `processing`, `completed`, `skipped`, `failed` or `not_applicable` (the upload turned it off, or the photograph was rejected by the checks).
+  - `waiting_for` (only while `queued` and not yet started): `quality_verdict` (its checks have not decided), `moderator_approval` (an organization's moderator has to
+    approve it first) or `capacity` (the person already has the most enhancements running; it starts as they finish). Draw those as "waiting", never as done.
+  - `outcome` and `summary` (once it ended): `enhanced`, `partially_enhanced` or `original_preserved` (a clean photograph: nothing safe would help, so the
+    original is kept; **this is a success**, say "no change needed", not "failed"), or `failed`; `summary` is one plain sentence safe to show.
+  - `skipped_reason` (when `skipped`): `capacity` (no free slot for too long), `cancelled`, `already_requested`, `not_possible` or `error`. A skipped photograph is
+    never failed and its upload is untouched.
+  The batch is **not `completed` before its enhancements finished or were skipped** (`enhancement_finished` says so); a photograph that waits for a moderator does not
+  hold the batch back, because that can take days. A failed enhancement is that photograph's `failure_stage: "enhancement"` (status `failed`), the original stays,
+  and `POST /api/images/batches/{id}/retry/` runs it again. The person gets **one** notification per batch, `batch_enhanced` ("3 photos enhanced"), none per photograph.
+
+- **Person folders come after the quality verdict.** A photograph is filed into a person folder only once its quality check has decided: an `accepted` photo
+  at once, a `rejected` one never, and one that `needs_review` only after a moderator approves it (at once when it is in a personal workspace, where no
+  moderator can decide). So a photograph that is going to be rejected never appears in a folder, not even for a moment. Each image in the progress carries
+  `identity_grouping: {status, waiting_for}`: `status` is `queued`, `processing`, `completed`, `needs_review`, `failed`, `cancelled`, `skipped` (rejected: it is
+  never grouped) or `not_applicable` (grouping is off for this photo); a photo that is still waiting is `queued` and `waiting_for` says what for,
+  `quality_verdict` or `moderator_approval` (otherwise it is empty). Draw the grouping step as "waiting" for those, never as done. The batch also has
+  `identity_grouping_finished` (every photo that will be grouped has been) and `suggested_merge_count` (see section 5; `0` until the batch is fully grouped).
 - Poll every 2 to 3 seconds while the batch is active and stop when
   `status` is terminal: `completed`, `partial`, `failed` or `cancelled`.
 - `stage` moves through: `uploaded, queued, preprocessing, face_validation,
@@ -232,6 +266,12 @@ person folder the photo was in** (`member_count`, and the folder no longer match
 (their secure links then answer 410; the owner can build new ones). A folder left empty stays until its owner
 deletes it, and its `cover_images` is empty. Deleting an upload batch (`DELETE /api/images/batches/{id}/`) does the same.
 
+**Favourites (new).** `PUT /api/images/{id}/favorite/` marks one of the person's own photographs (answer `{id, is_favorite: true, favorited_at}`), `DELETE` takes the mark off
+(`is_favorite: false`); both are idempotent and a photograph that is not theirs, does not exist or was refused at upload is a `404`. `POST /api/images/favorites/
+{image_ids: [..up to 200], favorite: true|false}` does many and answers `{favorite, updated_ids, not_found_ids}` (nothing is done for the ids in `not_found_ids`).
+`GET /api/images/my/?favorite=true` lists only the favourites (`false` the others; it combines with every other filter), and every photograph row and batch image carries `is_favorite`.
+Marking a favourite never changes the photograph's other timestamps.
+
 **Thumbnails.** Never draw a gallery from `download_url`: originals can be
 hundreds of megabytes. Each image in the list carries `thumbnail_url`, which
 serves a small JPEG (`GET /api/images/{id}/thumbnail/`, optional `?size=256`
@@ -252,6 +292,18 @@ rejected photo can still be shown in the list with its reason.
 `/api/duplicates/images/{image_id}/`. A decision is `accepted`, `rejected` or
 `needs_review`, with human-readable reasons to show the user.
 
+**"In review" only where someone can review (changed).** `needs_review` means a person has to look at the photograph. In an **organization** that is a moderator, and nothing changes
+there. In the person's **own workspace** nobody can ever decide it, so it is no longer shown as a state: such a photograph is **`accepted`, with tips**. Concretely, for a photograph in a
+personal workspace whose checks doubted it:
+
+- `display_status` (everywhere: `GET /api/images/my/`, batch responses, progress) is `accepted`, the batch progress `counts` count it as `accepted`, the batch is `completed` (not `partial`
+  because of it), `GET /api/images/my/?status=needs_review` does not list it and `?status=accepted` does, the dashboard counts it as accepted, the `accepted_results` ZIP includes it, the
+  notification is "Photo accepted" with a tip, and no moderator review is opened for it.
+- The quality decision (`GET /api/quality/images/{id}/`, and `quality_decision` on every photograph row) keeps **`decision` exactly as the checks found it** (it is the evidence) and gains
+  **`effective_decision`** (what it means for the person: `accepted`), **`review_required`** (true only for a `needs_review` in an organization) and **`tips`** (plain sentences such as
+  "This photo is a little dark; more light gives better results."). Show `tips`, never the word "review", when `review_required` is false.
+- A **rejected** photograph is never softened (very dark, blown out, corrupt). The same photograph filed under an organization still shows `needs_review` and `review_required: true`.
+
 ## 4. Enhancement
 
 ```text
@@ -261,6 +313,10 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}     -> 201
 
 - `level`: `auto` (default), `low`, `medium`, `high`.
 - `style`: `natural` (default), `dynamic`, `ai_max`.
+- **Automatic results** (section 3) are ordinary results: `GET /api/enhancements/results/{id}/` and the lists, with a new field `trigger`: `auto` (started after the upload
+  passed the checks) or `manual` (the person asked). An automatic one runs level `auto`, style `natural`. Its `applied_parameters.render_policy.name` is the policy it
+  used (the adaptive engine by default), which can differ from a manual request's. Automatic ones count towards the same limit of enhancements in progress, so
+  `POST /api/enhancements/images/{id}/` can answer 429 while a large upload is still being enhanced: say "wait for the running enhancements" and try again.
 - `applied_parameters.no_correction_needed` is `true` when the photo had nothing to
   correct and was left as it is; say that rather than showing an identical
   before/after as an enhancement.
@@ -336,6 +392,26 @@ Faces are grouped into "person folders". A photo with no detectable face is
 analysed as `completed` with `face_count` 0 (not `failed`), so do not show an
 error for it.
 
+**Group photographs (changed).** A photograph with several people is accepted when at least one face is big enough to use, however many faces it has (it used to go to review above five
+faces or when one face was small), and it appears in **each** person's folder. Faces too small to place in a folder are skipped, and the photograph's quality `tips` say how many
+("2 faces are too small to place in a person folder..."); at most `IDENTITY_MAX_FACES_PER_IMAGE` (20) faces of one photograph are placed, the largest first. A photograph whose only
+face is small is no longer **rejected**: it is kept (`needs_review` in the face check, so "accepted with a tip" in a personal workspace) and simply not placed in a folder.
+
+**People you can tap (new): avatars, chips, search.**
+
+- `GET /api/identities/people/?q=&limit=&include_unnamed=` returns the person folders as **chips**, most photographs first: `[{id, display_name, is_named, photo_count, avatar_url}]`. Folders with
+  no photograph and inactive ones are not listed. `q` filters by name, `limit` defaults to 12 (at most 50, larger is capped), `include_unnamed=false` hides folders that still have their automatic
+  name. `is_named: false` means the folder is still "Person 001": show an "Add a name" prompt (`POST /api/identities/groups/{id}/rename/`). Call it with no `q` for what a search bar offers before
+  anything is typed.
+- `GET /api/identities/groups/{id}/avatar/?size=96|192|384` is a **square JPEG crop of the person's best face** (bright enough first, then the detector's confidence, then size), with a margin so the
+  head shows. Fetch it with the Authorization header and a blob URL, like a thumbnail (`Cache-Control: private, max-age=3600`). `404` while the folder has no face that can be cropped, `400` for another size.
+  The folder objects (`/api/identities/groups/`, `/{id}/`) gained `avatar_url` (null while there is no face). Nothing new is analysed: the crop uses the face box and the standardized picture the
+  analysis already stored, under the person's consent; withdrawing consent with erasure removes the folders and so their avatars.
+- `GET /api/search/?q=` gained **`people`** (the same chip objects, for folders whose name contains `q`) next to the existing `groups` (unchanged).
+- `GET /api/images/my/?person=<folder id>` lists the photographs that contain that person; **repeat the parameter for photographs that contain all of those people**
+  (`?person=3&person=7`). Only faces placed in the folder count (a suggested face waits for a decision and does not); another person's folder id gives an empty list; a non-number is a `400`.
+  It combines with every other filter (`favorite`, `status`, `batch`, ...). Measured cost of one avatar: 6 to 52 ms from a JPEG standardized picture (1 to 12 megapixels), up to 270 ms from a 12 MP PNG.
+
 - **Consent first.** Face grouping only runs for users who granted biometric
   consent. `GET /api/privacy/consents/` returns the current state and policy
   version; `POST /api/privacy/consents/ {granted, policy_version}` grants or
@@ -373,6 +449,20 @@ error for it.
   existing folder was, always below the new-folder threshold; `null` when it was the owner's first folder) and
   `evidence.closest_group_id` on its membership. Its `similarity_score` stays `null`: the face is not compared with
   the folder it starts. For matched and review faces `best_score` is the score against the suggested folder, as before.
+- **Folders that may be the same person.** Photographs are grouped one after the other, so the first ones of a batch can open separate folders before later
+  ones show they match. `GET /api/identities/groups/suggested-merges/` (the signed-in owner's own folders only, never anyone else's) answers a plain array
+  `[{source_group, target_group, similarity, source: {id, display_name, member_count}, target: {...}}]`, most alike first (up to 50): `similarity` is 0 to 1
+  (cosine of the folders' average faces; a pair is listed from the configured limit, `0.40` for the SFace model), `source_group` is the folder to merge away (the
+  one with fewer photos) and `target_group` the one to keep. Show it as "Person 003 and Person 001 may be the same person - Merge?" and merge with
+  `POST /api/identities/groups/{target_group}/merge/ {"source_group_id": source_group}`. **Nothing is merged for the person.** The list is worked out when asked
+  (nothing is stored), so after a merge the pair is gone. When a batch has been fully grouped and some of its folders may match, the owner also gets one
+  notification, `event_type` `identity_merge_suggested` ("N of your person folders may be the same person", `action_path` `/dashboard/groups`, once per batch,
+  only when N > 0); it follows the `person_group_created` switch (default on). `suggested_merge_count` in the batch progress is how many pairs involve a folder
+  that batch put photographs in.
+- **A photo the checks reject leaves no trace.** If a photo is rejected after it was grouped (a manual analysis, or a moderator rejecting it), it leaves its
+  folders, a folder only that photo made and that is now empty is archived (`state: "archived"`, the id still resolves; a folder the owner named is kept), and any
+  moderator review of its identity that was still open is closed as `rejected` with the reason "Photo was rejected" and no deciding moderator (`decided_by` is
+  `null`, which is how a closing by the system differs from a decision).
 - Manage folders: `PATCH .../groups/{id}/rename/ {display_name}`,
   `POST .../groups/{id}/merge/ {source_group_id, reason}` (merges the source
   into this folder), `PATCH .../groups/{id}/profile/`,
@@ -417,6 +507,102 @@ error for it.
   expired. Only a `ready`, unexpired export can be shared: a queued/generating
   one is **409**, an expired one **410** (regenerate it first). Share links
   count toward the same per-user limit as image links.
+
+## 5-albums. Albums (new)
+
+An album is a collection the person makes by hand ("Eid 2026"): a title, a description, a cover and the photographs they put in. A photograph can be in any number of albums; deleting a
+photograph takes it out of its albums; **deleting an album never deletes photographs**. Everything is owner-scoped (another person's album is a `404`).
+
+```text
+GET    /api/albums/?q=&image=&page=&page_size=      list, most recently changed first (image=<id>: only albums that contain it: "already in 2 albums")
+POST   /api/albums/   {title, description?, image_ids?: [..up to 200]}  -> 201 album + added_ids, not_found_ids
+GET    /api/albums/{id}/                            PATCH /api/albums/{id}/ {title?, description?}        DELETE /api/albums/{id}/  -> 204
+GET    /api/albums/{id}/images/?page=&page_size=    the photographs, newest added first, as the same rows the gallery lists (status, thumbnail, is_favorite, ...)
+POST   /api/albums/{id}/images/        {image_ids: [..up to 200]}  -> {added_ids, already_in_album_ids, not_found_ids, photo_count}   (idempotent)
+POST   /api/albums/{id}/images/remove/ {image_ids: [..]}           -> {removed_ids, not_in_album_ids, photo_count}
+PUT    /api/albums/{id}/cover/  {image_id}       DELETE -> automatic cover again
+GET    /api/images/my/?album=<id>               the gallery filtered to one album (combines with the other filters)
+```
+
+An album is `{id, title, description, photo_count, cover_image, cover_thumbnail_url, created_at, updated_at}`. The cover is the one chosen, else the first photograph added (`null` for an empty album);
+it goes back to automatic when its photograph leaves the album. `photo_count` counts photographs that are still stored. The title is trimmed (1 to 120 characters). Limits: `ALBUM_MAX_PER_USER`
+(500) albums per person and `ALBUM_MAX_IMAGES` (10,000) photographs per album, each a `400` with a plain sentence. `GET /api/search/?q=` gained **`albums`** (albums whose title contains `q`).
+A photograph id that is not the person's, does not exist or was refused at upload is never added; it comes back in `not_found_ids`.
+
+## 5-memories. Memories and capture dates (new)
+
+A **memory** is a few of the best photographs of a moment, chosen for the person: "2 years ago today", "Moments from 12 Oct", "With Ayesha". Nothing is stored: it is worked out from the
+person's own photographs when it is asked for (so it is always current and never shows a deleted or rejected photograph), in tens of milliseconds even for 20,000 photographs.
+
+```text
+GET /api/memories/?limit=10        -> [{id, kind, title, subtitle, start, end, photo_count, cover_thumbnail_url, preview_thumbnail_urls: [..4], filter: {..}}]
+GET /api/memories/{id}/            -> the card + images: [..gallery rows of its best photographs (up to 24), oldest first]      (404: the id no longer exists)
+```
+
+- `kind` is `on_this_day` (id `otd:<year>`: at least 3 photographs taken on today's date in an earlier year, at most 3 such years), `event` (id `event:<first photograph id>`: at least 5 photographs
+  in the last 180 days with gaps under 6 hours; newest first, at most 6) or `person` (id `person:<folder id>:<YYYY-MM>`: a **named** person with at least 10 photographs, at most 3; unnamed
+  folders have no memory). Ids stay the same for the same photographs; an event id changes if an earlier photograph joins the event, so **take ids from the list**, and treat a 404 as "gone".
+- The **cover** is the best photograph and `preview_thumbnail_urls` the best four (favourites first, then the higher quality score, then one with a face, then the earlier one). A photograph that
+  duplicates one already chosen, or was taken within a minute of one, is skipped, so a burst of ten shots gives one. `limit` defaults to 10 (at most 30).
+- `photo_count` is every photograph of the moment; to show them all, call `GET /api/images/my/` with the card's **`filter`** (`taken_from`/`taken_to` dates, or `person`).
+- **Capture dates.** Photographs now carry `taken_at` (the EXIF capture time, read at upload; `null` when the file has none, then the upload time is used on timelines). `GET /api/images/my/` accepts
+  `taken_from=YYYY-MM-DD` and `taken_to=YYYY-MM-DD` (inclusive, on the capture date, or the upload date when there is no EXIF time; anything else is a 400). Photographs uploaded before this change
+  have no `taken_at` until the operator runs `python manage.py backfill_taken_at` (it reads the stored originals, changes nothing else, and is safe to run again). EXIF has no time zone unless
+  `OffsetTime` is present, so the stored time is the wall-clock time taken as UTC: it is right to the day, which is what a memory needs.
+
+## 5-trash. Trash (new)
+
+Deleting with an undo. A photograph moved to the trash is gone from **every** other screen at once (My Images, search, albums, person folders and their counts, memories, events, the
+editor, reports, duplicates, shares) and can be restored for `retention_days` (30 by default); a daily job then deletes it for good. The existing permanent deletes
+(`DELETE /api/images/{id}/`, `POST /api/images/bulk-delete/`) are **unchanged and immediate**: offer both ("Move to trash" as the normal action, "Delete forever" in the trash).
+
+```text
+POST   /api/images/trash/             {image_ids: [..up to 200]}  -> {trashed_ids, skipped: [{id, reason}], not_found_ids, retention_days}
+GET    /api/images/trash/?search=&page=&page_size=                -> paged rows {id, original_name, thumbnail_url, width, height, file_size, is_favorite, taken_at, created_at, trashed_at, purge_at, days_left}
+POST   /api/images/trash/restore/     {image_ids: [..]}           -> {restored_ids, not_found_ids, folders_restored}
+POST   /api/images/trash/empty/       {confirm: true}             -> {deleted, remaining}        (500 per call: repeat while remaining > 0)
+DELETE /api/images/trash/{id}/                                    -> 204 (permanent); 404 when it is not in your trash
+GET    /api/images/trash/{id}/thumbnail/                          -> image/jpeg (fetch with the Authorization header, like any thumbnail)
+```
+
+- **`skipped`** are photographs that cannot be moved right now and nothing was done for them: `still_processing` (their checks or an enhancement are still running: say "try again in a
+  moment") and `in_review` (an organization moderator has not decided it yet: offer "Delete forever" or wait). The others in the same request **are** moved. A photograph in a personal
+  workspace is never `in_review` (see section 3).
+- **`not_found_ids`**: not yours, not a stored photograph (a refused upload), unknown, or already in the trash.
+- A trashed photograph answers **404** at every ordinary address (`/api/images/{id}/`, `/thumbnail/`, `/download/`, its checks, its enhancement results, its share link answers 410 until it is restored). Use the
+  trash's own thumbnail address for the trash screen; `thumbnail_url` in the trash rows already points to it.
+- **Restore** puts back the favourite mark, the album places and, when the folder still exists and is not a different one now, the person-folder membership (a folder the trash left empty and archived
+  becomes active again). A face that was placed in another folder meanwhile stays there. Nothing about the checks' results changes.
+- **Counts.** Every figure elsewhere drops by the trashed photographs (album `photo_count` and cover, person `photo_count`, dashboard totals). The dashboard summary also has `trash_images` and
+  `trash_bytes`, and `storage_bytes` **still includes** the trash (the files are still stored). The data export (`GET /api/privacy/export/`) lists trashed photographs with their `trashed_at`.
+- **Not in the trash view:** photographs that were refused at upload, and ones permanently deleted.
+- The retention is the server setting `TRASH_RETENTION_DAYS`; show `days_left` from each row, not a fixed 30.
+
+## 5-places. Places: where a photograph was taken (new)
+
+"Places" groups the person's own photographs by where they were taken ("Lahore", "Murree", "Paris"). The position comes from the photograph's own EXIF GPS block when it has one, is read on the
+server, and **no coordinate ever leaves it**. Names come from an offline file; until the server has installed and approved it, photographs keep a position but get no named place.
+
+```text
+GET    /api/places/?q=&country=PK&limit=24   -> {attribution, names_available, places: [{id, name, region, country, country_code, photo_count, cover_thumbnail_url, latitude, longitude}]}   most photographs first
+GET    /api/places/{id}/                      -> one of those (404 if you have no photograph there)
+GET    /api/images/my/?place=<id>             the gallery filtered to one place;  ?country=PK  to one country (two letters)
+GET    /api/images/{id}/location/             -> {latitude, longitude, place: {id, name, region, country, country_code} | null}   (404 if it has none); the photograph's owner only
+DELETE /api/images/{id}/location/             -> 204   take the location off this photograph
+POST   /api/images/location/remove/  {image_ids: [..up to 200]} -> {removed_ids, without_location_ids, not_found_ids}
+```
+
+- **Photograph rows** (`GET /api/images/my/`, albums, memories) gained `place` (`{id, name, region, country, country_code}` or `null`) and `has_location` (true when it has a position). They never carry
+  coordinates; only `GET /api/images/{id}/location/` does, and only for the owner. Moderators, administrators, share links, ZIPs and organization exports carry none.
+- **`latitude` and `longitude` on a place are the place's own centre**, not any photograph's position. Draw a map pin for a photograph from its own `/location/` call, never from the places list.
+- **You must show the credit** in `attribution` ("Place names: GeoNames ... CC BY 4.0") wherever place names are shown, for example under the Places screen.
+- `names_available: false` means this server has no approved place-name file: hide the Places strip (the list is empty) rather than show an empty screen. Photographs still have `has_location`.
+- **Remove a location** with `DELETE` or the bulk `POST`. It is gone from FaceCloud's records and views and is never read again, but it is **not** removed from the stored original file: say
+  so in the confirmation ("removes it from your library; the downloaded original may still contain it").
+- A photograph in the trash is in no place count and has no location endpoint until it is restored. `GET /api/search/?q=` gained `places` (places whose name contains `q`).
+- Naming is by the nearest listed town within 50 km (a suburb or village next to a city is named after the city; in very large cities a district may be named: "Paris 16 Passy"). A position far from
+  any settlement (open sea, desert) has coordinates but no place. Photographs uploaded before this feature appear after the operator runs `python manage.py backfill_location`.
+- Rate limit: 1200 requests per hour per user.
 
 ## 5a. Duplicates
 
@@ -465,13 +651,18 @@ POST .../{id}/regenerate/                                     after expiry or fa
 Statuses: `queued, generating, ready, failed` (packages also `expired`).
 Asking for a package that cannot be made yet is a **409** whose body is
 `{"detail": "<sentence>", "code": "<code>", ...}`; branch on `code`:
-`enhancement_required` (photos passed the checks but were never enhanced; also
+`enhancement_required` (photos passed the checks, the upload did not ask for automatic enhancement and nobody enhanced any; also
 `accepted_images: n`; call `POST /api/enhancements/batches/{id}/`, wait, then ask
-again), `no_accepted_images` (nothing passed, nothing to enhance),
+again; an upload that did ask for it never answers this), `no_accepted_images` (nothing passed, nothing to enhance),
 `batch_still_processing`, `batch_empty`. Downloading before `ready` returns
 **409**; after expiry **410**. Packages
 (`package_type`: `accepted_results` or `complete_batch`) expire after a
 configurable time, so show an expiry and offer "regenerate".
+
+**What `accepted_results` holds (changed).** For each accepted photograph, its **enhanced** version (folder `enhanced/`) when it has one, and its **original** (folder
+`original/`) when it does not (an automatic enhancement that was skipped or failed). `manifest.json` says which, file by file: each entry of `files` has `version`
+(`enhanced` or `original`), and an enhanced one has `enhancement_outcome` (`enhanced`, `partially_enhanced`, `original_preserved`) while an original has a `reason`;
+`summary` has `enhanced_files` and `original_files`. Earlier the package held only the enhanced photographs and listed the others under `skipped_files`.
 
 **What a processing report contains** (`payload`, and the JSON file). A **batch** report's `summary` is
 `{total_images, accepted_uploads, rejected_uploads, processing_status, status_counts, total_input_size}` plus three fields:
@@ -853,9 +1044,21 @@ Moderators and owners of an organization also receive `event_type`
 `moderator_review_updates` preference, and never goes to the person who uploaded
 the batch (they get their own `batch_completed`).
 
-**Preferences** (`GET/PATCH /api/notifications/preferences/`) are seven switches, all booleans, a PATCH may send any of them: `photo_accepted`,
-`photo_rejected`, `batch_upload_finished`, `person_group_created`, `email_notifications` (off by default), `live_session_alerts` (off by default) and
-`moderator_review_updates` (on by default; **new in this response**: show it on the settings screen of owners and moderators only). With
+When a batch has been fully grouped and some of its person folders may be the same person the owner receives `identity_merge_suggested` (severity `info`,
+title "Some of your person folders may be the same person", `message` "N of your person folders may be the same person. Check them and merge the ones that are.",
+`resource_type` `batch`, `resource_id` the batch, `action_path` `/dashboard/groups`, `metadata.batch_id`, `metadata.folder_count`, `metadata.suggested_merge_count`).
+It is in-app only, sent once per batch and only when N is more than 0, and it follows the `person_group_created` preference.
+
+When a batch's automatic enhancements are all finished the owner receives `batch_enhanced` (severity `success`, or `warning` when some failed, title "Photos enhanced",
+`message` "3 photos enhanced." with, when there is something to add, "(1 kept as uploaded because enhancing them would not have helped; 1 could not be enhanced)",
+`resource_type` `batch`, `resource_id` the batch, `action_path` `/dashboard/jobs`, `metadata.batch_id`, `enhanced`, `kept`, `failed`, `skipped`, `total`). It is in-app only, sent
+**once per batch** (never per photograph), and follows the `batch_upload_finished` preference.
+
+**Preferences** (`GET/PATCH /api/notifications/preferences/`) are eight switches, all booleans, a PATCH may send any of them: `photo_accepted`,
+`photo_rejected`, `batch_upload_finished`, `person_group_created`, `email_notifications` (off by default), `live_session_alerts` (off by default),
+`moderator_review_updates` (on by default; show it on the settings screen of owners and moderators only) and **`auto_enhance`** (on by default; **new**: the account's
+setting for automatic enhancement after upload, which a form field on one upload can override; it is the only switch here that is not about notifications, kept in
+this endpoint because it is the account's existing preferences endpoint, so show it as "Enhance my photos automatically" on the account's settings screen). With
 `moderator_review_updates` off a moderator or owner is no longer told that a review was assigned to them, escalated or overdue, or that a batch failed;
 the reviews themselves are unaffected. Everything else in the response is unchanged.
 
@@ -935,6 +1138,27 @@ never blank. Single and multiple uploads that were never renamed have no name to
 search; they appear as `Upload <id>` wherever they are listed but are not found
 by that label. Rate limit: 600 requests per hour per user.
 
+## 8c. Search by what is in the photograph (new, off by default)
+
+"beach", "red car", "birthday cake": a model looks at each accepted photograph once and ranks the person's own photographs against the words. **English queries only.** It is
+switched off on a server until its owner has approved the model (`docs/model-licenses/semantic-search-model.md`), so the screen must work without it.
+
+```text
+GET /api/search/photos/?q=<2-200 characters>&limit=<n>
+  -> 200 {enabled: true,  query, language: "en", model: "ViT-B-16-SigLIP", results: [{score: 0.2143, photo: {..the same row as GET /api/images/my/..}}, ...]}   best first
+  -> 200 {enabled: false, query, language: "en", model: null, results: []}                                  the server has the feature off: hide the box, show nothing
+  -> 503 {detail, code: "semantic_search_unavailable"}                                                       switched on but its model cannot be used: say "not available right now"
+  -> 400 q shorter than 2 or longer than 200 characters, or a bad limit
+```
+
+- `GET /api/search/` (the top-bar search) gains a `photos` list (`id, name, thumbnail_url, status, created_at, score`) **only** when the feature is on and working; its other keys are
+  unchanged. Use it to show "photos that look like this" under the name matches.
+- Only the person's own photographs that are accepted (in a personal workspace that includes the ones the checks had a doubt about) and not in the trash. A photograph appears once it has been indexed:
+  a few seconds after its checks finish, longer in a busy queue; a photograph from before the feature was switched on appears after the operator runs `python manage.py index_semantic_search`.
+- `score` is a cosine similarity, not a percentage: show the order, not the number. A server-side minimum drops weak matches, so a query can honestly return fewer results than `limit`, or none.
+- The words are not stored or logged. The vectors describe whole pictures (not faces), are kept apart from face data, and are deleted with the photograph.
+- Rate limit: 600 requests per hour per user.
+
 ## 9. Privacy screens
 
 - Consent: section 5.
@@ -999,6 +1223,12 @@ hide these routes, but never rely on that for security.
   `camera_snapshots_bytes` is already inside `originals_and_outputs_bytes`.
 * The older `success_rate_percent` is the share of *quality decisions* that were accepted, not the share of enhancements that worked; the weekly
   enhancement success is `enhancement_success_per_week`. `totals.images.accepted` counts photographs not refused at upload.
+
+**Background jobs running inside the request.** `GET /api/system/health/` has a top-level `background_jobs_inline` (boolean, always present) and, when it is
+`true`, `checks.celery.eager: true` and the celery row of `services` has `detail: "eager"` (instead of `no_workers`): `CELERY_TASK_ALWAYS_EAGER` is on, so
+uploads are processed inside the HTTP request and the progress screens have nothing to show. Show it as a notice ("Background jobs run inside the request: start a
+Celery worker and set CELERY_TASK_ALWAYS_EAGER=False"), not as an outage. The server also logs a warning when it starts and reports the system check
+`operations.W001`; production refuses to start with it on.
 
 **Failed batches and jobs** (Failed Jobs / System Monitoring screens). Every key that was there is unchanged; these are added.
 

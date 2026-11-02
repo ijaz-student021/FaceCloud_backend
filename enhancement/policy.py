@@ -5,7 +5,8 @@ measured denoising, conditional sharpening, the quality and face-fidelity
 guards. It never runs a learned enhancement model, whatever the per-model
 settings say. ``learned_v1`` is the earlier behaviour, where each model's own
 setting (ZERO_DCE_ENABLED, ...) decides; it is kept so the change is
-reversible, and is selected only by ENHANCEMENT_RENDER_POLICY.
+reversible, and is selected by ENHANCEMENT_RENDER_POLICY (or, for an automatic
+enhancement after upload, AUTO_ENHANCEMENT_RENDER_POLICY through ``use_policy``).
 
 Learned stages are never a silent fallback: under ``lightweight_v1`` a stage
 that would have run reports ``disabled by rendering policy``, and the output's
@@ -14,6 +15,9 @@ parameters name the policy, so a stored result always says what could have run.
 YuNet and SFace are not enhancement models. They keep working for face
 detection, the face-fidelity check and consented identity features.
 """
+import contextlib
+import contextvars
+
 from django.conf import settings
 
 LIGHTWEIGHT = "lightweight_v1"
@@ -61,8 +65,25 @@ DESCRIPTIONS = {
 }
 
 
+# The policy one enhancement run is told to use instead of ENHANCEMENT_RENDER_POLICY (automatic enhancement: AUTO_ENHANCEMENT_RENDER_POLICY). A context
+# variable, not a setting: it covers exactly the call it wraps, in the thread that made it, and a person's own request that runs next is not touched.
+_RUN_POLICY = contextvars.ContextVar("enhancement_run_policy", default=None)
+
+
+@contextlib.contextmanager
+def use_policy(name):
+    """Run the enclosed enhancement under ``name``; everything outside it keeps ENHANCEMENT_RENDER_POLICY."""
+    if name not in POLICIES:
+        raise ValueError(f"The rendering policy must be one of {POLICIES}, not {name!r}.")
+    token = _RUN_POLICY.set(name)
+    try:
+        yield name
+    finally:
+        _RUN_POLICY.reset(token)
+
+
 def active_policy():
-    name = getattr(settings, "ENHANCEMENT_RENDER_POLICY", LIGHTWEIGHT)
+    name = _RUN_POLICY.get() or getattr(settings, "ENHANCEMENT_RENDER_POLICY", LIGHTWEIGHT)
     if name not in POLICIES:
         raise ValueError(f"ENHANCEMENT_RENDER_POLICY must be one of {POLICIES}, not {name!r}.")
     return name

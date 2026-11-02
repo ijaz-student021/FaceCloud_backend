@@ -225,8 +225,15 @@ def model_rule(cfg):
         restricted.append("ArcFace / InsightFace weights (non-commercial)")
     if cfg.get("FACE_DETECTOR_PROVIDER") == "retinaface_v1":
         restricted.append("RetinaFace weights (terms not verified)")
-    if cfg.get("ENHANCEMENT_RENDER_POLICY", "lightweight_v1") != "lightweight_v1" and cfg.get("ZERO_DCE_ENABLED"):
+    # The policy of a person's own request, and the one automatic enhancement runs under (it is on by default): either one lets Zero-DCE run.
+    policies = {cfg.get("ENHANCEMENT_RENDER_POLICY", "lightweight_v1")}
+    if cfg.get("AUTO_ENHANCEMENT_ENABLED", False):
+        policies.add(cfg.get("AUTO_ENHANCEMENT_RENDER_POLICY", "lightweight_v1"))
+    if policies != {"lightweight_v1"} and cfg.get("ZERO_DCE_ENABLED"):
         restricted.append("Zero-DCE (licence not on file)")
+    if cfg.get("SEMANTIC_SEARCH_ENABLED") and (not cfg.get("SEMANTIC_SEARCH_MODEL_DIR") or len(str(cfg.get("SEMANTIC_SEARCH_MODEL_SHA256") or "")) != 64):
+        problems.append("SEMANTIC_SEARCH_ENABLED needs SEMANTIC_SEARCH_MODEL_DIR and the 64-character SEMANTIC_SEARCH_MODEL_SHA256 of the approved weights "
+                        "(docs/model-licenses/semantic-search-model.md): the model is checked against it before it is loaded.")
     if restricted and not cfg.get("NONCOMMERCIAL_MODELS_ACKNOWLEDGED"):
         problems.append(
             "These models are enabled without a verified commercial licence: " + "; ".join(restricted) + ". Disable them, or set "

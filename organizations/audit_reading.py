@@ -56,7 +56,7 @@ def labels_for(events):
         for pk, name in ModeratorReview.objects.filter(pk__in=wanted["ModeratorReview"]).values_list("pk", "image__original_name"):
             labels[("ModeratorReview", pk)] = name
     if "ImageUpload" in wanted:
-        for pk, name in ImageUpload.objects.filter(pk__in=wanted["ImageUpload"]).values_list("pk", "original_name"):
+        for pk, name in ImageUpload.all_objects.filter(pk__in=wanted["ImageUpload"]).values_list("pk", "original_name"):
             labels[("ImageUpload", pk)] = name
     if "UploadBatch" in wanted:
         for batch in UploadBatch.objects.filter(pk__in=wanted["UploadBatch"]):
@@ -96,7 +96,7 @@ def _search_filter(text):
         Q(actor__username__icontains=text) | Q(actor__email__icontains=text) | Q(reason__icontains=text)
         | Q(action__icontains=lowered.replace(" ", "_")) | Q(action__in=sentences)
         | Q(target_type="ModeratorReview", target_id__in=ModeratorReview.objects.filter(image__original_name__icontains=text).values("pk"))
-        | Q(target_type="ImageUpload", target_id__in=ImageUpload.objects.filter(original_name__icontains=text).values("pk"))
+        | Q(target_type="ImageUpload", target_id__in=ImageUpload.all_objects.filter(original_name__icontains=text).values("pk"))
         | Q(target_type="UploadBatch", target_id__in=UploadBatch.objects.filter(
             Q(display_name__icontains=text) | Q(original_archive_name__icontains=text)).values("pk"))
         | Q(target_type="IdentityGroup", target_id__in=IdentityGroup.objects.filter(display_name__icontains=text).values("pk"))

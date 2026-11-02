@@ -293,7 +293,22 @@ class StartupRefusalTests(SimpleTestCase):
             "IMAGE_ENCRYPTION_KEY": random_secret(48),
                 "BIOMETRIC_CONSENT_REQUIRED": "True",
             "FACIAL_DATA_RETENTION_DAYS": "365",
+            # Automatic enhancement after upload is on by default and runs the adaptive engine, which would use Zero-DCE (licence not on file): a correct production
+            # environment has decided that, here by switching Zero-DCE off.
+            "ZERO_DCE_ENABLED": "False",
         }
+
+    def test_zero_dce_left_on_under_automatic_enhancement_refuses_to_start_unless_the_licence_is_acknowledged(self):
+        refused = self.run_check({**self.production_env(), "ZERO_DCE_ENABLED": "True"})
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("Zero-DCE", refused.stderr)
+        self.assertIn("NONCOMMERCIAL_MODELS_ACKNOWLEDGED", refused.stderr)
+
+        acknowledged = self.run_check({**self.production_env(), "ZERO_DCE_ENABLED": "True", "NONCOMMERCIAL_MODELS_ACKNOWLEDGED": "True"})
+        self.assertEqual(acknowledged.returncode, 0, acknowledged.stderr[-1500:])
+
+        switched_off_automatic = self.run_check({**self.production_env(), "ZERO_DCE_ENABLED": "True", "AUTO_ENHANCEMENT_ENABLED": "False"})
+        self.assertEqual(switched_off_automatic.returncode, 0, switched_off_automatic.stderr[-1500:])
 
     def test_a_correct_production_environment_starts(self):
         result = self.run_check(self.production_env())

@@ -76,6 +76,20 @@ def notify_quality_result(decision):
         return notification
     if decision.status != decision.Status.COMPLETED:
         return None
+    from quality_control.effective import effective_decision, tips_for
+
+    # Where no moderator can decide a "needs review" verdict (a personal workspace) the photograph is accepted, with a tip, not "needs review".
+    if decision.decision == decision.Decision.NEEDS_REVIEW and effective_decision(image, decision.decision) == "accepted":
+        tips = tips_for(decision.rejection_reasons)
+        notification, _ = create_user_notification(
+            **common,
+            event_type=UserNotification.EventType.PHOTO_ACCEPTED,
+            idempotency_key=f"image:{image.pk}:quality:accepted",
+            title="Photo accepted",
+            message=f"{image.original_name} was accepted." + (f" Tip: {tips[0]}" if tips else ""),
+            severity=UserNotification.Severity.SUCCESS,
+        )
+        return notification
     if decision.decision == decision.Decision.ACCEPTED:
         event_type = UserNotification.EventType.PHOTO_ACCEPTED
         title = "Photo accepted"
@@ -225,6 +239,29 @@ def notify_member_of_review_decision(review, actor):
     return notification
 
 
+def notify_folders_may_match(batch, pairs):
+    """Tell the owner of ``batch`` that some of their person folders may be the same person (once per batch; ``pairs`` as ``identities.suggestions`` returns them).
+
+    In-app only, switched by the ``person_group_created`` preference. Nothing is merged: the message sends them to their person folders.
+    """
+    folders = {folder for pair in pairs for folder in (pair["source_group"], pair["target_group"])}
+    if not folders:
+        return None
+    notification, _ = create_user_notification(
+        recipient=batch.owner,
+        event_type=UserNotification.EventType.IDENTITY_MERGE_SUGGESTED,
+        idempotency_key=f"batch:{batch.pk}:folders-may-match",
+        title="Some of your person folders may be the same person",
+        message=f"{len(folders)} of your person folders may be the same person. Check them and merge the ones that are.",
+        severity=UserNotification.Severity.INFO,
+        resource_type="batch",
+        resource_id=batch.pk,
+        action_path="/dashboard/groups",
+        metadata={"batch_id": batch.pk, "folder_count": len(folders), "suggested_merge_count": len(pairs)},
+    )
+    return notification
+
+
 def notify_moderator_review_overdue(review):
     """Tell whoever can act on a review that it has passed its deadline.
 
@@ -307,6 +344,39 @@ def notify_enhancement_result(result):
         )
         return notification
     return None
+
+
+def notify_batch_enhanced(batch_id, counts):
+    """Once per batch, when its automatic enhancements are all finished: "3 photos enhanced". Never one per photograph (enhancement/auto.py)."""
+    from uploads.models import UploadBatch
+
+    batch = UploadBatch.objects.select_related("owner").filter(pk=batch_id).first()
+    if batch is None:
+        return None
+    enhanced, kept, failed, skipped = (int(counts.get(key, 0)) for key in ("enhanced", "kept", "failed", "skipped"))
+    message = f"{enhanced} photo{'s' if enhanced != 1 else ''} enhanced"
+    details = []
+    if kept:
+        details.append(f"{kept} kept as uploaded because enhancing them would not have helped")
+    if failed:
+        details.append(f"{failed} could not be enhanced")
+    if skipped:
+        details.append(f"{skipped} not enhanced")
+    if details:
+        message += " (" + "; ".join(details) + ")"
+    notification, _ = create_user_notification(
+        recipient=batch.owner,
+        event_type=UserNotification.EventType.BATCH_ENHANCED,
+        idempotency_key=f"batch:{batch.pk}:enhanced",
+        title="Photos enhanced",
+        message=message + ".",
+        severity=UserNotification.Severity.WARNING if failed else UserNotification.Severity.SUCCESS,
+        resource_type="batch",
+        resource_id=batch.pk,
+        action_path=JOBS_PATH,
+        metadata={"batch_id": batch.pk, "enhanced": enhanced, "kept": kept, "failed": failed, "skipped": skipped, "total": int(counts.get("total", 0))},
+    )
+    return notification
 
 
 def notify_batch_completed(batch_id, counts=None):

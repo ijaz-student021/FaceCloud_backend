@@ -178,9 +178,22 @@ def process_quality_decision(decision_id):
         result.processing_duration_ms = max(1, round((time.perf_counter() - started) * 1000))
         result.finished_at = timezone.now()
         result.save()
-        if decision == "needs_review":
+        from quality_control.effective import moderator_can_decide
+
+        if decision == "needs_review" and moderator_can_decide(result.image):      # a personal workspace has no moderator: nothing to queue
             from moderation.services import create_review_for_quality_decision
             create_review_for_quality_decision(result)
+        # Person folders follow the verdict: queued here, in the same transaction as the decision, so the photograph's progress never shows it finished in
+        # between (accepted: now; rejected: never; needs_review: now in a personal workspace, else after a moderator approves it). Never raises.
+        from identities.verdict import group_after_verdict
+        group_after_verdict(result.image, verdict=decision)
+        # The photograph is enhanced automatically on the same terms (enhancement/auto.py): accepted now, rejected never, needs_review now in a personal
+        # workspace, else after a moderator approves it. Same transaction as the decision, never raises, and never makes a second enhancement.
+        from enhancement.auto import enhance_after_verdict
+        enhance_after_verdict(result.image, verdict=decision)
+        # Search by what is in the photograph indexes it once the verdict is committed (only when that feature is switched on; accepted photographs only).
+        from search.semantic.service import index_after_verdict
+        index_after_verdict(result.image)
         return result
     except Exception as error:
         result.status = ImageQualityDecision.Status.FAILED
