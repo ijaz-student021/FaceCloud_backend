@@ -2,6 +2,7 @@ import hashlib
 import shutil
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, wait
 from functools import lru_cache
 from pathlib import Path
 
@@ -11,8 +12,9 @@ from django.conf import settings
 from enhancement.policy import learned_stage_enabled
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
+from django.core.cache.backends.locmem import LocMemCache
 from django.core.mail import get_connection
-from django.db import connection
+from django.db import connection, connections
 from django.utils import timezone
 
 from config.celery import app as celery_app
@@ -265,18 +267,64 @@ def _services(checks, jobs, checked_at):
     return rows
 
 
-def build_system_health():
+def _failed_check(name, code, latency_ms=0.0):
+    return {"status": UNAVAILABLE if name in REQUIRED_CHECKS else DEGRADED, "latency_ms": latency_ms, "code": code}
+
+
+def _run_check(name, checker):
+    """One check, in its own thread: a failure is the check's own result, and the thread's database connection is closed when it ends."""
+    try:
+        return checker()
+    except Exception:
+        return _failed_check(name, "check_failed")
+    finally:
+        connections.close_all()
+
+
+def run_checks():
+    """Every check at the same time, waiting at most ``SYSTEM_HEALTH_DEADLINE_SECONDS`` for all of them.
+
+    They used to run one after another, so a stopped Redis made the answer wait for each timeout in turn (6 to 18 seconds; the worker inspection alone waits about 6). A check that has
+    not answered by the deadline is reported as failed with the code ``timeout`` (``unavailable`` for a required service, ``degraded`` for the others) and its thread is left to finish
+    on its own.
+    """
+    deadline = settings.SYSTEM_HEALTH_DEADLINE_SECONDS
+    pool = ThreadPoolExecutor(max_workers=max(len(CHECKS), 1), thread_name_prefix="system-health")
+    futures = {name: pool.submit(_run_check, name, checker) for name, checker in CHECKS.items()}
+    done, _late = wait(futures.values(), timeout=deadline)
+    pool.shutdown(wait=False, cancel_futures=True)
+    return {
+        name: future.result() if future in done else _failed_check(name, "timeout", round(deadline * 1000, 2))
+        for name, future in futures.items()
+    }
+
+
+# The finished answer is kept for a few seconds, so several admin screens and the bell asking at once cost one round of checks. It lives in this process's memory on purpose: the cache
+# server may be the very thing that is down, and asking it would be one more thing to wait for.
+_health_cache = LocMemCache("system-health", {"TIMEOUT": None, "OPTIONS": {"MAX_ENTRIES": 4}})
+HEALTH_CACHE_KEY = "system-health"
+
+
+def clear_health_cache():
+    _health_cache.clear()
+
+
+def build_system_health(use_cache=False):
+    """The system health answer. ``use_cache`` (what the endpoint passes) returns a copy made in the last ``SYSTEM_HEALTH_CACHE_SECONDS`` seconds, if there is one."""
+    seconds = settings.SYSTEM_HEALTH_CACHE_SECONDS if use_cache else 0
+    if seconds > 0:
+        cached = _health_cache.get(HEALTH_CACHE_KEY)
+        if cached is not None:
+            return cached
+    health = _build_system_health()
+    if seconds > 0:
+        _health_cache.set(HEALTH_CACHE_KEY, health, timeout=seconds)
+    return health
+
+
+def _build_system_health():
     started = time.perf_counter()
-    checks = {}
-    for name, checker in CHECKS.items():
-        try:
-            checks[name] = checker()
-        except Exception:
-            checks[name] = {
-                "status": UNAVAILABLE if name in REQUIRED_CHECKS else DEGRADED,
-                "latency_ms": 0.0,
-                "code": "check_failed",
-            }
+    checks = run_checks()
 
     if any(checks[name]["status"] == UNAVAILABLE for name in REQUIRED_CHECKS):
         overall = UNAVAILABLE

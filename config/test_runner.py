@@ -37,6 +37,9 @@ def _cache_clearing(result_class):
     class CacheClearingResult(result_class):
         def startTest(self, test):
             cache.clear()
+            from operations.services import clear_health_cache
+
+            clear_health_cache()                      # the health answer is kept in process memory, not in the cache above
             super().startTest(test)
 
     CacheClearingResult.__name__ = result_class.__name__

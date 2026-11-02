@@ -109,9 +109,15 @@ class FaceSharpnessTests(SimpleTestCase):
         decision, reasons, _ = make_decision(metrics, calculate_scores(metrics), validation("rejected", reason="no_face"))
         self.assertEqual((decision, reasons), ("rejected", ["no_face"]))
 
-    def test_lighting_rules_are_untouched_in_this_phase(self):
-        metrics = {**GOOD, "mean_luminance": 20.0, "sharpness_basis": "face"}
-        decision, reasons, _ = make_decision(metrics, calculate_scores(metrics), validation())
+    def test_darkness_is_a_warning_and_only_a_practically_black_photograph_is_refused(self):
+        """Face sharpness does not touch the lighting rules; those are the dark-photograph rules (quality_control/test_dark_photos.py): lifted when dark, refused when black."""
+        dark = {**GOOD, "mean_luminance": 20.0, "sharpness_basis": "face"}
+        decision, reasons, _ = make_decision(dark, calculate_scores(dark), validation())
+        self.assertEqual(decision, "needs_review")
+        self.assertIn("underexposed", reasons)
+        self.assertNotIn("severe_underexposure", reasons)
+        black = {**GOOD, "mean_luminance": 3.0, "sharpness_basis": "face"}
+        decision, reasons, _ = make_decision(black, calculate_scores(black), validation())
         self.assertEqual(decision, "rejected")
         self.assertIn("severe_underexposure", reasons)
 

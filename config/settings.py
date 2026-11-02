@@ -103,6 +103,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    "config.errors.ApiJsonNotFoundMiddleware",
 ]
 
 # Open CORS is a development convenience only; it defaults to on solely in DEBUG.
@@ -725,7 +726,10 @@ QUALITY_REJECT_SHARPNESS = env.float("QUALITY_REJECT_SHARPNESS", default=20.0)
 QUALITY_REVIEW_SHARPNESS = env.float("QUALITY_REVIEW_SHARPNESS", default=60.0)
 QUALITY_REJECT_MIN_EDGE = env.int("QUALITY_REJECT_MIN_EDGE", default=240)
 QUALITY_REVIEW_MIN_EDGE = env.int("QUALITY_REVIEW_MIN_EDGE", default=480)
-QUALITY_REJECT_MIN_LUMINANCE = env.float("QUALITY_REJECT_MIN_LUMINANCE", default=25.0)
+# A dark photograph is lifted by the low-light enhancement, not refused: it is refused only when it has no usable signal, which is a mean brightness below QUALITY_REJECT_MIN_LUMINANCE
+# (about 6 of 255: practically black) or almost no contrast (QUALITY_REJECT_CONTRAST, scaled down for a dark photograph, see quality_control/services.make_decision). Between that
+# and QUALITY_REVIEW_MIN_LUMINANCE it carries the warning "underexposed".
+QUALITY_REJECT_MIN_LUMINANCE = env.float("QUALITY_REJECT_MIN_LUMINANCE", default=6.0)
 QUALITY_REVIEW_MIN_LUMINANCE = env.float("QUALITY_REVIEW_MIN_LUMINANCE", default=55.0)
 QUALITY_REJECT_MAX_LUMINANCE = env.float("QUALITY_REJECT_MAX_LUMINANCE", default=235.0)
 QUALITY_REVIEW_MAX_LUMINANCE = env.float("QUALITY_REVIEW_MAX_LUMINANCE", default=210.0)
@@ -996,6 +1000,12 @@ if CELERY_BROKER_TRANSPORT_OPTIONS["visibility_timeout"] <= CELERY_TASK_TIME_LIM
     )
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 SYSTEM_HEALTH_TIMEOUT_SECONDS = env.float("SYSTEM_HEALTH_TIMEOUT_SECONDS", default=1.0)
+# GET /api/system/health/ runs its checks at the same time and waits at most this long for all of them (a check still running is reported as a timeout), and keeps the finished answer for
+# SYSTEM_HEALTH_CACHE_SECONDS (0 turns that off). With a service down the answer used to take 6 to 18 seconds.
+SYSTEM_HEALTH_DEADLINE_SECONDS = env.float("SYSTEM_HEALTH_DEADLINE_SECONDS", default=2.0)
+SYSTEM_HEALTH_CACHE_SECONDS = env.float("SYSTEM_HEALTH_CACHE_SECONDS", default=5.0)
+if SYSTEM_HEALTH_DEADLINE_SECONDS <= 0 or SYSTEM_HEALTH_CACHE_SECONDS < 0:
+    raise ImproperlyConfigured("SYSTEM_HEALTH_DEADLINE_SECONDS must be above 0 and SYSTEM_HEALTH_CACHE_SECONDS cannot be negative.")
 FACECLOUD_VERSION = env("FACECLOUD_VERSION", default="dev")
 # Send the model-loading tasks to their own queue (empty = the default queue, as before); see config/celery_routes.py.
 ENHANCEMENT_QUEUE_NAME = env("ENHANCEMENT_QUEUE_NAME", default="")

@@ -44,6 +44,8 @@ one helper that accepts both shapes.
 Registration is a two-step flow. No account exists until the link in the
 verification email is opened.
 
+**Length limits on the public forms.** A login identifier (`identifier`, `username` or `email`) and any email on a public form (sign-up, password reset) may be at most **254** characters, a password at most **1024**, a reset or invitation token at most 256. A longer value is a `400` with the field named and a plain sentence (for example `{"identifier": ["This is too long: use at most 254 characters."]}`), never a 500. Use `maxlength` on those inputs.
+
 ```text
 POST /api/auth/register/            {full_name, email, password, password_confirm?, username?}
    -> 202 {registration_id, ...}    (an email with a link is sent)
@@ -1210,6 +1212,9 @@ hide these routes, but never rely on that for security.
 | Image Monitoring | `GET /api/system/images/`, `.../{id}/`, `.../{id}/preview/` |
 | Users, Moderators | `GET/POST /api/user/admin/users/`, `PATCH /api/user/admin/users/{id}/` |
 
+
+`GET /api/system/health/` runs its seven checks at the same time and waits at most 2 seconds for all of them, so with a service down it still answers in about 2 seconds (it used to take 6 to 18) with all seven services listed; a check that has not answered by then is reported with `code: "timeout"` (`down` for the database, cache/broker and storage, `degraded` for the others). The finished answer is kept for 5 seconds, so `checked_at` can be up to 5 seconds old and several screens asking at once cost one round of checks. The shape, and the 503 when a required service is down, are unchanged.
+
 **Analytics `overview`** (additive; every existing key is unchanged). All counts are for the chosen window (default 30 days) unless said otherwise:
 
 ```json
@@ -1268,6 +1273,8 @@ kind `upload_batch` is described exactly like the failed-batch list above, inclu
 `GET /api/system/moderation/` has no failure rows: it counts reviews. `organizations_needing_attention[]` is `{organization_id, organization_name, pending, in_review,
 escalated, stale_open, overdue, oldest_open_at}` and `moderator_workload[]` is `{moderator_id, username, assigned_open, decided_total}`. A batch that failed in an
 organization is in the failed-batch list (and the organization's moderators and owners are notified, `moderator_batch_failed`).
+
+**Personal workspaces are not monitored.** A person with no team has a personal workspace, which has no moderator: a photograph the checks are unsure about opens no review there (the owner decides; the photograph stays usable), and personal workspaces are left out of `totals`, `organizations_needing_attention` and `moderator_workload`. `python manage.py close_personal_reviews` (dry run; `--apply` to change) closes the pending reviews that were opened there before this was fixed, with the reason "No moderator in a personal workspace" and no deciding moderator.
 
 **Audit search.** `GET /api/system/audit/?q=` keeps only rows whose actor's name (username, or the identifier typed at a failed
 sign-in), event (its stored name, or the sentence the screen shows: "signed in" finds `login`) or category (its name or label, for example

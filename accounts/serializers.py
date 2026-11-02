@@ -45,16 +45,26 @@ def clean_full_name(value):
     return cleaned
 
 
+# Public endpoints take text from anyone, so every identifier, email and password has a ceiling: 254 characters is the longest an email address can be, and no real password needs more
+# than 1024. Without it a 300,000-character identifier reached a LIKE query (HTTP 500 on SQLite) and a huge password reached the password hasher.
+MAX_IDENTIFIER_LENGTH = 254
+MAX_PASSWORD_LENGTH = 1024
+TOO_LONG_IDENTIFIER = {"max_length": f"This is too long: use at most {MAX_IDENTIFIER_LENGTH} characters."}
+TOO_LONG_PASSWORD = {"max_length": f"The password is too long: use at most {MAX_PASSWORD_LENGTH} characters."}
+
+
 class RegisterSerializer(serializers.Serializer):
     full_name = serializers.CharField(max_length=150)
     # Optional: when absent (or blank) the view derives it from the email's local part.
     username = serializers.CharField(max_length=150, required=False, allow_blank=True)
-    email = serializers.EmailField(required=True, allow_blank=False)
-    password = serializers.CharField(write_only=True, trim_whitespace=False)
+    email = serializers.EmailField(required=True, allow_blank=False, max_length=MAX_IDENTIFIER_LENGTH, error_messages=TOO_LONG_IDENTIFIER)
+    password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=MAX_PASSWORD_LENGTH, error_messages=TOO_LONG_PASSWORD)
     password_confirm = serializers.CharField(
         required=False,
         write_only=True,
         trim_whitespace=False,
+        max_length=MAX_PASSWORD_LENGTH,
+        error_messages=TOO_LONG_PASSWORD,
     )
     invitation_token = serializers.CharField(
         required=False, allow_blank=True, write_only=True, max_length=256,
@@ -104,10 +114,10 @@ class ResendVerificationSerializer(serializers.Serializer):
 
 
 class FaceCloudTokenObtainPairSerializer(serializers.Serializer):
-    identifier = serializers.CharField(required=False, write_only=True)
-    username = serializers.CharField(required=False, write_only=True)
-    email = serializers.EmailField(required=False, write_only=True)
-    password = serializers.CharField(write_only=True, trim_whitespace=False)
+    identifier = serializers.CharField(required=False, write_only=True, max_length=MAX_IDENTIFIER_LENGTH, error_messages=TOO_LONG_IDENTIFIER)
+    username = serializers.CharField(required=False, write_only=True, max_length=MAX_IDENTIFIER_LENGTH, error_messages=TOO_LONG_IDENTIFIER)
+    email = serializers.EmailField(required=False, write_only=True, max_length=MAX_IDENTIFIER_LENGTH, error_messages=TOO_LONG_IDENTIFIER)
+    password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=MAX_PASSWORD_LENGTH, error_messages=TOO_LONG_PASSWORD)
 
     @staticmethod
     def get_dashboard(user):
@@ -303,13 +313,13 @@ class ChangePasswordSerializer(serializers.Serializer):
 
 
 class PasswordResetRequestSerializer(serializers.Serializer):
-    email = serializers.EmailField()
+    email = serializers.EmailField(max_length=MAX_IDENTIFIER_LENGTH, error_messages=TOO_LONG_IDENTIFIER)
 
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
-    uidb64 = serializers.CharField()
-    token = serializers.CharField()
-    new_password = serializers.CharField(write_only=True, trim_whitespace=False)
+    uidb64 = serializers.CharField(max_length=64)
+    token = serializers.CharField(max_length=256)
+    new_password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=MAX_PASSWORD_LENGTH, error_messages=TOO_LONG_PASSWORD)
 
     def validate(self, attrs):
         try:
