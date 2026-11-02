@@ -69,6 +69,11 @@ class Limits:
     face_deblur_min_detail_gain: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN", 1.25)))   # a deblur chosen for a blurred *face* must raise the face's own detail at least this much
     face_max_detail: float = 260.0          # above this (sharp faces: median 119, p90 175) the detail is probably invented
     face_landmark_shift_max: float = 0.04   # of the face width, mean over the five landmarks
+    # On a tiny face the detector's own jitter is a large share of the face width: a 21 px silhouette measured 0.078 (1.6 px) for a super-resolution
+    # candidate that passed every other gate (data consistency 49.6 dB, detail 1.25x), so a photograph with a speck of a "face" could never be
+    # enlarged. A displacement under this many pixels of the ORIGINAL photograph is detection noise, not a changed face. It never applies to a
+    # generative face restoration (always strict) nor to polish (its own 0.02 gate), and a face that is no longer found is still a loss.
+    landmark_pixel_floor: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_LANDMARK_PIXEL_FLOOR", 2.0)))
     # An upscaled candidate's landmarks are found again on an interpolated image, so a little jitter is not a changed face: plain bicubic
     # enlargement of three 240 px portraits already shifted them by 0.019, 0.026 and 0.037 (measured on real photographs).
     face_landmark_shift_max_upscale: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX", 0.06)))
@@ -322,6 +327,10 @@ class FinalImageQualityValidator:
         shift_max = self.limits.face_landmark_shift_max_upscale if operation == "super_resolution" else self.limits.face_landmark_shift_max
         if operation == "polish":
             shift_max = self.limits.polish_face_landmark_shift_max
+        elif operation != "face_restoration" and self.limits.landmark_pixel_floor > 0:
+            widths = [face.box[2] for face in self.original_report.faces if face.landmarks and len(face.landmarks) == 5 and face.box[2] > 0]
+            if widths:
+                shift_max = max(shift_max, self.limits.landmark_pixel_floor / (sum(widths) / len(widths)))
         landmarks_ok = shift is not None and shift <= shift_max
         status = {"passed": landmarks_ok, "landmark_shift": None if shift is None else round(shift, 4)}
         if not landmarks_ok:

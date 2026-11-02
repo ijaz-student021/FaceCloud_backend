@@ -317,9 +317,13 @@ if AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES < 1:
 #   many times.
 # ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX: the largest mean landmark displacement (as a share of the face width) an upscaled candidate may show;
 #   plain bicubic enlargement of 240 px portraits measured 0.019 to 0.037, other operations keep 0.04.
+# ADAPTIVE_LANDMARK_PIXEL_FLOOR: a landmark displacement under this many pixels of the ORIGINAL photograph is detector jitter on a tiny
+#   face, not a changed face (a 21 px face moved 1.6 px = 0.078 of its width for a candidate that passed every other gate). It raises the
+#   share limit only for faces under limit-share/floor wide, never for face restoration or polish; 0 switches it off.
 ADAPTIVE_FACE_BLUR_HIGH = env.float("ADAPTIVE_FACE_BLUR_HIGH", default=25.0)
 ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN = env.float("ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN", default=1.25)
 ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX = env.float("ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX", default=0.06)
+ADAPTIVE_LANDMARK_PIXEL_FLOOR = env.float("ADAPTIVE_LANDMARK_PIXEL_FLOOR", default=2.0)
 NAFNET_MODEL_PATH = env(
     "NAFNET_MODEL_PATH",
     default=str(BASE_DIR / ".runtime" / "models" / "NAFNet-GoPro-width64.pth"),
