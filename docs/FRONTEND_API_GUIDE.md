@@ -345,8 +345,13 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}     -> 201
   say so, so a barely changed photograph is never presented as restored:
   - `applied_stages`: what changed the pixels, in order: `[{"stage": "deblur", "engine": "nafnet_gopro", "variant": "blend 1.0"},
     {"stage": "upscale", "engine": "realesrgan", "variant": "x2", "scale": 2, "input_size": [240, 320], "output_size": [480, 640]}]`.
-    Stages: `low_light`, `denoise`, `deblur`, `face_restore`, `upscale`. `[]` when nothing changed.
-  - `skipped_stages`: restoration the photograph called for that did not run: `[{"stage": "face_restore", "reason": "codeformer: switched
+    Stages: `low_light`, `denoise`, `deblur`, `face_restore`, `upscale`, and `polish` (a gentle contrast and sharpness polish of a
+    photograph with nothing to fix, only when the operator turned `ADAPTIVE_POLISH_ENABLED` on: `{"stage": "polish", "engine":
+    "opencv_polish", "variant": "blend 0.65"}`, summary "Polished: balanced the contrast and sharpened lightly.", outcome
+    `enhanced`; give it a label such as "Polish"). `[]` when nothing changed.
+  - `skipped_stages`: restoration the photograph called for that did not run (and, with polish on, `{"stage": "polish", "reason":
+    "Already balanced and sharp: nothing to improve."}` when a polish was tried and the photograph was left as it was; that is not a
+    failure and never feeds `hd_unavailable_reason`): `[{"stage": "face_restore", "reason": "codeformer: switched
     off (CODEFORMER_ENABLED=False), ..."}]`.
   - `hd_unavailable_reason`: one sentence when restoration was needed and not done (`"Restoration was needed but not available on this
     server: deblur (nafnet_gopro: checkpoint not found at ...)"`), else `null`. Show it where you would show "HD", for example "HD

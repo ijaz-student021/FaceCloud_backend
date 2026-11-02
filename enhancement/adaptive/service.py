@@ -185,6 +185,8 @@ class AdaptiveImageEnhancementService:
             return ops.run_deblur(image, engine, variant["blend"])
         if operation == ops.FACE:
             return ops.run_face_restoration(image, engine, variant["fidelity"])
+        if operation == ops.POLISH:
+            return ops.run_polish(image, engine, variant)
         return ops.run_upscale(image, engine, variant["scale"])
 
     def _unavailable_errors(self):
@@ -294,11 +296,15 @@ class AdaptiveImageEnhancementService:
             warnings.append(identity.reason)
 
         timed_out = False
+        polish_style = getattr(style, "value", style)
         while True:
             if time.perf_counter() - started > self.config.time_budget_seconds or timed_out:
                 warnings.append("The time budget was reached; remaining operations were not attempted.")
                 break
-            decision = self.router.next_step(report, done)
+            # Polish is for a photograph on which nothing else was found: offered only while it is switched on (ADAPTIVE_POLISH_ENABLED,
+            # off unless the operator turns it on) and no operation has been attempted yet, so it is never stacked on another one.
+            polish = {"style": polish_style} if settings.ADAPTIVE_POLISH_ENABLED and not stages else None
+            decision = self.router.next_step(report, done, polish) if polish else self.router.next_step(report, done)
             for item in decision.skipped:
                 if item not in skipped:
                     skipped.append(item)
@@ -417,7 +423,7 @@ class AdaptiveImageEnhancementService:
     @staticmethod
     def _debug_name(operation):
         return {ops.LOW_LIGHT: "02_low_light", ops.DENOISE: "03_denoised", ops.DEBLUR: "04_deblurred",
-                ops.FACE: "05_face_restored", ops.UPSCALE: "06_upscaled"}[operation]
+                ops.FACE: "05_face_restored", ops.UPSCALE: "06_upscaled", ops.POLISH: "06b_polished"}[operation]
 
     @staticmethod
     def _chosen_model(pool, stage):
@@ -427,10 +433,12 @@ class AdaptiveImageEnhancementService:
     @staticmethod
     def _summary(outcome, stages, skipped, remaining):
         words = {ops.LOW_LIGHT: "brightened the dark subject", ops.DENOISE: "reduced noise", ops.DEBLUR: "reduced motion blur",
-                 ops.FACE: "restored a degraded face", ops.UPSCALE: "enlarged the photograph"}
+                 ops.FACE: "restored a degraded face", ops.UPSCALE: "enlarged the photograph",
+                 ops.POLISH: "balanced the contrast and sharpened lightly"}
         done = [words[s["operation"]] for s in stages if s["status"] == "accepted"]
         if outcome == ORIGINAL_PRESERVED:
-            rejected = [s for s in stages if s["status"] in ("rejected", "unavailable", "no_engine")]
+            # A polish that was tried and refused is not a defect that could not be fixed: it says "nothing to improve", not "unsafe".
+            rejected = [s for s in stages if s["status"] in ("rejected", "unavailable", "no_engine") and s["operation"] != ops.POLISH]
             if any(s.get("timed_out") for s in stages):
                 return "The enhancement ran out of time, so the original photograph was kept."
             if rejected and all(s["status"] in ("unavailable", "no_engine") for s in rejected):
@@ -448,7 +456,7 @@ class AdaptiveImageEnhancementService:
             if found:
                 return "The original photograph was kept: it has " + "; ".join(found) + "."
             return "The photograph did not need enhancement, so it was left as it is."
-        text = "Enhanced: " + ", ".join(done) + "."
+        text = ("Polished: " if [s["operation"] for s in stages if s["status"] == "accepted"] == [ops.POLISH] else "Enhanced: ") + ", ".join(done) + "."
         if remaining:
             text += " Not fully corrected: " + " ".join(sorted({UNADDRESSABLE_REASONS.get(item, item) for item in remaining})) + ""
         return text

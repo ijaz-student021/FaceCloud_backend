@@ -99,6 +99,35 @@ Turn restoration on only after validating it on a larger, more diverse set of fa
 * **Denoising** offers blend 1.0 and 0.65 and lets the validator choose, because 65 % beat full strength on light-to-moderate noise and
   full strength won on heavy noise (`docs/evaluation/2026-10-15-denoising.md`).
 
+## 5a. Polish: a gentle improvement for a photograph with nothing to fix (`ADAPTIVE_POLISH_ENABLED`, off by default)
+
+Without it, a well-lit, sharp photograph runs no operation and ends as `original_preserved`. With `ADAPTIVE_POLISH_ENABLED=True` the
+router may offer one more operation, **polish**, and only for a photograph on which nothing else was found:
+
+* the analyzer recommends no operation, none was tried (a rejected low-light lift, denoise, ... also blocks polish) and none was applied;
+* the scene is not a `dark_scene` left as photographed;
+* the style is `natural` (CLAHE share 25 %, unsharp amount 0.25) or `dynamic` (55 %, 0.50); `ai_max` is unchanged and never polished;
+* the engine is OpenCV and NumPy only (`opencv_polish`): no model, no licence, nothing to install.
+
+What it does, on CIELAB lightness first: (a) local contrast, CLAHE (clip 1.5, 8 x 8 tiles) blended in at the style's share, keeping
+only its mid-scale band (the full CLAHE change also lifted grain and JPEG blocks: noise estimate x1.17 and landmark jitter of 1.9 %
+on two compressed portraits, measured in `docs/evaluation/2026-10-24-adaptive-polish.md`); (b) a lightness-only unsharp mask (sigma 1.2
+at the 1024 px working scale, soft threshold so grain and flat regions are not amplified), lower inside a face and none at all for a
+face that is already sharp (detail 119 to 175 is the measured range of a sharp face); (c) a levels stretch of at most 8 %, only when the
+1st to 99th percentile of lightness covers under 85 % of the range, never into clipping; (d) at most 6 % more chroma, on low-chroma
+pixels only. Two variants (`blend 1.0`, `blend 0.65`) are proposed, like the other operations.
+
+The result is kept only if **all** of these hold (`Limits.polish_*` in `validator.py`): the main face's detail or the frame's contrast
+(standard deviation of luminance) rises by at least 5 % and none of face detail, frame contrast, local contrast and frame sharpness gets
+worse; a face does not leave the sharp range (detail 175, or 10 % above a face that was already above it); no more than 0.5 percentage
+points of newly clipped highlights; the noise estimate is not more than 10 % worse; the mean CIELAB distance from the original is at
+most 3; face landmarks move by at most 2 % of the face width; and the existing gates (data consistency, colour, halos, identity) pass.
+Otherwise the output is the original pixels, `original_preserved`, and `skipped_stages` carries
+`{"stage": "polish", "reason": "Already balanced and sharp: nothing to improve."}`. A polished result is `enhanced` (or
+`partially_enhanced` when a defect the engine cannot fix remains, as for any operation), with the summary "Polished: balanced the
+contrast and sharpened lightly." Polish never changes a photograph that has a defect, and with the flag off the engine is
+byte-for-byte what it was (`enhancement/test_adaptive_polish.py`, and the golden before/after run in the evaluation note).
+
 ## 5. Outcomes and the API contract
 
 `GET /api/enhancements/results/{id}/` now also returns:

@@ -16,6 +16,9 @@ Rules, each tied to a measured condition in the ``QualityReport``:
 * **Face restoration** only for a face whose quality is "poor" and which is large enough to restore (a smaller face is
   not reconstructed, however damaged), never for a good one; variants start at high fidelity (little change).
 * **Super-resolution** only when the photograph (or its face) is genuinely small, at the smallest useful scale.
+* **Polish** (OpenCV only, off unless ``ADAPTIVE_POLISH_ENABLED``) only for a photograph on which nothing else was found: the analyzer
+  recommends no operation, none was tried or applied, and the scene is not a dark one left as photographed. A dark photograph gets the
+  low-light logic, a defective one its own operation; polish is never stacked on either.
 """
 from dataclasses import dataclass, field
 
@@ -40,13 +43,17 @@ class AdaptiveEnhancementRouter:
     def __init__(self, config):
         self.config = config
 
-    def next_step(self, report, done):
-        """The next operation to try given the current ``report`` and the operations already attempted."""
+    def next_step(self, report, done, polish=None):
+        """The next operation to try given the current ``report`` and the operations already attempted.
+
+        ``polish`` is ``None`` (the default: the polish operation is not offered) or ``{"style": ...}``, which the service passes only
+        while polish is switched on and no operation has been attempted for this photograph.
+        """
         skipped = []
         for operation in ops.ORDER:
             if operation in done:
                 continue
-            step, reason = self._consider(operation, report)
+            step, reason = self._consider(operation, report, polish)
             if step is not None:
                 return Decision(step, skipped)
             if reason:
@@ -54,9 +61,11 @@ class AdaptiveEnhancementRouter:
         return Decision(None, skipped)
 
     # -- one operation ----------------------------------------------------------------------------------------
-    def _consider(self, operation, report):
+    def _consider(self, operation, report, polish=None):
         engines = ops.enabled_engines(operation)
         main = report.main_face
+        if operation == ops.POLISH:
+            return self._consider_polish(report, polish, engines)
         if operation == ops.LOW_LIGHT:
             if report.exposure["status"] == "dark_scene":
                 return None, "The scene is dark but the subject is visible: left as photographed."
@@ -125,3 +134,16 @@ class AdaptiveEnhancementRouter:
             return Step(operation, engines, [{"name": f"x{scale}", "scale": scale}],
                         "The photograph is small." if small_image else "The face is small."), ""
         return None, ""
+
+    @staticmethod
+    def _consider_polish(report, polish, engines):
+        """A gentle polish for a photograph with nothing to fix. Not a defect operation: refusing it is not recorded as a skip."""
+        if not polish or not engines:
+            return None, ""
+        strength = ops.POLISH_STRENGTH.get(str(polish.get("style")))
+        if strength is None or report.exposure["status"] == "dark_scene" or report.recommended_operations:
+            return None, ""
+        faces = [[*face.box, face.detail] for face in report.faces]
+        variants = [{"name": f"blend {blend}", "blend": blend, "clahe": strength[0], "amount": strength[1], "faces": faces}
+                    for blend in (1.0, 0.65)]
+        return Step(ops.POLISH, engines, variants, "No defect was found; a gentle polish may still help."), ""

@@ -24,8 +24,9 @@ logger = logging.getLogger(__name__)
 # stage name in the API -> the adaptive engine's operation name
 OPERATION_STAGE = {
     "low_light_enhancement": "low_light", "denoising": "denoise", "motion_deblurring": "deblur",
-    "face_restoration": "face_restore", "super_resolution": "upscale",
+    "face_restoration": "face_restore", "super_resolution": "upscale", "polish": "polish",
 }
+POLISH_REFUSED_REASON = "Already balanced and sharp: nothing to improve."
 RESTORATION_OPERATIONS = ("motion_deblurring", "face_restoration", "super_resolution")
 
 # stage -> engines in preference order: (engine, enabled setting, checkpoint path setting, checksum setting, licence)
@@ -147,7 +148,11 @@ def _from_adaptive(parameters, adaptive):
     reason = None
     if unmet:
         reason = ("Restoration was needed but not completed: " + "; ".join(f"{s['stage']} ({s['reason']})" for s in unmet))
-    return {"applied_stages": applied, "skipped_stages": unmet, "hd_unavailable_reason": reason}
+    listed = list(unmet)
+    if any(stage.get("operation") == "polish" and stage.get("status") == "rejected" for stage in adaptive.get("stages", [])):
+        # A polish that was tried and refused is reported, but it is not a restoration that was needed: it never feeds the reason above.
+        listed.append({"stage": "polish", "reason": POLISH_REFUSED_REASON})
+    return {"applied_stages": applied, "skipped_stages": listed, "hd_unavailable_reason": reason}
 
 
 def _from_staged(parameters, empty):
