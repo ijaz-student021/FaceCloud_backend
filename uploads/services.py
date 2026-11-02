@@ -14,6 +14,7 @@ from PIL import Image, ImageColor, UnidentifiedImageError
 from rest_framework.exceptions import ValidationError
 
 from .decoding import to_working_colour
+from .enlarge import enlarge_small_image
 from .models import BatchImageProgress, ImagePreprocessingResult, ImageUpload, UploadBatch
 from .validators import safe_original_name, validate_image_file, validate_zip_archive
 
@@ -307,6 +308,7 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
                 (settings.PREPROCESS_MAX_WIDTH, settings.PREPROCESS_MAX_HEIGHT),
                 Image.Resampling.LANCZOS,
             )
+            working, enlargement = enlarge_small_image(working)   # a very small photograph is enlarged here (off unless SMALL_IMAGE_ENLARGE_ENABLED)
             extension = ".png" if output_format == "PNG" else ".jpg"
             output_name = f"{requested_stem}{extension}"
             output = tempfile.SpooledTemporaryFile(max_size=10 * 1024 * 1024, mode="w+b")
@@ -333,6 +335,7 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
             result.original_file_size = image_upload.file_size
             result.processed_file_size = output_size
             result.had_transparency = had_transparency
+            result.enlargement = enlargement
             result.processing_duration_ms = max(1, round((time.perf_counter() - started) * 1000))
             result.failure_reason = ""
             result.save()
