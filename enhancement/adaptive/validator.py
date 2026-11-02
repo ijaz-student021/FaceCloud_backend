@@ -85,6 +85,14 @@ class Limits:
     polish_delta_e_max: float = 3.0                # mean CIELAB distance from the parent (76, at the 1024 px working scale)
     polish_face_landmark_shift_max: float = 0.02   # of the face width (the other operations allow 0.04)
     polish_face_detail_ceiling: float = 175.0      # a sharp face's 90th percentile (face_sharpness.py): polish never pushes a face past it,
+    # colourization (DDColor): it must leave the lightness as it was and give a plausible colour. Measured on 8 photographs (the portrait and 7 grey-converted
+    # colour photographs, DDCOLOR damping on): gray PSNR 42.7-55.5 dB, mean chroma 2.3-20.8, 99th percentile 15-47, cast 0.8-19.0. The limits are backstops against a
+    # runaway prediction, not a taste: the damping in colorize.py is what keeps colours natural.
+    colourize_luminance_psnr_min: float = 38.0
+    colourize_mean_chroma_max: float = 28.0
+    colourize_p99_chroma_max: float = 58.0
+    colourize_cast_max: float = 26.0
+    colourize_min_mean_chroma: float = 1.5
     polish_face_growth_max: float = 1.10           # unless the face was already above it, and then by at most this factor
 
 
@@ -242,6 +250,7 @@ class FinalImageQualityValidator:
         limits = self.limits
         lowlight = operation == "low_light_enhancement"
         polish = operation == "polish"
+        colourize = operation == "colourization"
         verdict = {"accepted": False, "reasons": [], "gates": {}, "metrics": {}, "improvement": 0.0, "change_cost": 0.0}
 
         def gate(name, passed, detail, reason=None):
@@ -261,11 +270,26 @@ class FinalImageQualityValidator:
         if lowlight:
             ssim = structure_ssim(parent, candidate)
             gate("data_consistency", ssim >= limits.structure_ssim_min_lowlight, {"structure_ssim": round(ssim, 3)}, "structure_changed")
+        elif colourize:   # the colour changes by design, so consistency is judged on the lightness, which colourization must not touch
+            psnr = float(cv2.PSNR(_gray(parent), _gray(candidate))) if (_gray(parent) != _gray(candidate)).any() else 99.0
+            gate("data_consistency", psnr >= limits.colourize_luminance_psnr_min, {"luminance_psnr": round(psnr, 2)}, "lightness_changed")
         else:
             psnr = consistency_psnr(parent, candidate)
             gate("data_consistency", psnr >= limits.consistency_psnr_min, {"psnr": round(psnr, 2)}, "content_not_consistent_with_input")
         shift = chroma_shift(parent, candidate)
-        if lowlight:
+        if colourize:
+            lab = cv2.cvtColor(candidate, cv2.COLOR_BGR2LAB).astype(np.float32)
+            chroma = np.hypot(lab[:, :, 1] - 128.0, lab[:, :, 2] - 128.0)
+            mean, p99 = float(chroma.mean()), float(np.percentile(chroma[::4, ::4], 99))
+            cast = float(np.hypot(lab[:, :, 1].mean() - 128.0, lab[:, :, 2].mean() - 128.0))
+            detail = {"mean_chroma": round(mean, 1), "p99_chroma": round(p99, 1), "cast": round(cast, 1)}
+            if mean > limits.colourize_mean_chroma_max or p99 > limits.colourize_p99_chroma_max:
+                gate("colour", False, detail, "colour_oversaturated")
+            elif cast > limits.colourize_cast_max:
+                gate("colour", False, detail, "colour_cast")
+            else:
+                gate("colour", True, detail)
+        elif lowlight:
             colour = lift_colour_metrics(parent, candidate)
             hue, saturation = colour["hue_shift"], colour["saturation_ratio"]
             detail = {"hue_shift": None if hue is None else round(hue, 2),
@@ -435,6 +459,11 @@ class FinalImageQualityValidator:
                       else "face_over_sharpened")
             gate("improves_defect", improves and nothing_worse and face_ok, detail, reason)
             return float(np.clip((max(gains) - 1.0) / 0.25, 0, 1))
+        if operation == "colourization":
+            lab = cv2.cvtColor(candidate, cv2.COLOR_BGR2LAB).astype(np.float32)
+            mean = float(np.hypot(lab[:, :, 1] - 128.0, lab[:, :, 2] - 128.0).mean())
+            gate("improves_defect", mean >= limits.colourize_min_mean_chroma, {"mean_chroma": round(mean, 1)}, "no_colour_added")
+            return float(np.clip(mean / 10.0, 0, 1))
         if operation == "super_resolution":
             detail = edge_energy(candidate) / max(edge_energy(cv2.resize(parent, (candidate.shape[1], candidate.shape[0]),
                                                                            interpolation=cv2.INTER_CUBIC)), 1e-6)

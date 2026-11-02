@@ -199,6 +199,7 @@ def check_models():
             settings.REALESRGAN_MODEL_PATH, settings.REALESRGAN_MODEL_SHA256,
             learned_stage_enabled("HD_RESTORATION_ENABLED") and bool(settings.REALESRGAN_MODEL_PATH),
         ),
+        "ddcolor": (settings.DDCOLOR_MODEL_PATH, settings.DDCOLOR_MODEL_SHA256, learned_stage_enabled("DDCOLOR_ENABLED")),
         "gfpgan": (
             settings.GFPGAN_MODEL_PATH, settings.GFPGAN_MODEL_SHA256,
             learned_stage_enabled("GFPGAN_ENABLED") and bool(settings.GFPGAN_MODEL_PATH),

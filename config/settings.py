@@ -628,6 +628,30 @@ CODEFORMER_DEVICE = env("CODEFORMER_DEVICE", default="auto")
 CODEFORMER_FIDELITY = env.float("CODEFORMER_FIDELITY", default=0.7)
 CODEFORMER_MAX_FACES = env.int("CODEFORMER_MAX_FACES", default=5)
 CODEFORMER_MAX_INPUT_PIXELS = env.int("CODEFORMER_MAX_INPUT_PIXELS", default=12_000_000)
+
+# DDColor (Kang et al., ICCV 2023; Apache-2.0): colourizes a photograph that is black and white (enhancement/colorize.py). It only ever runs on a photograph
+# whose own colour channels are empty, and only for the "dynamic" and "ai_max" styles (see enhancement/adaptive/profile.py). The checkpoint must match its pinned
+# checksum. VARIANT "large" (ConvNeXt-L, 912 MB) is the default: on the owner's B&W portrait the small one turned teeth orange (teeth chroma 39.5 against 15.0).
+# The three natural-colour settings are the measured result of a ground-truth test (docs/evaluation/2026-11-03-colourization.md): the raw prediction is more
+# saturated than real photographs, painted a dark wall blue and tinted teeth, so it is damped: CHROMA_SCALE everywhere, DARK_DAMPING keeps that share of the
+# chroma in the darkest pixels (L < 8, rising to full by L 35), HIGHLIGHT_DAMPING removes that share of it in the brightest (L 80 to 96: teeth, eye whites,
+# clouds, shirts). MAX_CHROMA caps any pixel. CHROMA_SCALE=1, DARK_DAMPING=1, HIGHLIGHT_DAMPING=0 gives the raw prediction.
+DDCOLOR_ENABLED = env.bool("DDCOLOR_ENABLED", default=False)
+DDCOLOR_MODEL_VARIANT = env("DDCOLOR_MODEL_VARIANT", default="large")
+if DDCOLOR_MODEL_VARIANT not in ("tiny", "large"):
+    raise ImproperlyConfigured(f"DDCOLOR_MODEL_VARIANT must be tiny or large, not {DDCOLOR_MODEL_VARIANT!r}.")
+_DDCOLOR_PINNED = {
+    "large": ("ddcolor_paper.bin", "5c77db8292398a2ec1397003f0a90266c28e97b013515d5e9a32e73a4c54a67d"),    # piddnad/ddcolor_paper, 911,914,869 bytes
+    "tiny": ("ddcolor_paper_tiny.bin", "8a1277bc90a1bfbb6d2d83933a9a6bc821931879ca93e26e4fcec12165d41fce"),  # piddnad/ddcolor_paper_tiny, 220,372,845 bytes
+}
+DDCOLOR_MODEL_PATH = env("DDCOLOR_MODEL_PATH", default=str(BASE_DIR / ".runtime" / "models" / "ddcolor" / _DDCOLOR_PINNED[DDCOLOR_MODEL_VARIANT][0]))
+DDCOLOR_MODEL_SHA256 = env("DDCOLOR_MODEL_SHA256", default=_DDCOLOR_PINNED[DDCOLOR_MODEL_VARIANT][1])
+DDCOLOR_DEVICE = env("DDCOLOR_DEVICE", default="auto")
+DDCOLOR_INPUT_SIZE = env.int("DDCOLOR_INPUT_SIZE", default=512)
+DDCOLOR_CHROMA_SCALE = env.float("DDCOLOR_CHROMA_SCALE", default=0.7)
+DDCOLOR_DARK_DAMPING = env.float("DDCOLOR_DARK_DAMPING", default=0.3)
+DDCOLOR_HIGHLIGHT_DAMPING = env.float("DDCOLOR_HIGHLIGHT_DAMPING", default=0.5)
+DDCOLOR_MAX_CHROMA = env.float("DDCOLOR_MAX_CHROMA", default=60.0)
 GFPGAN_OUTPUT_BLEND = env.float("GFPGAN_OUTPUT_BLEND", default=0.25)
 GFPGAN_MIN_OUTPUT_BLEND = env.float("GFPGAN_MIN_OUTPUT_BLEND", default=0.08)
 GFPGAN_ALLOW_MILD_BLUR = env.bool("GFPGAN_ALLOW_MILD_BLUR", default=True)

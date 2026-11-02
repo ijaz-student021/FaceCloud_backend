@@ -23,6 +23,7 @@ Rules, each tied to a measured condition in the ``QualityReport``:
 from dataclasses import dataclass, field
 
 from . import operations as ops
+from .profile import DEFAULT as DEFAULT_PROFILE
 
 
 @dataclass
@@ -43,17 +44,18 @@ class AdaptiveEnhancementRouter:
     def __init__(self, config):
         self.config = config
 
-    def next_step(self, report, done, polish=None):
+    def next_step(self, report, done, polish=None, profile=None):
         """The next operation to try given the current ``report`` and the operations already attempted.
 
         ``polish`` is ``None`` (the default: the polish operation is not offered) or ``{"style": ...}``, which the service passes only
         while polish is switched on and no operation has been attempted for this photograph.
         """
         skipped = []
+        profile = profile or DEFAULT_PROFILE
         for operation in ops.ORDER:
             if operation in done:
                 continue
-            step, reason = self._consider(operation, report, polish)
+            step, reason = self._consider(operation, report, polish, profile)
             if step is not None:
                 return Decision(step, skipped)
             if reason:
@@ -61,22 +63,32 @@ class AdaptiveEnhancementRouter:
         return Decision(None, skipped)
 
     # -- one operation ----------------------------------------------------------------------------------------
-    def _consider(self, operation, report, polish=None):
+    def _consider(self, operation, report, polish=None, profile=None):
+        profile = profile or DEFAULT_PROFILE
         engines = ops.enabled_engines(operation)
         main = report.main_face
+        blends = [{"name": f"blend {blend}", "blend": blend} for blend in profile.variant_blends]
         if operation == ops.POLISH:
-            return self._consider_polish(report, polish, engines)
+            return self._consider_polish(report, polish, engines, profile)
+        if operation == ops.COLORIZE:
+            if not profile.colourize or not report.colour.get("greyscale"):
+                return None, ""
+            if not engines:
+                return None, "No colourization model is switched on."
+            return Step(operation, engines, [{"name": "natural colour"}], "The photograph is black and white."), ""
         if operation == ops.LOW_LIGHT:
-            if report.exposure["status"] == "dark_scene":
+            dark_scene = report.exposure["status"] == "dark_scene"
+            if dark_scene and not profile.lift_dark_scenes:
                 return None, "The scene is dark but the subject is visible: left as photographed."
-            if report.exposure["status"] not in ("low_light", "low_light_subject"):
+            if not dark_scene and report.exposure["status"] not in ("low_light", "low_light_subject"):
                 return None, ""
-            return Step(operation, engines, [{"name": "blend 1.0", "blend": 1.0}, {"name": "blend 0.65", "blend": 0.65}],
-                        f"Exposure: {report.exposure['status']} (judged on the {report.exposure['judged_on']})."), ""
+            return Step(operation, engines, blends,
+                        f"Exposure: {report.exposure['status']} (judged on the {report.exposure['judged_on']})."
+                        + (" The strength asked for lifts a dark scene." if dark_scene else "")), ""
         if operation == ops.DENOISE:
-            if report.noise["status"] not in ("moderate", "high"):
+            if report.noise["status"] not in (("low", "moderate", "high") if profile.treat_low_noise else ("moderate", "high")):
                 return None, ""
-            variants = [{"name": "blend 1.0", "blend": 1.0}, {"name": "blend 0.65", "blend": 0.65}]
+            variants = blends
             return Step(operation, engines, variants, f"Noise: {report.noise['status']} (estimate {report.noise['estimate']})."), ""
         if operation == ops.DEBLUR:
             # The main face's own blur decides first: a blurred subject in front of a sharp background reads as "no blur" for the frame,
@@ -115,7 +127,8 @@ class AdaptiveEnhancementRouter:
             return Step(operation, engines, [{"name": "fidelity 0.85", "fidelity": 0.85}, {"name": "fidelity 0.65", "fidelity": 0.65}],
                         "The main face is degraded."), ""
         if operation == ops.UPSCALE:
-            small_image = report.resolution["status"] == "low"
+            small_image = report.resolution["status"] == "low" or (
+                profile.upscale_below_edge > 0 and max(report.width, report.height) < profile.upscale_below_edge)
             # A small face in an otherwise adequate photograph is not a reason to enlarge (and re-render) the whole photograph:
             # that costs several times the compute and changes pixels nowhere near the face. It stays available behind
             # ADAPTIVE_FACE_UPSCALE_BELOW (0 = off, the default) for deployments that have measured a benefit.
@@ -136,13 +149,15 @@ class AdaptiveEnhancementRouter:
         return None, ""
 
     @staticmethod
-    def _consider_polish(report, polish, engines):
+    def _consider_polish(report, polish, engines, profile=None):
         """A gentle polish for a photograph with nothing to fix. Not a defect operation: refusing it is not recorded as a skip."""
+        profile = profile or DEFAULT_PROFILE
         if not polish or not engines:
             return None, ""
         strength = ops.POLISH_STRENGTH.get(str(polish.get("style")))
-        if strength is None or report.exposure["status"] == "dark_scene" or report.recommended_operations:
+        if strength is None or (report.exposure["status"] == "dark_scene" and not profile.polish_dark_scenes) or report.recommended_operations:
             return None, ""
+        strength = (min(0.8, strength[0] * profile.polish_scale), min(0.7, strength[1] * profile.polish_scale))
         faces = [[*face.box, face.detail] for face in report.faces]
         variants = [{"name": f"blend {blend}", "blend": blend, "clahe": strength[0], "amount": strength[1], "faces": faces}
                     for blend in (1.0, 0.65)]

@@ -68,6 +68,10 @@ class Thresholds:
     highlight_clip_percent: float = 8.0
     # --- resolution ---
     image_short_edge_low: int = 480
+    # A photograph is black and white when its own colour channels are empty: mean chroma and the 99th percentile (8-bit CIELAB units; a grey
+    # JPEG decodes to exactly 0, a faintly tinted print does not and is not colourized: the tint is the photographer's).
+    greyscale_mean_chroma_max: float = 1.0
+    greyscale_p99_chroma_max: float = 5.0
     face_short_edge_too_small: int = 48
     face_short_edge_low: int = 96
     # --- face quality ---
@@ -357,9 +361,10 @@ class ImageQualityAnalyzer:
         report.compression = {"status": "heavy" if compression["detected"] else "none", "blockiness": compression["blockiness"]}
         lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB).astype(np.float32)
         cast = float(np.hypot(lab[:, :, 1].mean() - 128.0, lab[:, :, 2].mean() - 128.0))
+        chroma = np.hypot(lab[:, :, 1] - 128.0, lab[:, :, 2] - 128.0)
         report.colour = {
-            "status": "cast" if cast > 18.0 else "normal", "cast": round(cast, 1),
-            "saturation": round(float(np.hypot(lab[:, :, 1] - 128.0, lab[:, :, 2] - 128.0).mean()), 1),
+            "status": "cast" if cast > 18.0 else "normal", "cast": round(cast, 1), "saturation": round(float(chroma.mean()), 1),
+            "greyscale": bool(chroma.mean() <= t.greyscale_mean_chroma_max and np.percentile(chroma[::4, ::4], 99) <= t.greyscale_p99_chroma_max),
         }
 
         self._conclude(report, face_error)

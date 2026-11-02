@@ -24,7 +24,8 @@ DEBLUR = "motion_deblurring"
 FACE = "face_restoration"
 UPSCALE = "super_resolution"
 POLISH = "polish"
-ORDER = (LOW_LIGHT, DENOISE, DEBLUR, FACE, UPSCALE, POLISH)
+COLORIZE = "colourization"    # last: it takes the lightness of the best black-and-white image the other operations produced
+ORDER = (LOW_LIGHT, DENOISE, DEBLUR, FACE, UPSCALE, POLISH, COLORIZE)
 
 ENGINES = {
     LOW_LIGHT: ("retinexformer", "zero_dce", "opencv_exposure"),
@@ -33,6 +34,7 @@ ENGINES = {
     FACE: ("codeformer", "gfpgan"),
     UPSCALE: ("realesrgan",),
     POLISH: ("opencv_polish",),
+    COLORIZE: ("ddcolor",),
 }
 
 
@@ -50,6 +52,7 @@ def _flags():
         "nafnet_gopro": bool(settings.NAFNET_DEBLUR_ENABLED), "codeformer": bool(settings.CODEFORMER_ENABLED),
         "gfpgan": bool(settings.GFPGAN_ENABLED), "realesrgan": bool(settings.HD_RESTORATION_ENABLED),
         "opencv_polish": True,   # OpenCV and NumPy only; whether the router offers it at all is ADAPTIVE_POLISH_ENABLED
+        "ddcolor": bool(settings.DDCOLOR_ENABLED),
     }
 
 
@@ -127,6 +130,15 @@ def run_face_restoration(image, engine, fidelity):
         raw, metadata = restore_faces(image)
     return raw, [_record(engine, metadata, time.perf_counter() - started, fidelity=fidelity,
                          faces_restored=metadata.get("faces_restored"))]
+
+
+def run_colorize(image, engine, variant):
+    """The black-and-white ``image`` colourized (lightness untouched, chroma predicted and damped: enhancement/colorize.py)."""
+    from enhancement.colorize import colorize_with_ddcolor
+
+    started = time.perf_counter()
+    raw, metadata = colorize_with_ddcolor(image)
+    return raw, [_record(engine, metadata, time.perf_counter() - started, chroma_scale=metadata.get("chroma_scale"))]
 
 
 def run_upscale(image, engine, scale):
