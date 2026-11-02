@@ -22,6 +22,10 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 
+# An unknown address or an uncaught exception under /api/ answers JSON, not Django's HTML page (config/errors.py).
+handler404 = "config.errors.not_found"
+handler500 = "config.errors.server_error"
+
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),

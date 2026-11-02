@@ -27,7 +27,7 @@ class SystemHealthView(APIView):
 
     @extend_schema(responses={200: OpenApiTypes.OBJECT, 503: OpenApiTypes.OBJECT})
     def get(self, request):
-        health = build_system_health()
+        health = build_system_health(use_cache=True)
         response_status = (
             status.HTTP_503_SERVICE_UNAVAILABLE
             if health["status"] == UNAVAILABLE

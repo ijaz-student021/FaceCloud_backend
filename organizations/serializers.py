@@ -276,7 +276,7 @@ class OrganizationInvitationCreateSerializer(serializers.Serializer):
 
 
 class OrganizationInvitationAcceptSerializer(serializers.Serializer):
-    token = serializers.CharField()
+    token = serializers.CharField(max_length=256)
 
 
 class OrganizationInvitationPreviewSerializer(serializers.Serializer):

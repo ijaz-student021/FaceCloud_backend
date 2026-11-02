@@ -220,7 +220,7 @@ class PdfTextTests(SimpleTestCase):
             self.assertEqual(text[text.index(label) + 1], "0", label)
 
     def test_statuses_reasons_and_duplicate_decisions_are_in_words(self):
-        for words in ("No duplicate", "Duplicate", "Possible duplicate", "Not checked", "Needs review", "Blurry photo; Too dark", "Face not clear; No face found",
+        for words in ("No duplicate", "Duplicate", "Possible duplicate", "Not checked", "Needs review", "Blurry photo; Almost black", "Face not clear; No face found",
                       "Unsupported image"):
             self.assertTrue(any(words in item for item in self.text), words)
         joined = "\n".join(self.text)
@@ -233,7 +233,7 @@ class PdfTextTests(SimpleTestCase):
         self.assertIn("Why photos were rejected", self.text)
         rejected = self.text[self.text.index("Why photos were rejected"):self.text.index("Photos")]
         self.assertIn("blurry_night.jpeg", rejected)
-        self.assertIn("Blurry photo; Too dark", rejected)
+        self.assertIn("Blurry photo; Almost black", rejected)
         self.assertIn("broken.bmp", rejected)
 
     def test_a_rejected_photo_with_no_recorded_reason_says_so(self):

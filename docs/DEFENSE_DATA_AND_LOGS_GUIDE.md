@@ -21,6 +21,8 @@ DJANGO_SUPERUSER_USERNAME=admin DJANGO_SUPERUSER_EMAIL=admin@example.com DJANGO_
 python manage.py runserver                                                     # then open http://127.0.0.1:8000/admin/
 ```
 
+`--dark` darkens the photograph to **x0.40** of its light (a normal portrait, brightness about 70, becomes about 28; only a photograph so bright that x0.40 would leave it above 30 is darkened further, to 30). The script prints each photograph's brightness, its quality verdict and the reasons, and if the checks refuse a photograph it says so and carries on. The quality check refuses a photograph only when it is practically black (brightness under about 6) or has almost no contrast; a dark one is lifted. (x0.25, the earlier setting, left a normal portrait at brightness 18, which the check used to refuse.)
+
 For the adaptive engine add `ENHANCEMENT_RENDER_POLICY=adaptive_v1` (and the model flags you want). The seed script prints the database path, the files folder and the ids it created. Your own `db.sqlite3` in the
 project folder was **empty (0 bytes)** when checked: it has never been migrated, which is why a demo database is the safe choice.
 

@@ -109,7 +109,9 @@ def review_deadline(from_time=None):
 
 
 def _get_or_create_review(*, organization, image, source, ai_recommendation, ai_confidence, **source_kwargs):
-    if organization is None:
+    # A personal workspace has no moderator, so a review opened there could never be decided: it would sit pending for ever, be counted in every total and end up overdue. The owner
+    # decides about their own photograph, which stays usable (enhancement and grouping allow an unsure photograph). Quality, duplicate and identity reviews all come through here.
+    if organization is None or organization.is_personal:
         return None
     defaults = {
         "organization": organization, "image": image, "source": source,
@@ -662,7 +664,7 @@ def flag_overdue_reviews(now=None):
 
     now = now or timezone.now()
     breached = ModeratorReview.objects.filter(
-        status__in=OPEN_REVIEW_STATUSES, decided_at__isnull=True,
+        status__in=OPEN_REVIEW_STATUSES, decided_at__isnull=True, organization__is_personal=False,
         due_at__isnull=False, due_at__lt=now, sla_breached_at__isnull=True,
     ).select_related("assigned_moderator")
     flagged = 0

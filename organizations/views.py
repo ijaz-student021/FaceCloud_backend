@@ -78,7 +78,12 @@ class AdminOrganizationListCreateView(generics.ListCreateAPIView):
     """FaceCloud-administrator-only: create and list every organization."""
 
     permission_classes = [IsAdminRole]
-    throttle_scope = "org_invite"
+
+    @property
+    def throttle_scope(self):
+        # The 30 an hour limit is for creating organizations. Reading the list is what the Organizations, Moderators, Invitations and "add account" screens do each
+        # time they open, so it stays under the ordinary per-user allowance.
+        return "org_invite" if self.request.method == "POST" else None
 
     def get_queryset(self):
         return organizations_with_head_counts()
