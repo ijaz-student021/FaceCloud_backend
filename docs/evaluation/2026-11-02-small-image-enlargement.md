@@ -1,7 +1,7 @@
 # Enlarging very small photographs during preprocessing (2026-11-02)
 
 Status: measured on three of the owner's stored photographs (54, 56, 44), each reduced to 150 px (enlarged 4 times) and to 230 px (enlarged 2 times),
-on one Apple M1 laptop (8 GB, PyTorch on MPS). **Not enabled anywhere**: `SMALL_IMAGE_ENLARGE_ENABLED` defaults to `False`.
+on one Apple M1 laptop (8 GB, PyTorch on MPS). **On by default** (the owner asked that a photograph is not refused for its size but made larger): `SMALL_IMAGE_ENLARGE_ENABLED=False` turns it off.
 
 ## The problem
 
@@ -10,6 +10,10 @@ is never enhanced, so a small upload was lost before any model could help it. Wi
 smallest that reaches 480 px, the line below which the enhancement engine would enlarge it again) and every later stage sees the enlarged copy. The
 upload is never changed; `ImagePreprocessingResult.enlargement` records the engine, the scale and the original size, and the quality decision carries
 `measurements.enlarged_from`.
+
+A picture whose shorter side is under a quarter of that line (60 px with the defaults) is left alone: 4 times is the most that is done, so it would still be
+refused as too small and the only result of enlarging it would be invented pixels. This rule was found when the setting became the default and the
+existing preprocessing tests, which use 10 to 30 px pictures, were enlarged too.
 
 ## How the enlargement is done (and why)
 

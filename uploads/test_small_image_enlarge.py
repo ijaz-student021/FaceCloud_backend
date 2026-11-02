@@ -1,4 +1,4 @@
-"""Enlarging a very small photograph during preprocessing (SMALL_IMAGE_ENLARGE_ENABLED, off by default).
+"""Enlarging a very small photograph during preprocessing (SMALL_IMAGE_ENLARGE_ENABLED, on by default).
 
 The decisions (when, by how much, with what, what happens when the model cannot be used) are tested with stand-ins for the model, because they are
 decisions. What the real model does to real photographs is in docs/evaluation/2026-11-02-small-image-enlargement.md.
@@ -53,9 +53,18 @@ def fake_model(bgr, output_scale=None):
 
 
 class PlanningTests(SimpleTestCase):
-    def test_it_is_off_by_default(self):
-        self.assertIs(settings.SMALL_IMAGE_ENLARGE_ENABLED, False)
-        self.assertEqual(enlargement_scale(100, 100), 0)
+    def test_it_is_on_by_default_and_can_be_turned_off(self):
+        self.assertIs(settings.SMALL_IMAGE_ENLARGE_ENABLED, True)
+        self.assertEqual(enlargement_scale(100, 100), 4)
+        with override_settings(SMALL_IMAGE_ENLARGE_ENABLED=False):
+            self.assertEqual(enlargement_scale(100, 100), 0)
+
+    def test_a_picture_that_four_times_would_not_rescue_is_left_alone(self):
+        self.assertEqual(enlargement_scale(60, 80), 4)          # 240: reaches the quality check's line
+        self.assertEqual(enlargement_scale(59, 80), 0)          # 236: still under it, so enlarging only invents pixels
+        self.assertEqual(enlargement_scale(16, 512), 0)
+        self.assertEqual(enlargement_scale(10, 5), 0)
+        self.assertEqual(enlargement_scale(0, 100), 0)
 
     @override_settings(**ON)
     def test_the_defaults_follow_the_quality_check(self):
@@ -244,6 +253,7 @@ class PreprocessingTests(TestCase):
             self.assertEqual(hashlib.sha256(handle.read()).hexdigest(), digest)
         self.assertEqual((image.width, image.height), (150, 200))
 
+    @override_settings(SMALL_IMAGE_ENLARGE_ENABLED=False)
     def test_with_the_setting_off_the_standardized_copy_has_the_original_size(self):
         image, _digest = self.upload()
         result = self.run_preprocessing(image)
@@ -272,6 +282,7 @@ class PreprocessingTests(TestCase):
         decision.refresh_from_db()
         return decision.decision, list(decision.rejection_reasons), decision.measurements
 
+    @override_settings(SMALL_IMAGE_ENLARGE_ENABLED=False)
     def test_without_the_setting_a_small_photograph_is_refused_for_its_size(self):
         image, _digest = self.upload()
         self.run_preprocessing(image)

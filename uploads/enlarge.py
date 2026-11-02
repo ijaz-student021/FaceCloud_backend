@@ -1,4 +1,4 @@
-"""Enlarging a very small photograph while it is standardized (``SMALL_IMAGE_ENLARGE_ENABLED``, off by default).
+"""Enlarging a very small photograph while it is standardized (``SMALL_IMAGE_ENLARGE_ENABLED``, on by default).
 
 A photograph whose shorter side is under ``SMALL_IMAGE_ENLARGE_BELOW_EDGE`` pixels is refused by the quality check for its size
 (``resolution_too_low``) and so never reaches face validation's size rules, grouping or enhancement. With the setting on it is enlarged
@@ -30,14 +30,17 @@ REALESRGAN_ENGINE = "realesrgan_x4plus"
 def enlargement_scale(width, height):
     """The factor (2 or 4) by which a ``width`` x ``height`` photograph is to be enlarged, or 0 for "leave it alone".
 
-    It is enlarged only when the setting is on and its shorter side is under ``SMALL_IMAGE_ENLARGE_BELOW_EDGE``; the factor is the smallest of 2
-    and 4 that brings the shorter side to ``SMALL_IMAGE_ENLARGE_TARGET_EDGE`` (4 when even that falls short), and is lowered if the result would
-    exceed the preprocessing size limit.
+    It is enlarged only when the setting is on and its shorter side is under ``SMALL_IMAGE_ENLARGE_BELOW_EDGE`` but at least a quarter of it (4 times
+    is the most that is done, so a smaller picture, an icon or a thumbnail, would stay under the line anyway and only gain invented pixels); the factor
+    is the smallest of 2 and 4 that brings the shorter side to ``SMALL_IMAGE_ENLARGE_TARGET_EDGE`` (4 when even that falls short), and is lowered if
+    the result would exceed the preprocessing size limit.
     """
     if not settings.SMALL_IMAGE_ENLARGE_ENABLED:
         return 0
     shorter = min(width, height)
     if shorter <= 0 or shorter >= settings.SMALL_IMAGE_ENLARGE_BELOW_EDGE:
+        return 0
+    if shorter * 4 < settings.SMALL_IMAGE_ENLARGE_BELOW_EDGE:
         return 0
     scale = 2 if shorter * 2 >= settings.SMALL_IMAGE_ENLARGE_TARGET_EDGE else 4
     while scale >= 2 and (width * scale > settings.PREPROCESS_MAX_WIDTH or height * scale > settings.PREPROCESS_MAX_HEIGHT):

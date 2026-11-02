@@ -738,15 +738,16 @@ QUALITY_FACE_REGION_INSET = env.float("QUALITY_FACE_REGION_INSET", default=0.15)
 QUALITY_FACE_MIN_CONFIDENCE = env.float("QUALITY_FACE_MIN_CONFIDENCE", default=0.5)
 QUALITY_FACE_BLUR_WARNING = env.float("QUALITY_FACE_BLUR_WARNING", default=50.0)
 
-# Enlarging a very small photograph while it is standardized (uploads/enlarge.py). OFF unless SMALL_IMAGE_ENLARGE_ENABLED=True, so nothing changes
-# for anyone who does not ask for it. A photograph whose shorter side is under SMALL_IMAGE_ENLARGE_BELOW_EDGE (default: the line under which the quality
+# Enlarging a very small photograph while it is standardized (uploads/enlarge.py). ON unless SMALL_IMAGE_ENLARGE_ENABLED=False, so that a photograph is
+# not refused for its size alone: it is made larger instead. A photograph whose shorter side is under SMALL_IMAGE_ENLARGE_BELOW_EDGE (default: the line under which the quality
 # check refuses a photograph for its size, QUALITY_REJECT_MIN_EDGE) is enlarged by 2 or 4 times, the smallest of the two that reaches
-# SMALL_IMAGE_ENLARGE_TARGET_EDGE (default: QUALITY_REVIEW_MIN_EDGE, the line under which the enhancement engine would enlarge it again). The original
+# SMALL_IMAGE_ENLARGE_TARGET_EDGE (default: QUALITY_REVIEW_MIN_EDGE, the line under which the enhancement engine would enlarge it again); a picture under a
+# quarter of that line (60 px by default) is left alone, because even 4 times would not rescue it. The original
 # file is never changed. SMALL_IMAGE_ENLARGE_ENGINE: "auto" (Real-ESRGAN, blended like the enhancement engine does with REALESRGAN_OUTPUT_BLEND, when
 # HD_RESTORATION_ENABLED is on and the model runs; OpenCV Lanczos otherwise), "realesrgan" (the same, but never silently OpenCV: a failure leaves the
 # photograph as it is) or "opencv" (Lanczos only: no invented detail, no model). A model result whose reduction back to the input size is not within
 # SMALL_IMAGE_ENLARGE_MIN_CONSISTENCY_DB of the input is not used (measured: real model output 32 to 49 dB, noise 22 to 28 dB).
-SMALL_IMAGE_ENLARGE_ENABLED = env.bool("SMALL_IMAGE_ENLARGE_ENABLED", default=False)
+SMALL_IMAGE_ENLARGE_ENABLED = env.bool("SMALL_IMAGE_ENLARGE_ENABLED", default=True)
 SMALL_IMAGE_ENLARGE_BELOW_EDGE = env.int("SMALL_IMAGE_ENLARGE_BELOW_EDGE", default=QUALITY_REJECT_MIN_EDGE)
 SMALL_IMAGE_ENLARGE_TARGET_EDGE = env.int("SMALL_IMAGE_ENLARGE_TARGET_EDGE", default=QUALITY_REVIEW_MIN_EDGE)
 SMALL_IMAGE_ENLARGE_ENGINE = env("SMALL_IMAGE_ENLARGE_ENGINE", default="auto")
