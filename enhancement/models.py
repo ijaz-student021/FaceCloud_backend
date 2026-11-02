@@ -40,6 +40,11 @@ class EnhancementStyle(models.TextChoices):
     AI_MAX = "ai_max", "AI Enhance"
 
 
+class EnhancementTrigger(models.TextChoices):
+    MANUAL = "manual", "Asked for by a person"
+    AUTO = "auto", "Automatic, after upload"
+
+
 class EnhancementStatus(models.TextChoices):
     PENDING = "pending", "Pending"
     QUEUED = "queued", "Queued"
@@ -139,6 +144,12 @@ class ImageEnhancementResult(models.Model):
         choices=EnhancementStyle.choices,
         default=EnhancementStyle.NATURAL,
     )
+    # Who started it. An automatic one (enhancement/auto.py) runs under AUTO_ENHANCEMENT_RENDER_POLICY and tells the owner once per batch, not per photograph.
+    trigger = models.CharField(
+        max_length=8,
+        choices=EnhancementTrigger.choices,
+        default=EnhancementTrigger.MANUAL,
+    )
     status = models.CharField(
         max_length=12,
         choices=EnhancementStatus.choices,
@@ -187,6 +198,42 @@ class ImageEnhancementResult(models.Model):
 def delete_enhanced_image(sender, instance, **kwargs):
     if instance.enhanced_file:
         instance.enhanced_file.storage.delete(instance.enhanced_file.name)
+
+
+class AutoEnhancement(models.Model):
+    """The automatic enhancement of one photograph: the single record that makes it happen once, and says where it is.
+
+    Created when the photograph's quality verdict allows it (``enhancement.auto.enhance_after_verdict``); a photograph has at most one, so a retry or a
+    re-analysis never makes a second enhancement. ``waiting`` photographs have no result yet because their owner is at the limit of enhancements in progress
+    (``ensure_enhancement_capacity``); they start as slots free up. ``started`` ones have a ``result``. ``skipped`` ones will not be enhanced, and say why
+    in ``skip_reason`` (``capacity``: no slot for too long; ``cancelled``: the batch was cancelled; ``already_requested``: a person asked first;
+    ``not_possible``: the photograph could not be enhanced; ``error``: something unexpected, logged). A skip never fails the upload.
+    """
+
+    class State(models.TextChoices):
+        WAITING = "waiting", "Waiting for a free slot"
+        STARTED = "started", "Started"
+        SKIPPED = "skipped", "Skipped"
+
+    image = models.OneToOneField(ImageUpload, on_delete=models.CASCADE, related_name="auto_enhancement")
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="auto_enhancements")
+    batch = models.ForeignKey(UploadBatch, on_delete=models.CASCADE, related_name="auto_enhancements")
+    state = models.CharField(max_length=8, choices=State.choices, default=State.WAITING)
+    skip_reason = models.CharField(max_length=24, blank=True)
+    waiting_since = models.DateTimeField(null=True, blank=True)
+    result = models.OneToOneField(ImageEnhancementResult, null=True, blank=True, on_delete=models.SET_NULL, related_name="auto_request")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["created_at", "pk"]
+        indexes = [
+            models.Index(fields=["state", "waiting_since"]),
+            models.Index(fields=["batch", "state"]),
+        ]
+
+    def __str__(self):
+        return f"auto-enhancement:{self.image_id}:{self.state}"
 
 
 class EditMode(models.TextChoices):

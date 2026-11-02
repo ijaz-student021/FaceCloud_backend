@@ -1,0 +1,209 @@
+{
+ "cases": 40,
+ "right": 34,
+ "rows": [
+  {
+   "landmark": "Badshahi Mosque, Lahore",
+   "got": "Lahore, Punjab, PK (5.0 km)",
+   "right": true
+  },
+  {
+   "landmark": "Faisal Mosque, Islamabad",
+   "got": "Islamabad, Islamabad, PK (1.1 km)",
+   "right": true
+  },
+  {
+   "landmark": "Mazar-e-Quaid, Karachi",
+   "got": "Karachi, Sindh, PK (3.4 km)",
+   "right": true
+  },
+  {
+   "landmark": "Murree Mall Road",
+   "got": "Murree, Punjab, PK (0.4 km)",
+   "right": true
+  },
+  {
+   "landmark": "Karimabad, Hunza",
+   "got": "Karimabad, Gilgit-Baltistan, PK (1.5 km)",
+   "right": true
+  },
+  {
+   "landmark": "Skardu",
+   "got": "Skardu, Gilgit-Baltistan, PK (0.1 km)",
+   "right": true
+  },
+  {
+   "landmark": "Multan Fort",
+   "got": "Multan, Punjab, PK (0.9 km)",
+   "right": true
+  },
+  {
+   "landmark": "Peshawar Qissa Khwani",
+   "got": "Peshawar, Khyber Pakhtunkhwa, PK (0.8 km)",
+   "right": true
+  },
+  {
+   "landmark": "Eiffel Tower",
+   "got": "Paris 16 Passy, Ile-de-France, FR (1.5 km)",
+   "right": false
+  },
+  {
+   "landmark": "Times Square",
+   "got": "Manhattan, New York, US (3.3 km)",
+   "right": true
+  },
+  {
+   "landmark": "Sydney Opera House",
+   "got": "Sydney, New South Wales, AU (1.4 km)",
+   "right": true
+  },
+  {
+   "landmark": "Taj Mahal",
+   "got": "Agra, Uttar Pradesh, IN (2.7 km)",
+   "right": true
+  },
+  {
+   "landmark": "Burj Khalifa",
+   "got": "Dubai, Dubai, AE (13.8 km)",
+   "right": true
+  },
+  {
+   "landmark": "Colosseum",
+   "got": "Rome, Lazio, IT (1.6 km)",
+   "right": true
+  },
+  {
+   "landmark": "Kaaba, Mecca",
+   "got": "Makkah, Mecca Region, SA (0.5 km)",
+   "right": true
+  },
+  {
+   "landmark": "Prophet's Mosque, Medina",
+   "got": "Madinah, Medina Region, SA (0.4 km)",
+   "right": true
+  },
+  {
+   "landmark": "Big Ben",
+   "got": "City of Westminster, England, GB (0.8 km)",
+   "right": true
+  },
+  {
+   "landmark": "Tokyo Tower",
+   "got": "Minato City, Tokyo, JP (0.6 km)",
+   "right": false
+  },
+  {
+   "landmark": "Christ the Redeemer",
+   "got": "Botafogo, Rio de Janeiro, BR (2.9 km)",
+   "right": false
+  },
+  {
+   "landmark": "Great Pyramid, Giza",
+   "got": "Kird\u0101sah, Giza, EG (6.2 km)",
+   "right": false
+  },
+  {
+   "landmark": "Machu Picchu",
+   "got": "Machupicchu, Cuzco Department, PE (2.4 km)",
+   "right": true
+  },
+  {
+   "landmark": "Table Mountain",
+   "got": "Cape Town, Western Cape, ZA (4.3 km)",
+   "right": true
+  },
+  {
+   "landmark": "Golden Gate Bridge",
+   "got": "San Francisco, California, US (7.2 km)",
+   "right": true
+  },
+  {
+   "landmark": "Niagara Falls",
+   "got": "Niagara Falls, New York, US (1.5 km)",
+   "right": true
+  },
+  {
+   "landmark": "Red Square",
+   "got": "Moscow, Moscow, RU (0.3 km)",
+   "right": true
+  },
+  {
+   "landmark": "Mount Fuji, Kawaguchiko",
+   "got": "Fujiyoshida, Yamanashi, JP (7.1 km)",
+   "right": true
+  },
+  {
+   "landmark": "Stonehenge",
+   "got": "Salisbury, England, GB (12.4 km)",
+   "right": true
+  },
+  {
+   "landmark": "Istanbul Hagia Sophia",
+   "got": "Istanbul, Istanbul, TR (2.6 km)",
+   "right": true
+  },
+  {
+   "landmark": "Kuala Lumpur Petronas Towers",
+   "got": "Bukit Bintang, Kuala Lumpur, MY (1.3 km)",
+   "right": false
+  },
+  {
+   "landmark": "Marina Bay, Singapore",
+   "got": "Singapore, , SG (1.4 km)",
+   "right": true
+  },
+  {
+   "landmark": "Dhaka Lalbagh Fort",
+   "got": "Azimpur, Dhaka Division, BD (1.2 km)",
+   "right": false
+  },
+  {
+   "landmark": "Delhi India Gate",
+   "got": "New Delhi, Delhi, IN (1.8 km)",
+   "right": true
+  },
+  {
+   "landmark": "Kabul Babur Gardens",
+   "got": "Kabul, Kabul, AF (1.6 km)",
+   "right": true
+  },
+  {
+   "landmark": "Tehran Azadi Tower",
+   "got": "Tehran, Tehran, IR (7.6 km)",
+   "right": true
+  },
+  {
+   "landmark": "Beijing Forbidden City",
+   "got": "Beijing, Beijing, CN (0.9 km)",
+   "right": true
+  },
+  {
+   "landmark": "Toronto CN Tower",
+   "got": "Toronto, Ontario, CA (7.1 km)",
+   "right": true
+  },
+  {
+   "landmark": "Berlin Brandenburg Gate",
+   "got": "Berlin, State of Berlin, DE (2.4 km)",
+   "right": true
+  },
+  {
+   "landmark": "Nairobi Uhuru Park",
+   "got": "Nairobi, Nairobi County, KE (1.1 km)",
+   "right": true
+  },
+  {
+   "landmark": "Mid-Atlantic (no land)",
+   "got": null,
+   "right": true
+  },
+  {
+   "landmark": "Rub' al Khali desert",
+   "got": null,
+   "right": true
+  }
+ ],
+ "load_seconds": 0.28,
+ "uncached_lookup_ms": 2.81,
+ "places_in_file": 171572
+}

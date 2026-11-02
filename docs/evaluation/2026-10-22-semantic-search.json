@@ -1,0 +1,96 @@
+{
+ "model_dir": "siglip-vit-b-16",
+ "weights_sha256": "81942ea8c09b9e41963357cca5d2682118bf7eb7491c2ae51a28bc4f4f95b194",
+ "photographs": 3669,
+ "breeds": 37,
+ "edge": 256,
+ "device": "mps",
+ "machine": "macOS-27.2-arm64-arm-64bit",
+ "queries": 39,
+ "species_queries": {
+  "n": 2,
+  "precision_at_10": 1.0,
+  "precision_at_50": 1.0,
+  "average_precision": 0.9999,
+  "first_is_right": 1.0
+ },
+ "breed_queries": {
+  "n": 37,
+  "precision_at_10": 0.9676,
+  "precision_at_50": 0.9459,
+  "average_precision": 0.9156,
+  "first_is_right": 0.973
+ },
+ "worst_breeds_by_average_precision": [
+  [
+   "bombay",
+   0.127
+  ],
+  [
+   "ragdoll",
+   0.491
+  ],
+  [
+   "american pit bull terrier",
+   0.654
+  ],
+  [
+   "birman",
+   0.728
+  ],
+  [
+   "american bulldog",
+   0.881
+  ]
+ ],
+ "score_percentiles_right_pairs": {
+  "5": 0.0822,
+  "25": 0.1058,
+  "50": 0.115,
+  "75": 0.1238,
+  "95": 0.1388
+ },
+ "score_percentiles_wrong_pairs": {
+  "50": -0.004,
+  "90": 0.0462,
+  "99": 0.0874,
+  "99.9": 0.1108
+ },
+ "pooled_by_score_floor_breed_queries": {
+  "0.0": {
+   "precision": 0.0572,
+   "recall": 1.0
+  },
+  "0.03": {
+   "precision": 0.131,
+   "recall": 0.9975
+  },
+  "0.05": {
+   "precision": 0.244,
+   "recall": 0.9883
+  },
+  "0.08": {
+   "precision": 0.6118,
+   "recall": 0.9548
+  },
+  "0.1": {
+   "precision": 0.868,
+   "recall": 0.8406
+  },
+  "0.12": {
+   "precision": 0.973,
+   "recall": 0.3442
+  },
+  "0.15": {
+   "precision": 1.0,
+   "recall": 0.0041
+  }
+ },
+ "seconds": {
+  "model_load_and_first_text": 17.1,
+  "decode_and_shrink_per_photo_ms": 6.9,
+  "embed_per_photo_ms": 34.2,
+  "embed_one_query_ms": 60.5,
+  "rank_query_over_all_photos_ms": 1.75
+ }
+}

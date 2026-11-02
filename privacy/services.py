@@ -270,8 +270,8 @@ def build_privacy_export(user):
 
     images = collect(
         "images",
-        ImageUpload.objects.filter(owner=user).order_by("-created_at"),
-        ("id", "original_name", "file_size", "width", "height", "status", "created_at"),
+        ImageUpload.all_objects.filter(owner=user).order_by("-created_at"),         # everything held about the person, the trash included
+        ("id", "original_name", "file_size", "width", "height", "status", "created_at", "trashed_at", "gps_lat", "gps_lon"),
     )
     enhancement_rows = collect(
         "enhancements",
@@ -425,8 +425,8 @@ def build_organization_export_payload(organization):
     )
     images = collect(
         "images",
-        ImageUpload.objects.filter(batch__organization=organization),
-        ("id", "batch_id", "original_name", "status", "created_at"),
+        ImageUpload.all_objects.filter(batch__organization=organization),
+        ("id", "batch_id", "original_name", "status", "created_at", "trashed_at"),
     )
     quality_decisions = collect(
         "quality_decisions",

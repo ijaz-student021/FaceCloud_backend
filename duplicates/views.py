@@ -24,7 +24,7 @@ class DuplicateImageAnalysisView(APIView):
     @extend_schema(responses={200: DuplicateAnalysisSerializer})
     def get(self, request, image_id):
         analysis = get_object_or_404(
-            DuplicateAnalysis.objects.filter(owner=request.user),
+            DuplicateAnalysis.objects.filter(owner=request.user, image__trashed_at__isnull=True),
             image_id=image_id,
         )
         return Response(
@@ -62,7 +62,7 @@ class DuplicateAnalysisListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        queryset = DuplicateAnalysis.objects.filter(owner=self.request.user)
+        queryset = DuplicateAnalysis.objects.filter(owner=self.request.user, image__trashed_at__isnull=True)
         status_value = self.request.query_params.get("status")
         decision = self.request.query_params.get("decision")
         if status_value:
@@ -89,7 +89,7 @@ class DuplicateImageMatchListView(generics.ListAPIView):
             pk=self.kwargs["image_id"],
         )
         return DuplicateMatch.objects.filter(
-            owner=self.request.user,
+            owner=self.request.user, source_image__trashed_at__isnull=True, matched_image__trashed_at__isnull=True,
         ).filter(
             Q(source_image=image) | Q(matched_image=image)
         ).select_related("source_image", "matched_image", "analysis")
@@ -100,7 +100,7 @@ class DuplicateMatchDetailView(generics.RetrieveAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return DuplicateMatch.objects.filter(owner=self.request.user).select_related(
+        return DuplicateMatch.objects.filter(owner=self.request.user, source_image__trashed_at__isnull=True, matched_image__trashed_at__isnull=True).select_related(
             "source_image", "matched_image", "analysis"
         )
 
@@ -114,7 +114,7 @@ class DuplicateMatchReviewView(APIView):
     )
     def patch(self, request, pk):
         match = get_object_or_404(
-            DuplicateMatch.objects.filter(owner=request.user).select_related("analysis"),
+            DuplicateMatch.objects.filter(owner=request.user, source_image__trashed_at__isnull=True, matched_image__trashed_at__isnull=True).select_related("analysis"),
             pk=pk,
         )
         payload = DuplicateMatchReviewSerializer(data=request.data)

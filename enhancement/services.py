@@ -48,6 +48,7 @@ from .models import (
     EnhancementLevel,
     EnhancementStatus,
     EnhancementStyle,
+    EnhancementTrigger,
     ImageEditVersion,
     ImageEnhancementResult,
 )
@@ -2468,7 +2469,19 @@ def _read_standardized_with_alpha(preprocessing):
     return bgr, alpha
 
 
+def _enlarged_in_preprocessing(result):
+    """Whether preprocessing made the standardized copy larger than the upload (uploads/enlarge.py).
+
+    That copy is then the photograph to enhance: starting again from the tiny upload would enlarge it a second time, to a smaller size, and
+    throw the first enlargement away (a 236 x 354 upload enlarged 4 times to 944 x 1416 came out as 472 x 708).
+    """
+    preprocessing = getattr(result, "preprocessing_result", None)
+    return bool((getattr(preprocessing, "enlargement", None) or {}).get("applied"))
+
+
 def _read_enhancement_source(result, decoding=None):
+    if _enlarged_in_preprocessing(result):
+        return _read_standardized_image(result.preprocessing_result), "standardized_enlarged"
     if settings.ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION:
         try:
             return _read_full_resolution_original(result, decoding=decoding), "full_resolution_original"
@@ -2480,6 +2493,9 @@ def _read_enhancement_source(result, decoding=None):
 
 def _read_enhancement_source_with_alpha(result, decoding=None):
     """``(bgr, alpha, strategy)`` for a result whose output format keeps transparency."""
+    if _enlarged_in_preprocessing(result):
+        bgr, alpha = _read_standardized_with_alpha(result.preprocessing_result)
+        return bgr, alpha, "standardized_enlarged"
     if settings.ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION:
         try:
             bgr, alpha = _read_full_resolution_original(result, keep_alpha=True, decoding=decoding)
@@ -2619,7 +2635,7 @@ def ensure_enhancement_capacity(owner, *, batch):
 
 def create_enhancement_result(
     image, requested_level=EnhancementLevel.AUTO, batch_job=None,
-    requested_style=EnhancementStyle.NATURAL,
+    requested_style=EnhancementStyle.NATURAL, trigger=EnhancementTrigger.MANUAL,
 ):
     if image.owner_id != (batch_job.owner_id if batch_job else image.owner_id):
         raise ValidationError("The enhancement owner does not match the image owner.")
@@ -2636,6 +2652,7 @@ def create_enhancement_result(
         batch_job=batch_job,
         requested_level=requested_level,
         requested_style=requested_style,
+        trigger=trigger,
         status=EnhancementStatus.PENDING,
     )
 

@@ -77,6 +77,9 @@ INSTALLED_APPS = [
     "reports",
     "downloads",
     "notifications",
+    "albums",
+    "memories",
+    "places",
     "operations",
     "activity",
     "privacy",
@@ -290,6 +293,22 @@ NAFNET_DEBLUR_ENABLED = env.bool("NAFNET_DEBLUR_ENABLED", default=True)
 # restoration chain (the adaptive engine) when this server can run it, and left to the lightweight pipeline otherwise, with the reason
 # recorded in the result (hd_unavailable_reason). False keeps every photograph on the policy's own pipeline.
 ENHANCEMENT_RESTORATION_ESCALATION = env.bool("ENHANCEMENT_RESTORATION_ESCALATION", default=True)
+
+# Automatic enhancement after upload (enhancement/auto.py): a photograph that passes the checks is enhanced without anyone asking.
+# AUTO_ENHANCEMENT_ENABLED: the operator's switch; False stops every automatic enhancement (a person's own request still works).
+# AUTO_ENHANCEMENT_RENDER_POLICY: the rendering policy those runs use, so they can be the adaptive engine ("original preserved" when nothing safe helps)
+#   while a person's own request keeps ENHANCEMENT_RENDER_POLICY. No model setting changes: the policy only decides which already-enabled stages may run.
+# AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES: a photograph waits this long for a free slot (ensure_enhancement_capacity) before it is skipped, never failed.
+AUTO_ENHANCEMENT_ENABLED = env.bool("AUTO_ENHANCEMENT_ENABLED", default=True)
+AUTO_ENHANCEMENT_RENDER_POLICY = env("AUTO_ENHANCEMENT_RENDER_POLICY", default="adaptive_v1")
+if AUTO_ENHANCEMENT_RENDER_POLICY not in ("lightweight_v1", "balanced_v1", "learned_v1", "adaptive_v1"):
+    raise ImproperlyConfigured(
+        "AUTO_ENHANCEMENT_RENDER_POLICY must be lightweight_v1, balanced_v1, learned_v1 or adaptive_v1, "
+        f"not {AUTO_ENHANCEMENT_RENDER_POLICY!r}."
+    )
+AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES = env.int("AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES", default=180)
+if AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES < 1:
+    raise ImproperlyConfigured("AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES must be at least 1.")
 # Thresholds of the restoration chain (read when the adaptive engine starts a run; docs/deployment/restoration-chain.md):
 # ADAPTIVE_FACE_BLUR_HIGH: a face whose detail (Laplacian variance of the face resized to 128 px; sharp faces about 119, p10 81) is below
 #   this counts as strongly blurred and is deblurred even when the frame reads sharp or as defocus.
@@ -455,6 +474,49 @@ IDENTITY_GUARD_STRENGTHS = tuple(
     )
 )
 IDENTITY_GUARD_MAX_FACES = env.int("IDENTITY_GUARD_MAX_FACES", default=5)
+# Person folders: at most this many faces of one photograph are grouped (the largest ones); a crowd of sixty does not stall the queue. The rest are recorded as
+# skipped (reason too_many_faces) in the analysis evidence, and the photograph is still accepted and enhanced.
+IDENTITY_MAX_FACES_PER_IMAGE = env.int("IDENTITY_MAX_FACES_PER_IMAGE", default=20)
+# Albums (albums/): how many a person may have, and how many photographs one album may hold.
+ALBUM_MAX_PER_USER = env.int("ALBUM_MAX_PER_USER", default=500)
+ALBUM_MAX_IMAGES = env.int("ALBUM_MAX_IMAGES", default=10000)
+if ALBUM_MAX_PER_USER < 1 or ALBUM_MAX_IMAGES < 1:
+    raise ImproperlyConfigured("ALBUM_MAX_PER_USER and ALBUM_MAX_IMAGES must be at least 1.")
+# Trash (uploads/trash.py): a photograph moved to the trash is deleted for good by the daily task uploads.purge_trash after this many days.
+TRASH_RETENTION_DAYS = env.int("TRASH_RETENTION_DAYS", default=30)
+if not 1 <= TRASH_RETENTION_DAYS <= 3650:
+    raise ImproperlyConfigured("TRASH_RETENTION_DAYS must be between 1 and 3650.")
+# Places (places/): where a photograph was taken. LOCATION_ENABLED switches reading GPS from uploads on or off (nothing is read when it is off). Place names come from an
+# OFFLINE gazetteer in LOCATION_GAZETTEER_DIR (GeoNames cities1000.txt, CC BY 4.0; scripts/fetch_gazetteer.py downloads it and prints its SHA-256); no coordinate is ever sent
+# to another service. Names stay off until LOCATION_GAZETTEER_SHA256 matches the file and the owner has approved docs/model-licenses/location-gazetteer.md.
+LOCATION_ENABLED = env.bool("LOCATION_ENABLED", default=True)
+LOCATION_GAZETTEER_DIR = env("LOCATION_GAZETTEER_DIR", default=str(BASE_DIR / ".runtime" / "data" / "geonames"))
+LOCATION_GAZETTEER_SHA256 = env("LOCATION_GAZETTEER_SHA256", default="")
+LOCATION_LICENSE_RECORD_PATH = env("LOCATION_LICENSE_RECORD_PATH", default=str(BASE_DIR / "docs" / "model-licenses" / "location-gazetteer.md"))
+LOCATION_MAX_DISTANCE_KM = env.float("LOCATION_MAX_DISTANCE_KM", default=50.0)
+if not 1.0 <= LOCATION_MAX_DISTANCE_KM <= 500.0:
+    raise ImproperlyConfigured("LOCATION_MAX_DISTANCE_KM must be between 1 and 500.")
+# Search by what is in the photograph (search/semantic/): "beach", "red car", "birthday cake". OFF by default, and it needs the optional libraries
+# (requirements-semantic.txt) and the approved model files in SEMANTIC_SEARCH_MODEL_DIR; the weights are checked against SEMANTIC_SEARCH_MODEL_SHA256 before they
+# are loaded, and nothing is downloaded at run time. The model, its licence and the measured quality are recorded in docs/model-licenses/semantic-search-model.md
+# and docs/evaluation/2026-10-22-semantic-search.md. English queries only. SEMANTIC_SEARCH_MIN_SCORE is the lowest cosine similarity a result may have.
+SEMANTIC_SEARCH_ENABLED = env.bool("SEMANTIC_SEARCH_ENABLED", default=False)
+SEMANTIC_SEARCH_MODEL_NAME = env("SEMANTIC_SEARCH_MODEL_NAME", default="ViT-B-16-SigLIP")
+SEMANTIC_SEARCH_MODEL_DIR = env("SEMANTIC_SEARCH_MODEL_DIR", default=str(BASE_DIR / ".runtime" / "models" / "siglip-vit-b-16"))
+SEMANTIC_SEARCH_MODEL_SHA256 = env("SEMANTIC_SEARCH_MODEL_SHA256", default="")
+SEMANTIC_SEARCH_LICENSE_RECORD_PATH = env("SEMANTIC_SEARCH_LICENSE_RECORD_PATH", default=str(BASE_DIR / "docs" / "model-licenses" / "semantic-search-model.md"))
+SEMANTIC_SEARCH_DEVICE = env("SEMANTIC_SEARCH_DEVICE", default="auto")          # auto (cuda, else mps, else cpu), or cpu / cuda / mps
+SEMANTIC_SEARCH_MIN_SCORE = env.float("SEMANTIC_SEARCH_MIN_SCORE", default=0.10)
+SEMANTIC_SEARCH_DEFAULT_RESULTS = env.int("SEMANTIC_SEARCH_DEFAULT_RESULTS", default=24)
+SEMANTIC_SEARCH_MAX_RESULTS = env.int("SEMANTIC_SEARCH_MAX_RESULTS", default=100)
+if SEMANTIC_SEARCH_DEVICE not in ("auto", "cpu", "cuda", "mps"):
+    raise ImproperlyConfigured("SEMANTIC_SEARCH_DEVICE must be auto, cpu, cuda or mps.")
+if not -1.0 <= SEMANTIC_SEARCH_MIN_SCORE <= 1.0:
+    raise ImproperlyConfigured("SEMANTIC_SEARCH_MIN_SCORE must be between -1 and 1.")
+if not 1 <= SEMANTIC_SEARCH_DEFAULT_RESULTS <= SEMANTIC_SEARCH_MAX_RESULTS:
+    raise ImproperlyConfigured("SEMANTIC_SEARCH_DEFAULT_RESULTS must be at least 1 and no more than SEMANTIC_SEARCH_MAX_RESULTS.")
+if IDENTITY_MAX_FACES_PER_IMAGE < 1:
+    raise ImproperlyConfigured("IDENTITY_MAX_FACES_PER_IMAGE must be at least 1.")
 IDENTITY_GUARD_MAX_EDGE = env.int("IDENTITY_GUARD_MAX_EDGE", default=1024)
 IDENTITY_GUARD_MIN_FACE_EDGE = env.int("IDENTITY_GUARD_MIN_FACE_EDGE", default=40)
 
@@ -680,6 +742,25 @@ QUALITY_FACE_SHARPNESS_TARGET = env.float("QUALITY_FACE_SHARPNESS_TARGET", defau
 QUALITY_FACE_REGION_INSET = env.float("QUALITY_FACE_REGION_INSET", default=0.15)
 QUALITY_FACE_MIN_CONFIDENCE = env.float("QUALITY_FACE_MIN_CONFIDENCE", default=0.5)
 QUALITY_FACE_BLUR_WARNING = env.float("QUALITY_FACE_BLUR_WARNING", default=50.0)
+
+# Enlarging a very small photograph while it is standardized (uploads/enlarge.py). ON unless SMALL_IMAGE_ENLARGE_ENABLED=False, so that a photograph is
+# not refused for its size alone: it is made larger instead. A photograph whose shorter side is under SMALL_IMAGE_ENLARGE_BELOW_EDGE (default: the line under which the quality
+# check refuses a photograph for its size, QUALITY_REJECT_MIN_EDGE) is enlarged by 2 or 4 times, the smallest of the two that reaches
+# SMALL_IMAGE_ENLARGE_TARGET_EDGE (default: QUALITY_REVIEW_MIN_EDGE, the line under which the enhancement engine would enlarge it again); a picture under a
+# quarter of that line (60 px by default) is left alone, because even 4 times would not rescue it. The original
+# file is never changed. SMALL_IMAGE_ENLARGE_ENGINE: "auto" (Real-ESRGAN, blended like the enhancement engine does with REALESRGAN_OUTPUT_BLEND, when
+# HD_RESTORATION_ENABLED is on and the model runs; OpenCV Lanczos otherwise), "realesrgan" (the same, but never silently OpenCV: a failure leaves the
+# photograph as it is) or "opencv" (Lanczos only: no invented detail, no model). A model result whose reduction back to the input size is not within
+# SMALL_IMAGE_ENLARGE_MIN_CONSISTENCY_DB of the input is not used (measured: real model output 32 to 49 dB, noise 22 to 28 dB).
+SMALL_IMAGE_ENLARGE_ENABLED = env.bool("SMALL_IMAGE_ENLARGE_ENABLED", default=True)
+SMALL_IMAGE_ENLARGE_BELOW_EDGE = env.int("SMALL_IMAGE_ENLARGE_BELOW_EDGE", default=QUALITY_REJECT_MIN_EDGE)
+SMALL_IMAGE_ENLARGE_TARGET_EDGE = env.int("SMALL_IMAGE_ENLARGE_TARGET_EDGE", default=QUALITY_REVIEW_MIN_EDGE)
+SMALL_IMAGE_ENLARGE_ENGINE = env("SMALL_IMAGE_ENLARGE_ENGINE", default="auto")
+SMALL_IMAGE_ENLARGE_MIN_CONSISTENCY_DB = env.float("SMALL_IMAGE_ENLARGE_MIN_CONSISTENCY_DB", default=30.0)
+if SMALL_IMAGE_ENLARGE_ENGINE not in ("auto", "realesrgan", "opencv"):
+    raise ImproperlyConfigured("SMALL_IMAGE_ENLARGE_ENGINE must be auto, realesrgan or opencv.")
+if not 16 <= SMALL_IMAGE_ENLARGE_BELOW_EDGE <= SMALL_IMAGE_ENLARGE_TARGET_EDGE:
+    raise ImproperlyConfigured("SMALL_IMAGE_ENLARGE_BELOW_EDGE must be at least 16 and not above SMALL_IMAGE_ENLARGE_TARGET_EDGE.")
 
 # Duplicate detection. Perceptual and face-region matches are review evidence,
 # not identity recognition and never create cross-user matches.
@@ -994,6 +1075,10 @@ ACCOUNT_INVITATION_TTL_HOURS = env.int("ACCOUNT_INVITATION_TTL_HOURS", default=7
 # (scripts/run_beat.ps1 or `celery -A config beat`). Every entry is safe to run
 # repeatedly and does nothing when the feature it serves is switched off.
 CELERY_BEAT_SCHEDULE = {
+    "release-waiting-auto-enhancements": {
+        "task": "enhancement.release_waiting_auto",
+        "schedule": crontab(minute="*/2"),
+    },
     "reap-stuck-jobs": {
         "task": "operations.reap_stuck_jobs",
         "schedule": crontab(minute="*/5"),
@@ -1017,6 +1102,14 @@ CELERY_BEAT_SCHEDULE = {
     "expire-download-packages": {
         "task": "downloads.cleanup_expired",
         "schedule": crontab(minute=5),
+    },
+    "index-semantic-search": {
+        "task": "search.index_pending",
+        "schedule": crontab(minute="*/15"),
+    },
+    "purge-trash": {
+        "task": "uploads.purge_trash",
+        "schedule": crontab(minute=30, hour=3),
     },
     "expire-organization-exports": {
         "task": "privacy.cleanup_organization_exports",
@@ -1153,6 +1246,12 @@ REST_FRAMEWORK = {
         "password_change": "10/hour",
         "image_upload": "100/hour",
         "image_delete": "300/hour",
+        "image_favorite": "1200/hour",
+        "image_trash": "600/hour",
+        "semantic_search": "600/hour",
+        "places": "1200/hour",
+        "album": "1200/hour",
+        "memories": "600/hour",
         "zip_upload": "20/hour",
         "image_preprocess": "100/hour",
         "report_generation": "60/hour",
@@ -1219,6 +1318,7 @@ SPECTACULAR_SETTINGS = {
         "UserRoleEnum": "accounts.models.User.ROLE_CHOICES",
         "ProcessingReportFormatEnum": "reports.models.ProcessingReport.Format",
         "ImageUploadStatusEnum": "uploads.models.ImageUpload.STATUS_CHOICES",
+        "UploadBatchStatusEnum": "uploads.models.UploadBatch.STATUS_CHOICES",
         "OrganizationStatusEnum": "organizations.models.Organization.Status",
         "OrganizationPlanEnum": "organizations.models.Organization.Plan",
         "OrganizationMembershipRoleEnum": "organizations.models.OrganizationMembership.Role",
@@ -1309,7 +1409,7 @@ LOG_FILE = env("LOG_FILE", default="")
 _APP_LOGGERS = (
     "accounts", "activity", "config", "contact", "downloads", "duplicates", "enhancement", "events", "identities", "moderation",
     "notifications", "operations", "organizations", "privacy", "quality_control", "reports", "security", "sharing", "thumbnails", "uploads",
-    "validation",
+    "validation", "albums", "memories", "places", "search",
 )
 _LOG_HANDLERS = ["console"] + (["file"] if LOG_FILE else [])
 LOGGING = {

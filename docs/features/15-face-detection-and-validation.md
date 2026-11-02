@@ -12,21 +12,22 @@ Every successfully preprocessed image is automatically checked with the bundled
 OpenCV frontal-face detector. The original is never changed and results are
 stored idempotently in PostgreSQL.
 
-- `accepted`: one suitable portrait face or a valid group containing up to five visible faces.
-- `rejected`: a clear violation such as a single primary face that is too small.
-- `needs_review`: no suitable frontal face, or a face cut off by or touching an edge of the picture (within 1% of it). Where the face sits otherwise does not matter:
-  a head-and-shoulders portrait, with the face in the upper part, is accepted.
+- `accepted`: one suitable face (anywhere in the frame that is not cut by an edge), or **a group photograph of any number of people when at least one face is big enough to use**.
+  Faces too small to group are skipped, and the message says how many.
+- `rejected`: no longer used for faces. Rejection is for photographs that are unusable as images (the quality check: almost black, blown out, tiny).
+- `needs_review`: no face found; a single face that is small (`face_too_small`; it is not placed in a person folder, but the photograph is kept); a single face cut off by or within 1% of
+  an edge (`face_off_center`); a group photograph where no face is big enough (`group_face_too_small`). In a personal workspace nobody can review, so these show as accepted with
+  tips (`docs/FRONTEND_API_GUIDE.md`, section 3); in an organization a moderator decides.
 - `failed`: validation could not complete safely.
 
 Results contain face count, detector score and its confidence type, bounding
 boxes, area ratios, decision, machine-readable reason, explanation, detector
 version, coordinate provenance, and duration. Reasons include
 `no_face_detected`, `face_too_small`, `face_off_center`,
-`group_face_too_small`, `large_group_detected`, and `detector_failed`.
+`group_face_too_small`, `large_group_detected` (no longer produced; old rows keep it) and `detector_failed`.
 
-Group photographs containing 3–5 people are supported and are not rejected
-because of their face count. Very small group faces or more than five detected
-people are routed to review.
+Group photographs of any size are supported. Person folders take the 20 largest usable faces of a photograph (`IDENTITY_MAX_FACES_PER_IMAGE`); the others are
+recorded as skipped in the analysis evidence, and the photograph is still accepted and enhanced.
 
 ## API integration
 
