@@ -14,7 +14,7 @@ from .services import CHECKS, DEGRADED, HEALTHY, UNAVAILABLE, build_system_healt
 clear_health_cache = getattr(services, "clear_health_cache", lambda: None)             # the tests are meant to fail, not break, on the old code that has none
 
 SERVICES = ["api", "database", "redis", "celery", "storage", "email", "models"]
-TOP_LEVEL = {"status", "version", "checked_at", "response_time_ms", "checks", "jobs", "services", "process"}
+TOP_LEVEL = {"status", "version", "checked_at", "response_time_ms", "checks", "jobs", "services", "process", "background_jobs_inline"}
 
 
 def healthy():
