@@ -13,6 +13,7 @@ from .test_pipeline_regressions import NO_MODELS, ResultFixture
 from uploads.models import ImageUpload
 
 
+@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about refusing a photograph; the product default no longer refuses (test_never_reject.py)
 @override_settings(**NO_MODELS)
 class EligibilityTests(ResultFixture):
     def photo(self, name, *, quality=None, face=None, upload_status="uploaded"):

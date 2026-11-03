@@ -141,12 +141,14 @@ def make_decision(metrics, scores, face_validation):
         reject.append(face_validation.rejection_reason or "face_validation_rejected")
 
     reject = list(dict.fromkeys(reject))
+    if reject and not settings.QUALITY_CHECKS_REJECT:     # a quality check never refuses a photograph here: its reasons become review reasons (and tips), see QUALITY_CHECKS_REJECT
+        review, reject = reject + review, []
     review = [reason for reason in dict.fromkeys(review) if reason not in reject]
     if reject:
         return "rejected", reject + review, "The image did not pass mandatory quality checks."
     if review or acceptance_score(metrics, scores) < settings.QUALITY_ACCEPT_SCORE:
         reasons = review or ["overall_score_below_acceptance"]
-        return "needs_review", reasons, "The image requires review before enhancement."
+        return "needs_review", reasons, "The image has quality problems; it is still enhanced." if not settings.QUALITY_CHECKS_REJECT else "The image requires review before enhancement."
     return "accepted", [], "The image passed quality and face checks."
 
 

@@ -65,6 +65,7 @@ class EffectiveDecisionBase(TestCase):
         return client
 
 
+@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about refusing a photograph; the product default no longer refuses (test_never_reject.py)
 class TheRuleTests(EffectiveDecisionBase):
     def test_a_moderator_can_decide_only_in_an_organization_that_is_not_personal(self):
         self.assertTrue(moderator_can_decide(self.photo(self.batch("team"), "needs_review")))
@@ -106,6 +107,7 @@ class TheRuleTests(EffectiveDecisionBase):
         self.assertEqual(image_reason_codes(image), ["underexposed", "face_off_center"])
 
 
+@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about refusing a photograph; the product default no longer refuses (test_never_reject.py)
 class EverythingThatShowsTheVerdictTests(EffectiveDecisionBase):
     def test_the_status_word(self):
         personal = self.photo(self.batch("personal"), "needs_review", ["underexposed"])
@@ -285,6 +287,7 @@ class TheTaskTests(EffectiveDecisionBase):
         self.assertTrue(ModeratorReview.objects.filter(image=image, source="quality").exists())
 
 
+@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about refusing a photograph; the product default no longer refuses (test_never_reject.py)
 class SimpleRuleTests(SimpleTestCase):
     def test_the_condition_for_a_rejection_is_the_plain_stored_value(self):
         self.assertEqual(str(effective_q("rejected")), "(AND: ('quality_decision__decision', 'rejected'))")

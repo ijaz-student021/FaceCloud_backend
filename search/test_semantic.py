@@ -77,6 +77,7 @@ class SemanticBase(TestCase):
         return [row["photo"]["id"] for row in self.search(query, **extra).json()["results"]]
 
 
+@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about photographs the checks refused; the product default no longer refuses (quality_control/test_never_reject.py)
 class RankingTests(SemanticBase):
     def test_the_words_find_the_photographs_that_show_them_best_first(self):
         red, green, blue = self.photo("red"), self.photo("green"), self.photo("blue")
@@ -150,6 +151,7 @@ class RankingTests(SemanticBase):
         self.assertEqual(APIClient().get(reverse("search-photos"), {"q": "red"}).status_code, 401)
 
 
+@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about photographs the checks refused; the product default no longer refuses (quality_control/test_never_reject.py)
 class IndexingTests(SemanticBase):
     def test_indexing_is_idempotent_and_a_new_model_is_a_new_index(self):
         image = self.photo("red", index=False)

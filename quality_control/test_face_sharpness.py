@@ -49,6 +49,7 @@ def judge(image, face_validation):
     return metrics, scores, make_decision(metrics, scores, face_validation)
 
 
+@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about refusing a photograph; the product default no longer refuses (test_never_reject.py)
 class FaceSharpnessTests(SimpleTestCase):
     def test_the_face_measure_falls_with_blur_and_ignores_the_background(self):
         sharp = primary_face_detail(portrait(), tuple(FACE_BOX[k] for k in ("x", "y", "width", "height")))

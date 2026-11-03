@@ -17,6 +17,7 @@ from .models import ImageUpload, UploadBatch
 User = get_user_model()
 
 
+@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about refusing a photograph; the product default no longer refuses (test_never_reject.py)
 class BatchDisplayStatusTests(APITestCase):
     def setUp(self):
         self.media = tempfile.TemporaryDirectory()

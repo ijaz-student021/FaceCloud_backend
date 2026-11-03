@@ -181,6 +181,7 @@ class NotEveryDetectionIsAPersonTests(Base):
         self.assertTrue(face_grouping_check({"x": 0, "y": 0, "width": 10, "height": 10}, 1)[0])                 # an old record without score or ratio is judged on what it has
 
 
+@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about refusing a photograph; the product default no longer refuses (test_never_reject.py)
 class RejectedPhotosLeaveFoldersTests(Base):
     def folder_with(self, image, vector=None, **group_extra):
         group = self.group(**group_extra)
