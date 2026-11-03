@@ -34,7 +34,7 @@ from .serializers import (PersonChipSerializer, IdentityAnalysisSerializer, Iden
                           IdentityGroupExportSerializer, IdentityGroupSerializer,
                           IdentityMembershipSerializer, IdentityMergeSerializer,
                           IdentityMoveSerializer, IdentityProfileSerializer,
-                          IdentityReasonSerializer, IdentityRenameSerializer,
+                          IdentityGroupDeleteSerializer, IdentityReasonSerializer, IdentityRenameSerializer,
                           IdentityReviewRequestSerializer,
                           IdentitySearchResponseSerializer, SuggestedMergeSerializer)
 from .services import (enqueue_identity_analysis, group_member_photos,
@@ -328,17 +328,23 @@ class IdentityGroupProfileView(APIView):
 
 
 class IdentityGroupDeleteView(APIView):
+    """Delete a person folder. The photographs are never deleted: with ``dissolve`` true they stay in the library, in no folder.
+
+    The automatic names of your other folders are renumbered afterwards (``Person 004`` becomes ``Person 002``); folder ids do not change, so reload the
+    list to show the new names. A folder that has no photograph left is deleted by the server on its own, so this is for a folder you want gone.
+    """
+
     permission_classes = [permissions.IsAuthenticated]
 
     @extend_schema(
-        request=IdentityReasonSerializer,
+        request=IdentityGroupDeleteSerializer,
         responses={204: None},
     )
     def delete(self, request, pk):
         group = get_object_or_404(IdentityGroup.objects.filter(owner=request.user), pk=pk)
-        payload = IdentityReasonSerializer(data=request.data)
+        payload = IdentityGroupDeleteSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
-        delete_empty_group(group, request.user, payload.validated_data["reason"])
+        delete_empty_group(group, request.user, payload.validated_data["reason"], dissolve=payload.validated_data["dissolve"])
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

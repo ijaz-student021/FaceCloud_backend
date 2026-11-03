@@ -264,13 +264,17 @@ endpoints, so fetch them with the Authorization header (not a bare `<img src>`;
 use fetch with a blob, or a short-lived approach agreed with the backend).
 
 **Deleting photos.** `DELETE /api/images/{id}/` (204) deletes one; `POST /api/images/bulk-delete/ {image_ids: [..]}`
-(1 to 200 ids) deletes several and answers `{deleted_ids, not_found_ids, folders_updated, packages_expired, exports_expired}`:
+(1 to 200 ids) deletes several and answers `{deleted_ids, not_found_ids, folders_updated, folders_deleted, folders_renumbered, packages_expired, exports_expired}`:
 ids that are not yours or do not exist are listed in `not_found_ids` and nothing is done for them. A delete also
 removes the photo's files, thumbnails, enhanced copies and the share links to those copies; it **recounts every
 person folder the photo was in** (`member_count`, and the folder no longer matches faces against it); and it
 **expires the ready ZIP of the same upload and the ready folder exports of those folders**, because they hold a copy
-(their secure links then answer 410; the owner can build new ones). A folder left empty stays until its owner
-deletes it, and its `cover_images` is empty. Deleting an upload batch (`DELETE /api/images/batches/{id}/`) does the same.
+(their secure links then answer 410; the owner can build new ones). **A folder left with no photograph is deleted by the
+server (changed 2026-11-03; it used to stay empty, showing "0 images")**, with its ready exports, and the automatic names of the owner's other folders
+are **renumbered** so no gap is left: delete the photos of `Person 002` and `Person 003` and `Person 004` becomes `Person 002`. Folder ids never change,
+only `display_name` does, so reload the folder list after a delete (`folders_deleted` and `folders_renumbered` tell you whether to). A folder the owner
+named is deleted when it is left empty, too; a folder that a photo in the trash can still return to is kept. On a folder's own page, a `404` after deleting
+its last photo means the folder is gone: go back to the list. Deleting an upload batch (`DELETE /api/images/batches/{id}/`) does the same.
 
 **Favourites (new).** `PUT /api/images/{id}/favorite/` marks one of the person's own photographs (answer `{id, is_favorite: true, favorited_at}`), `DELETE` takes the mark off
 (`is_favorite: false`); both are idempotent and a photograph that is not theirs, does not exist or was refused at upload is a `404`. `POST /api/images/favorites/
@@ -505,8 +509,10 @@ face is small is no longer **rejected**: it is kept (`needs_review` in the face 
 - Manage folders: `PATCH .../groups/{id}/rename/ {display_name}`,
   `POST .../groups/{id}/merge/ {source_group_id, reason}` (merges the source
   into this folder), `PATCH .../groups/{id}/profile/`,
-  `DELETE .../groups/{id}/delete/` (only when empty), and per face
-  `PATCH /api/identities/memberships/{id}/move/` and `/remove/`.
+  `DELETE .../groups/{id}/delete/ {reason?, dissolve?}` (204; **a folder with photographs is refused with a 400 unless `dissolve: true`**, then the folder is
+  deleted and its photographs stay in the library, in no folder; the automatic names of the other folders are renumbered, ids unchanged),
+  and per face `PATCH /api/identities/memberships/{id}/move/` and `/remove/` (moving or removing a folder's last photograph deletes the folder; the
+  `/remove/` answer is then `state: "rejected"` with `identity_group: null`).
 - **Review queue.** `GET /api/identities/review/` lists uncertain assignments
   (`state: needs_review`). Resolve one with
   `PATCH /api/identities/assignments/{id}/review/ {action, group_id?}` where

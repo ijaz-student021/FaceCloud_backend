@@ -138,11 +138,10 @@ class IdentityGroupManagementTests(TestCase):
     def test_rename_move_profile_remove_and_delete_are_audited(self):
         rename_group(self.source, self.owner, "Family")
         moved = move_membership(self.membership, self.target, self.owner, "correction")
+        self.assertFalse(IdentityGroup.objects.filter(pk=self.source.pk).exists())          # its last photograph left: the folder is deleted (and audited)
         set_profile_membership(self.target, moved, self.owner)
         remove_membership(moved, self.owner, "incorrect face")
-        delete_empty_group(self.source, self.owner, "unused")
-        self.target.refresh_from_db()
-        self.assertIsNone(self.target.profile_membership_id)
+        self.assertFalse(IdentityGroup.objects.filter(pk=self.target.pk).exists())          # the same for the folder it was moved to
         self.assertEqual(set(IdentityChange.objects.filter(owner=self.owner).values_list("action", flat=True)), {"renamed", "moved", "profile_set", "removed", "deleted"})
 
     def test_merge_moves_members_and_marks_source(self):
@@ -241,7 +240,10 @@ class IdentityGroupManagementApiTests(APITestCase):
         response = self.client.patch(reverse("identities:membership-remove", args=[self.membership.pk]), {"reason": "incorrect face"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.membership.refresh_from_db()
-        self.assertEqual(self.membership.state, IdentityMembership.State.REMOVED)
+        # It was the folder's only photograph, so the folder is deleted and the record is "rejected" with no folder (with other photographs left the
+        # state is "removed": identities/test_empty_folders.py).
+        self.assertEqual((self.membership.state, self.membership.identity_group_id), (IdentityMembership.State.REJECTED, None))
+        self.assertFalse(IdentityGroup.objects.filter(pk=self.source.pk).exists())
 
     def test_remove_endpoint_rejects_other_owner(self):
         self.authenticate(self.other)
