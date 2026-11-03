@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 import uuid
 
@@ -35,6 +36,9 @@ def _read_image(preprocessing):
     if image is None:
         raise ValidationError("The standardized image cannot be decoded safely.")
     return image
+
+
+AUTOMATIC_NAME = re.compile(r"Person (\d{3,})")          # the name a folder gets before its owner renames it
 
 
 def _next_group_name(owner):
@@ -134,17 +138,117 @@ def photo_is_rejected(image):
 
 def folder_is_renamed(group):
     """Whether the owner named this folder themselves (a rename is recorded, or the name is no longer the automatic ``Person 001``)."""
-    import re
-
     from .models import IdentityChange
 
-    if not re.fullmatch(r"Person \d{3,}", group.display_name):
+    if not AUTOMATIC_NAME.fullmatch(group.display_name):
         return True
     return IdentityChange.objects.filter(group=group, action=IdentityChange.Action.RENAMED).exists()
 
 
 def _folder_is_empty(group):
     return not group.memberships.filter(state__in=[*_confirmed_states(), IdentityMembership.State.NEEDS_REVIEW]).exists()
+
+
+EMPTY_FOLDER_DELETED_REASON = "The folder had no photographs left."
+
+
+def _holds_a_restorable_photo(group):
+    """Whether a photograph in the trash can still come back into ``group``: its membership is kept (``removed``) until the photograph is purged."""
+    return group.memberships.filter(state=IdentityMembership.State.REMOVED, identity_face__image__trashed_at__isnull=False).exists()
+
+
+def folder_has_no_photographs(group):
+    """No photograph is in ``group`` and none can come back into it (a photograph in the trash can, so its folder is kept)."""
+    return not group.memberships.filter(state__in=_confirmed_states()).exists() and not _holds_a_restorable_photo(group)
+
+
+def delete_folder(group, *, actor=None, reason=""):
+    """Delete one person folder. The photographs stay in the library: what still points at the folder is detached first, never deleted with it.
+
+    A suggestion (``needs_review``) stays a suggestion, with no folder suggested; every other record of the folder (a photograph taken out of it, a
+    rejected match, a photograph still counted in it) becomes ``rejected``, the inactive state that needs no folder. What was deleted is written to the
+    owner's history (the change keeps the folder's name and id) and to the activity log; that change is returned.
+    """
+    from activity.services import record_activity_event
+
+    from .models import IdentityChange
+
+    now = timezone.now()
+    photos = group.memberships.filter(state__in=_confirmed_states()).count()
+    group.memberships.filter(state=IdentityMembership.State.NEEDS_REVIEW).update(identity_group=None, updated_at=now)
+    group.memberships.exclude(state=IdentityMembership.State.NEEDS_REVIEW).update(state=IdentityMembership.State.REJECTED, identity_group=None, updated_at=now)
+    snapshot = {"group_id": group.pk, "display_name": group.display_name, "state": group.state, "photographs_released": photos}
+    change = IdentityChange.objects.create(owner=group.owner, actor=actor, group=group, action=IdentityChange.Action.DELETED, before=snapshot, reason=reason[:240])
+    record_activity_event(
+        group.owner, "group", "group_deleted", object_type="IdentityGroup", object_id=group.pk,
+        details={"actor_id": actor.pk if actor else None, "reason": reason, "photographs_released": photos},
+    )
+    group.delete()
+    return change
+
+
+def renumbering_plan(groups, renamed_group_ids):
+    """``[(folder id, current name, new name)]`` for the folders of ONE owner that would be renumbered (see ``renumber_person_folders``); changes nothing."""
+    movable, reserved = [], set()
+    for group in groups:
+        match = AUTOMATIC_NAME.fullmatch(group.display_name)
+        if match is None:
+            continue
+        if group.state == IdentityGroup.State.ACTIVE and group.pk not in renamed_group_ids:
+            movable.append((int(match.group(1)), group.pk, group.display_name))
+        else:
+            reserved.add(int(match.group(1)))
+    plan, number = [], 0
+    for current, pk, name in sorted(movable):
+        number += 1
+        while number in reserved:
+            number += 1
+        if number != current:
+            plan.append((pk, name, f"Person {number:03d}"))
+    return plan
+
+
+def renamed_folder_ids(owner):
+    from .models import IdentityChange
+
+    return set(IdentityChange.objects.filter(owner=owner, action=IdentityChange.Action.RENAMED).values_list("group_id", flat=True))
+
+
+@transaction.atomic
+def renumber_person_folders(owner):
+    """Close the gaps in the automatic names: ``Person 001``, ``Person 004`` become ``Person 001``, ``Person 002``. Returns how many folders got a new name.
+
+    Only an active folder that still has its automatic name and was never renamed by its owner is renumbered, in the order of its number. A number held by
+    any other folder (one the owner named, an archived or merged one) is skipped, so two folders never share a name. The folder's id never changes (links,
+    exports and history use it) and neither does ``updated_at``: that orders the folders a new face is matched against, and a rename is not a reason to
+    match differently.
+    """
+    groups = list(IdentityGroup.objects.select_for_update().filter(owner=owner))
+    plan = renumbering_plan(groups, renamed_folder_ids(owner))
+    for pk, _old, new in plan:
+        IdentityGroup.objects.filter(pk=pk).update(display_name=new)          # ascending, so the new number is always free
+    if plan:
+        logger.info("Renumbered %d automatic person folder name(s) of user %s.", len(plan), owner.pk)
+    return len(plan)
+
+
+@transaction.atomic
+def prune_empty_folders(groups, *, actor=None, reason=EMPTY_FOLDER_DELETED_REASON):
+    """Delete the folders in ``groups`` that have no photographs left, then close the gaps in their owners' automatic names.
+
+    A folder an owner named is deleted too: with no photograph it has no face to match and nothing to show, and the owner has just taken its last photograph
+    away. A merged folder is never touched (it is the record of a merge). Returns ``{"deleted": [folder ids], "renumbered": n}``.
+    """
+    deleted, owners = [], {}
+    for group in groups:
+        locked = IdentityGroup.objects.select_for_update(of=("self",)).select_related("owner").filter(pk=group.pk).first()
+        if locked is None or locked.state == IdentityGroup.State.MERGED or not folder_has_no_photographs(locked):
+            continue
+        owners[locked.owner_id] = locked.owner
+        delete_folder(locked, actor=actor, reason=reason)
+        deleted.append(locked.pk)
+    renumbered = sum(renumber_person_folders(owner) for owner in owners.values())
+    return {"deleted": deleted, "renumbered": renumbered}
 
 
 FOLDER_EMPTY_REASON = "The folder was left empty."

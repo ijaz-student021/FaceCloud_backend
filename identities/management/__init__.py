@@ -3,7 +3,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from ..models import IdentityChange, IdentityGroup, IdentityMembership
-from ..services import _confirmed_states, _refresh_group
+from ..services import _confirmed_states, _refresh_group, delete_folder, prune_empty_folders, renumber_person_folders
 
 
 def _record(owner, actor, action, *, group=None, membership=None, before=None, after=None, reason=""):
@@ -92,6 +92,8 @@ def move_membership(membership, target, actor, reason=""):
         _refresh_group(source)
     _refresh_group(target)
     _record(actor, actor, IdentityChange.Action.MOVED, group=target, membership=membership, before={"group_id": source.pk if source else None}, after={"group_id": target.pk}, reason=reason)
+    if source:
+        prune_empty_folders([source], actor=actor)          # the last photograph left it: the folder goes, the numbering closes up
     return membership
 
 
@@ -112,6 +114,8 @@ def remove_membership(membership, actor, reason=""):
     if group:
         _refresh_group(group)
     _record(actor, actor, IdentityChange.Action.REMOVED, group=group, membership=membership, before={"state": before}, after={"state": membership.state}, reason=reason)
+    if group and prune_empty_folders([group], actor=actor)["deleted"]:
+        membership.refresh_from_db()          # the folder it was removed from is gone, so the record now says "rejected" with no folder
     return membership
 
 
@@ -127,11 +131,15 @@ def set_profile_membership(group, membership, actor):
 
 
 @transaction.atomic
-def delete_empty_group(group, actor, reason=""):
+def delete_empty_group(group, actor, reason="", *, dissolve=False):
+    """Delete a person folder, and close the gap in the automatic numbering (``Person 004`` becomes ``Person 002``).
+
+    A folder that still has photographs is refused unless ``dissolve`` is true: then the folder goes and its photographs stay in the library, in no folder.
+    """
     group = IdentityGroup.objects.select_for_update().get(pk=group.pk, owner=actor)
-    if group.memberships.filter(state__in=_confirmed_states()).exists():
+    confirmed = group.memberships.filter(state__in=_confirmed_states()).count()
+    if confirmed and not dissolve:
         raise ValidationError("Remove or move every confirmed image before deleting this person folder.")
-    snapshot = {"group_id": group.pk, "display_name": group.display_name, "state": group.state}
-    change = _record(actor, actor, IdentityChange.Action.DELETED, group=group, before=snapshot, reason=reason)
-    group.delete()
+    change = delete_folder(group, actor=actor, reason=reason)
+    renumber_person_folders(actor)
     return change

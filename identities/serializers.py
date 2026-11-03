@@ -171,6 +171,14 @@ class IdentityReasonSerializer(serializers.Serializer):
     reason = serializers.CharField(max_length=240, required=False, allow_blank=True, default="")
 
 
+class IdentityGroupDeleteSerializer(IdentityReasonSerializer):
+    dissolve = serializers.BooleanField(
+        required=False, default=False,
+        help_text="false (default): only a folder with no photograph can be deleted. true: delete the folder even though it has photographs; "
+                  "the photographs stay in the library, in no folder.",
+    )
+
+
 class IdentityProfileSerializer(serializers.Serializer):
     membership_id = serializers.IntegerField(min_value=1)
 

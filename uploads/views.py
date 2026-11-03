@@ -453,6 +453,8 @@ class BulkDeleteResultSerializer(serializers.Serializer):
     deleted_ids = serializers.ListField(child=serializers.IntegerField())
     not_found_ids = serializers.ListField(child=serializers.IntegerField(), help_text="Ids that are not yours or do not exist: nothing was done for them.")
     folders_updated = serializers.IntegerField(help_text="Person folders whose count and matching were recomputed.")
+    folders_deleted = serializers.IntegerField(help_text="Person folders that were left with no photograph and were deleted (the photographs of other folders are untouched).")
+    folders_renumbered = serializers.IntegerField(help_text="Folders whose automatic name (Person 004) was renumbered (Person 002) to close the gap the deleted folders left; their ids do not change.")
     packages_expired = serializers.IntegerField(help_text="Ready ZIPs of the affected uploads that were expired because they held a copy.")
     exports_expired = serializers.IntegerField(help_text="Ready person-folder exports that were expired for the same reason.")
 

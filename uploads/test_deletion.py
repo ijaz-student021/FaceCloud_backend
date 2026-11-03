@@ -36,13 +36,29 @@ class DeletionTests(FolderFixtures, TestCase):
         self.assertEqual(self.group.member_count, 1)
         self.assertEqual(self.group.memberships.count(), 1)
 
-    def test_deleting_the_last_photo_leaves_an_empty_folder_with_no_centroid_and_no_cover(self):
+    def test_deleting_the_cover_photo_clears_the_cover_and_keeps_the_folders_average_face_of_the_rest(self):
         image, membership = self.add_photo(self.group)
+        self.add_photo(self.group, "rest.jpg")
         IdentityGroup.objects.filter(pk=self.group.pk).update(profile_membership=membership)
         self.delete(image)
         self.group.refresh_from_db()
-        self.assertEqual((self.group.member_count, bytes(self.group.protected_centroid), self.group.profile_membership_id), (0, b"", None))
-        self.assertTrue(IdentityGroup.objects.filter(pk=self.group.pk).exists())         # the folder is kept; the owner may delete it
+        self.assertEqual((self.group.member_count, self.group.profile_membership_id), (1, None))
+        self.assertNotEqual(bytes(self.group.protected_centroid), b"")
+
+    def test_deleting_the_last_photo_deletes_the_folder(self):
+        image, membership = self.add_photo(self.group)
+        IdentityGroup.objects.filter(pk=self.group.pk).update(profile_membership=membership)
+        self.delete(image)
+        self.assertFalse(IdentityGroup.objects.filter(pk=self.group.pk).exists())          # no empty folder is left behind (identities/test_empty_folders.py)
+
+    def test_the_ready_export_of_a_folder_that_goes_with_its_last_photo_goes_too(self):
+        image, _ = self.add_photo(self.group)
+        export = IdentityGroupExport.objects.create(
+            owner=self.owner, identity_group=self.group, status="ready", file_size=5, expires_at=timezone.now() + timedelta(days=1),
+        )
+        export.export_file.save("e.zip", ContentFile(b"zipzip"))
+        self.delete(image)
+        self.assertFalse(IdentityGroupExport.objects.filter(pk=export.pk).exists())
 
     def test_a_ready_package_of_the_same_upload_is_expired_and_its_file_removed(self):
         image, _ = self.add_photo(self.group)
@@ -65,6 +81,7 @@ class DeletionTests(FolderFixtures, TestCase):
 
     def test_a_ready_folder_export_and_its_secure_link_stop_working(self):
         image, _ = self.add_photo(self.group)
+        self.add_photo(self.group, "stays.jpg")           # the folder keeps a photograph, so it (and its expired export) remain
         export = IdentityGroupExport.objects.create(
             owner=self.owner, identity_group=self.group, status="ready", file_size=5, expires_at=timezone.now() + timedelta(days=1),
         )
@@ -132,7 +149,7 @@ class BulkDeleteTests(FolderFixtures, TestCase):
     def test_a_folder_is_recounted_once_however_many_photos_leave_it(self):
         photos = [self.add_photo(self.group, f"q{i}.jpg")[0] for i in range(4)]
         response = self.client.post(self.url, {"image_ids": [p.pk for p in photos]}, format="json")
-        self.assertEqual(response.json()["folders_updated"], 1)
-        self.group.refresh_from_db()
-        self.assertEqual(self.group.member_count, 0)
+        body = response.json()
+        self.assertEqual((body["folders_updated"], body["folders_deleted"]), (1, 1))
+        self.assertFalse(IdentityGroup.objects.filter(pk=self.group.pk).exists())          # all four photographs left it: the folder goes
         self.assertFalse(IdentityMembership.objects.filter(identity_group=self.group).exists())
