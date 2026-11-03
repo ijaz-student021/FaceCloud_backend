@@ -652,6 +652,23 @@ DDCOLOR_CHROMA_SCALE = env.float("DDCOLOR_CHROMA_SCALE", default=0.7)
 DDCOLOR_DARK_DAMPING = env.float("DDCOLOR_DARK_DAMPING", default=0.3)
 DDCOLOR_HIGHLIGHT_DAMPING = env.float("DDCOLOR_HIGHLIGHT_DAMPING", default=0.5)
 DDCOLOR_MAX_CHROMA = env.float("DDCOLOR_MAX_CHROMA", default=60.0)
+
+# Detail restoration (the adaptive engine's "detail_restoration" operation): a soft or heavily compressed photograph (a WhatsApp copy: blur the engine calls "defocus" and JPEG
+# blocking) is run through a 4x model at 2x and shrunk back to its own size, so it comes out clearer at the SAME size. Measured on the owner's 1600 x 1382 portrait (blur and
+# compression both found before, neither after; PSNR against the original 37.5-39.2 dB, i.e. the same photograph; docs/evaluation/2026-11-03-detail-restoration.md).
+# ADAPTIVE_DETAIL_ENABLED=False switches the operation off. ADAPTIVE_DETAIL_MAX_PIXELS: a larger photograph is left alone (the time grows with the pixels: about 3 s per megapixel with the
+# compact model, about 30 s with x4plus or UltraSharp, which only AI Enhance / Strong prefer or the fallback uses).
+ADAPTIVE_DETAIL_ENABLED = env.bool("ADAPTIVE_DETAIL_ENABLED", default=True)
+ADAPTIVE_DETAIL_MAX_PIXELS = env.int("ADAPTIVE_DETAIL_MAX_PIXELS", default=4_000_000)
+# The compact Real-ESRGAN network (realesr-general-x4v3, BSD-3-Clause, xinntao/Real-ESRGAN): the first choice for detail restoration (5-6 s against 69 s for x4plus on the same photograph).
+# Its switch is HD_RESTORATION_ENABLED. The hash is that of the file the owner downloaded on 2026-10-17 (not compared with a published hash: none was found; docs/model-licenses/ultrasharp.md).
+REALESRGAN_GENERAL_MODEL_PATH = env("REALESRGAN_GENERAL_MODEL_PATH", default=str(BASE_DIR / ".runtime" / "models" / "realesr-general-x4v3.pth"))
+REALESRGAN_GENERAL_MODEL_SHA256 = env("REALESRGAN_GENERAL_MODEL_SHA256", default="8dc7edb9ac80ccdc30c3a5dca6616509367f05fbc184ad95b731f05bece96292")
+# 4x-UltraSharp (Kim2091; CC BY-NC-SA 4.0: non-commercial, attribution, share-alike; docs/model-licenses/ultrasharp.md), the same RRDBNet as Real-ESRGAN x4plus in the original
+# ESRGAN key layout. OFF unless True; when on and present it is the first choice for detail restoration (sharper edges, no halos on the owner's portrait), Real-ESRGAN x4plus the fallback.
+ULTRASHARP_ENABLED = env.bool("ULTRASHARP_ENABLED", default=False)
+ULTRASHARP_MODEL_PATH = env("ULTRASHARP_MODEL_PATH", default=str(BASE_DIR / ".runtime" / "models" / "ultrasharp" / "4x-UltraSharp.pth"))
+ULTRASHARP_MODEL_SHA256 = env("ULTRASHARP_MODEL_SHA256", default="a5812231fc936b42af08a5edba784195495d303d5b3248c24489ef0c4021fe01")
 GFPGAN_OUTPUT_BLEND = env.float("GFPGAN_OUTPUT_BLEND", default=0.25)
 GFPGAN_MIN_OUTPUT_BLEND = env.float("GFPGAN_MIN_OUTPUT_BLEND", default=0.08)
 GFPGAN_ALLOW_MILD_BLUR = env.bool("GFPGAN_ALLOW_MILD_BLUR", default=True)

@@ -320,6 +320,9 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}     -> 201
   - `ai_max`: all of `dynamic`, a stronger polish, a dark scene with a visible subject may be lifted, light noise is treated, and a photograph under 1280 px is enlarged.
   - `level`: `low` = gentler (blends 0.65 and 0.4, polish x0.6); `auto`/`medium` = the style as it is; `high` = polish x1.4, a dark scene may be lifted, light noise is treated,
     a photograph under 960 px is enlarged.
+  - **`detail_restoration`** (in `adaptive.operations_applied`, summary "restored fine detail and reduced compression blocking"): a soft or heavily compressed photograph (a WhatsApp copy)
+    comes out clearer at the **same size**. It is tried for every style when the photograph shows heavy compression or softness (not for a sharp face in front of a blurred
+    background), and AI Enhance / Strong prefer the slowest, best-looking model for it. A photograph over 4 megapixels is left alone. Say "clearer", not "enlarged".
   Suggested wording for the style picker: "Natural: keeps the photo as it is. Dynamic: more punch, and colours a black-and-white photo. AI Enhance: strongest; also brightens dark
   scenes and enlarges small photos." A colourized photograph is a guess at the original colours (the model predicts them; they are damped to look natural): say "colourized",
   never "restored". The upload and the original download are never changed.

@@ -200,6 +200,8 @@ def check_models():
             learned_stage_enabled("HD_RESTORATION_ENABLED") and bool(settings.REALESRGAN_MODEL_PATH),
         ),
         "ddcolor": (settings.DDCOLOR_MODEL_PATH, settings.DDCOLOR_MODEL_SHA256, learned_stage_enabled("DDCOLOR_ENABLED")),
+        "realesrgan_general": (settings.REALESRGAN_GENERAL_MODEL_PATH, settings.REALESRGAN_GENERAL_MODEL_SHA256, learned_stage_enabled("HD_RESTORATION_ENABLED")),
+        "ultrasharp": (settings.ULTRASHARP_MODEL_PATH, settings.ULTRASHARP_MODEL_SHA256, learned_stage_enabled("ULTRASHARP_ENABLED")),
         "gfpgan": (
             settings.GFPGAN_MODEL_PATH, settings.GFPGAN_MODEL_SHA256,
             learned_stage_enabled("GFPGAN_ENABLED") and bool(settings.GFPGAN_MODEL_PATH),
