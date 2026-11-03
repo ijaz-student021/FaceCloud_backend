@@ -20,12 +20,21 @@ class Candidate:
     verdict: dict | None = None
     selected: bool = False
     seconds: float = 0.0
+    size: tuple | None = None       # (width, height), kept when the pixels are released
+
+    def __post_init__(self):
+        if self.size is None and self.image is not None:
+            self.size = (int(self.image.shape[1]), int(self.image.shape[0]))
+
+    def release(self):
+        """Free the pixels of a candidate the validator refused: it is never used again, so it neither holds memory nor counts against the pool's limit."""
+        self.image = None
 
     def describe(self):
         """A JSON-friendly summary, without the pixels."""
         return {
             "id": self.id, "parent": self.parent, "operation": self.operation, "variant": self.variant,
-            "dimensions": [int(self.image.shape[1]), int(self.image.shape[0])], "models": self.models,
+            "dimensions": [int(self.size[0]), int(self.size[1])], "models": self.models,
             "seconds": round(self.seconds, 3), "selected": self.selected, "verdict": self.verdict,
         }
 
@@ -35,6 +44,8 @@ class PoolFull(Exception):
 
 
 class CandidatePool:
+    TOTAL_FACTOR = 6          # at most this many times ``max_candidates`` candidates are ever proposed, released ones included
+
     def __init__(self, original, max_candidates=8):
         self.max_candidates = max(2, int(max_candidates))
         self.items = [Candidate(id="c0_original", image=original, parent=None, operation="original", selected=True)]
@@ -44,7 +55,8 @@ class CandidatePool:
         return self.items[0]
 
     def add(self, image, parent, operation, variant="", models=None, seconds=0.0):
-        if len(self.items) >= self.max_candidates:
+        # The limit is on the images held at once: a refused candidate is released and does not count. The work stays bounded because the total is capped as well.
+        if sum(1 for item in self.items if item.image is not None) >= self.max_candidates or len(self.items) >= self.max_candidates * self.TOTAL_FACTOR:
             raise PoolFull(f"The candidate limit ({self.max_candidates}) was reached.")
         candidate = Candidate(
             id=f"c{len(self.items)}_{operation}", image=image, parent=parent.id, operation=operation, variant=variant,

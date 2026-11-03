@@ -99,6 +99,26 @@ Turn restoration on only after validating it on a larger, more diverse set of fa
 * **Denoising** offers blend 1.0 and 0.65 and lets the validator choose, because 65 % beat full strength on light-to-moderate noise and
   full strength won on heavy noise (`docs/evaluation/2026-10-15-denoising.md`).
 
+## 5.0 Every photograph is enhanced (`ADAPTIVE_ALWAYS_ENHANCE`, on by default; 2026-11-03)
+
+The owner's rule: a photograph that needs no correction is enhanced with the model used for light photographs, never returned as "it did not need enhancement".
+When the analyzer recommends no correction (and while no step has been accepted):
+
+1. **Refine**: the compact `realesr-general-x4v3` network (`general` only; the slower networks are not its fallback) at about 1.0 and 0.7 of its own output.
+   Kept if the structure energy rises by at least `ADAPTIVE_REFINE_MIN_GAIN` (1.01), not by an invented amount (at most 1.6), the main face does not grow past
+   `max(260, 1.1 x its detail before)`, and every other gate (identity, face geometry, halo, clipping, colour) passes. 2-9 s for a 1400 px photograph; a photograph over
+   `ADAPTIVE_DETAIL_MAX_PIXELS` (4 MP) skips it.
+2. **Finish** (the polish, as the fallback): `ADAPTIVE_FINISH_STRENGTH` (3) times the gentle share, vibrance `ADAPTIVE_FINISH_VIBRANCE` (15 percent instead of 6) and a ladder of five
+   variants, strongest first (finish, finish blended 0.65, finish with soft edges, finish gentle, finish colour: no sharpening at all). Kept if every safety gate passes, no measure
+   falls below `ADAPTIVE_FINISH_TOLERANCE` (0.97) of what it was, and the photograph really changes (mean change of at least `ADAPTIVE_FINISH_MIN_CHANGE`, 1.5 of 255). The gentle
+   polish needed a 5 percent gain, which a photograph that is already balanced and sharp does not give, so 26 of the owner's 48 results had been returned unchanged.
+   The main face's detail ratio is not asked to hold here (the detector can pick another face after a small change); a face that gets too sharp is still refused by the ceiling.
+3. A refused candidate releases its pixels and no longer counts against `ADAPTIVE_MAX_CANDIDATES`: refused lift and model candidates used to fill the pool, so the polish was
+   only offered its first one or two (strongest) variants.
+
+Evidence (20 of the owner's photographs that had come back unchanged, 1400 px long edge, `natural` / `auto`, `docs/evaluation/2026-11-03-always-enhance.md`): 19 changed (3 by the
+refine model, 14 by the finish, 2 by super-resolution), 1 kept because every candidate was refused by the identity, face-geometry and highlight gates.
+
 ## 5a. Polish: a gentle improvement for a photograph with nothing to fix (`ADAPTIVE_POLISH_ENABLED`, off by default)
 
 Without it, a well-lit, sharp photograph runs no operation and ends as `original_preserved`. With `ADAPTIVE_POLISH_ENABLED=True` the

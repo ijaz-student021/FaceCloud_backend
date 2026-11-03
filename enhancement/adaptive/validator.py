@@ -254,8 +254,8 @@ class FinalImageQualityValidator:
         self.identity = identity            # an object with .check(image) -> dict, or None
         self.limits = limits or Limits()
 
-    def evaluate(self, parent, candidate, operation, parent_report, expected_scale=1, candidate_report=None):
-        """``{accepted, reasons, gates, metrics, improvement, change_cost}`` for one candidate."""
+    def evaluate(self, parent, candidate, operation, parent_report, expected_scale=1, candidate_report=None, refine=False):
+        """``{accepted, reasons, gates, metrics, improvement, change_cost}`` for one candidate. ``refine``: a detail-restoration candidate for a photograph with no defect (always-enhance)."""
         limits = self.limits
         lowlight = operation == "low_light_enhancement"
         polish = operation == "polish"
@@ -343,7 +343,7 @@ class FinalImageQualityValidator:
                  {"before": noise_before, "after": noise_after}, "noise_increased")
 
         self._identity_gate(verdict, candidate, candidate_report, operation, parent)
-        improvement = self._improvement(verdict, operation, parent, candidate, parent_report, candidate_report, expected_scale)
+        improvement = self._improvement(verdict, operation, parent, candidate, parent_report, candidate_report, expected_scale, refine=refine)
         verdict["improvement"] = round(float(improvement), 4)
         mean_change = float(np.mean(np.abs(_gray(_to_size(candidate, parent.shape)).astype(np.float32) - _gray(parent).astype(np.float32)))) / 255.0
         verdict["change_cost"] = round(mean_change, 4)
@@ -405,7 +405,7 @@ class FinalImageQualityValidator:
         verdict["gates"]["identity"] = status
 
     # -- does it fix what it was for ---------------------------------------------------------------------------
-    def _improvement(self, verdict, operation, parent, candidate, before, after, scale):
+    def _improvement(self, verdict, operation, parent, candidate, before, after, scale, refine=False):
         limits = self.limits
 
         def gate(name, passed, detail, reason):
@@ -478,8 +478,19 @@ class FinalImageQualityValidator:
             # a local-contrast operation always raises that, so it would pass itself. A photograph that is already balanced and sharp
             # gains less than 5 percent on both, and stays as it is.
             gains = [value for value in (face_gain, global_gain) if value is not None]
-            improves = max(gains) >= limits.polish_min_gain
-            nothing_worse = (face_gain is None or face_gain >= 1.0) and local_gain >= 1.0 and global_gain >= 1.0 and frame_gain >= 1.0
+            if settings.ADAPTIVE_ALWAYS_ENHANCE:
+                # The finishing polish: a photograph that is already balanced and sharp cannot show a 5 percent gain, so it is judged on being SAFE and VISIBLE: no measure falls
+                # below the tolerance of what it was (the other gates, the face ceiling below and the identity check still apply), and the photograph really changes.
+                tolerance = float(settings.ADAPTIVE_FINISH_TOLERANCE)
+                step = 4
+                change = float(np.abs(candidate[::step, ::step].astype(np.int16) - parent[::step, ::step].astype(np.int16)).mean())
+                improves = change >= float(settings.ADAPTIVE_FINISH_MIN_CHANGE)
+                # The main face's detail is not asked to hold here: the detector can pick another face (or lose one) after a small change, so the ratio compares two different faces (measured: a
+                # two-face photograph read 0.84 for every strength). A face that gets too sharp is still refused by the ceiling below, and polish never blurs a face.
+                nothing_worse = min(local_gain, global_gain, frame_gain) >= tolerance
+            else:
+                improves = max(gains) >= limits.polish_min_gain
+                nothing_worse = (face_gain is None or face_gain >= 1.0) and local_gain >= 1.0 and global_gain >= 1.0 and frame_gain >= 1.0
             ceiling = limits.polish_face_detail_ceiling
             face_ok = face_gain is None or face_after.detail <= max(ceiling, face_before.detail * limits.polish_face_growth_max)
             detail = {"face_detail_gain": None if face_gain is None else round(face_gain, 3), "local_contrast_gain": round(local_gain, 3),
@@ -494,7 +505,13 @@ class FinalImageQualityValidator:
             blur_better = (before.blur["status"] != "none" and after.blur["status"] == "none") or (before.blur["retention"] - after.blur["retention"] >= 0.02)
             face = after.main_face
             face_ok = face is None or face.detail is None or face.detail <= limits.face_max_detail
-            gate("improves_defect", limits.detail_min_gain <= gain <= limits.detail_max_gain and (compression_better or blur_better) and face_ok,
+            # Always-enhance, a photograph with no defect (``refine``): there is no defect to resolve, so it is judged on adding real structure (at least ADAPTIVE_REFINE_MIN_GAIN, not an
+            # invented amount) and on a face that does not grow past the ceiling or by more than the polish allows (a sharp face is already above 260), besides every other gate.
+            if refine:
+                face_before = before.main_face.detail if before.main_face is not None and before.main_face.detail is not None else None
+                face_ok = face is None or face.detail is None or face.detail <= max(limits.face_max_detail, (face_before or 0.0) * limits.polish_face_growth_max)
+            minimum = float(settings.ADAPTIVE_REFINE_MIN_GAIN) if refine else limits.detail_min_gain
+            gate("improves_defect", minimum <= gain <= limits.detail_max_gain and (True if refine else (compression_better or blur_better)) and face_ok,
                  {"structure_gain": round(gain, 3), "compression_before": before.compression["status"], "compression_after": after.compression["status"],
                   "blur_before": before.blur["status"], "blur_after": after.blur["status"], "face_detail_after": None if face is None else face.detail},
                  "no_added_detail_or_invented_detail")

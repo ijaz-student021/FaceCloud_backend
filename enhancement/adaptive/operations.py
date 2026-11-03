@@ -278,6 +278,7 @@ def run_polish(image, engine, variant):
     """
     started = time.perf_counter()
     clahe_share, amount, blend = float(variant["clahe"]), float(variant["amount"]), float(variant["blend"])
+    vibrance = float(variant.get("vibrance", _POLISH_VIBRANCE_MAX))          # the finishing polish (ADAPTIVE_ALWAYS_ENHANCE) asks for more
     faces = [list(face) for face in variant.get("faces", [])]
     plan = _polish_plan(image, clahe_share, amount, faces)
     height, width = image.shape[:2]
@@ -294,7 +295,7 @@ def run_polish(image, engine, variant):
             lightness = plan["middle"] + (lightness - plan["middle"]) * plan["stretch"]
         lab[:, :, 0] = np.clip(lightness, 0.0, 100.0)
         chroma = np.hypot(lab[:, :, 1], lab[:, :, 2])
-        gain = 1.0 + _POLISH_VIBRANCE_MAX * np.clip(1.0 - chroma / _POLISH_VIBRANCE_CHROMA, 0.0, 1.0)
+        gain = 1.0 + vibrance * np.clip(1.0 - chroma / _POLISH_VIBRANCE_CHROMA, 0.0, 1.0)
         lab[:, :, 1] *= gain
         lab[:, :, 2] *= gain
         polished = _polish_bgr(lab)[top - first:bottom - first]
