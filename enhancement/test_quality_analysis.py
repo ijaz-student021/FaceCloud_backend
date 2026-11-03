@@ -23,7 +23,12 @@ def reference_analyze(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     luminance = float(np.mean(gray))
     contrast = float(np.std(gray))
-    sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    luminance_reference = float(gray.mean())
+    measured = gray                      # a photograph darker than 90 is measured brightened to 110 (a dark photograph is not a blurry one)
+    if 0.5 <= luminance_reference < 90.0:
+        gamma = max(0.2, float(np.log(110.0 / 255.0) / np.log(luminance_reference / 255.0)))
+        measured = cv2.LUT(gray, (255.0 * np.power(np.arange(256, dtype=np.float64) / 255.0, gamma)).astype(np.uint8))
+    sharpness = float(cv2.Laplacian(measured, cv2.CV_64F).var())
     smooth = cv2.GaussianBlur(gray, (3, 3), 0)
     noise = float(np.median(np.abs(gray.astype(np.float32) - smooth.astype(np.float32))))
     shadow_clipping = float(np.mean(gray <= 5) * 100)

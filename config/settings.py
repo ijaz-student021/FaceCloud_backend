@@ -731,6 +731,10 @@ FACE_MIN_EDGE_PIXELS = env.int("FACE_MIN_EDGE_PIXELS", default=160)
 YUNET_SCORE_THRESHOLD = env.float("YUNET_SCORE_THRESHOLD", default=0.75)
 YUNET_NMS_THRESHOLD = env.float("YUNET_NMS_THRESHOLD", default=0.3)
 YUNET_TOP_K = env.int("YUNET_TOP_K", default=5000)
+# YuNet is run at two sizes and the results merged: at the photograph's own size when that is at most YUNET_MAX_EDGE (else shrunk to it), and shrunk to YUNET_LARGE_FACE_EDGE (0 = off). A large face in
+# a large photograph is missed at full size (the owner's 4096 px portrait: score 0.93 at 1024 px, 0.75 at 2048 px, no face at 4096 px), which left a dark portrait with "0 faces" and no person folder.
+YUNET_MAX_EDGE = env.int("YUNET_MAX_EDGE", default=2048)
+YUNET_LARGE_FACE_EDGE = env.int("YUNET_LARGE_FACE_EDGE", default=1024)
 ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION = env.bool(
     "ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION", default=True
 )
@@ -774,6 +778,12 @@ QUALITY_REVIEW_MIN_EDGE = env.int("QUALITY_REVIEW_MIN_EDGE", default=480)
 # A dark photograph is lifted by the low-light enhancement, not refused: it is refused only when it has no usable signal, which is a mean brightness below QUALITY_REJECT_MIN_LUMINANCE
 # (about 6 of 255: practically black) or almost no contrast (QUALITY_REJECT_CONTRAST, scaled down for a dark photograph, see quality_control/services.make_decision). Between that
 # and QUALITY_REVIEW_MIN_LUMINANCE it carries the warning "underexposed".
+# QUALITY_CHECKS_REJECT: whether a failed quality check REFUSES a photograph (default False). This product's job is enhancement: a dark, soft, small or faceless photograph is exactly what it
+# is for, so it is never refused for its quality; the reasons that used to refuse it ("severe_blur", "severe_underexposure", "contrast_too_low", ...) become review reasons and tips, the verdict
+# is ``needs_review`` (in a personal workspace the photograph is simply accepted with tips; in a team it goes to its moderator) and the photograph is enhanced. Only a file that cannot be read
+# is still refused (at upload). True restores the old behaviour. Found on a real portrait (mean brightness 29, 3456 x 5184) refused as "Too blurry": a dark photograph has weak gradients, the
+# face detector missed its large face, and the engine, once allowed to run, brightened it to a natural 82.5 (docs/evaluation/2026-11-03-enhance-every-photograph.md).
+QUALITY_CHECKS_REJECT = env.bool("QUALITY_CHECKS_REJECT", default=False)
 QUALITY_REJECT_MIN_LUMINANCE = env.float("QUALITY_REJECT_MIN_LUMINANCE", default=6.0)
 QUALITY_REVIEW_MIN_LUMINANCE = env.float("QUALITY_REVIEW_MIN_LUMINANCE", default=55.0)
 QUALITY_REJECT_MAX_LUMINANCE = env.float("QUALITY_REJECT_MAX_LUMINANCE", default=235.0)

@@ -1,4 +1,5 @@
 """The one status word a photo shows in the app, shared by My Images, batch responses and batch progress."""
+from django.conf import settings
 from django.db.models import Prefetch
 
 from .models import ImagePreprocessingResult
@@ -40,9 +41,9 @@ def image_display_status(image):
     if quality:
         if quality.status in {"pending", "queued", "processing", "failed"}:
             return "quality_failed" if quality.status == "failed" else "quality_processing"
-        if quality.decision == "rejected":
+        if quality.decision == "rejected" and settings.QUALITY_CHECKS_REJECT:
             return "rejected"
-        if quality.decision == "needs_review" and moderator_can_decide(image):
+        if quality.decision in ("needs_review", "rejected") and moderator_can_decide(image):
             return "needs_review"      # only where a moderator can decide it; in a personal workspace it shows as accepted (quality_control/effective.py)
     try:
         validation = image.face_validation

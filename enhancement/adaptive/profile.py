@@ -26,7 +26,7 @@ class Profile:
     polish_style: str | None = "natural"    # a key of operations.POLISH_STRENGTH; None = no polish
     polish_scale: float = 1.0           # multiplies the polish shares (the router caps the result)
     polish_dark_scenes: bool = False    # a deliberately dark photograph may be polished (contrast and sharpness only; polish never lifts shadows)
-    lift_dark_scenes: bool = False      # a dark scene with a visible subject is treated as low light
+    lift_dark_scenes: bool = True       # a dark scene with a visible subject is treated as low light (the owner: "the darkness should be removed"; the validator's gates still decide)
     treat_low_noise: bool = False       # noise at the "low" level is denoised too
     upscale_below_edge: int = 0         # a photograph whose long edge is under this is enlarged (0: only when the analyzer calls it low resolution)
     variant_blends: tuple = (1.0, 0.65)     # the blends tried for a lift or a denoise, strongest first

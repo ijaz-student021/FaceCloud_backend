@@ -39,6 +39,12 @@ TIP_SENTENCES = {
 }
 
 
+def _rejection_applies():
+    from django.conf import settings
+
+    return bool(settings.QUALITY_CHECKS_REJECT)
+
+
 def moderator_can_decide(image):
     """Whether a moderator could ever decide ``image``: it is filed under an organization that is not a personal workspace."""
     organization = image.batch.organization
@@ -50,6 +56,8 @@ def effective_decision(image, decision=None):
     if decision is None:
         quality = getattr(image, "quality_decision", None)
         decision = quality.decision if quality is not None else ""
+    if decision == "rejected" and not _rejection_applies():
+        decision = "needs_review"                 # a row from before quality checks stopped refusing photographs
     if decision == "needs_review" and not moderator_can_decide(image):
         return "accepted"
     return decision
@@ -60,6 +68,8 @@ def review_required(image, decision=None):
     if decision is None:
         quality = getattr(image, "quality_decision", None)
         decision = quality.decision if quality is not None else ""
+    if decision == "rejected" and not _rejection_applies():
+        decision = "needs_review"
     return decision == "needs_review" and moderator_can_decide(image)
 
 
@@ -117,8 +127,11 @@ def effective_q(wanted, *, decision_path="quality_decision__decision", batch_pat
     ``accepted`` also matches a stored ``needs_review`` that no moderator can decide; ``needs_review`` matches only one a moderator can.
     """
     stored = Q(**{decision_path: wanted})
+    review = Q(**{decision_path: "needs_review"}) if _rejection_applies() else Q(**{f"{decision_path}__in": ["needs_review", "rejected"]})
     if wanted == "accepted":
-        return stored | (Q(**{decision_path: "needs_review"}) & ~moderated_q(batch_path))
+        return stored | (review & ~moderated_q(batch_path))
     if wanted == "needs_review":
-        return stored & moderated_q(batch_path)
+        return review & moderated_q(batch_path)
+    if wanted == "rejected" and not _rejection_applies():
+        return Q(**{f"{decision_path}__in": []})
     return stored

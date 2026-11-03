@@ -48,11 +48,11 @@ def warm_colourization(image, engine, variant):
 
 
 class ProfileMappingTests(SimpleTestCase):
-    def test_natural_and_auto_is_what_the_engine_always_did(self):
+    def test_natural_and_auto_is_the_defect_driven_default_and_it_lifts_a_dark_scene(self):
         profile = profile_for("natural", "auto")
         self.assertEqual((profile.colourize, profile.polish_style, profile.polish_scale, profile.polish_dark_scenes, profile.lift_dark_scenes,
                           profile.treat_low_noise, profile.upscale_below_edge, profile.variant_blends),
-                         (False, "natural", 1.0, False, False, False, 0, (1.0, 0.65)))
+                         (False, "natural", 1.0, False, True, False, 0, (1.0, 0.65)))      # a dark scene is lifted whatever the style (the owner: darkness must go)
         self.assertEqual(profile_for("natural", "medium").describe() | {"level": "auto"}, profile.describe())
 
     def test_dynamic_adds_punch_dark_scene_polish_and_colour(self):
@@ -66,7 +66,7 @@ class ProfileMappingTests(SimpleTestCase):
 
     def test_the_strength_scales_the_style(self):
         low, high = profile_for("dynamic", "low"), profile_for("dynamic", "high")
-        self.assertEqual((low.polish_scale, low.variant_blends, low.lift_dark_scenes), (0.6, (0.65, 0.4), False))
+        self.assertEqual((low.polish_scale, low.variant_blends, low.lift_dark_scenes), (0.6, (0.65, 0.4), True))
         self.assertEqual((high.polish_scale, high.lift_dark_scenes, high.treat_low_noise, high.upscale_below_edge), (1.4, True, True, 960))
         self.assertEqual(profile_for("ai_max", "high").upscale_below_edge, 1280)      # never lowered by the strength
 
@@ -123,15 +123,19 @@ class RouterProfileTests(SimpleTestCase):
     def dark_scene(self):
         return self.report(exposure={"status": "dark_scene", "judged_on": "subject", "scene_median": 40.0})
 
-    def test_a_dark_scene_is_left_alone_unless_the_strength_is_strong_or_the_style_is_ai_max(self):
-        self.assertEqual(self.router().next_step(self.dark_scene(), set(), None, profile_for("ai_max")).step.operation, ops.LOW_LIGHT)
-        for profile in (profile_for("natural"), profile_for("dynamic")):
-            decision = self.router().next_step(self.dark_scene(), set(), None, profile)
-            self.assertNotEqual(getattr(decision.step, "operation", None), ops.LOW_LIGHT, profile.style)
-            self.assertTrue(any("left as photographed" in item["reason"] for item in decision.skipped), profile.style)
-        step = self.router().next_step(self.dark_scene(), set(), None, profile_for("natural", "high")).step
-        self.assertEqual(step.operation, ops.LOW_LIGHT)
-        self.assertIn("lifts a dark scene", step.reason)
+    def test_a_dark_scene_is_lifted_whatever_the_style_or_the_strength(self):
+        for profile in (profile_for("natural"), profile_for("dynamic"), profile_for("ai_max"), profile_for("natural", "low"), profile_for("natural", "high")):
+            step = self.router().next_step(self.dark_scene(), set(), None, profile).step
+            self.assertEqual(step.operation, ops.LOW_LIGHT, profile.describe())
+            self.assertTrue(step.optional)
+            self.assertIn("lifts a dark scene", step.reason)
+
+    def test_with_the_lift_switched_off_a_dark_scene_is_left_as_photographed_and_the_reason_is_recorded(self):
+        from dataclasses import replace
+
+        decision = self.router().next_step(self.dark_scene(), set(), None, replace(profile_for("natural"), lift_dark_scenes=False))
+        self.assertNotEqual(getattr(decision.step, "operation", None), ops.LOW_LIGHT)
+        self.assertTrue(any("left as photographed" in item["reason"] for item in decision.skipped))
 
     def test_polish_reaches_a_dark_scene_only_with_dynamic_or_ai_max(self):
         report = self.dark_scene()
@@ -363,8 +367,10 @@ class RefusedAttemptDoesNotBlockPolishTests(SimpleTestCase):
         self.assertTrue(stages[ops.LOW_LIGHT]["optional"])
         self.assertIn(ops.POLISH, stages, "the strongest style must do at least what Dynamic does")
 
-    def test_natural_leaves_a_dark_scene_entirely_alone(self):
-        self.assertEqual(self.stages(DarkSceneAnalyzer(detector=base.StubDetector([])), "natural"), {})
+    def test_natural_lifts_a_dark_scene_and_when_that_is_refused_it_does_not_polish_it(self):
+        stages = self.stages(DarkSceneAnalyzer(detector=base.StubDetector([])), "natural")
+        self.assertEqual(list(stages), [ops.LOW_LIGHT])
+        self.assertEqual((stages[ops.LOW_LIGHT]["status"], stages[ops.LOW_LIGHT]["optional"]), ("rejected", True))
 
     def test_a_refused_lift_that_a_real_defect_called_for_still_blocks_polish_as_before(self):
         stages = self.stages(base.analyzer_with(), "ai_max", image=base.portrait(brightness=0.12))

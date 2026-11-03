@@ -109,6 +109,8 @@ def verdict_allows_enhancement(image, verdict=None):
         if quality is None or quality.status != "completed":
             return False, WAIT_FOR_VERDICT
         verdict = quality.decision
+    if verdict == REJECTED and not settings.QUALITY_CHECKS_REJECT:
+        verdict = "needs_review"             # a row from before quality checks stopped refusing photographs
     if verdict == "accepted":
         return True, NOW
     if verdict == REJECTED:
@@ -286,7 +288,7 @@ def _rejected_by_the_checks(image):
         return True
     validation = getattr(image, "face_validation", None)
     quality = getattr(image, "quality_decision", None)
-    return (validation is not None and validation.decision == REJECTED) or (quality is not None and quality.decision == REJECTED)
+    return (validation is not None and validation.decision == REJECTED) or (quality is not None and quality.decision == REJECTED and settings.QUALITY_CHECKS_REJECT)
 
 
 def _latest_result(image):

@@ -312,6 +312,7 @@ class VerdictOrderTests(Pipeline):
         self.assertEqual(third, first)
 
 
+@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about refusing a photograph; the product default no longer refuses (test_never_reject.py)
 class ManualAndRetryTests(Pipeline):
     def setUp(self):
         super().setUp()

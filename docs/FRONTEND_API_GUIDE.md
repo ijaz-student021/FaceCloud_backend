@@ -303,6 +303,11 @@ personal workspace whose checks doubted it:
   **`effective_decision`** (what it means for the person: `accepted`), **`review_required`** (true only for a `needs_review` in an organization) and **`tips`** (plain sentences such as
   "This photo is a little dark; more light gives better results."). Show `tips`, never the word "review", when `review_required` is false.
 - A **rejected** photograph is never softened (very dark, blown out, corrupt). The same photograph filed under an organization still shows `needs_review` and `review_required: true`.
+- **Quality checks no longer reject (`QUALITY_CHECKS_REJECT`, off by default, 2026-11-03).** A dark, soft, small, over-exposed, flat or faceless photograph is exactly what this product enhances, so a failed
+  quality check never refuses it: the reasons that used to refuse it (`severe_blur`, `severe_underexposure`, `severe_overexposure`, `contrast_too_low`, `resolution_too_low`) are kept as `rejection_reasons`
+  (show them as `tips`) and the verdict is `needs_review`: in a personal workspace the photograph is **`accepted` with tips, enhanced and grouped like any other**; in a team it goes to the moderator.
+  `display_status` is `rejected` only for a file that could not be read at upload. An old row stored as `rejected` follows the same rule (`effective_decision`), and
+  `python manage.py reconsider_rejected_photos --apply` re-runs the face check and the quality check for such photographs. The wording "Photo too dark / Too blurry / rejected" must not be shown for a quality reason any more.
 
 ## 4. Enhancement
 

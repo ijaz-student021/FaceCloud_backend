@@ -66,6 +66,7 @@ def decide(mean, spread, face=True, **extra):
     return make_decision(measured, calculate_scores(measured), validation)
 
 
+@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about refusing a photograph; the product default no longer refuses (test_never_reject.py)
 class RuleTests(SimpleTestCase):
     def test_a_dark_photograph_is_lifted_not_refused(self):
         for mean, spread in ((28.0, 20.0), (22.0, 14.0), (18.0, 12.0), (10.0, 6.0), (6.5, 4.0)):
@@ -111,6 +112,7 @@ class RuleTests(SimpleTestCase):
         self.assertEqual(decide(18.0, 14.0)[0], "rejected")
 
 
+@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about refusing a photograph; the product default no longer refuses (test_never_reject.py)
 @override_settings(MEDIA_ROOT=MEDIA, IMAGE_ENCRYPTION_ENABLED=False)
 class EndToEndTests(TestCase):
     """Through the real quality check and the real enhancement request, with the face check stood in for (a synthetic scene has no face)."""
@@ -248,6 +250,7 @@ def load_seed_demo():
     return module
 
 
+@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about refusing a photograph; the product default no longer refuses (test_never_reject.py)
 class DemoScriptTests(SimpleTestCase):
     def test_a_normal_portrait_is_darkened_to_forty_percent_and_a_bright_one_further(self):
         import cv2
@@ -286,7 +289,7 @@ class DemoScriptTests(SimpleTestCase):
         black.write_bytes(png(np.zeros((360, 480, 3), np.uint8)))
         environment = {
             **os.environ, "DB_NAME": str(folder / "demo.sqlite3"), "MEDIA_ROOT": str(folder / "media"), "DJANGO_DEBUG": "True", "DB_ENGINE": "django.db.backends.sqlite3",
-            "IMAGE_ENCRYPTION_ENABLED": "False", "LOG_FILE": str(folder / "log.txt"),
+            "IMAGE_ENCRYPTION_ENABLED": "False", "LOG_FILE": str(folder / "log.txt"), "QUALITY_CHECKS_REJECT": "True",     # the subprocess does not see override_settings
         }
         root = str(settings.BASE_DIR)
         subprocess.run([sys.executable, "manage.py", "migrate", "-v", "0"], cwd=root, env=environment, check=True, capture_output=True, timeout=300)

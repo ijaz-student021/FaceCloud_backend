@@ -152,7 +152,8 @@ class PolishRouterTests(SimpleTestCase):
         scene[y:y + h, x:x + w] = np.clip(portrait()[y:y + h, x:x + w].astype(np.float32) * 1.05, 0, 255).astype(np.uint8)
         report = self.report(scene)
         self.assertEqual(report.exposure["status"], "dark_scene")
-        self.assertIsNone(self.router().next_step(report, set(), polish={"style": "natural"}).step)
+        # (the dark scene itself is lifted first, whatever the style; polish is what is not offered to it, with the lift attempted)
+        self.assertIsNone(self.router().next_step(report, {ops.LOW_LIGHT}, polish={"style": "natural"}).step)
 
     def test_a_photograph_with_a_recommended_operation_is_not_polished(self):
         report = self.report(portrait(noise=25.0))

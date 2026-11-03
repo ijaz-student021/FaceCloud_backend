@@ -92,6 +92,24 @@ class OpenCVHaarFaceDetector:
         )
 
 
+def _merge_rows(rows, iou_threshold, top_k):
+    """Non-maximum suppression over detector rows (x, y, w, h, ..., score last): the highest score of overlapping boxes is kept."""
+    kept = []
+    for row in sorted(rows, key=lambda item: -float(item[14])):
+        x0, y0, w0, h0 = row[:4]
+        duplicate = False
+        for other in kept:
+            x1, y1, w1, h1 = other[:4]
+            overlap = max(0.0, min(x0 + w0, x1 + w1) - max(x0, x1)) * max(0.0, min(y0 + h0, y1 + h1) - max(y0, y1))
+            union = w0 * h0 + w1 * h1 - overlap
+            if union > 0 and overlap / union > iou_threshold:
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(row)
+    return kept[:max(1, top_k)]
+
+
 class OpenCVYuNetFaceDetector:
     name = "opencv_yunet"
     version = "s_dynamic_v1"
@@ -119,12 +137,7 @@ class OpenCVYuNetFaceDetector:
         if image.ndim == 2:
             image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
         height, width = image.shape[:2]
-        self.detector.setInputSize((width, height))
-        try:
-            _result, rows = self.detector.detect(image)
-        except cv2.error as error:
-            raise ValidationError("YuNet face detection failed safely.") from error
-        rows = [] if rows is None else rows
+        rows = self._detect_rows(image, width, height)
         boxes, scores, landmarks = [], [], []
         for row in rows:
             boxes.append(tuple(int(round(value)) for value in row[:4]))
@@ -142,6 +155,34 @@ class OpenCVYuNetFaceDetector:
             detector_version=self.version,
             confidence_type=self.confidence_type,
         )
+
+
+    def _detect_rows(self, image, width, height):
+        """YuNet's rows (box, five landmarks, score) in the photograph's own pixels, from two runs merged.
+
+        A large face in a large photograph is missed when YuNet is run at the photograph's full size (a 1200 px face in a 4096 px portrait: score 0.93 at 1024 px, 0.75 at 2048 px,
+        nothing at 4096 px), and a small face is missed when the photograph is shrunk. So it runs at ``YUNET_MAX_EDGE`` (the photograph's own size when smaller) and, for a larger photograph, again
+        shrunk to ``YUNET_LARGE_FACE_EDGE``; the rows are scaled back and merged by non-maximum suppression, the higher score winning.
+        """
+        longest = max(width, height)
+        edges = [min(longest, max(64, int(settings.YUNET_MAX_EDGE)))]
+        small = int(settings.YUNET_LARGE_FACE_EDGE)
+        if 0 < small < edges[0]:
+            edges.append(small)
+        rows = []
+        for edge in edges:
+            scale = edge / longest
+            scaled = image if scale >= 1.0 else cv2.resize(image, (max(1, round(width * scale)), max(1, round(height * scale))), interpolation=cv2.INTER_AREA)
+            self.detector.setInputSize((scaled.shape[1], scaled.shape[0]))
+            try:
+                _result, found = self.detector.detect(scaled)
+            except cv2.error as error:
+                raise ValidationError("YuNet face detection failed safely.") from error
+            for row in ([] if found is None else found):
+                row = np.asarray(row, dtype=np.float64).copy()
+                row[:14] /= scale
+                rows.append(row)
+        return _merge_rows(rows, float(settings.YUNET_NMS_THRESHOLD), int(settings.YUNET_TOP_K))
 
 
 class RetinaFaceDetector:

@@ -210,6 +210,7 @@ class EnlargeTests(SimpleTestCase):
         self.assertEqual((info["applied"], info["engine"], result.size), (True, REALESRGAN_ENGINE, (600, 800)))
 
 
+@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about refusing a photograph; the product default no longer refuses (test_never_reject.py)
 class PreprocessingTests(TestCase):
     def setUp(self):
         self.media = tempfile.TemporaryDirectory()

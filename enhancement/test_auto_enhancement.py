@@ -138,6 +138,7 @@ class Base(ModerationFixtureMixin, TestCase):
         self.assertEqual(response.status_code, 200, response.content)
 
 
+@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about refusing a photograph; the product default no longer refuses (test_never_reject.py)
 class ExactlyOneEnhancementTests(Base):
     def test_an_accepted_photo_gets_exactly_one_automatic_enhancement(self):
         image = self.photo()
@@ -445,6 +446,7 @@ class FailureTests(Base):
         self.assertEqual((record.state, record.skip_reason), ("skipped", "not_possible"))
 
 
+@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about refusing a photograph; the product default no longer refuses (test_never_reject.py)
 class ProgressTests(Base):
     def test_a_photo_waiting_for_its_verdict_shows_the_enhancement_queued_and_holds_the_batch(self):
         image = self.photo()
@@ -499,6 +501,7 @@ class ProgressTests(Base):
         self.assertEqual(set(payload["images"][0]["enhancement"]), {"status", "outcome", "summary", "waiting_for", "skipped_reason"})
 
 
+@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about refusing a photograph; the product default no longer refuses (test_never_reject.py)
 class NotificationTests(Base):
     def events(self):
         return UserNotification.objects.filter(recipient=self.owner, event_type="batch_enhanced")
@@ -559,6 +562,7 @@ class NotificationTests(Base):
         self.assertIn("1 could not be enhanced", notification.message)
 
 
+@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about refusing a photograph; the product default no longer refuses (test_never_reject.py)
 class PackageTests(Base):
     def package(self, kind="accepted_results"):
         return DownloadPackage.objects.create(owner=self.owner, batch=self.batch, package_type=kind, report_format="json", status="queued", task_id="t")

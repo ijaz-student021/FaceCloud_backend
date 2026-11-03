@@ -356,7 +356,13 @@ def analyze_image_quality(image):
     levels = np.arange(256, dtype=np.int64)
     luminance = float(int(np.dot(levels, histogram)) / total)
     contrast = float(np.sqrt(np.dot(histogram, (levels - luminance) ** 2) / total))
-    laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+    # Edge strength scales with the light, so a dark photograph reads "blurry" (a real portrait at mean brightness 29: 16.7, and 84.5 once brightened, i.e. sharp). It is measured on the photograph
+    # brought to a mean brightness of 110 when it is darker than 90, so darkness is not mistaken for blur; a photograph that is not dark is measured as it always was.
+    measured = gray
+    if 0.5 <= luminance < 90.0:
+        gamma = max(0.2, float(np.log(110.0 / 255.0) / np.log(luminance / 255.0)))
+        measured = cv2.LUT(gray, (255.0 * np.power(np.arange(256, dtype=np.float64) / 255.0, gamma)).astype(np.uint8))
+    laplacian = cv2.Laplacian(measured, cv2.CV_64F)
     sharpness = float(cv2.meanStdDev(laplacian)[1][0][0] ** 2)
     blur = measure_blur(gray)
     smooth = cv2.GaussianBlur(gray, (3, 3), 0)
