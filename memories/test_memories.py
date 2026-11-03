@@ -2,7 +2,7 @@
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -62,6 +62,7 @@ class MemoryBase(TestCase):
         return timezone.make_aware(timezone.datetime(day.year, day.month, day.day, hour, 0, 0))
 
 
+@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about photographs the checks refused; the product default no longer refuses (quality_control/test_never_reject.py)
 class OnThisDayTests(MemoryBase):
     def test_a_year_with_enough_photographs_becomes_a_card(self):
         self.burst(self.years_ago(2), MIN_ON_THIS_DAY)
@@ -199,6 +200,7 @@ class SelectionTests(MemoryBase):
         self.assertEqual(select_highlights(self.owner, [], 5), [])
 
 
+@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about photographs the checks refused; the product default no longer refuses (quality_control/test_never_reject.py)
 class EndpointTests(MemoryBase):
     def test_the_list_has_the_cards_with_a_cover_and_previews(self):
         photos = self.burst(self.now - timedelta(days=10), 8, score=60)

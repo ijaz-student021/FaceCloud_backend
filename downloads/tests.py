@@ -25,6 +25,7 @@ from .models import DownloadEvent, DownloadPackage
 from .tasks import process_download_package
 
 
+@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about photographs the checks refused; the product default no longer refuses (quality_control/test_never_reject.py)
 class SecureDownloadTests(APITestCase):
     def setUp(self):
         self.media_root = tempfile.mkdtemp(prefix="facecloud-downloads-")
