@@ -400,10 +400,13 @@ ADAPTIVE_FINISH_STRENGTH = env.float("ADAPTIVE_FINISH_STRENGTH", default=3.0)
 ADAPTIVE_FINISH_VIBRANCE = env.float("ADAPTIVE_FINISH_VIBRANCE", default=0.15)
 ADAPTIVE_FINISH_TOLERANCE = env.float("ADAPTIVE_FINISH_TOLERANCE", default=0.97)
 ADAPTIVE_FINISH_MIN_CHANGE = env.float("ADAPTIVE_FINISH_MIN_CHANGE", default=1.5)
-# With ADAPTIVE_ALWAYS_ENHANCE a photograph on which no defect was found first goes through the detail model (the compact "general" network used for light photographs) as a
-# refinement; it is kept if its structure energy rises by at least this factor (1.01 = 1 percent) and every other gate passes. The finishing polish above is the fallback
-# when the model's result is refused, or when the photograph is over ADAPTIVE_DETAIL_MAX_PIXELS.
-ADAPTIVE_REFINE_MIN_GAIN = env.float("ADAPTIVE_REFINE_MIN_GAIN", default=1.01)
+# With ADAPTIVE_ALWAYS_ENHANCE every photograph gets, as its LAST layer, the detail model used for light photographs (the compact "general" network), whether anything needed
+# correcting or not; it is applied unless it smooths the photograph by more than this allows (structure energy x0.75: on a brightened dark photograph the model cleans the
+# amplified noise and JPEG blocks, which reads as 0.6-0.9; a defocused portrait is smoothed to 0.94), changes nothing visible (a mean change under ADAPTIVE_REFINE_MIN_CHANGE
+# grey levels of 255), or another gate (identity, face geometry, halo, clipping, colour) refuses it. The finishing polish above is the fallback when nothing at all was
+# accepted. A photograph over ADAPTIVE_DETAIL_MAX_PIXELS skips the model (its time and memory grow with the pixels) and gets only the polish.
+ADAPTIVE_REFINE_MIN_GAIN = env.float("ADAPTIVE_REFINE_MIN_GAIN", default=0.75)
+ADAPTIVE_REFINE_MIN_CHANGE = env.float("ADAPTIVE_REFINE_MIN_CHANGE", default=0.5)
 # How a low-light lift gets its colour: "chromaticity" (the source's colour ratios in linear light with the network's luminance;
 # measured to keep colour closest to the clean photograph, docs/evaluation/2026-10-15-lowlight-colour.md) or "legacy" (the source's
 # CIELAB chroma scaled by the square root of the lightness gain; measured 20-40 % paler on dark inputs).

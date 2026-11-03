@@ -35,3 +35,24 @@ the compact model only.
 * 20 photographs, one person's eye for the 100 percent crops; no group photographs, no black-and-white photographs and no `dynamic` / `ai_max` styles were measured for this change.
 * Photographs over 4 MP skip the model and are finished only (timings for those were not measured here).
 * "Visible" is a mean change of at least 1.5 of 255; whether that is visible enough is the owner's call (`ADAPTIVE_FINISH_STRENGTH`, `ADAPTIVE_FINISH_MIN_CHANGE`).
+
+## Update: the light-photo model as the final layer of every photograph
+
+The owner then asked for that model to be applied as the last layer of **all** photographs, whether they need correcting or not. It now runs after the router has nothing more to do, stacked on whatever
+was accepted (`router.final_layer_step`), and the finishing polish is only the fallback when nothing at all was accepted. Measured on 14 photographs (the 10 that had come back unchanged, the three
+dark portraits and the deblurred portrait), 1400 px long edge, `natural` / `auto`:
+
+| Photograph(s) | What ran | Time |
+|---|---|---|
+| 74, 44, 95, 101 (no correction, or the lift was refused) | the final layer only | 3-8 s |
+| 137, 91 (dark portraits) | lift, then the final layer | 6 s |
+| 57 | deblur, face restoration, then the final layer | 39-47 s |
+| 134 | super-resolution, then the final layer | 10 s |
+| 146, 124, 71, 107 | the final layer was refused (defocus or an already clipped scene), so the finishing polish | 7-18 s |
+| 83 (dark portrait) | lift; the final layer was refused | 7 s |
+| 59 (a screenshot with faces) | every candidate refused by the identity, face-geometry and highlight gates: kept as it was | 8 s |
+
+On the lifted dark photographs the model smooths the amplified noise and JPEG blocks (structure energy x0.62-0.88: heavy compression read as "none" afterwards); the first gate (structure must not
+fall) refused it there, so the floor is now 0.75 with a visible-change minimum. At 100 percent the skin of 137 is cleaner, the eyes and the beard of 91 keep their detail, and nothing was damaged.
+
+Not verified: 14 photographs; no group, black-and-white or `dynamic` / `ai_max` runs for this layer; a photograph over 4 MP gets no model (the polish only).
