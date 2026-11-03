@@ -523,11 +523,24 @@ class ServiceTests(SimpleTestCase):
         self.assertTrue(any("defocus" in item["reason"].lower() or "blur" in item["reason"].lower() for item in adaptive["operations_skipped"]))
 
     def test_the_candidate_limit_bounds_the_work(self):
+        from unittest.mock import patch
+
+        from .adaptive.candidates import CandidatePool
+
+        pools = []
+
+        def spy(*args, **kwargs):
+            pools.append(CandidatePool(*args, **kwargs))
+            return pools[-1]
+
         source = portrait(brightness=0.12, noise=22)
-        _out, _level, parameters = self.run_service(
-            source, service=self.service(max_candidates=3, runners={ops.LOW_LIGHT: runner_lift, ops.DENOISE: runner_denoise}),
-        )
-        self.assertLessEqual(len(parameters["adaptive"]["candidates"]), 3)
+        with patch("enhancement.adaptive.service.CandidatePool", spy):
+            _out, _level, parameters = self.run_service(
+                source, service=self.service(max_candidates=3, runners={ops.LOW_LIGHT: runner_lift, ops.DENOISE: runner_denoise}),
+            )
+        # At most 3 images are held at once (a refused candidate is released and no longer counts), and the total ever proposed is capped at 6 times the limit.
+        self.assertLessEqual(sum(1 for item in pools[0].items if item.image is not None), 3)
+        self.assertLessEqual(len(parameters["adaptive"]["candidates"]), 3 * CandidatePool.TOTAL_FACTOR)
 
     def test_the_time_budget_stops_new_operations(self):
         source = portrait(brightness=0.12)

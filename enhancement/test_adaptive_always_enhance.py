@@ -223,6 +223,12 @@ class CandidatePoolTests(SimpleTestCase):
         self.assertEqual(third.id, "c3_polish")                              # ids stay unique
         self.assertIsNone(first.image)
 
+    def test_the_total_ever_proposed_is_still_capped(self):
+        pool, original = self.pool(limit=2)
+        with self.assertRaises(PoolFull):
+            for _ in range(2 * CandidatePool.TOTAL_FACTOR + 5):
+                pool.add(original.copy(), pool.original, "polish").release()          # released at once, so only the total cap can stop it
+
     def test_a_released_candidate_still_describes_itself_and_the_original_is_never_released(self):
         pool, original = self.pool()
         candidate = pool.add(np.zeros((6, 10, 3), np.uint8), pool.original, "polish")

@@ -502,7 +502,7 @@ class ProgressTests(Base):
         self.assertEqual(set(payload["images"][0]["enhancement"]), {"status", "outcome", "summary", "waiting_for", "skipped_reason"})
 
 
-@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about refusing a photograph; the product default no longer refuses (test_never_reject.py, ADAPTIVE_ALWAYS_ENHANCE=False)
+@override_settings(QUALITY_CHECKS_REJECT=True, ADAPTIVE_ALWAYS_ENHANCE=False)      # about refusing a photograph and about photographs the engine leaves as they were: the defaults no longer do either (test_never_reject.py, test_adaptive_always_enhance.py)
 class NotificationTests(Base):
     def events(self):
         return UserNotification.objects.filter(recipient=self.owner, event_type="batch_enhanced")

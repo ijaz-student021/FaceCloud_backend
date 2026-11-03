@@ -44,6 +44,8 @@ class PoolFull(Exception):
 
 
 class CandidatePool:
+    TOTAL_FACTOR = 6          # at most this many times ``max_candidates`` candidates are ever proposed, released ones included
+
     def __init__(self, original, max_candidates=8):
         self.max_candidates = max(2, int(max_candidates))
         self.items = [Candidate(id="c0_original", image=original, parent=None, operation="original", selected=True)]
@@ -53,7 +55,8 @@ class CandidatePool:
         return self.items[0]
 
     def add(self, image, parent, operation, variant="", models=None, seconds=0.0):
-        if sum(1 for item in self.items if item.image is not None) >= self.max_candidates:     # refused candidates were released and do not count
+        # The limit is on the images held at once: a refused candidate is released and does not count. The work stays bounded because the total is capped as well.
+        if sum(1 for item in self.items if item.image is not None) >= self.max_candidates or len(self.items) >= self.max_candidates * self.TOTAL_FACTOR:
             raise PoolFull(f"The candidate limit ({self.max_candidates}) was reached.")
         candidate = Candidate(
             id=f"c{len(self.items)}_{operation}", image=image, parent=parent.id, operation=operation, variant=variant,
