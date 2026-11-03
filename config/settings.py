@@ -308,6 +308,11 @@ if AUTO_ENHANCEMENT_RENDER_POLICY not in ("lightweight_v1", "balanced_v1", "lear
         f"not {AUTO_ENHANCEMENT_RENDER_POLICY!r}."
     )
 AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES = env.int("AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES", default=180)
+# GROUPING_MAX_WAIT_FOR_ENHANCEMENT_SECONDS: person folders are made AFTER a photograph's automatic enhancement (enhancement/auto.py, identities/verdict.py). A photograph never waits longer than this for
+# its enhancement (counted from the moment its automatic enhancement was created): a worker that died, or an owner stuck at the limit of enhancements in progress, must not leave a photograph ungrouped.
+GROUPING_MAX_WAIT_FOR_ENHANCEMENT_SECONDS = env.int("GROUPING_MAX_WAIT_FOR_ENHANCEMENT_SECONDS", default=900)
+if GROUPING_MAX_WAIT_FOR_ENHANCEMENT_SECONDS < 30:
+    raise ImproperlyConfigured("GROUPING_MAX_WAIT_FOR_ENHANCEMENT_SECONDS must be at least 30.")
 if AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES < 1:
     raise ImproperlyConfigured("AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES must be at least 1.")
 # Thresholds of the restoration chain (read when the adaptive engine starts a run; docs/deployment/restoration-chain.md):

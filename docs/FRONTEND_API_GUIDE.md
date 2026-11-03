@@ -223,17 +223,23 @@ GET /api/images/batches/{batch_id}/progress/
   hold the batch back, because that can take days. A failed enhancement is that photograph's `failure_stage: "enhancement"` (status `failed`), the original stays,
   and `POST /api/images/batches/{id}/retry/` runs it again. The person gets **one** notification per batch, `batch_enhanced` ("3 photos enhanced"), none per photograph.
 
+- **The order is: quality verdict, then the automatic enhancement, then the person folders (changed 2026-11-03).** The progress payload carries `stage_order`, the nine stage keys in that order
+  (`uploaded, queued, preprocessing, face_validation, quality_analysis, enhancement, identity_grouping, finalizing, completed`): draw the stages from it. A photograph is grouped when its
+  automatic enhancement ENDS (completed, failed, cancelled or skipped), or at once when none is coming (switched off for the upload, the account or the server); it never waits longer than
+  `GROUPING_MAX_WAIT_FOR_ENHANCEMENT_SECONDS` (900). While it waits, `identity_grouping` is `{status: "queued", waiting_for: "enhancement"}`. The percentages only rise along `stage_order`:
+  `quality_analysis` 65, `enhancement` 75 (70 while it waits for a free slot), `identity_grouping` 95. The grouping still reads the standardised ORIGINAL, never the enhanced file, so an
+  enhancement never changes who a face is grouped with. The batch is not `completed`, and "N photos enhanced" is not sent, while a person folder is still being made.
 - **Person folders come after the quality verdict.** A photograph is filed into a person folder only once its quality check has decided: an `accepted` photo
   at once, a `rejected` one never, and one that `needs_review` only after a moderator approves it (at once when it is in a personal workspace, where no
   moderator can decide). So a photograph that is going to be rejected never appears in a folder, not even for a moment. Each image in the progress carries
   `identity_grouping: {status, waiting_for}`: `status` is `queued`, `processing`, `completed`, `needs_review`, `failed`, `cancelled`, `skipped` (rejected: it is
   never grouped) or `not_applicable` (grouping is off for this photo); a photo that is still waiting is `queued` and `waiting_for` says what for,
-  `quality_verdict` or `moderator_approval` (otherwise it is empty). Draw the grouping step as "waiting" for those, never as done. The batch also has
+  `quality_verdict`, `moderator_approval` or `enhancement` (otherwise it is empty). Draw the grouping step as "waiting" for those, never as done. The batch also has
   `identity_grouping_finished` (every photo that will be grouped has been) and `suggested_merge_count` (see section 5; `0` until the batch is fully grouped).
 - Poll every 2 to 3 seconds while the batch is active and stop when
   `status` is terminal: `completed`, `partial`, `failed` or `cancelled`.
-- `stage` moves through: `uploaded, queued, preprocessing, face_validation,
-  quality_analysis, identity_grouping, enhancement, finalizing, completed`.
+- `stage` moves through (`stage_order` in the payload): `uploaded, queued, preprocessing, face_validation,
+  quality_analysis, enhancement, identity_grouping, finalizing, completed`.
 - A batch can be `partial`: some images succeeded and some did not. Show both.
 - `display_status` is the photo's final verdict word, identical to the
   `display_status` of `GET /api/images/my/` (`rejected`, `needs_review`,

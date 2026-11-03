@@ -268,14 +268,15 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
         if not hasattr(image_upload, "quality_decision"):
             from quality_control.services import enqueue_quality_analysis
             enqueue_quality_analysis(image_upload)
-        elif not hasattr(image_upload, "identity_analysis"):
-            # Person folders follow the quality verdict (identities/verdict.py); one that is already decided and was never grouped is grouped now.
-            from identities.verdict import group_after_verdict
-            group_after_verdict(image_upload)
         if hasattr(image_upload, "quality_decision"):
             # Already decided and never enhanced automatically (a retry, a re-analysis): started now if its verdict allows it, and never twice.
             from enhancement.auto import enhance_after_verdict
             enhance_after_verdict(image_upload)
+            if not hasattr(image_upload, "identity_analysis"):
+                # Person folders follow the verdict and the enhancement (identities/verdict.py); one that is already decided and was never grouped is grouped
+                # now, or when its enhancement ends.
+                from identities.verdict import group_when_enhancement_ends
+                group_when_enhancement_ends(image_upload)
             from search.semantic.service import index_after_verdict
             index_after_verdict(image_upload)
         return existing, False
