@@ -14,7 +14,7 @@ drf-spectacular
 django-cors-headers
 django-environ
 reportlab
-cryptography>=50.0.1
+cryptography>=50.0.2
 gunicorn
 # Optional cloud adjustment advisor (disabled until OPENAI_API_KEY and a model are configured).
 openai>=3.31,<4
