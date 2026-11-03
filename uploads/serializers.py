@@ -244,3 +244,29 @@ class UploadBatchCreatedSerializer(UploadBatchSerializer):
         from operations.inline import processing_mode
 
         return processing_mode()
+
+
+class BatchProgressSerializer(serializers.Serializer):
+    """``GET /api/images/batches/{id}/progress/``: where every photograph of a batch is, stage by stage.
+
+    A photograph goes through ``stage_order``: the automatic enhancement comes BEFORE the person folders. Each entry of ``images`` carries ``stage`` / ``status`` / ``progress_percentage``
+    (the percentages only rise along ``stage_order``: enhancement 75, identity_grouping 95), ``identity_grouping`` (``{status, waiting_for}``: ``waiting_for`` is ``enhancement`` while the photograph's
+    automatic enhancement has not ended) and ``enhancement``.
+    """
+
+    batch_id = serializers.IntegerField()
+    upload_type = serializers.CharField()
+    status = serializers.CharField()
+    stage = serializers.CharField(help_text="One of ``stage_order``.")
+    stage_order = serializers.ListField(child=serializers.CharField(), help_text="The nine stages, in the order a photograph goes through them: ..., quality_analysis, enhancement, identity_grouping, finalizing, completed.")
+    progress_percentage = serializers.FloatField()
+    cancellation_requested = serializers.BooleanField()
+    retry_count = serializers.IntegerField()
+    counts = serializers.DictField(child=serializers.IntegerField())
+    estimated_completion_at = serializers.DateTimeField(allow_null=True)
+    identity_grouping_finished = serializers.BooleanField(help_text="Every photograph that will be grouped has been; a photograph still waiting for its enhancement is not.")
+    auto_enhance = serializers.BooleanField()
+    enhancement_finished = serializers.BooleanField()
+    suggested_merge_count = serializers.IntegerField()
+    images = serializers.ListField(child=serializers.DictField())
+    updated_at = serializers.DateTimeField(allow_null=True)

@@ -22,6 +22,7 @@ from .display_status import with_status_relations
 from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
 from .progress import batch_progress_payload
 from .serializers import (
+    BatchProgressSerializer,
     ImagePreprocessingResultSerializer,
     ImageUploadSerializer,
     MyImageSerializer,
@@ -174,7 +175,7 @@ class UploadBatchDetailView(generics.RetrieveUpdateDestroyAPIView):
 class UploadBatchProgressView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
-    @extend_schema(responses={200: OpenApiTypes.OBJECT})
+    @extend_schema(responses={200: BatchProgressSerializer})
     def get(self, request, batch_id):
         batch = get_object_or_404(UploadBatch.objects.filter(owner=request.user), pk=batch_id)
         return Response(batch_progress_payload(batch))

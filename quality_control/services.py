@@ -189,14 +189,14 @@ def process_quality_decision(decision_id):
         if decision == "needs_review" and moderator_can_decide(result.image):      # a personal workspace has no moderator: nothing to queue
             from moderation.services import create_review_for_quality_decision
             create_review_for_quality_decision(result)
-        # Person folders follow the verdict: queued here, in the same transaction as the decision, so the photograph's progress never shows it finished in
-        # between (accepted: now; rejected: never; needs_review: now in a personal workspace, else after a moderator approves it). Never raises.
-        from identities.verdict import group_after_verdict
-        group_after_verdict(result.image, verdict=decision)
         # The photograph is enhanced automatically on the same terms (enhancement/auto.py): accepted now, rejected never, needs_review now in a personal
         # workspace, else after a moderator approves it. Same transaction as the decision, never raises, and never makes a second enhancement.
         from enhancement.auto import enhance_after_verdict
         enhance_after_verdict(result.image, verdict=decision)
+        # Person folders come AFTER the enhancement: queued here when no automatic enhancement is coming (accepted: now; rejected: never; needs_review: now in a personal
+        # workspace, else after a moderator approves it), otherwise by the end of that enhancement (identities/verdict.py ``group_when_enhancement_ends``). Never raises.
+        from identities.verdict import group_when_enhancement_ends
+        group_when_enhancement_ends(result.image, verdict=decision)
         # Search by what is in the photograph indexes it once the verdict is committed (only when that feature is switched on; accepted photographs only).
         from search.semantic.service import index_after_verdict
         index_after_verdict(result.image)
