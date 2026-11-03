@@ -4,7 +4,9 @@ The models are replaced by stand-ins here (CI has no weights); the real network 
 docs/evaluation/2026-11-03-colourization.md.
 """
 import hashlib
+import importlib.util
 import tempfile
+import unittest
 from pathlib import Path
 from unittest.mock import patch
 
@@ -22,6 +24,7 @@ from .adaptive.validator import FinalImageQualityValidator, Limits
 from .test_adaptive_polish import _no_identity
 
 COLOUR_ON = dict(base.ALL_ON, DDCOLOR_ENABLED=True)
+NEEDS_TORCH = unittest.skipUnless(importlib.util.find_spec("torch"), "PyTorch is not installed (CI); these run the network code with a stand-in")
 EVERYTHING_BUT_COLOUR = set(ops.ORDER) - {ops.COLORIZE}
 
 
@@ -285,6 +288,7 @@ class DDColorAdapterSafetyTests(SimpleTestCase):
                 colorize.colorize_with_ddcolor(np.zeros((10, 10, 3), np.uint8))
         self.assertIn("integrity", str(caught.exception))
 
+    @NEEDS_TORCH
     def test_a_checkpoint_that_only_partly_fits_the_network_is_refused_not_run_as_a_random_network(self):
         import torch
 
@@ -297,11 +301,12 @@ class DDColorAdapterSafetyTests(SimpleTestCase):
             path = Path(folder) / "ddcolor.bin"
             torch.save({"layer.weight": torch.zeros(2, 2)}, path)         # no "layer.bias": strict=False would load it silently
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
-            with override_settings(DDCOLOR_MODEL_PATH=str(path), DDCOLOR_MODEL_SHA256=digest), patch("enhancement.archs.ddcolor.DDColor", Tiny), \
+            with override_settings(DDCOLOR_MODEL_PATH=str(path), DDCOLOR_MODEL_SHA256=digest), patch("enhancement.archs.ddcolor.model.DDColor", Tiny), \
                     self.assertRaises(colorize.DDColorUnavailable) as caught:
                 colorize.colorize_with_ddcolor(np.zeros((10, 10, 3), np.uint8))
         self.assertIn("does not match", str(caught.exception))
 
+    @NEEDS_TORCH
     def test_the_output_keeps_the_input_lightness_and_size_with_a_stand_in_network(self):
         import torch
 
@@ -320,7 +325,7 @@ class DDColorAdapterSafetyTests(SimpleTestCase):
             path = Path(folder) / "ddcolor.bin"
             torch.save({"p": torch.zeros(1)}, path)
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
-            with override_settings(DDCOLOR_MODEL_PATH=str(path), DDCOLOR_MODEL_SHA256=digest, DDCOLOR_DEVICE="cpu"), patch("enhancement.archs.ddcolor.DDColor", Predicts):
+            with override_settings(DDCOLOR_MODEL_PATH=str(path), DDCOLOR_MODEL_SHA256=digest, DDCOLOR_DEVICE="cpu"), patch("enhancement.archs.ddcolor.model.DDColor", Predicts):
                 out, metadata = colorize.colorize_with_ddcolor(source)
         self.assertEqual(out.shape, source.shape)
         self.assertGreater(cv2.PSNR(cv2.cvtColor(source, cv2.COLOR_BGR2GRAY), cv2.cvtColor(out, cv2.COLOR_BGR2GRAY)), 38.0)

@@ -38,17 +38,17 @@ def _torch():
 
 
 def _load_model():
-    torch = _torch()
     try:
         path = _verified_path(settings.DDCOLOR_MODEL_PATH, settings.DDCOLOR_MODEL_SHA256, "DDColor")
     except HDRestorationUnavailable as error:
         raise DDColorUnavailable(str(error)) from error
+    torch = _torch()
     device = runtime.resolve_device(torch, settings.DDCOLOR_DEVICE, "DDColor", DDColorUnavailable)
     key = (settings.DDCOLOR_MODEL_VARIANT, str(path), str(device), int(settings.DDCOLOR_INPUT_SIZE))
     if key in _MODEL_CACHE:
         return _MODEL_CACHE[key], device, path
     runtime.make_room(_MODEL_CACHE)       # on a small machine only one large model stays loaded
-    from .archs.ddcolor import DDColor
+    from .archs.ddcolor.model import DDColor
 
     size = int(settings.DDCOLOR_INPUT_SIZE)
     model = DDColor(encoder_name=_ENCODERS[settings.DDCOLOR_MODEL_VARIANT], decoder_name="MultiScaleColorDecoder", input_size=[size, size],
