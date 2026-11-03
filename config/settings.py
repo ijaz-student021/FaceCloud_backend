@@ -416,6 +416,9 @@ RETINEXFORMER_TILE_SIZE = env.int("RETINEXFORMER_TILE_SIZE", default=1024)
 # On a CPU the tile is capped at this (memory and time grow quickly with tile area there); GPUs keep RETINEXFORMER_TILE_SIZE.
 RETINEXFORMER_CPU_TILE_SIZE = env.int("RETINEXFORMER_CPU_TILE_SIZE", default=512)
 RETINEXFORMER_TILE_OVERLAP = env.int("RETINEXFORMER_TILE_OVERLAP", default=32)
+# A photograph whose long edge is over this is brightened in ONE pass on a copy reduced to it, and the gain is applied to the full-size photograph (tiles of
+# the full size show seams and do not fit an 8 GB machine). 0 = run the network tile by tile at the full size, as before.
+RETINEXFORMER_WORK_EDGE = max(0, env.int("RETINEXFORMER_WORK_EDGE", default=960))
 ZERO_DCE_ENABLED = env.bool("ZERO_DCE_ENABLED", default=True)
 ZERO_DCE_MODEL_PATH = env(
     "ZERO_DCE_MODEL_PATH",
