@@ -313,6 +313,16 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}     -> 201
 
 - `level`: `auto` (default), `low`, `medium`, `high`.
 - `style`: `natural` (default), `dynamic`, `ai_max`.
+- **What `style` and `level` do in the adaptive engine** (the default policy; `applied_parameters.adaptive.profile` echoes what was used). They change *when* an operation is
+  tried and how strongly; the safety checks are the same for every choice, so a stronger choice can still end in "nothing needed fixing" or "kept the original":
+  - `natural` (and what an automatic enhancement uses): defect-driven; a black-and-white photograph **stays** black and white.
+  - `dynamic`: a stronger polish, also for a deliberately dark photograph, and **a black-and-white photograph is colourized** (`operations_applied` contains `colourization`).
+  - `ai_max`: all of `dynamic`, a stronger polish, a dark scene with a visible subject may be lifted, light noise is treated, and a photograph under 1280 px is enlarged.
+  - `level`: `low` = gentler (blends 0.65 and 0.4, polish x0.6); `auto`/`medium` = the style as it is; `high` = polish x1.4, a dark scene may be lifted, light noise is treated,
+    a photograph under 960 px is enlarged.
+  Suggested wording for the style picker: "Natural: keeps the photo as it is. Dynamic: more punch, and colours a black-and-white photo. AI Enhance: strongest; also brightens dark
+  scenes and enlarges small photos." A colourized photograph is a guess at the original colours (the model predicts them; they are damped to look natural): say "colourized",
+  never "restored". The upload and the original download are never changed.
 - **Automatic results** (section 3) are ordinary results: `GET /api/enhancements/results/{id}/` and the lists, with a new field `trigger`: `auto` (started after the upload
   passed the checks) or `manual` (the person asked). An automatic one runs level `auto`, style `natural`. Its `applied_parameters.render_policy.name` is the policy it
   used (the adaptive engine by default), which can differ from a manual request's. Automatic ones count towards the same limit of enhancements in progress, so
