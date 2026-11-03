@@ -74,3 +74,52 @@ class LandmarkPixelFloorTests(SimpleTestCase):
         FinalImageQualityValidator(None, original, identity=None)._identity_gate(verdict, None, SimpleNamespace(faces=[], width=1280), "super_resolution")
         self.assertFalse(verdict["gates"]["identity"]["passed"])
         self.assertIn("face_lost", verdict["reasons"])
+
+
+class PolishFaceStructureTests(SimpleTestCase):
+    """Polish moves no pixel; when the detector places the landmarks elsewhere on a soft face, the face's own structure decides (SSIM of the padded face crop)."""
+
+    def setUp(self):
+        import cv2
+        import numpy as np
+
+        self.cv2, self.np = cv2, np
+        self.parent = base.portrait()
+        self.box = (150, 100, 180, 220)
+        self.original = SimpleNamespace(faces=[face(self.box)], width=640)
+
+    def gate(self, candidate_image, landmark_dx):
+        candidate_report = SimpleNamespace(faces=[face(self.box, 1, dx=landmark_dx)], width=640)
+        verdict = {"reasons": [], "gates": {}}
+        FinalImageQualityValidator(None, self.original, identity=None)._identity_gate(verdict, candidate_image, candidate_report, "polish", self.parent)
+        return verdict["gates"]["identity"], verdict["reasons"]
+
+    def polished(self):
+        lab = self.cv2.cvtColor(self.parent.astype(self.np.float32) / 255.0, self.cv2.COLOR_BGR2Lab)
+        lab[:, :, 0] = self.np.clip(lab[:, :, 0] * 1.04 + 1.0, 0, 100)
+        return self.np.clip(self.np.rint(self.cv2.cvtColor(lab, self.cv2.COLOR_Lab2BGR) * 255.0), 0, 255).astype(self.np.uint8)
+
+    def test_a_polished_face_passes_although_the_detector_moved_its_landmarks(self):
+        status, reasons = self.gate(self.polished(), landmark_dx=0.05 * self.box[2])       # 5 percent: over polish's 0.02
+        self.assertTrue(status["passed"], status)
+        self.assertGreaterEqual(status["face_structure_ssim"], 0.985)
+        self.assertEqual(reasons, [])
+
+    def test_a_face_that_really_moved_is_still_refused(self):
+        moved = self.cv2.warpAffine(self.parent, self.np.float32([[1, 0, 6], [0, 1, 0]]), (self.parent.shape[1], self.parent.shape[0]), borderMode=self.cv2.BORDER_REPLICATE)
+        status, reasons = self.gate(moved, landmark_dx=0.05 * self.box[2])
+        self.assertFalse(status["passed"], status)
+        self.assertLess(status["face_structure_ssim"], 0.985)
+        self.assertIn("face_geometry_changed", reasons)
+
+    def test_without_the_pixels_the_old_landmark_rule_stands(self):
+        verdict = {"reasons": [], "gates": {}}
+        candidate_report = SimpleNamespace(faces=[face(self.box, 1, dx=0.05 * self.box[2])], width=640)
+        FinalImageQualityValidator(None, self.original, identity=None)._identity_gate(verdict, None, candidate_report, "polish")
+        self.assertFalse(verdict["gates"]["identity"]["passed"])
+
+    def test_only_polish_gets_this_second_opinion(self):
+        verdict = {"reasons": [], "gates": {}}
+        candidate_report = SimpleNamespace(faces=[face(self.box, 1, dx=0.05 * self.box[2])], width=640)
+        FinalImageQualityValidator(None, self.original, identity=None)._identity_gate(verdict, self.polished(), candidate_report, "denoising", self.parent)
+        self.assertFalse(verdict["gates"]["identity"]["passed"])

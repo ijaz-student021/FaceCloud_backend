@@ -32,6 +32,9 @@ class Step:
     engines: list           # engines to try, in order of preference
     variants: list          # [{"name": ..., ...}] what to propose from the first engine that runs
     reason: str
+    # Tried only because the style or strength asked for it (a dark scene lifted, low noise treated, a modest photograph enlarged), not because the photograph had a
+    # defect. If such an attempt is refused the photograph is as it was, so it does not stop the polish from being offered.
+    profile_driven: bool = False
 
 
 @dataclass
@@ -84,12 +87,12 @@ class AdaptiveEnhancementRouter:
                 return None, ""
             return Step(operation, engines, blends,
                         f"Exposure: {report.exposure['status']} (judged on the {report.exposure['judged_on']})."
-                        + (" The strength asked for lifts a dark scene." if dark_scene else "")), ""
+                        + (" The style or strength asked for lifts a dark scene." if dark_scene else ""), profile_driven=dark_scene), ""
         if operation == ops.DENOISE:
             if report.noise["status"] not in (("low", "moderate", "high") if profile.treat_low_noise else ("moderate", "high")):
                 return None, ""
             variants = blends
-            return Step(operation, engines, variants, f"Noise: {report.noise['status']} (estimate {report.noise['estimate']})."), ""
+            return Step(operation, engines, variants, f"Noise: {report.noise['status']} (estimate {report.noise['estimate']}).", profile_driven=report.noise["status"] == "low"), ""
         if operation == ops.DEBLUR:
             # The main face's own blur decides first: a blurred subject in front of a sharp background reads as "no blur" for the frame,
             # and a large defocus is where the motion-deblurring model measurably helps (a small one it hurts, so only "high" counts).
@@ -145,7 +148,8 @@ class AdaptiveEnhancementRouter:
             if not scale:
                 return None, "Upscaling would exceed the output size limit."
             return Step(operation, engines, [{"name": f"x{scale}", "scale": scale}],
-                        "The photograph is small." if small_image else "The face is small."), ""
+                        "The photograph is small." if small_image else "The face is small.",
+                        profile_driven=small_image and report.resolution["status"] != "low"), ""
         return None, ""
 
     @staticmethod

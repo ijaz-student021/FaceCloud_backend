@@ -84,6 +84,11 @@ class Limits:
     polish_noise_growth_max: float = 1.10          # noise estimate after / before (plus 0.02 of slack on the "moderate = 1.0" scale)
     polish_delta_e_max: float = 3.0                # mean CIELAB distance from the parent (76, at the 1024 px working scale)
     polish_face_landmark_shift_max: float = 0.02   # of the face width (the other operations allow 0.04)
+    # Polish never moves a pixel, so a landmark shift after it is the detector's doing: on a soft, enlarged 209 px portrait it placed the landmarks 0.053 (11 px)
+    # away for both polish variants although they passed every other gate (face detail x1.18, contrast x1.17, delta E 1.2), while the same detector moved 0.0054 at most
+    # under harmless changes. The face's own structure is the stable evidence: structure SSIM of the padded face crop was 0.996-0.997 for polish and 0.965 for a 2 px shift, 0.874
+    # for 6 px, 0.938 for a 2 percent change of scale. Polish passes the face gate when every face keeps at least this structure similarity (or when its landmarks held).
+    polish_face_structure_ssim_min: float = 0.985
     polish_face_detail_ceiling: float = 175.0      # a sharp face's 90th percentile (face_sharpness.py): polish never pushes a face past it,
     # colourization (DDColor): it must leave the lightness as it was and give a plausible colour. Measured on 8 photographs (the portrait and 7 grey-converted
     # colour photographs, DDCOLOR damping on): gray PSNR 42.7-55.5 dB, mean chroma 2.3-20.8, 99th percentile 15-47, cast 0.8-19.0. The limits are backstops against a
@@ -333,7 +338,7 @@ class FinalImageQualityValidator:
             gate("noise", noise_after <= max(noise_before * allowed, noise_before + 0.25, 1.0 if lowlight else 0.0),
                  {"before": noise_before, "after": noise_after}, "noise_increased")
 
-        self._identity_gate(verdict, candidate, candidate_report, operation)
+        self._identity_gate(verdict, candidate, candidate_report, operation, parent)
         improvement = self._improvement(verdict, operation, parent, candidate, parent_report, candidate_report, expected_scale)
         verdict["improvement"] = round(float(improvement), 4)
         mean_change = float(np.mean(np.abs(_gray(_to_size(candidate, parent.shape)).astype(np.float32) - _gray(parent).astype(np.float32)))) / 255.0
@@ -342,7 +347,21 @@ class FinalImageQualityValidator:
         return verdict
 
     # -- identity ---------------------------------------------------------------------------------------------
-    def _identity_gate(self, verdict, candidate, candidate_report, operation):
+    def _face_structure_holds(self, parent, candidate):
+        """Whether every original face keeps its structure (SSIM of the brightness-normalised, padded face crop) between two same-sized images."""
+        if parent is None or candidate is None or parent.shape != candidate.shape:
+            return None, None
+        worst = 1.0
+        for face in self.original_report.faces:
+            x, y, w, h = face.box
+            x0, y0 = max(0, int(x - 0.15 * w)), max(0, int(y - 0.15 * h))
+            x1, y1 = min(parent.shape[1], int(x + 1.15 * w)), min(parent.shape[0], int(y + 1.15 * h))
+            if x1 - x0 < 16 or y1 - y0 < 16:
+                continue
+            worst = min(worst, structure_ssim(parent[y0:y1, x0:x1], candidate[y0:y1, x0:x1]))
+        return worst >= self.limits.polish_face_structure_ssim_min, worst
+
+    def _identity_gate(self, verdict, candidate, candidate_report, operation, parent=None):
         if not self.original_report.faces:
             verdict["gates"]["identity"] = {"passed": True, "status": "no_face"}
             return
@@ -356,7 +375,13 @@ class FinalImageQualityValidator:
             if widths:
                 shift_max = max(shift_max, self.limits.landmark_pixel_floor / (sum(widths) / len(widths)))
         landmarks_ok = shift is not None and shift <= shift_max
-        status = {"passed": landmarks_ok, "landmark_shift": None if shift is None else round(shift, 4)}
+        status = {"landmark_shift": None if shift is None else round(shift, 4)}
+        if operation == "polish" and not landmarks_ok:
+            holds, worst = self._face_structure_holds(parent, candidate)
+            if holds is not None:
+                status["face_structure_ssim"] = round(worst, 4)
+                landmarks_ok = bool(holds)
+        status["passed"] = landmarks_ok
         if not landmarks_ok:
             verdict["reasons"].append("face_lost" if shift is None else "face_geometry_changed")
         if self.identity is None:

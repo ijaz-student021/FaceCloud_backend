@@ -8,7 +8,8 @@ is tried and how strongly**; every safety gate of the validator (data consistenc
   polish when nothing is wrong (if ``ADAPTIVE_POLISH_ENABLED``). A black-and-white photograph stays black and white.
 * ``dynamic``: the same, with the polish at its stronger "punch" setting, also for a deliberately dark photograph (polish never lifts shadows), and a black-and-white
   photograph is colourized (DDColor, if ``DDCOLOR_ENABLED``).
-* ``ai_max``: everything ``dynamic`` does, a stronger polish (x1.25), noise is treated from the "low" level, and a photograph whose long edge is under 1280 px is enlarged.
+* ``ai_max``: everything ``dynamic`` does, a stronger polish (x1.25), a dark scene whose subject is visible is lifted, noise is treated from the "low" level, and a photograph
+  whose long edge is under 1280 px is enlarged.
 
 The strength scales the polish and decides how far the engine goes: ``low`` (Light) uses gentler blends and 0.6x polish; ``auto`` and ``medium`` leave the style as it is;
 ``high`` (Strong) polishes 1.4x, treats low noise as noise, lifts a dark scene whose subject is visible (a "dark scene" is otherwise left as photographed) and enlarges
@@ -41,7 +42,8 @@ DEFAULT = Profile()
 _STYLES = {
     "natural": DEFAULT,
     "dynamic": Profile(style="dynamic", colourize=True, polish_style="dynamic", polish_dark_scenes=True),
-    "ai_max": Profile(style="ai_max", colourize=True, polish_style="dynamic", polish_scale=1.25, polish_dark_scenes=True, treat_low_noise=True, upscale_below_edge=1280),
+    "ai_max": Profile(style="ai_max", colourize=True, polish_style="dynamic", polish_scale=1.25, polish_dark_scenes=True, lift_dark_scenes=True, treat_low_noise=True,
+                      upscale_below_edge=1280),
 }
 
 

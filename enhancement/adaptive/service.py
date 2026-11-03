@@ -307,7 +307,9 @@ class AdaptiveImageEnhancementService:
                 break
             # Polish is for a photograph on which nothing else was found: offered only while it is switched on (ADAPTIVE_POLISH_ENABLED,
             # off unless the operator turns it on) and no operation has been attempted yet, so it is never stacked on another one.
-            polish = {"style": profile.polish_style} if settings.ADAPTIVE_POLISH_ENABLED and not stages and profile.polish_style else None
+            # Not after an operation that was accepted or that a defect called for; a refused attempt the style or strength asked for left the photograph as it was.
+            nothing_changed = all(s["status"] != "accepted" and s.get("profile_driven") for s in stages)
+            polish = {"style": profile.polish_style} if settings.ADAPTIVE_POLISH_ENABLED and nothing_changed and profile.polish_style else None
             decision = self.router.next_step(report, done, polish, profile)
             for item in decision.skipped:
                 if item not in skipped:
@@ -330,7 +332,7 @@ class AdaptiveImageEnhancementService:
             done.add(step.operation)
             checkpoint(step.operation)
             record = {"operation": step.operation, "reason": step.reason, "engines": step.engines, "skipped_engines": [],
-                      "notes": [], "candidates": []}
+                      "notes": [], "candidates": [], "profile_driven": step.profile_driven}
             if not step.engines:
                 record["status"] = "no_engine"
                 record["notes"].append("No engine for this operation is switched on.")

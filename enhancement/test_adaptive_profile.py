@@ -58,8 +58,8 @@ class ProfileMappingTests(SimpleTestCase):
 
     def test_ai_max_does_everything_dynamic_does_and_more(self):
         profile = profile_for("ai_max")
-        self.assertEqual((profile.colourize, profile.polish_style, profile.polish_scale, profile.treat_low_noise, profile.upscale_below_edge),
-                         (True, "dynamic", 1.25, True, 1280))
+        self.assertEqual((profile.colourize, profile.polish_style, profile.polish_scale, profile.treat_low_noise, profile.upscale_below_edge, profile.lift_dark_scenes),
+                         (True, "dynamic", 1.25, True, 1280, True))
 
     def test_the_strength_scales_the_style(self):
         low, high = profile_for("dynamic", "low"), profile_for("dynamic", "high")
@@ -120,8 +120,9 @@ class RouterProfileTests(SimpleTestCase):
     def dark_scene(self):
         return self.report(exposure={"status": "dark_scene", "judged_on": "subject", "scene_median": 40.0})
 
-    def test_a_dark_scene_is_left_alone_unless_the_strength_is_strong(self):
-        for profile in (profile_for("natural"), profile_for("dynamic"), profile_for("ai_max", "medium")):
+    def test_a_dark_scene_is_left_alone_unless_the_strength_is_strong_or_the_style_is_ai_max(self):
+        self.assertEqual(self.router().next_step(self.dark_scene(), set(), None, profile_for("ai_max")).step.operation, ops.LOW_LIGHT)
+        for profile in (profile_for("natural"), profile_for("dynamic")):
             decision = self.router().next_step(self.dark_scene(), set(), None, profile)
             self.assertNotEqual(getattr(decision.step, "operation", None), ops.LOW_LIGHT, profile.style)
             self.assertTrue(any("left as photographed" in item["reason"] for item in decision.skipped), profile.style)
@@ -327,3 +328,48 @@ class DDColorAdapterSafetyTests(SimpleTestCase):
         self.assertLessEqual(float(np.hypot(lab[:, :, 1], lab[:, :, 2]).max()), 60.5, "capped at DDCOLOR_MAX_CHROMA")
         self.assertGreater(float(np.hypot(lab[:, :, 1], lab[:, :, 2]).mean()), 5.0)
         self.assertEqual((metadata["provider"], metadata["chroma_scale"]), ("ddcolor_large", 0.7))
+
+
+class DarkSceneAnalyzer(base.ImageQualityAnalyzer):
+    """The analyzer, but it reads every photograph as a deliberately dark scene (no defect recommended)."""
+
+    def analyze(self, image):
+        report = super().analyze(image)
+        report.exposure = {**report.exposure, "status": "dark_scene"}
+        report.recommended_operations = []
+        return report
+
+
+def refused_lift(image, engine, variant):
+    return image.copy(), [{"model": engine}]          # nothing gets brighter: the validator refuses it
+
+
+@override_settings(**dict(base.ALL_ON, ADAPTIVE_POLISH_ENABLED=True))
+class RefusedAttemptDoesNotBlockPolishTests(SimpleTestCase):
+    def stages(self, analyzer, style, image=None, level="auto"):
+        service = AdaptiveImageEnhancementService(analyzer=analyzer, config=EngineConfig(), runners={ops.LOW_LIGHT: refused_lift})
+        with patch("enhancement.adaptive.service.IdentityChecker", _no_identity):
+            _out, _level, parameters = service.enhance(image if image is not None else base.portrait(), requested_level=level, style=style)
+        return {stage["operation"]: stage for stage in parameters["adaptive"]["stages"]}
+
+    def test_ai_max_still_polishes_after_its_own_refused_dark_scene_lift(self):
+        stages = self.stages(DarkSceneAnalyzer(detector=base.StubDetector([])), "ai_max")
+        self.assertEqual(stages[ops.LOW_LIGHT]["status"], "rejected")
+        self.assertTrue(stages[ops.LOW_LIGHT]["profile_driven"])
+        self.assertIn(ops.POLISH, stages, "the strongest style must do at least what Dynamic does")
+
+    def test_natural_leaves_a_dark_scene_entirely_alone(self):
+        self.assertEqual(self.stages(DarkSceneAnalyzer(detector=base.StubDetector([])), "natural"), {})
+
+    def test_a_refused_lift_that_a_real_defect_called_for_still_blocks_polish_as_before(self):
+        stages = self.stages(base.analyzer_with(), "ai_max", image=base.portrait(brightness=0.12))
+        self.assertEqual(stages[ops.LOW_LIGHT]["status"], "rejected")
+        self.assertFalse(stages[ops.LOW_LIGHT]["profile_driven"])
+        self.assertNotIn(ops.POLISH, stages)
+
+    def test_the_step_says_when_it_was_asked_for_by_the_profile(self):
+        router = AdaptiveEnhancementRouter(EngineConfig())
+        report = DarkSceneAnalyzer(detector=base.StubDetector([])).analyze(base.portrait())
+        self.assertTrue(router.next_step(report, set(), None, profile_for("ai_max")).step.profile_driven)
+        defective = base.analyzer_with().analyze(base.portrait(brightness=0.12))
+        self.assertFalse(router.next_step(defective, set(), None, profile_for("ai_max")).step.profile_driven)
