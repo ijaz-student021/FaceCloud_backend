@@ -116,7 +116,7 @@ class PolishSettingTests(SimpleTestCase):
         self.assertEqual(ops.ENGINES[ops.POLISH], ("opencv_polish",))
 
 
-@override_settings(**ALL_ON)
+@override_settings(**ALL_ON, ADAPTIVE_ALWAYS_ENHANCE=False)
 class PolishRouterTests(SimpleTestCase):
     def router(self):
         return AdaptiveEnhancementRouter(EngineConfig())
@@ -216,7 +216,7 @@ class PolishOperationTests(SimpleTestCase):
         self.assertLess(fine_detail(sharp_out), fine_detail(image) * 1.12)
 
 
-@override_settings(**ALL_ON)
+@override_settings(**ALL_ON, ADAPTIVE_ALWAYS_ENHANCE=False)
 class PolishEngineTests(SimpleTestCase):
     def test_a_clean_portrait_is_polished_and_stays_the_same_photograph(self):
         source = soft_portrait()

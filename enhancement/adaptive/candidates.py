@@ -20,12 +20,21 @@ class Candidate:
     verdict: dict | None = None
     selected: bool = False
     seconds: float = 0.0
+    size: tuple | None = None       # (width, height), kept when the pixels are released
+
+    def __post_init__(self):
+        if self.size is None and self.image is not None:
+            self.size = (int(self.image.shape[1]), int(self.image.shape[0]))
+
+    def release(self):
+        """Free the pixels of a candidate the validator refused: it is never used again, so it neither holds memory nor counts against the pool's limit."""
+        self.image = None
 
     def describe(self):
         """A JSON-friendly summary, without the pixels."""
         return {
             "id": self.id, "parent": self.parent, "operation": self.operation, "variant": self.variant,
-            "dimensions": [int(self.image.shape[1]), int(self.image.shape[0])], "models": self.models,
+            "dimensions": [int(self.size[0]), int(self.size[1])], "models": self.models,
             "seconds": round(self.seconds, 3), "selected": self.selected, "verdict": self.verdict,
         }
 
@@ -44,7 +53,7 @@ class CandidatePool:
         return self.items[0]
 
     def add(self, image, parent, operation, variant="", models=None, seconds=0.0):
-        if len(self.items) >= self.max_candidates:
+        if sum(1 for item in self.items if item.image is not None) >= self.max_candidates:     # refused candidates were released and do not count
             raise PoolFull(f"The candidate limit ({self.max_candidates}) was reached.")
         candidate = Candidate(
             id=f"c{len(self.items)}_{operation}", image=image, parent=parent.id, operation=operation, variant=variant,

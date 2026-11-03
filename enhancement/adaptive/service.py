@@ -236,8 +236,11 @@ class AdaptiveImageEnhancementService:
                     break
                 candidate.verdict = validator.evaluate(
                     current.image, candidate.image, step.operation, report, expected_scale=scale if step.operation == ops.UPSCALE else 1,
+                    refine=bool(variant.get("refine")),
                 )
                 engine_produced.append(candidate)
+                if not candidate.verdict["accepted"]:
+                    candidate.release()          # refused: its pixels are never used again, and it must not use up the pool the later operations (the polish) need
             tried += 1
             produced.extend(engine_produced)
             if any(candidate.verdict["accepted"] for candidate in engine_produced):
@@ -313,8 +316,10 @@ class AdaptiveImageEnhancementService:
             # Polish is for a photograph on which nothing else was found: offered only while it is switched on (ADAPTIVE_POLISH_ENABLED,
             # off unless the operator turns it on) and no operation has been attempted yet, so it is never stacked on another one.
             # Not after an operation that was accepted or that a defect called for; a refused attempt the style or strength asked for left the photograph as it was.
-            nothing_changed = all(s["status"] != "accepted" and s.get("optional") for s in stages)
-            polish = {"style": profile.polish_style} if settings.ADAPTIVE_POLISH_ENABLED and nothing_changed and profile.polish_style else None
+            # Always-enhance: a corrective step the safety gates refused does not keep the photograph from the finishing polish (nothing was accepted, so nothing is stacked).
+            nothing_changed = all(s["status"] != "accepted" and (s.get("optional") or settings.ADAPTIVE_ALWAYS_ENHANCE) for s in stages)
+            polish_on = settings.ADAPTIVE_POLISH_ENABLED or settings.ADAPTIVE_ALWAYS_ENHANCE
+            polish = {"style": profile.polish_style} if polish_on and nothing_changed and profile.polish_style else None
             decision = self.router.next_step(report, done, polish, profile)
             for item in decision.skipped:
                 if item not in skipped:
@@ -447,7 +452,8 @@ class AdaptiveImageEnhancementService:
                  ops.FACE: "restored a degraded face", ops.UPSCALE: "enlarged the photograph",
                  ops.DETAIL: "restored fine detail and reduced compression blocking",
                  ops.POLISH: "balanced the contrast and sharpened lightly", ops.COLORIZE: "colourized the black-and-white photograph"}
-        done = [words[s["operation"]] for s in stages if s["status"] == "accepted"]
+        done = [("refined the fine detail with the enhancement model" if s["operation"] == ops.DETAIL and str(s.get("reason", "")).startswith("No defect") else words[s["operation"]])
+                for s in stages if s["status"] == "accepted"]
         if outcome == ORIGINAL_PRESERVED:
             # A polish that was tried and refused is not a defect that could not be fixed: it says "nothing to improve", not "unsafe".
             rejected = [s for s in stages if s["status"] in ("rejected", "unavailable", "no_engine") and s["operation"] != ops.POLISH]

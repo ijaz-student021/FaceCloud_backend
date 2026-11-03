@@ -47,6 +47,7 @@ def warm_colourization(image, engine, variant):
     return np.clip(np.rint(cv2.cvtColor(lab, cv2.COLOR_Lab2BGR) * 255.0), 0, 255).astype(np.uint8), [{"model": engine}]
 
 
+@override_settings(ADAPTIVE_ALWAYS_ENHANCE=False)
 class ProfileMappingTests(SimpleTestCase):
     def test_natural_and_auto_is_the_defect_driven_default_and_it_lifts_a_dark_scene(self):
         profile = profile_for("natural", "auto")
@@ -78,7 +79,7 @@ class ProfileMappingTests(SimpleTestCase):
         self.assertEqual(profile_for(None, None).level, "auto")
 
 
-@override_settings(**COLOUR_ON)
+@override_settings(**COLOUR_ON, ADAPTIVE_ALWAYS_ENHANCE=False)
 class RouterProfileTests(SimpleTestCase):
     def router(self):
         return AdaptiveEnhancementRouter(EngineConfig())
@@ -179,7 +180,7 @@ class RouterProfileTests(SimpleTestCase):
         self.assertEqual([v["blend"] for v in self.router().next_step(report, set()).step.variants], [1.0, 0.65])      # no profile: as before
 
 
-@override_settings(**COLOUR_ON)
+@override_settings(**COLOUR_ON, ADAPTIVE_ALWAYS_ENHANCE=False)
 class ColourizationEngineTests(SimpleTestCase):
     def run_engine(self, image, style, runner=warm_colourization, level="auto"):
         service = AdaptiveImageEnhancementService(analyzer=base.analyzer_with(None), config=EngineConfig(), runners={ops.COLORIZE: runner})
@@ -353,7 +354,7 @@ def refused_lift(image, engine, variant):
     return image.copy(), [{"model": engine}]          # nothing gets brighter: the validator refuses it
 
 
-@override_settings(**dict(base.ALL_ON, ADAPTIVE_POLISH_ENABLED=True))
+@override_settings(**dict(base.ALL_ON, ADAPTIVE_POLISH_ENABLED=True), ADAPTIVE_ALWAYS_ENHANCE=False)
 class RefusedAttemptDoesNotBlockPolishTests(SimpleTestCase):
     def stages(self, analyzer, style, image=None, level="auto"):
         service = AdaptiveImageEnhancementService(analyzer=analyzer, config=EngineConfig(), runners={ops.LOW_LIGHT: refused_lift})

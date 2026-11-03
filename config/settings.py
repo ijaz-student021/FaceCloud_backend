@@ -389,6 +389,21 @@ ADAPTIVE_DEBUG_ARTIFACTS = env.bool("ADAPTIVE_DEBUG_ARTIFACTS", default=False)
 # polish only when the analyzer recommends no operation, none was tried, the scene is not a dark one left as photographed and the style is
 # natural or dynamic; the result is kept only if the validator's polish gates pass, otherwise the original pixels are returned.
 ADAPTIVE_POLISH_ENABLED = env.bool("ADAPTIVE_POLISH_ENABLED", default=False)
+# Every photograph is enhanced. With this on, a photograph on which nothing was found to fix (or on which every corrective step was refused by the
+# safety gates) still gets the polish, as a FINISH: ADAPTIVE_FINISH_STRENGTH times the gentle share and a vibrance of ADAPTIVE_FINISH_VIBRANCE (the gentle polish
+# is 6 percent) on low-chroma pixels. It is kept if every safety gate passes, no measure (frame contrast, structure, local contrast, the main face's detail) falls
+# below ADAPTIVE_FINISH_TOLERANCE of what it was, and the photograph really changes (mean change of at least ADAPTIVE_FINISH_MIN_CHANGE grey levels of 255). The gentle
+# polish needed a 5 percent gain, which a photograph that is already balanced and sharp does not give, so it was returned unchanged. It does not need
+# ADAPTIVE_POLISH_ENABLED. Off: the engine behaves as before.
+ADAPTIVE_ALWAYS_ENHANCE = env.bool("ADAPTIVE_ALWAYS_ENHANCE", default=True)
+ADAPTIVE_FINISH_STRENGTH = env.float("ADAPTIVE_FINISH_STRENGTH", default=3.0)
+ADAPTIVE_FINISH_VIBRANCE = env.float("ADAPTIVE_FINISH_VIBRANCE", default=0.15)
+ADAPTIVE_FINISH_TOLERANCE = env.float("ADAPTIVE_FINISH_TOLERANCE", default=0.97)
+ADAPTIVE_FINISH_MIN_CHANGE = env.float("ADAPTIVE_FINISH_MIN_CHANGE", default=1.5)
+# With ADAPTIVE_ALWAYS_ENHANCE a photograph on which no defect was found first goes through the detail model (the compact "general" network used for light photographs) as a
+# refinement; it is kept if its structure energy rises by at least this factor (1.01 = 1 percent) and every other gate passes. The finishing polish above is the fallback
+# when the model's result is refused, or when the photograph is over ADAPTIVE_DETAIL_MAX_PIXELS.
+ADAPTIVE_REFINE_MIN_GAIN = env.float("ADAPTIVE_REFINE_MIN_GAIN", default=1.01)
 # How a low-light lift gets its colour: "chromaticity" (the source's colour ratios in linear light with the network's luminance;
 # measured to keep colour closest to the clean photograph, docs/evaluation/2026-10-15-lowlight-colour.md) or "legacy" (the source's
 # CIELAB chroma scaled by the square root of the lightness gain; measured 20-40 % paler on dark inputs).

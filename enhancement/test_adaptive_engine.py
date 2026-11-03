@@ -381,7 +381,7 @@ def runner_denoise(image, engine, variant):
     return cv2.fastNlMeansDenoisingColored(image, None, 10, 10, 7, 21), [{"model": engine, "device": "stand-in"}]
 
 
-@override_settings(**ALL_ON)
+@override_settings(**ALL_ON, ADAPTIVE_ALWAYS_ENHANCE=False)
 class ServiceTests(SimpleTestCase):
     def service(self, face=True, runners=None, **config):
         analyzer = analyzer_with() if face else analyzer_with(None)

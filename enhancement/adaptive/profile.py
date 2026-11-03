@@ -17,6 +17,8 @@ a photograph under 960 px. A colourization is never scaled (it is one prediction
 """
 from dataclasses import dataclass, replace
 
+from django.conf import settings
+
 
 @dataclass(frozen=True)
 class Profile:
@@ -57,4 +59,6 @@ def profile_for(style, level="auto"):
     elif level == "high":
         profile = replace(profile, polish_scale=round(profile.polish_scale * 1.4, 4), lift_dark_scenes=True, treat_low_noise=True,
                           upscale_below_edge=max(profile.upscale_below_edge, 960))
+    if settings.ADAPTIVE_ALWAYS_ENHANCE:       # every photograph is enhanced: the finishing polish is stronger than the gentle one and may touch a dark scene
+        profile = replace(profile, polish_scale=round(profile.polish_scale * float(settings.ADAPTIVE_FINISH_STRENGTH), 4), polish_dark_scenes=True)
     return profile

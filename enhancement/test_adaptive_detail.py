@@ -47,7 +47,7 @@ class HeavyCompressionAnalyzer(ImageQualityAnalyzer):
         return report
 
 
-@override_settings(**ON)
+@override_settings(**ON, ADAPTIVE_ALWAYS_ENHANCE=False)
 class DetailRouterTests(SimpleTestCase):
     def router(self):
         return AdaptiveEnhancementRouter(EngineConfig())
@@ -158,7 +158,7 @@ class DetailValidatorTests(SimpleTestCase):
         self.assertEqual((Limits().detail_min_gain, Limits().detail_max_gain), (1.02, 1.6))
 
 
-@override_settings(**dict(ON, ADAPTIVE_POLISH_ENABLED=True))
+@override_settings(**dict(ON, ADAPTIVE_POLISH_ENABLED=True), ADAPTIVE_ALWAYS_ENHANCE=False)
 class DetailEngineTests(SimpleTestCase):
     def run_engine(self, style="natural", level="auto", runner=None):
         source = base.portrait()
