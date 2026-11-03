@@ -21,3 +21,6 @@ openai>=3.31,<4
 # Private object storage (Feature 43): used only when STORAGE_BACKEND=s3.
 boto3>=1.40
 django-storages[s3]>=1.14
+# kombu 5.7.0 (released 2026-11-03) declares packaging only under its [redis] extra, but its Redis transport imports it unconditionally; without this line a
+# fresh install cannot queue a single Celery task (109 failures in one CI run). Remove only when `celery[redis]` is used instead.
+packaging

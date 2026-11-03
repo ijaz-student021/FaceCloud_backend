@@ -35,6 +35,7 @@ LEARNED_STAGES = {
     "NAFNET_DENOISE_ENABLED": "nafnet_denoise",
     "GFPGAN_ENABLED": "gfpgan_face_restoration",
     "CODEFORMER_ENABLED": "codeformer_face_restoration",
+    "DDCOLOR_ENABLED": "ddcolor_colourization",
 }
 
 # Which learned stages each policy may run (a stage also needs its own setting on). ``balanced_v1`` allows
@@ -50,13 +51,13 @@ ALLOWED_STAGES = {
 DESCRIPTIONS = {
     LIGHTWEIGHT: (
         "OpenCV and Pillow only. No learned enhancement model runs: no Zero-DCE, "
-        "Retinexformer, NAFNet, Real-ESRGAN, GFPGAN or CodeFormer."
+        "Retinexformer, NAFNet, Real-ESRGAN, GFPGAN, CodeFormer or DDColor."
     ),
     BALANCED: (
         "OpenCV and Pillow, plus Zero-DCE (CPU, OpenCV DNN) when a lift is requested by an explicit level or "
         "style. Automatic mode still never lifts a dark photo. No PyTorch model runs."
     ),
-    LEARNED: "Each learned model (Retinexformer, Zero-DCE, NAFNet, Real-ESRGAN, GFPGAN, CodeFormer) runs when its own setting is on.",
+    LEARNED: "Each learned model (Retinexformer, Zero-DCE, NAFNet, Real-ESRGAN, GFPGAN, CodeFormer, DDColor) runs when its own setting is on.",
     ADAPTIVE: (
         "The adaptive engine (enhancement/adaptive/): the photograph is analysed, only the operations its defects call for "
         "run, each candidate is validated (quality, colour, artifacts, identity), and one final image is selected or the "

@@ -69,6 +69,11 @@ class Limits:
     face_deblur_min_detail_gain: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN", 1.25)))   # a deblur chosen for a blurred *face* must raise the face's own detail at least this much
     face_max_detail: float = 260.0          # above this (sharp faces: median 119, p90 175) the detail is probably invented
     face_landmark_shift_max: float = 0.04   # of the face width, mean over the five landmarks
+    # On a tiny face the detector's own jitter is a large share of the face width: a 21 px silhouette measured 0.078 (1.6 px) for a super-resolution
+    # candidate that passed every other gate (data consistency 49.6 dB, detail 1.25x), so a photograph with a speck of a "face" could never be
+    # enlarged. A displacement under this many pixels of the ORIGINAL photograph is detection noise, not a changed face. It never applies to a
+    # generative face restoration (always strict) nor to polish (its own 0.02 gate), and a face that is no longer found is still a loss.
+    landmark_pixel_floor: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_LANDMARK_PIXEL_FLOOR", 2.0)))
     # An upscaled candidate's landmarks are found again on an interpolated image, so a little jitter is not a changed face: plain bicubic
     # enlargement of three 240 px portraits already shifted them by 0.019, 0.026 and 0.037 (measured on real photographs).
     face_landmark_shift_max_upscale: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX", 0.06)))
@@ -79,7 +84,20 @@ class Limits:
     polish_noise_growth_max: float = 1.10          # noise estimate after / before (plus 0.02 of slack on the "moderate = 1.0" scale)
     polish_delta_e_max: float = 3.0                # mean CIELAB distance from the parent (76, at the 1024 px working scale)
     polish_face_landmark_shift_max: float = 0.02   # of the face width (the other operations allow 0.04)
+    # Polish never moves a pixel, so a landmark shift after it is the detector's doing: on a soft, enlarged 209 px portrait it placed the landmarks 0.053 (11 px)
+    # away for both polish variants although they passed every other gate (face detail x1.18, contrast x1.17, delta E 1.2), while the same detector moved 0.0054 at most
+    # under harmless changes. The face's own structure is the stable evidence: structure SSIM of the padded face crop was 0.996-0.997 for polish and 0.965 for a 2 px shift, 0.874
+    # for 6 px, 0.938 for a 2 percent change of scale. Polish passes the face gate when every face keeps at least this structure similarity (or when its landmarks held).
+    polish_face_structure_ssim_min: float = 0.985
     polish_face_detail_ceiling: float = 175.0      # a sharp face's 90th percentile (face_sharpness.py): polish never pushes a face past it,
+    # colourization (DDColor): it must leave the lightness as it was and give a plausible colour. Measured on 8 photographs (the portrait and 7 grey-converted
+    # colour photographs, DDCOLOR damping on): gray PSNR 42.7-55.5 dB, mean chroma 2.3-20.8, 99th percentile 15-47, cast 0.8-19.0. The limits are backstops against a
+    # runaway prediction, not a taste: the damping in colorize.py is what keeps colours natural.
+    colourize_luminance_psnr_min: float = 38.0
+    colourize_mean_chroma_max: float = 28.0
+    colourize_p99_chroma_max: float = 58.0
+    colourize_cast_max: float = 26.0
+    colourize_min_mean_chroma: float = 1.5
     polish_face_growth_max: float = 1.10           # unless the face was already above it, and then by at most this factor
 
 
@@ -237,6 +255,7 @@ class FinalImageQualityValidator:
         limits = self.limits
         lowlight = operation == "low_light_enhancement"
         polish = operation == "polish"
+        colourize = operation == "colourization"
         verdict = {"accepted": False, "reasons": [], "gates": {}, "metrics": {}, "improvement": 0.0, "change_cost": 0.0}
 
         def gate(name, passed, detail, reason=None):
@@ -256,11 +275,26 @@ class FinalImageQualityValidator:
         if lowlight:
             ssim = structure_ssim(parent, candidate)
             gate("data_consistency", ssim >= limits.structure_ssim_min_lowlight, {"structure_ssim": round(ssim, 3)}, "structure_changed")
+        elif colourize:   # the colour changes by design, so consistency is judged on the lightness, which colourization must not touch
+            psnr = float(cv2.PSNR(_gray(parent), _gray(candidate))) if (_gray(parent) != _gray(candidate)).any() else 99.0
+            gate("data_consistency", psnr >= limits.colourize_luminance_psnr_min, {"luminance_psnr": round(psnr, 2)}, "lightness_changed")
         else:
             psnr = consistency_psnr(parent, candidate)
             gate("data_consistency", psnr >= limits.consistency_psnr_min, {"psnr": round(psnr, 2)}, "content_not_consistent_with_input")
         shift = chroma_shift(parent, candidate)
-        if lowlight:
+        if colourize:
+            lab = cv2.cvtColor(candidate, cv2.COLOR_BGR2LAB).astype(np.float32)
+            chroma = np.hypot(lab[:, :, 1] - 128.0, lab[:, :, 2] - 128.0)
+            mean, p99 = float(chroma.mean()), float(np.percentile(chroma[::4, ::4], 99))
+            cast = float(np.hypot(lab[:, :, 1].mean() - 128.0, lab[:, :, 2].mean() - 128.0))
+            detail = {"mean_chroma": round(mean, 1), "p99_chroma": round(p99, 1), "cast": round(cast, 1)}
+            if mean > limits.colourize_mean_chroma_max or p99 > limits.colourize_p99_chroma_max:
+                gate("colour", False, detail, "colour_oversaturated")
+            elif cast > limits.colourize_cast_max:
+                gate("colour", False, detail, "colour_cast")
+            else:
+                gate("colour", True, detail)
+        elif lowlight:
             colour = lift_colour_metrics(parent, candidate)
             hue, saturation = colour["hue_shift"], colour["saturation_ratio"]
             detail = {"hue_shift": None if hue is None else round(hue, 2),
@@ -304,7 +338,7 @@ class FinalImageQualityValidator:
             gate("noise", noise_after <= max(noise_before * allowed, noise_before + 0.25, 1.0 if lowlight else 0.0),
                  {"before": noise_before, "after": noise_after}, "noise_increased")
 
-        self._identity_gate(verdict, candidate, candidate_report, operation)
+        self._identity_gate(verdict, candidate, candidate_report, operation, parent)
         improvement = self._improvement(verdict, operation, parent, candidate, parent_report, candidate_report, expected_scale)
         verdict["improvement"] = round(float(improvement), 4)
         mean_change = float(np.mean(np.abs(_gray(_to_size(candidate, parent.shape)).astype(np.float32) - _gray(parent).astype(np.float32)))) / 255.0
@@ -313,7 +347,21 @@ class FinalImageQualityValidator:
         return verdict
 
     # -- identity ---------------------------------------------------------------------------------------------
-    def _identity_gate(self, verdict, candidate, candidate_report, operation):
+    def _face_structure_holds(self, parent, candidate):
+        """Whether every original face keeps its structure (SSIM of the brightness-normalised, padded face crop) between two same-sized images."""
+        if parent is None or candidate is None or parent.shape != candidate.shape:
+            return None, None
+        worst = 1.0
+        for face in self.original_report.faces:
+            x, y, w, h = face.box
+            x0, y0 = max(0, int(x - 0.15 * w)), max(0, int(y - 0.15 * h))
+            x1, y1 = min(parent.shape[1], int(x + 1.15 * w)), min(parent.shape[0], int(y + 1.15 * h))
+            if x1 - x0 < 16 or y1 - y0 < 16:
+                continue
+            worst = min(worst, structure_ssim(parent[y0:y1, x0:x1], candidate[y0:y1, x0:x1]))
+        return worst >= self.limits.polish_face_structure_ssim_min, worst
+
+    def _identity_gate(self, verdict, candidate, candidate_report, operation, parent=None):
         if not self.original_report.faces:
             verdict["gates"]["identity"] = {"passed": True, "status": "no_face"}
             return
@@ -322,8 +370,18 @@ class FinalImageQualityValidator:
         shift_max = self.limits.face_landmark_shift_max_upscale if operation == "super_resolution" else self.limits.face_landmark_shift_max
         if operation == "polish":
             shift_max = self.limits.polish_face_landmark_shift_max
+        elif operation != "face_restoration" and self.limits.landmark_pixel_floor > 0:
+            widths = [face.box[2] for face in self.original_report.faces if face.landmarks and len(face.landmarks) == 5 and face.box[2] > 0]
+            if widths:
+                shift_max = max(shift_max, self.limits.landmark_pixel_floor / (sum(widths) / len(widths)))
         landmarks_ok = shift is not None and shift <= shift_max
-        status = {"passed": landmarks_ok, "landmark_shift": None if shift is None else round(shift, 4)}
+        status = {"landmark_shift": None if shift is None else round(shift, 4)}
+        if operation == "polish" and not landmarks_ok:
+            holds, worst = self._face_structure_holds(parent, candidate)
+            if holds is not None:
+                status["face_structure_ssim"] = round(worst, 4)
+                landmarks_ok = bool(holds)
+        status["passed"] = landmarks_ok
         if not landmarks_ok:
             verdict["reasons"].append("face_lost" if shift is None else "face_geometry_changed")
         if self.identity is None:
@@ -426,6 +484,11 @@ class FinalImageQualityValidator:
                       else "face_over_sharpened")
             gate("improves_defect", improves and nothing_worse and face_ok, detail, reason)
             return float(np.clip((max(gains) - 1.0) / 0.25, 0, 1))
+        if operation == "colourization":
+            lab = cv2.cvtColor(candidate, cv2.COLOR_BGR2LAB).astype(np.float32)
+            mean = float(np.hypot(lab[:, :, 1] - 128.0, lab[:, :, 2] - 128.0).mean())
+            gate("improves_defect", mean >= limits.colourize_min_mean_chroma, {"mean_chroma": round(mean, 1)}, "no_colour_added")
+            return float(np.clip(mean / 10.0, 0, 1))
         if operation == "super_resolution":
             detail = edge_energy(candidate) / max(edge_energy(cv2.resize(parent, (candidate.shape[1], candidate.shape[0]),
                                                                            interpolation=cv2.INTER_CUBIC)), 1e-6)

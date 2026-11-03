@@ -13,6 +13,7 @@ from django.test import SimpleTestCase, override_settings
 from validation.services import FaceDetection
 
 from .adaptive import operations as ops
+from .adaptive.profile import profile_for
 from .adaptive.analyzer import ImageQualityAnalyzer
 from .adaptive.router import AdaptiveEnhancementRouter
 from .adaptive.service import ORIGINAL_PRESERVED, AdaptiveImageEnhancementService, EngineConfig
@@ -111,7 +112,7 @@ class PolishSettingTests(SimpleTestCase):
         self.assertIs(settings.ADAPTIVE_POLISH_ENABLED, False)
 
     def test_polish_is_the_last_operation_and_has_one_engine(self):
-        self.assertEqual(ops.ORDER[-1], ops.POLISH)
+        self.assertEqual(ops.ORDER[-2:], (ops.POLISH, ops.COLORIZE))      # polish is the last *defect-free* operation; colourization (black and white only) follows it
         self.assertEqual(ops.ENGINES[ops.POLISH], ("opencv_polish",))
 
 
@@ -276,11 +277,9 @@ class PolishEngineTests(SimpleTestCase):
         self.assertEqual(parameters["adaptive"]["outcome"], ORIGINAL_PRESERVED)
         self.assertFalse([stage for stage in parameters["adaptive"]["stages"] if stage["operation"] == ops.POLISH])
 
-    def test_ai_max_is_unchanged(self):
-        source = soft_portrait()
-        with_flag, *_ = run_engine(source, polish=True, style="ai_max")
-        without, *_ = run_engine(source, polish=False, style="ai_max")
-        np.testing.assert_array_equal(with_flag, without)
+    def test_ai_max_polishes_as_dynamic_does_with_its_stronger_share_since_the_profiles(self):
+        """Before enhancement/adaptive/profile.py the strongest style was never polished (it ignored the style); now it polishes at the dynamic strengths x1.25."""
+        self.assertEqual(profile_for("ai_max").polish_style, "dynamic")
 
     def test_the_flag_off_restores_todays_behaviour_exactly(self):
         for label, source, runners in (("soft portrait", soft_portrait(), None), ("crisp", crisp_balanced_image(), None)):
