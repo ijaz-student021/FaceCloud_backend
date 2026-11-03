@@ -23,9 +23,10 @@ DENOISE = "denoising"
 DEBLUR = "motion_deblurring"
 FACE = "face_restoration"
 UPSCALE = "super_resolution"
+DETAIL = "detail_restoration"   # clearer at the SAME size: a soft or heavily compressed photograph, run through a 4x model at 2x and shrunk back
 POLISH = "polish"
 COLORIZE = "colourization"    # last: it takes the lightness of the best black-and-white image the other operations produced
-ORDER = (LOW_LIGHT, DENOISE, DEBLUR, FACE, UPSCALE, POLISH, COLORIZE)
+ORDER = (LOW_LIGHT, DENOISE, DEBLUR, FACE, UPSCALE, DETAIL, POLISH, COLORIZE)
 
 ENGINES = {
     LOW_LIGHT: ("retinexformer", "zero_dce", "opencv_exposure"),
@@ -33,6 +34,7 @@ ENGINES = {
     DEBLUR: ("nafnet_gopro",),
     FACE: ("codeformer", "gfpgan"),
     UPSCALE: ("realesrgan",),
+    DETAIL: ("ultrasharp", "general", "realesrgan"),      # the router puts the compact "general" first unless the style/strength asks for the best (ultrasharp)
     POLISH: ("opencv_polish",),
     COLORIZE: ("ddcolor",),
 }
@@ -52,7 +54,7 @@ def _flags():
         "nafnet_gopro": bool(settings.NAFNET_DEBLUR_ENABLED), "codeformer": bool(settings.CODEFORMER_ENABLED),
         "gfpgan": bool(settings.GFPGAN_ENABLED), "realesrgan": bool(settings.HD_RESTORATION_ENABLED),
         "opencv_polish": True,   # OpenCV and NumPy only; whether the router offers it at all is ADAPTIVE_POLISH_ENABLED
-        "ddcolor": bool(settings.DDCOLOR_ENABLED),
+        "ddcolor": bool(settings.DDCOLOR_ENABLED), "ultrasharp": bool(settings.ULTRASHARP_ENABLED), "general": bool(settings.HD_RESTORATION_ENABLED),
     }
 
 
@@ -130,6 +132,43 @@ def run_face_restoration(image, engine, fidelity):
         raw, metadata = restore_faces(image)
     return raw, [_record(engine, metadata, time.perf_counter() - started, fidelity=fidelity,
                          faces_restored=metadata.get("faces_restored"))]
+
+
+_DETAIL_OUTPUT = {"image": None, "engine": None, "raw": None, "metadata": None}
+
+
+def clear_detail_cache():
+    _DETAIL_OUTPUT.update(image=None, engine=None, raw=None, metadata=None)
+
+
+def _detail_model_output(image, engine):
+    """The model's 2x output for ``image``, computed ONCE for all the blends of one step: the blends are cheap, the model is not (measured 70 s per run for a 2.2 MP photograph
+    on a loaded machine; running it once per variant doubled the time of the whole operation)."""
+    from enhancement import hd_restoration
+
+    if _DETAIL_OUTPUT["image"] is image and _DETAIL_OUTPUT["engine"] == engine:
+        return _DETAIL_OUTPUT["raw"], _DETAIL_OUTPUT["metadata"]
+    upscale = {"ultrasharp": hd_restoration.upscale_with_ultrasharp, "general": hd_restoration.upscale_with_general}.get(engine, hd_restoration.upscale_with_realesrgan)
+    raw, metadata = upscale(image, output_scale=2)
+    _DETAIL_OUTPUT.update(image=image, engine=engine, raw=raw, metadata=metadata)
+    return raw, metadata
+
+
+def run_detail(image, engine, blend):
+    """``image`` made clearer at its own size: the 4x model at 2x (4x-UltraSharp or Real-ESRGAN x4plus), blended with a cubic enlargement, shrunk back with INTER_AREA.
+
+    ``blend`` (1.0 = the style's full strength) is scaled per engine to the strength each one measured as natural on the owner's soft 1600 x 1382 portrait: 4x-UltraSharp 1.0 (clean, no
+    halos), Real-ESRGAN x4plus REALESRGAN_OUTPUT_BLEND (0.35, the strength the engine has always used; its plain output has halos), the compact "general" network 0.45 (at 0.6 the eyes and
+    beard were slightly over-crisp, at 1.0 the face detail left the validator's limit).
+    """
+    started = time.perf_counter()
+    raw, metadata = _detail_model_output(image, engine)
+    share = {"ultrasharp": 1.0, "general": 0.45}.get(engine, float(settings.REALESRGAN_OUTPUT_BLEND))
+    strength = min(1.0, max(0.0, float(blend) * share))
+    reference = cv2.resize(image, (raw.shape[1], raw.shape[0]), interpolation=cv2.INTER_CUBIC)
+    mixed = raw if strength >= 0.999 else cv2.addWeighted(raw, strength, reference, 1.0 - strength, 0)
+    restored = cv2.resize(mixed, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_AREA)
+    return restored, [_record(engine, metadata, time.perf_counter() - started, blend=round(strength, 3), supersample=2)]
 
 
 def run_colorize(image, engine, variant):

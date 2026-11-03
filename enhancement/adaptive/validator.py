@@ -98,6 +98,10 @@ class Limits:
     colourize_p99_chroma_max: float = 58.0
     colourize_cast_max: float = 26.0
     colourize_min_mean_chroma: float = 1.5
+    # detail restoration (a 4x model at 2x, shrunk back to the same size): measured on a soft, WhatsApp-compressed 1600 x 1382 portrait, structure energy x1.05-1.17 (x1.05 and x1.06 for
+    # the two clean variants), blur and compression no longer found, PSNR against the original 37.5-39.2 dB. It must add real structure, but not an invented amount of it.
+    detail_min_gain: float = 1.02
+    detail_max_gain: float = 1.60
     polish_face_growth_max: float = 1.10           # unless the face was already above it, and then by at most this factor
 
 
@@ -314,7 +318,7 @@ class FinalImageQualityValidator:
         else:
             overshoot = overshoot_fraction(parent, candidate) if expected_scale == 1 else overshoot_fraction(
                 cv2.resize(parent, (candidate.shape[1], candidate.shape[0]), interpolation=cv2.INTER_CUBIC), candidate)
-            sharpening = operation in ("motion_deblurring", "face_restoration", "super_resolution", "polish")
+            sharpening = operation in ("motion_deblurring", "face_restoration", "super_resolution", "polish", "detail_restoration")
             gate("artifacts", overshoot <= (limits.overshoot_max_sharpening if sharpening else limits.overshoot_max),
                  {"overshoot": round(overshoot, 4)}, "halo_or_ringing")
 
@@ -484,6 +488,17 @@ class FinalImageQualityValidator:
                       else "face_over_sharpened")
             gate("improves_defect", improves and nothing_worse and face_ok, detail, reason)
             return float(np.clip((max(gains) - 1.0) / 0.25, 0, 1))
+        if operation == "detail_restoration":
+            gain = structure_energy(candidate) / max(structure_energy(parent), 1e-6)
+            compression_better = before.compression["status"] == "heavy" and after.compression["status"] != "heavy"
+            blur_better = (before.blur["status"] != "none" and after.blur["status"] == "none") or (before.blur["retention"] - after.blur["retention"] >= 0.02)
+            face = after.main_face
+            face_ok = face is None or face.detail is None or face.detail <= limits.face_max_detail
+            gate("improves_defect", limits.detail_min_gain <= gain <= limits.detail_max_gain and (compression_better or blur_better) and face_ok,
+                 {"structure_gain": round(gain, 3), "compression_before": before.compression["status"], "compression_after": after.compression["status"],
+                  "blur_before": before.blur["status"], "blur_after": after.blur["status"], "face_detail_after": None if face is None else face.detail},
+                 "no_added_detail_or_invented_detail")
+            return float(min(1.0, np.clip((gain - 1.0) / 0.2, 0, 1) + (0.25 if compression_better else 0.0) + (0.25 if blur_better else 0.0)))
         if operation == "colourization":
             lab = cv2.cvtColor(candidate, cv2.COLOR_BGR2LAB).astype(np.float32)
             mean = float(np.hypot(lab[:, :, 1] - 128.0, lab[:, :, 2] - 128.0).mean())

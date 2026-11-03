@@ -221,6 +221,8 @@ def model_rule(cfg):
         restricted.append("CodeFormer (S-Lab licence, non-commercial)")
     if cfg.get("GFPGAN_ENABLED"):
         restricted.append("GFPGAN (weights used under a permission that is not on file)")
+    if cfg.get("ULTRASHARP_ENABLED"):
+        restricted.append("4x-UltraSharp (CC BY-NC-SA 4.0, non-commercial)")
     if cfg.get("IDENTITY_PROVIDER") == "arcface_w600k_r50_v1":
         restricted.append("ArcFace / InsightFace weights (non-commercial)")
     if cfg.get("FACE_DETECTOR_PROVIDER") == "retinaface_v1":

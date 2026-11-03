@@ -186,6 +186,8 @@ class AdaptiveImageEnhancementService:
             return ops.run_deblur(image, engine, variant["blend"])
         if operation == ops.FACE:
             return ops.run_face_restoration(image, engine, variant["fidelity"])
+        if operation == ops.DETAIL:
+            return ops.run_detail(image, engine, variant["blend"])
         if operation == ops.POLISH:
             return ops.run_polish(image, engine, variant)
         if operation == ops.COLORIZE:
@@ -269,8 +271,11 @@ class AdaptiveImageEnhancementService:
         """The whole run under one wall-clock budget: it stops between operations *and* between the tiles of a model call."""
         from enhancement import runtime
 
-        with runtime.deadline_until(time.monotonic() + self.config.time_budget_seconds):
-            return self._enhance(image, requested_level, style, allow_biometric_processing, checkpoint, debug)
+        try:
+            with runtime.deadline_until(time.monotonic() + self.config.time_budget_seconds):
+                return self._enhance(image, requested_level, style, allow_biometric_processing, checkpoint, debug)
+        finally:
+            ops.clear_detail_cache()      # the detail step keeps the model's output for its blends; it is not kept past the run
 
     def _enhance(self, image, requested_level, style, allow_biometric_processing, checkpoint, debug):
         from enhancement.services import analyze_image_quality, compare_image_quality
@@ -308,7 +313,7 @@ class AdaptiveImageEnhancementService:
             # Polish is for a photograph on which nothing else was found: offered only while it is switched on (ADAPTIVE_POLISH_ENABLED,
             # off unless the operator turns it on) and no operation has been attempted yet, so it is never stacked on another one.
             # Not after an operation that was accepted or that a defect called for; a refused attempt the style or strength asked for left the photograph as it was.
-            nothing_changed = all(s["status"] != "accepted" and s.get("profile_driven") for s in stages)
+            nothing_changed = all(s["status"] != "accepted" and s.get("optional") for s in stages)
             polish = {"style": profile.polish_style} if settings.ADAPTIVE_POLISH_ENABLED and nothing_changed and profile.polish_style else None
             decision = self.router.next_step(report, done, polish, profile)
             for item in decision.skipped:
@@ -332,7 +337,7 @@ class AdaptiveImageEnhancementService:
             done.add(step.operation)
             checkpoint(step.operation)
             record = {"operation": step.operation, "reason": step.reason, "engines": step.engines, "skipped_engines": [],
-                      "notes": [], "candidates": [], "profile_driven": step.profile_driven}
+                      "notes": [], "candidates": [], "optional": step.optional}
             if not step.engines:
                 record["status"] = "no_engine"
                 record["notes"].append("No engine for this operation is switched on.")
@@ -429,7 +434,7 @@ class AdaptiveImageEnhancementService:
     @staticmethod
     def _debug_name(operation):
         return {ops.LOW_LIGHT: "02_low_light", ops.DENOISE: "03_denoised", ops.DEBLUR: "04_deblurred",
-                ops.FACE: "05_face_restored", ops.UPSCALE: "06_upscaled", ops.POLISH: "06b_polished", ops.COLORIZE: "06c_colourized"}[operation]
+                ops.FACE: "05_face_restored", ops.UPSCALE: "06_upscaled", ops.DETAIL: "06a_detail", ops.POLISH: "06b_polished", ops.COLORIZE: "06c_colourized"}[operation]
 
     @staticmethod
     def _chosen_model(pool, stage):
@@ -440,6 +445,7 @@ class AdaptiveImageEnhancementService:
     def _summary(outcome, stages, skipped, remaining):
         words = {ops.LOW_LIGHT: "brightened the dark subject", ops.DENOISE: "reduced noise", ops.DEBLUR: "reduced motion blur",
                  ops.FACE: "restored a degraded face", ops.UPSCALE: "enlarged the photograph",
+                 ops.DETAIL: "restored fine detail and reduced compression blocking",
                  ops.POLISH: "balanced the contrast and sharpened lightly", ops.COLORIZE: "colourized the black-and-white photograph"}
         done = [words[s["operation"]] for s in stages if s["status"] == "accepted"]
         if outcome == ORIGINAL_PRESERVED:

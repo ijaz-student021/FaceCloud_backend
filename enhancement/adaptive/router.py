@@ -22,6 +22,8 @@ Rules, each tied to a measured condition in the ``QualityReport``:
 """
 from dataclasses import dataclass, field
 
+from django.conf import settings
+
 from . import operations as ops
 from .profile import DEFAULT as DEFAULT_PROFILE
 
@@ -32,9 +34,10 @@ class Step:
     engines: list           # engines to try, in order of preference
     variants: list          # [{"name": ..., ...}] what to propose from the first engine that runs
     reason: str
-    # Tried only because the style or strength asked for it (a dark scene lifted, low noise treated, a modest photograph enlarged), not because the photograph had a
-    # defect. If such an attempt is refused the photograph is as it was, so it does not stop the polish from being offered.
-    profile_driven: bool = False
+    # An attempt that is not a defect the photograph must have fixed: asked for by the style or strength (a dark scene lifted, low noise treated, a modest photograph enlarged) or an
+    # opportunistic quality step (detail restoration of a soft or compressed photograph). If it is refused or its model is missing the photograph is as it was, so it does not stop
+    # the polish from being offered.
+    optional: bool = False
 
 
 @dataclass
@@ -58,7 +61,7 @@ class AdaptiveEnhancementRouter:
         for operation in ops.ORDER:
             if operation in done:
                 continue
-            step, reason = self._consider(operation, report, polish, profile)
+            step, reason = self._consider(operation, report, polish, profile, done)
             if step is not None:
                 return Decision(step, skipped)
             if reason:
@@ -66,13 +69,32 @@ class AdaptiveEnhancementRouter:
         return Decision(None, skipped)
 
     # -- one operation ----------------------------------------------------------------------------------------
-    def _consider(self, operation, report, polish=None, profile=None):
+    def _consider(self, operation, report, polish=None, profile=None, done=()):
         profile = profile or DEFAULT_PROFILE
         engines = ops.enabled_engines(operation)
         main = report.main_face
         blends = [{"name": f"blend {blend}", "blend": blend} for blend in profile.variant_blends]
         if operation == ops.POLISH:
             return self._consider_polish(report, polish, engines, profile)
+        if operation == ops.DETAIL:
+            heavy_compression = report.compression["status"] == "heavy"
+            # "Soft" is the frame reading blurred AND, when there is a face, that face not being sharp: a portrait with a sharp face against a defocused background reads as blurred
+            # for the frame and is not soft (a professional 1600 px portrait did exactly that and wasted two minutes of model time before the validator refused it).
+            soft = report.blur["status"] in ("low", "high") and not (report.main_face is not None and report.face_blur.get("status") == "none")
+            if not settings.ADAPTIVE_DETAIL_ENABLED or ops.UPSCALE in done or not (heavy_compression or soft):
+                return None, ""
+            if report.resolution["status"] == "low":
+                return None, ""                       # a small photograph is enlarged (UPSCALE), not restored a second time
+            if report.width * report.height > settings.ADAPTIVE_DETAIL_MAX_PIXELS:
+                return None, f"The photograph is larger than {settings.ADAPTIVE_DETAIL_MAX_PIXELS / 1e6:.0f} megapixels, too large to restore its detail here."
+            if not engines:
+                return None, "No detail-restoration model is switched on."
+            # Speed first, quality when asked for: the compact "general" network takes seconds, 4x-UltraSharp (and x4plus) about thirty times as long and look best; AI Enhance and the Strong level
+            # want the best, everything else the fast one (4x-UltraSharp is then only reached when the fast models are not there).
+            best_first = profile.style == "ai_max" or profile.level == "high"
+            engines = sorted(engines, key=lambda engine: ("ultrasharp", "general", "realesrgan").index(engine) if best_first else ("general", "realesrgan", "ultrasharp").index(engine))
+            why = "heavy compression" if heavy_compression and not soft else "softness" if soft and not heavy_compression else "softness and heavy compression"
+            return Step(operation, engines, blends, f"The photograph shows {why}.", optional=True), ""
         if operation == ops.COLORIZE:
             if not profile.colourize or not report.colour.get("greyscale"):
                 return None, ""
@@ -87,12 +109,12 @@ class AdaptiveEnhancementRouter:
                 return None, ""
             return Step(operation, engines, blends,
                         f"Exposure: {report.exposure['status']} (judged on the {report.exposure['judged_on']})."
-                        + (" The style or strength asked for lifts a dark scene." if dark_scene else ""), profile_driven=dark_scene), ""
+                        + (" The style or strength asked for lifts a dark scene." if dark_scene else ""), optional=dark_scene), ""
         if operation == ops.DENOISE:
             if report.noise["status"] not in (("low", "moderate", "high") if profile.treat_low_noise else ("moderate", "high")):
                 return None, ""
             variants = blends
-            return Step(operation, engines, variants, f"Noise: {report.noise['status']} (estimate {report.noise['estimate']}).", profile_driven=report.noise["status"] == "low"), ""
+            return Step(operation, engines, variants, f"Noise: {report.noise['status']} (estimate {report.noise['estimate']}).", optional=report.noise["status"] == "low"), ""
         if operation == ops.DEBLUR:
             # The main face's own blur decides first: a blurred subject in front of a sharp background reads as "no blur" for the frame,
             # and a large defocus is where the motion-deblurring model measurably helps (a small one it hurts, so only "high" counts).
@@ -149,7 +171,7 @@ class AdaptiveEnhancementRouter:
                 return None, "Upscaling would exceed the output size limit."
             return Step(operation, engines, [{"name": f"x{scale}", "scale": scale}],
                         "The photograph is small." if small_image else "The face is small.",
-                        profile_driven=small_image and report.resolution["status"] != "low"), ""
+                        optional=small_image and report.resolution["status"] != "low"), ""
         return None, ""
 
     @staticmethod

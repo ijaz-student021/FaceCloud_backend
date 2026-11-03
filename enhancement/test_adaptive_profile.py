@@ -360,7 +360,7 @@ class RefusedAttemptDoesNotBlockPolishTests(SimpleTestCase):
     def test_ai_max_still_polishes_after_its_own_refused_dark_scene_lift(self):
         stages = self.stages(DarkSceneAnalyzer(detector=base.StubDetector([])), "ai_max")
         self.assertEqual(stages[ops.LOW_LIGHT]["status"], "rejected")
-        self.assertTrue(stages[ops.LOW_LIGHT]["profile_driven"])
+        self.assertTrue(stages[ops.LOW_LIGHT]["optional"])
         self.assertIn(ops.POLISH, stages, "the strongest style must do at least what Dynamic does")
 
     def test_natural_leaves_a_dark_scene_entirely_alone(self):
@@ -369,12 +369,12 @@ class RefusedAttemptDoesNotBlockPolishTests(SimpleTestCase):
     def test_a_refused_lift_that_a_real_defect_called_for_still_blocks_polish_as_before(self):
         stages = self.stages(base.analyzer_with(), "ai_max", image=base.portrait(brightness=0.12))
         self.assertEqual(stages[ops.LOW_LIGHT]["status"], "rejected")
-        self.assertFalse(stages[ops.LOW_LIGHT]["profile_driven"])
+        self.assertFalse(stages[ops.LOW_LIGHT]["optional"])
         self.assertNotIn(ops.POLISH, stages)
 
     def test_the_step_says_when_it_was_asked_for_by_the_profile(self):
         router = AdaptiveEnhancementRouter(EngineConfig())
         report = DarkSceneAnalyzer(detector=base.StubDetector([])).analyze(base.portrait())
-        self.assertTrue(router.next_step(report, set(), None, profile_for("ai_max")).step.profile_driven)
+        self.assertTrue(router.next_step(report, set(), None, profile_for("ai_max")).step.optional)
         defective = base.analyzer_with().analyze(base.portrait(brightness=0.12))
-        self.assertFalse(router.next_step(defective, set(), None, profile_for("ai_max")).step.profile_driven)
+        self.assertFalse(router.next_step(defective, set(), None, profile_for("ai_max")).step.optional)

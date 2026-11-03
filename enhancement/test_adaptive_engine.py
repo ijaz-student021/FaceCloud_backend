@@ -30,6 +30,7 @@ ALL_ON = dict(
     ENHANCEMENT_RENDER_POLICY="adaptive_v1", RETINEXFORMER_ENABLED=True, ZERO_DCE_ENABLED=False, NAFNET_DENOISE_ENABLED=True,
     NAFNET_DEBLUR_ENABLED=True, HD_RESTORATION_ENABLED=True, CODEFORMER_ENABLED=True, GFPGAN_ENABLED=False,
     ADAPTIVE_DEBUG_ARTIFACTS=False,
+    ADAPTIVE_DETAIL_ENABLED=False,      # detail restoration (soft / heavily compressed photographs) has its own tests: enhancement/test_adaptive_detail.py
 )
 
 
@@ -200,6 +201,7 @@ class RouterTests(SimpleTestCase):
         second = self.router().next_step(report, {first}).step.operation
         self.assertEqual((first, second), (ops.LOW_LIGHT, ops.DENOISE))
 
+    @override_settings(ADAPTIVE_DETAIL_ENABLED=False)       # these are about the other operations (detail restoration: test_adaptive_detail.py)
     def test_defocus_blur_is_skipped_with_a_reason(self):
         report = analyzer_with(None).analyze(cv2.GaussianBlur(resized(dead_leaves(), 900), (0, 0), 3.5))
         decision = self.router().next_step(report, set())
@@ -227,6 +229,7 @@ class RouterTests(SimpleTestCase):
         self.assertTrue(any("size limit" in item["reason"] for item in decision.skipped))
 
     @override_settings(NAFNET_DEBLUR_ENABLED=False)
+    @override_settings(ADAPTIVE_DETAIL_ENABLED=False)       # these are about the other operations (detail restoration: test_adaptive_detail.py)
     def test_an_operation_with_its_model_off_is_reported_not_silently_dropped(self):
         report = analyzer_with(None).analyze(motion_blur(resized(dead_leaves(), 900), 25, 0))
         decision = self.router().next_step(report, set())
@@ -475,6 +478,7 @@ class ServiceTests(SimpleTestCase):
         self.assertTrue(any("time budget" in warning for warning in parameters["warnings"]))
 
     @override_settings(NAFNET_DEBLUR_ENABLED=False)
+    @override_settings(ADAPTIVE_DETAIL_ENABLED=False)       # these are about the other operations (detail restoration: test_adaptive_detail.py)
     def test_a_defect_the_server_has_no_model_for_is_not_called_a_clean_photograph(self):
         source = motion_blur(resized(dead_leaves(), 900), 25, 0)
         _out, _level, parameters = self.run_service(source)
@@ -799,6 +803,7 @@ class SmallFaceUpscaleTests(SimpleTestCase):
         return AdaptiveEnhancementRouter(EngineConfig(**config))
 
     @override_settings(**ALL_ON)
+    @override_settings(ADAPTIVE_DETAIL_ENABLED=False)       # these are about the other operations (detail restoration: test_adaptive_detail.py)
     def test_a_small_poor_face_in_an_adequate_photograph_does_not_enlarge_the_photograph(self):
         image = cv2.resize(portrait(), (1280, 960))
         box = (500, 300, 60, 70)
