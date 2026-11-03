@@ -196,10 +196,10 @@ def decide_review(*, review, actor, action, reason="", notes="", group_id=None, 
         # photo is grouped now (identities/verdict.py: it was held back for exactly this); a rejected one is out of every folder.
         if action == "approve":
             from enhancement.auto import enhance_after_verdict
-            from identities.verdict import group_after_verdict
+            from identities.verdict import group_when_enhancement_ends
 
-            group_after_verdict(locked.image, verdict="accepted")
-            enhance_after_verdict(locked.image, verdict="accepted")
+            enhance_after_verdict(locked.image, verdict="accepted")          # enhancement first, then the person folders (at once when none is coming)
+            group_when_enhancement_ends(locked.image, verdict="accepted")
         else:
             from identities.services import remove_photo_from_folders
 

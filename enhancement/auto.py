@@ -21,6 +21,8 @@ engine by default: a clean photograph ends as ``original_preserved``, which is a
 * The owner's limit of enhancements in progress (``ensure_enhancement_capacity``) is respected: a photograph over it is ``waiting`` and starts as slots
   free up, or is ``skipped`` (``capacity``) after ``AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES``. Nothing here ever fails an upload.
 * The owner gets one notification per batch ("N photos enhanced"), none per photograph.
+* Person folders come AFTER the enhancement (identities/verdict.py ``group_when_enhancement_ends``): wherever an automatic enhancement ends (``after_result``, ``_skip``,
+  ``_record_failure_to_start``) the photograph's identity analysis is queued, at once when no automatic enhancement is coming; ``enhancement_pending`` says whether one is.
 """
 import logging
 import uuid
@@ -155,6 +157,7 @@ def _record_failure_to_start(image):
             })
     except Exception:
         logger.exception("Could not record the failed automatic enhancement of image_id=%s.", image.pk)
+    _group_now(image)
 
 
 def _start(image):
@@ -178,6 +181,7 @@ def _skip(record, reason):
     record.skip_reason = reason
     record.waiting_since = None
     record.save(update_fields=["state", "skip_reason", "waiting_since", "updated_at"])
+    _group_now(record.image)          # it will not be enhanced: its person folders do not wait for it
     return SKIPPED_NOW
 
 
@@ -235,6 +239,53 @@ def _dispatch(result_id, task_id):
             after_result(result)
 
 
+def enhancement_pending(image):
+    """Whether an automatic enhancement of ``image`` is still to come or running, so that its person folders wait for it.
+
+    Only the photograph's own ``AutoEnhancement`` record counts (a person's own request, ``POST /api/enhancements/images/{id}/``, neither delays nor triggers grouping), and only for
+    ``GROUPING_MAX_WAIT_FOR_ENHANCEMENT_SECONDS`` from the moment that record was made: a lost task or an owner stuck at the limit never leaves a photograph ungrouped.
+    """
+    record = AutoEnhancement.objects.select_related("result").filter(image_id=image.pk).first()
+    if record is None:
+        return False
+    if timezone.now() - record.created_at > timedelta(seconds=settings.GROUPING_MAX_WAIT_FOR_ENHANCEMENT_SECONDS):
+        return False
+    if record.state == AutoEnhancement.State.WAITING:
+        return True
+    return record.state == AutoEnhancement.State.STARTED and record.result is not None and record.result.status in ACTIVE_STATUSES
+
+
+def _group_now(image):
+    """An automatic enhancement of ``image`` ended (or none is coming): queue its person folders. Idempotent; never raises into the enhancement code."""
+    try:
+        from identities.verdict import group_when_enhancement_ends
+
+        group_when_enhancement_ends(image)
+    except Exception:
+        logger.exception("Could not queue the person folders of image_id=%s after its enhancement.", image.pk)
+
+
+def release_overdue_grouping(limit=200):
+    """Group the photographs that waited the maximum for an enhancement that never ended (a worker died, an owner stuck at the limit); returns how many were tried.
+
+    Run by the scheduler with ``release_waiting``. Cheap: only photographs with an automatic enhancement, a face and no identity analysis yet, whose enhancement is older than the maximum wait and
+    younger than six hours, are looked at; ``group_when_enhancement_ends`` does nothing for one that is not eligible.
+    """
+    now = timezone.now()
+    images = (
+        ImageUpload.objects.filter(
+            status="uploaded", identity_analysis__isnull=True, face_validation__face_count__gt=0,
+            auto_enhancement__created_at__lte=now - timedelta(seconds=settings.GROUPING_MAX_WAIT_FOR_ENHANCEMENT_SECONDS),
+            auto_enhancement__created_at__gte=now - timedelta(hours=6),
+        ).order_by("pk")[:limit]
+    )
+    tried = 0
+    for image in images:
+        _group_now(image)
+        tried += 1
+    return tried
+
+
 def release_waiting(owner=None):
     """Start the waiting photographs, oldest first, while their owners have free slots; returns how many were started.
 
@@ -268,6 +319,8 @@ def release_waiting(owner=None):
             UploadBatch.objects.filter(auto_enhance=True, auto_enhance_notified_at__isnull=True, auto_enhancements__isnull=False)
             .values_list("pk", flat=True).distinct()[:200]
         )
+    if owner is None:
+        release_overdue_grouping()
     for batch_id in touched_batches:
         notify_batch_if_finished(batch_id)
     return started
@@ -275,6 +328,7 @@ def release_waiting(owner=None):
 
 def after_result(result):
     """An automatic enhancement ended: free its slot for the next waiting photograph, and tell the owner once when the whole batch is done. Never raises."""
+    _group_now(result.image)          # first: the identity analysis is queued before anything reports this photograph as finished
     try:
         release_waiting(owner=result.owner)
         notify_batch_if_finished(result.image.batch_id)
@@ -369,7 +423,13 @@ def batch_enhancement_finished(batch):
         .exclude(preprocessing_result__status="failed")
         .filter(Q(quality_decision__isnull=True) | Q(quality_decision__status__in=QUALITY_IN_PROGRESS))
     )
-    return not waiting_for_verdict.exists()
+    if waiting_for_verdict.exists():
+        return False
+    # The person folders come after the enhancement, so the batch is not finished while one is still being made.
+    from identities.models import IdentityAnalysis
+    from identities.verdict import IN_PROGRESS as GROUPING_IN_PROGRESS
+
+    return not IdentityAnalysis.objects.filter(image__batch=batch, status__in=GROUPING_IN_PROGRESS).exists()
 
 
 def batch_counts(batch):

@@ -8,10 +8,15 @@ from .models import BatchImageProgress, ImageUpload, UploadBatch
 
 
 TERMINAL_STATUSES = {"accepted", "rejected", "needs_review", "completed", "failed", "cancelled"}
+# The nine stages in the order a photograph goes through them (the batch progress payload's ``stage_order``): the automatic enhancement comes BEFORE the person folders
+# (identities/verdict.py ``group_when_enhancement_ends``), and the percentages only ever rise along this order.
+STAGE_ORDER = [
+    "uploaded", "queued", "preprocessing", "face_validation", "quality_analysis", "enhancement", "identity_grouping", "finalizing", "completed",
+]
 STAGE_PROGRESS = {
     "uploaded": 10.0, "queued": 12.0, "preprocessing": 30.0,
     "face_validation": 45.0, "quality_analysis": 65.0,
-    "identity_grouping": 75.0, "enhancement": 95.0,
+    "enhancement": 75.0, "identity_grouping": 95.0,
     "finalizing": 98.0, "completed": 100.0,
 }
 
@@ -34,26 +39,34 @@ def _state_for_image(image):
         identity = image.identity_analysis
     except Exception:
         identity = None
-    if identity and identity.status in {"pending", "queued", "processing"}:
-        return "identity_grouping", "processing" if identity.status == "processing" else "queued", 75.0, "", ""
 
+    # The enhancement comes first, then the person folders: a photograph whose enhancement is queued or running is in the enhancement stage whatever else exists.
     enhancement = image.enhancement_results.order_by("-created_at").first()
-    if enhancement:
-        if enhancement.status == "completed":
-            if identity and identity.status == "needs_review":
-                return "completed", "needs_review", 100.0, "", ""
-            return "completed", "completed", 100.0, "", ""
-        if enhancement.status == "failed":
-            return "enhancement", "failed", 95.0, "enhancement", enhancement.failure_reason
-        if enhancement.status == "cancelled":
-            return "completed", "cancelled", 100.0, "enhancement", enhancement.failure_reason
+    if enhancement and enhancement.status not in ("completed", "failed", "cancelled"):
         return "enhancement", "processing" if enhancement.status == "processing" else "queued", 75.0, "", ""
 
     # An automatic enhancement that is waiting for a free slot has no result yet, but the photograph is not finished (enhancement/auto.py).
     from enhancement.auto import waiting_in_queue
 
-    if waiting_in_queue(image):
-        return "enhancement", "queued", 80.0, "", ""
+    if not enhancement and waiting_in_queue(image):
+        return "enhancement", "queued", 70.0, "", ""
+
+    if identity and identity.status in {"pending", "queued", "processing"}:
+        return "identity_grouping", "processing" if identity.status == "processing" else "queued", 95.0, "", ""
+
+    if enhancement:
+        if enhancement.status == "completed":
+            if identity and identity.status == "needs_review":
+                return "completed", "needs_review", 100.0, "", ""
+            from identities.verdict import grouping_expected_soon
+
+            if grouping_expected_soon(image):        # the enhancement has just ended and its person folders are about to be queued: never show a finished photograph in between
+                return "identity_grouping", "queued", 90.0, "", ""
+            return "completed", "completed", 100.0, "", ""
+        if enhancement.status == "failed":
+            return "enhancement", "failed", 75.0, "enhancement", enhancement.failure_reason
+        if enhancement.status == "cancelled":
+            return "completed", "cancelled", 100.0, "enhancement", enhancement.failure_reason
 
     try:
         quality = image.quality_decision
@@ -195,6 +208,8 @@ def batch_progress_payload(batch):
     return {
         "batch_id": batch.pk, "upload_type": batch.upload_type,
         "status": summary["status"], "stage": summary["stage"],
+        # The nine stages in the order a photograph goes through them: the automatic enhancement, then the person folders.
+        "stage_order": list(STAGE_ORDER),
         "progress_percentage": summary["percentage"], "cancellation_requested": batch.cancellation_requested,
         "retry_count": batch.retry_count, "counts": summary["counts"],
         "estimated_completion_at": eta,

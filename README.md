@@ -82,8 +82,9 @@ Original uploads are never overwritten. Standardized, enhanced, edited,
 comparison, report, and package artifacts are stored separately with
 owner-scoped access.
 
-**Person folders come after the quality verdict.** After preprocessing a photograph goes through the face check, the duplicate check and the quality check, in
-that order, and only then is it filed into a person folder: an accepted photograph at once, a rejected one never, and one that needs review only after a
+**Person folders come after the quality verdict and the enhancement.** After preprocessing a photograph goes through the face check, the duplicate check and the quality check, in
+that order, then its automatic enhancement, and only then is it filed into a person folder (when no enhancement is coming, at once; never later than
+`GROUPING_MAX_WAIT_FOR_ENHANCEMENT_SECONDS`; the grouping reads the standardised original, never the enhanced file): an accepted photograph at once, a rejected one never, and one that needs review only after a
 moderator approves it (at once in a personal workspace, where no moderator can decide). So a photograph that is going to be rejected never opens a folder,
 moves a folder's average face or changes its cover and count. When a batch has been fully grouped the owner is told which of their folders may be the same
 person (`GET /api/identities/groups/suggested-merges/`); nothing is merged for them.
