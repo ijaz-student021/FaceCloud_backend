@@ -720,6 +720,55 @@ class AdaptiveJobTests(__import__("enhancement.test_pipeline_regressions", froml
         # one final image only: the intermediate candidates are not stored as files in production mode
         self.assertEqual(result.applied_parameters["adaptive"]["debug_artifacts"], None)
 
+    def test_the_result_says_how_the_lighting_was_seen_and_whether_it_was_brightened(self):
+        from rest_framework.test import APIClient
+
+        client = APIClient()
+        client.force_authenticate(self.user)
+        dark = self.process(portrait(brightness=0.12), runners={"run_low_light": lambda image, engine, blend: (exposure_lift(image, 1 + 4 * blend), [{"model": engine}])})
+        lighting = client.get(f"/api/enhancements/results/{dark.pk}/").json()["lighting"]
+        self.assertEqual(set(lighting), {"detected", "exposure", "scene_median", "brightened"})
+        self.assertEqual((lighting["detected"], lighting["brightened"]), ("dark", True))
+        self.assertIn(lighting["exposure"], ("low_light", "low_light_subject", "dark_scene"))
+        self.assertLess(lighting["scene_median"], 90)
+        light = self.process(portrait())
+        lighting = client.get(f"/api/enhancements/results/{light.pk}/").json()["lighting"]
+        self.assertEqual((lighting["detected"], lighting["exposure"], lighting["brightened"]), ("light", "normal", False))
+
+    def test_a_dark_photograph_whose_brightening_was_not_safe_is_dark_but_not_brightened(self):
+        from rest_framework.test import APIClient
+
+        client = APIClient()
+        client.force_authenticate(self.user)
+        result = self.process(portrait(brightness=0.12))          # no runner: the brightening is refused by the gates or unavailable
+        result.applied_parameters["adaptive"]["operations_applied"] = []
+        result.save(update_fields=["applied_parameters"])
+        lighting = client.get(f"/api/enhancements/results/{result.pk}/").json()["lighting"]
+        self.assertEqual((lighting["detected"], lighting["brightened"]), ("dark", False))
+
+    def test_a_result_without_an_adaptive_report_has_no_lighting(self):
+        from types import SimpleNamespace
+
+        from .outcome import result_lighting
+
+        self.assertIsNone(result_lighting(SimpleNamespace(applied_parameters={})))
+        self.assertIsNone(result_lighting(SimpleNamespace(applied_parameters=None)))
+        self.assertIsNone(result_lighting(SimpleNamespace(applied_parameters={"adaptive": {"quality_report": {}}})))
+
+    def test_a_failed_job_has_no_lighting(self):
+        from rest_framework.exceptions import ValidationError
+        from rest_framework.test import APIClient
+
+        from .services import process_enhancement_result
+
+        result = self.make_from(portrait())
+        with patch("enhancement.adaptive.service.AdaptiveImageEnhancementService.enhance", side_effect=RuntimeError("boom")):
+            with self.assertRaises(ValidationError):
+                process_enhancement_result(result)
+        client = APIClient()
+        client.force_authenticate(self.user)
+        self.assertIsNone(client.get(f"/api/enhancements/results/{result.pk}/").json()["lighting"])
+
     def test_a_job_that_fails_reports_failed_and_keeps_no_output(self):
         from rest_framework.exceptions import ValidationError
         from rest_framework.test import APIClient

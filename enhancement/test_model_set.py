@@ -59,10 +59,129 @@ class RetinexformerAdapterTests(SimpleTestCase):
         self.assertEqual(metadata["provider"], "retinexformer_ntire")
 
 
+class RetinexformerOnePassTests(SimpleTestCase):
+    """A large photograph is brightened in one pass on a reduced copy and the network's gain is applied at the full size (no tile seams)."""
+
+    def full_size(self, size=(900, 1500)):
+        return textured(*size)
+
+    def run_with(self, image, **settings_):
+        """``enhance_with_retinexformer(image)`` with a stand-in network that triples brightness; returns ``(output, sizes the network saw)``."""
+        from types import SimpleNamespace
+
+        seen = []
+
+        def fake_inference(torch_, picture, *args, **kwargs):
+            seen.append(picture.shape[:2])
+            return np.clip(picture.astype(np.int32) * 3, 0, 255).astype(np.uint8)
+
+        def fake_fallback(run, *, device, tile, overlap, label, error_class):
+            return run(tile, overlap), {"device": str(device), "tiles": 1}
+
+        with override_settings(**settings_), \
+                patch("enhancement.lowlight._torch", return_value=object()), \
+                patch("enhancement.lowlight._load_model", return_value=(object(), SimpleNamespace(type="mps"))), \
+                patch("enhancement.lowlight.runtime.run_with_memory_fallback", side_effect=fake_fallback), \
+                patch("enhancement.lowlight.runtime.tiled_inference", side_effect=fake_inference):
+            output, metadata = lowlight.enhance_with_retinexformer(image)
+        return output, metadata, seen
+
+    @override_settings(RETINEXFORMER_WORK_EDGE=960)
+    def test_a_large_photograph_goes_through_the_network_once_at_the_work_size(self):
+        image = (self.full_size() * 0.2).astype(np.uint8)
+        output, metadata, seen = self.run_with(image)
+        self.assertEqual(seen, [(576, 960)])                         # one pass, the long edge reduced to 960
+        self.assertEqual(output.shape, image.shape)                  # the answer has the photograph's own size
+        self.assertEqual(metadata["one_pass_work_size"], [960, 576])
+
+    @override_settings(RETINEXFORMER_WORK_EDGE=960)
+    def test_the_gain_is_the_networks_and_the_detail_is_the_photographs(self):
+        image = (self.full_size() * 0.2).astype(np.uint8)
+        output, _metadata, _seen = self.run_with(image)
+        ratio = output.astype(np.float32).mean() / image.astype(np.float32).mean()
+        self.assertAlmostEqual(ratio, 3.0, delta=0.25)               # the stand-in tripled the small copy; the full-size photograph is tripled too
+
+    @override_settings(RETINEXFORMER_WORK_EDGE=960)
+    def test_the_fine_detail_of_the_photograph_survives(self):
+        rng = np.random.default_rng(5)
+        image = np.clip(self.full_size().astype(np.float32) * 0.15 + rng.normal(0, 3, (900, 1500, 3)), 0, 255).astype(np.uint8)
+        output, _metadata, _seen = self.run_with(image)
+
+        def fine(picture):                                           # what is left after removing the slow lighting
+            grey = cv2.cvtColor(picture, cv2.COLOR_BGR2GRAY).astype(np.float32)
+            return (grey - cv2.GaussianBlur(grey, (0, 0), 2.0)).ravel()
+
+        correlation = float(np.corrcoef(fine(output), fine(image))[0, 1])
+        self.assertGreater(correlation, 0.95)                        # the full-size detail is the photograph's own, not a blurred enlargement of the small copy
+
+    @override_settings(RETINEXFORMER_DEVICE="auto", RETINEXFORMER_WORK_EDGE=960)
+    def test_the_real_model_brightens_a_large_photograph_in_one_pass_without_tile_seams(self):
+        if not (TORCH and has("RETINEXFORMER_MODEL_PATH")):
+            self.skipTest("PyTorch or the Retinexformer checkpoint is not installed here.")
+        source = dark_photo(size=(1100, 1500))
+        output, metadata = lowlight.enhance_with_retinexformer(source)
+        self.assertEqual(output.shape, source.shape)
+        self.assertEqual(metadata["one_pass_work_size"], [960, 704])
+        self.assertEqual(metadata["tiles"], 1)
+        self.assertGreater(float(output.mean()), float(source.mean()) + 20)
+        # no seam: the brightness changes smoothly across the photograph (a tile seam is a step between neighbouring columns)
+        columns = cv2.cvtColor(output, cv2.COLOR_BGR2GRAY).astype(np.float32).mean(axis=0)
+        self.assertLess(float(np.abs(np.diff(columns)).max()), 3.0)
+
+    @override_settings(RETINEXFORMER_WORK_EDGE=960)
+    def test_a_photograph_within_the_work_size_is_not_resized(self):
+        image = (self.full_size((600, 900)) * 0.2).astype(np.uint8)
+        output, metadata, seen = self.run_with(image)
+        self.assertEqual(seen, [(600, 900)])
+        self.assertNotIn("one_pass_work_size", metadata)
+        self.assertEqual(output.shape, image.shape)
+
+    def test_zero_switches_it_off(self):
+        image = (self.full_size() * 0.2).astype(np.uint8)
+        _output, metadata, seen = self.run_with(image, RETINEXFORMER_WORK_EDGE=0)
+        self.assertEqual(seen, [(900, 1500)])                        # the network saw the full size (tiled, as before)
+        self.assertNotIn("one_pass_work_size", metadata)
+
+
+class TransferGainTests(SimpleTestCase):
+    def setUp(self):
+        rng = np.random.default_rng(7)
+        self.full = np.clip(rng.normal(40, 12, (1000, 1300, 3)), 0, 255).astype(np.uint8)
+        self.small_in = cv2.resize(self.full, (650, 500), interpolation=cv2.INTER_AREA)
+
+    def test_no_brightening_changes_nothing(self):
+        self.assertTrue(np.array_equal(lowlight.transfer_gain(self.full, self.small_in, self.small_in), self.full))
+
+    def test_the_result_has_the_size_and_type_of_the_photograph_and_never_overflows(self):
+        out = lowlight.transfer_gain(self.full, self.small_in, np.clip(self.small_in.astype(np.int32) * 9, 0, 255).astype(np.uint8))
+        self.assertEqual((out.shape, out.dtype), (self.full.shape, np.uint8))
+        self.assertGreater(float(out.mean()), float(self.full.mean()) * 4)
+
+    def test_it_never_darkens(self):
+        darker = (self.small_in * 0.5).astype(np.uint8)
+        self.assertTrue(np.array_equal(lowlight.transfer_gain(self.full, self.small_in, darker), self.full))
+
+    def test_the_bands_leave_no_seam(self):
+        """The result does not depend on how many rows are processed at a time."""
+        small_out = np.clip(self.small_in.astype(np.int32) * 4, 0, 255).astype(np.uint8)
+        whole = lowlight.transfer_gain(self.full, self.small_in, small_out)
+        with patch("enhancement.lowlight.GAIN_BAND_ROWS", 64):
+            banded = lowlight.transfer_gain(self.full, self.small_in, small_out)
+        self.assertLessEqual(int(np.abs(whole.astype(np.int16) - banded.astype(np.int16)).max()), 1)
+
+    def test_a_local_lift_stays_local(self):
+        """Brightening only the left half of the small copy brightens the left half of the photograph, not the right."""
+        small_out = self.small_in.copy()
+        small_out[:, :250] = np.clip(small_out[:, :250].astype(np.int32) * 4, 0, 255)
+        out = lowlight.transfer_gain(self.full, self.small_in, small_out)
+        self.assertGreater(float(out[:, :450].mean()), float(self.full[:, :450].mean()) * 3)
+        self.assertAlmostEqual(float(out[:, 850:].mean()), float(self.full[:, 850:].mean()), delta=0.5)
+
+
 class RetinexformerTileTests(SimpleTestCase):
     """The CPU tile cap: measured to cut memory and time at the same quality (docs/deployment/hostinger-readiness-2026-10.md)."""
 
-    def run_with(self, device_type, **settings_):
+    def run_with(self, device_type, image=None, **settings_):
         from types import SimpleNamespace
 
         seen = {}
@@ -74,13 +193,19 @@ class RetinexformerTileTests(SimpleTestCase):
         with override_settings(RETINEXFORMER_TILE_SIZE=1024, **settings_), \
                 patch("enhancement.lowlight._torch", return_value=object()), \
                 patch("enhancement.lowlight._load_model", return_value=(object(), SimpleNamespace(type=device_type))), \
-                patch("enhancement.lowlight.runtime.run_with_memory_fallback", side_effect=fake_fallback):
-            lowlight.enhance_with_retinexformer(dark_photo())
+                patch("enhancement.lowlight.runtime.run_with_memory_fallback", side_effect=fake_fallback), \
+                patch("enhancement.lowlight.transfer_gain", side_effect=lambda full, small_in, small_out: full):          # only the tile is under test here
+            lowlight.enhance_with_retinexformer(dark_photo() if image is None else image)
         return seen["tile"]
 
-    def test_a_cpu_uses_the_smaller_tile(self):
-        self.assertEqual(self.run_with("cpu"), 512)
-        self.assertEqual(self.run_with("cpu", RETINEXFORMER_CPU_TILE_SIZE=256), 256)
+    def test_a_cpu_uses_the_smaller_tile_for_a_photograph_that_needs_several_tiles(self):
+        large = dark_photo(size=(1100, 1500))          # longer than the 1024 tile; the one-pass copy is switched off, so it is cut into tiles
+        self.assertEqual(self.run_with("cpu", large, RETINEXFORMER_WORK_EDGE=0), 512)
+        self.assertEqual(self.run_with("cpu", large, RETINEXFORMER_WORK_EDGE=0, RETINEXFORMER_CPU_TILE_SIZE=256), 256)
+
+    def test_a_cpu_never_cuts_the_one_pass_copy_into_smaller_tiles(self):
+        large = dark_photo(size=(1100, 1500))
+        self.assertEqual(self.run_with("cpu", large, RETINEXFORMER_WORK_EDGE=960), 1024)          # the reduced copy fits one tile: no seam
 
     def test_a_gpu_keeps_the_configured_tile(self):
         self.assertEqual(self.run_with("cuda"), 1024)

@@ -4,7 +4,7 @@ from rest_framework import serializers
 from . import comparison as comparison_engine
 from . import watermark as wm
 from .controls import INTENTS, ControlsSerializer
-from .outcome import result_outcome, result_summary
+from .outcome import result_lighting, result_outcome, result_summary
 from .models import (
     AdvisorRecommendation,
     AdvisorRun,
@@ -185,6 +185,13 @@ class SkippedStageSerializer(serializers.Serializer):
     reason = serializers.CharField()
 
 
+class LightingSerializer(serializers.Serializer):
+    detected = serializers.ChoiceField(choices=["dark", "light"], help_text="dark: the photograph is under-exposed or a dark scene (the dark-photo method may brighten it); light: normal, over-exposed or back-lit.")
+    exposure = serializers.CharField(help_text="The analyzer's own status: low_light, low_light_subject, dark_scene, backlit_subject, normal or overexposed.")
+    scene_median = serializers.FloatField(allow_null=True, help_text="Median grey level of the frame, 0 (black) to 255.")
+    brightened = serializers.BooleanField(help_text="Whether a brightening step really changed the photograph. A dark photograph can be detected dark and still not be brightened when the brightening was not safe to apply.")
+
+
 class ImageEnhancementResultSerializer(serializers.ModelSerializer):
     download_url = serializers.SerializerMethodField()
     original_download_url = serializers.SerializerMethodField()
@@ -198,6 +205,9 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
         "What the adaptive engine did: enhanced, partially_enhanced or original_preserved (the output is the original "
         "pixels); failed when the job failed. null for results made by the staged pipeline, which does not classify."))
     enhancement_summary = serializers.SerializerMethodField(help_text="One plain sentence on the outcome, safe to show a user.")
+    lighting = serializers.SerializerMethodField(help_text=(
+        "How the engine saw the lighting: {detected: dark|light, exposure, scene_median, brightened}. Show \"Dark-photo method\" for dark and \"Light-photo method\" "
+        "for light. null for results made before this field existed or by the staged pipeline."))
     applied_stages = serializers.SerializerMethodField(help_text=(
         "The restoration and enhancement stages that changed the photograph, in order: stage (low_light, denoise, deblur, face_restore, "
         "upscale), engine, variant, and for upscale the scale, input_size and output_size ([width, height]). Empty when nothing changed."))
@@ -211,7 +221,7 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
         model = ImageEnhancementResult
         fields = [
             "id", "image", "batch_job", "requested_level", "applied_level",
-            "requested_style", "trigger", "status", "enhancement_outcome", "enhancement_summary",
+            "requested_style", "trigger", "status", "enhancement_outcome", "enhancement_summary", "lighting",
             "applied_stages", "skipped_stages", "hd_unavailable_reason",
             "identity_status", "identity_check_bypassed", "identity_notice",
             "output_name", "output_format", "output_width", "output_height",
@@ -234,6 +244,10 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
 
     def get_enhancement_summary(self, obj) -> str:
         return result_summary(obj)
+
+    @extend_schema_field(LightingSerializer(allow_null=True))
+    def get_lighting(self, obj):
+        return result_lighting(obj)
 
     def _stages(self, obj):
         from .restoration import describe_stages

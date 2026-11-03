@@ -368,6 +368,14 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}     -> 201
   `standardized_download_url` and an `editor_url`. `applied_level` may differ
   from the requested level (the backend adapts to the image), so show what was
   actually applied.
+- **Dark-photo and light-photo method (new, 2026-11-03).** Every enhancement result (`GET /api/enhancements/results/{id}/`) carries
+  `lighting: {detected, exposure, scene_median, brightened}`, or `null` for a result made before this field existed, by the staged pipeline, or that failed.
+  `detected` is `dark` (an under-exposed photo or a dark scene: the dark-photo method may brighten it) or `light` (normal, over-exposed or back-lit: no
+  brightening, only detail, deblur, upscale and polish). `exposure` is the engine's own status (`low_light`, `low_light_subject`, `dark_scene`,
+  `backlit_subject`, `normal`, `overexposed`), `scene_median` the median grey level of the frame (0-255) and `brightened` whether a brightening step really
+  changed the photograph. Draw a badge from it: "Dark-photo method" / "Light-photo method"; for `detected: "dark"` with `brightened: false` say the photo was
+  recognised as dark but brightening was not safe to apply (the identity and quality checks refused it), never that it was brightened. The server decides on
+  its own; there is no way to force a method yet.
 - **What was done (restoration).** A blurred face or a low-resolution photograph goes through the restoration chain when the server can
   run it (deblur, face restoration, upscale to HD; `docs/deployment/restoration-chain.md`). Every result carries three fields that
   say so, so a barely changed photograph is never presented as restored:
