@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 OPERATION_STAGE = {
     "low_light_enhancement": "low_light", "denoising": "denoise", "motion_deblurring": "deblur",
     "face_restoration": "face_restore", "super_resolution": "upscale", "polish": "polish",
+    "detail_restoration": "detail", "colourization": "colourize",       # the detail model (also the final layer of every photograph) and DDColor; a missing name here sent `stage: null`
 }
 POLISH_REFUSED_REASON = "Already balanced and sharp: nothing to improve."
 RESTORATION_OPERATIONS = ("motion_deblurring", "face_restoration", "super_resolution")
@@ -118,6 +119,11 @@ def describe_stages(parameters, failed=False):
     return _from_staged(parameters, empty)
 
 
+def _stage_name(operation):
+    """The API's name for an engine operation. Never ``None``: an operation this table does not know yet is reported under its own name, so a client that reads ``stage`` as text does not break."""
+    return OPERATION_STAGE.get(operation) or str(operation or "unknown")
+
+
 def _from_adaptive(parameters, adaptive):
     contract = parameters.get("resolution_contract") or {}
     source, output = contract.get("source_dimensions"), contract.get("actual_output_dimensions")
@@ -125,7 +131,7 @@ def _from_adaptive(parameters, adaptive):
     needed = {OPERATION_STAGE.get(op) for op in (adaptive.get("quality_report") or {}).get("recommended_operations", [])
               if op in RESTORATION_OPERATIONS}
     for stage in adaptive.get("stages", []):
-        name = OPERATION_STAGE.get(stage.get("operation"))
+        name = _stage_name(stage.get("operation"))
         if stage.get("status") == "accepted":
             item = {"stage": name, "engine": (stage.get("models_run") or [None])[0], "variant": stage.get("variant")}
             if name == "upscale":
@@ -140,7 +146,7 @@ def _from_adaptive(parameters, adaptive):
                 reasons.append("the result did not pass the safety checks: " + ", ".join(stage.get("rejection_reasons", [])))
             skipped.append({"stage": name, "reason": "; ".join(reasons) or f"status {stage.get('status')}"})
     for item in adaptive.get("operations_skipped", []):
-        name = OPERATION_STAGE.get(item.get("operation"))
+        name = _stage_name(item.get("operation"))
         if name in ("deblur", "face_restore", "upscale") and name in needed and not any(s["stage"] == name for s in skipped):
             skipped.append({"stage": name, "reason": item.get("reason", "")})
     skipped = [s for s in skipped if s["stage"] in needed or s["stage"] in {"deblur", "face_restore", "upscale"} and s["reason"]]
