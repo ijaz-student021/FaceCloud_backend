@@ -9,7 +9,7 @@ Measurements are in the renderer's units: CIE L on the 0-255 scale and a/b of fl
 
 Natures:
 
-* ``low_key``: at least half of the pixels are near black (L below 40), there is a lit subject (at least 5 % of the pixels above L 60, the 95th percentile above 120). The automatic enhancement
+* ``low_key``: at least half of the pixels are near black (L below 40), there is a lit subject (at least 5 % of the pixels above L 60, the 95th percentile above 120) that sits on a dark SURROUND (at least half of the outer 15 % of the frame is near black). The automatic enhancement
   tends to lift the black floor of such a photograph (measured on the owner's portrait: the dark mass went from L 8.7 in the upload to 23.7, a milky background). Auto compares the floor with the
   unenhanced photograph (``baseline``): only a floor the enhancement LIFTED is put back (``brightness``: the way down divided by the renderer's 0.35, to 15 % of the original floor, as the owner did),
   so a photograph that is naturally dark grey is not crushed to black; without the unenhanced photograph the exposure is left alone. The darkest tones are deepened (``shadows``), the subject
@@ -42,6 +42,7 @@ SHADOWS_K = 0.45                  # tone.py: shadows adds value * 0.45 * (1 - L/
 LOW_KEY_DARK_SHARE = 0.50
 LOW_KEY_MIN_P95 = 120.0           # a lit subject that is properly exposed: the owner's portrait is at 136 in the upload; a dim night photograph of a person (95th percentile 97) is under-exposed, not low-key
 LOW_KEY_MIN_LIT_SHARE = 0.05
+LOW_KEY_MIN_BORDER_DARK = 0.5         # the dark part must be the SURROUND of the frame (a black backdrop); a dark subject against a bright background is backlit (the backlit portrait is at 0.33, the owner's at 0.91)
 LOW_KEY_MAX_ORIGINAL_FLOOR = 12.0     # a BLACK background: the owner's portrait is at 8.7 in the upload; a night photograph whose dark part is 15 and shows a wall and trees is not
 LOW_KEY_BLACK_RATIO = 0.15        # owner: the dark mass's median after the edit, over its median in the upload (1.2 / 8.7 = 0.14)
 LOW_KEY_DEADBAND = 3.0            # a floor the enhancement raised by no more than this is not touched
@@ -62,17 +63,20 @@ def measure_scene(bgr):
     lightness = lab[:, :, 0] * (255.0 / 100.0)
     chroma = np.hypot(lab[:, :, 1], lab[:, :, 2])
     dark, lit = lightness < DARK_LEVEL, lightness > LIT_LEVEL
+    edge = max(1, int(round(0.15 * min(lightness.shape))))
+    frame = np.zeros(lightness.shape, bool)
+    frame[:edge, :] = frame[-edge:, :] = frame[:, :edge] = frame[:, -edge:] = True
     p01, p05, p25, p50, p75, p95, p99 = (float(value) for value in np.percentile(lightness, [1, 5, 25, 50, 75, 95, 99]))
     return {
         "p01": p01, "p05": p05, "p25": p25, "p50": p50, "p75": p75, "p95": p95, "p99": p99, "mean": float(lightness.mean()),
-        "dark_share": float(dark.mean()), "dark_median": float(np.median(lightness[dark])) if dark.any() else None,
+        "dark_share": float(dark.mean()), "border_dark": float(dark[frame].mean()), "dark_median": float(np.median(lightness[dark])) if dark.any() else None,
         "lit_share": float(lit.mean()), "chroma_lit": float(chroma[lit].mean()) if lit.any() else 0.0,
         "warmth_lit": float(lab[:, :, 2][lit].mean()) if lit.any() else 0.0,
     }
 
 
 def classify_scene(scene):
-    if scene["dark_share"] >= LOW_KEY_DARK_SHARE and scene["p95"] >= LOW_KEY_MIN_P95 and scene["lit_share"] >= LOW_KEY_MIN_LIT_SHARE:
+    if scene["dark_share"] >= LOW_KEY_DARK_SHARE and scene["p95"] >= LOW_KEY_MIN_P95 and scene["lit_share"] >= LOW_KEY_MIN_LIT_SHARE and scene["border_dark"] >= LOW_KEY_MIN_BORDER_DARK:
         return "low_key"
     return "balanced"
 
