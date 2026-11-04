@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 !.env.staging.example
+!.env.demo.example
 !.env.example
 
 # Python

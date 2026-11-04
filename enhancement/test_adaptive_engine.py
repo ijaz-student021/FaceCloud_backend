@@ -566,7 +566,7 @@ class ServiceTests(SimpleTestCase):
 
     def test_no_biometric_permission_means_no_face_restoration_and_no_embedding(self):
         _out, _level, parameters = self.run_service(portrait(), allow_biometric_processing=False)
-        self.assertTrue(any("not permitted" in item["reason"] for item in parameters["adaptive"]["operations_skipped"]))
+        self.assertTrue(any("face-processing consent" in item["reason"] for item in parameters["adaptive"]["operations_skipped"]))
         self.assertEqual(parameters["identity_status"], "unavailable")
 
     def test_the_parameters_keep_the_shape_the_job_and_api_code_read(self):

@@ -48,6 +48,8 @@ logger = logging.getLogger(__name__)
 
 PIPELINE_VERSION = "adaptive_candidate_pipeline_v1"
 ENHANCED, PARTIALLY_ENHANCED, ORIGINAL_PRESERVED = "enhanced", "partially_enhanced", "original_preserved"
+FACE_CONSENT_SENTENCE = "Face restoration needs the person's face-processing consent."
+FACE_CONSENT_REASON = "Face restoration needs the person's face-processing consent, which is not given, so no face was restored."
 
 # Defects the engine can address (or must report as unresolved), as the analyzer names them.
 ADDRESSABLE = {"low_light", "visible_noise", "motion_blur", "mixed_blur", "defocus_blur", "low_resolution", "face_poor", "face_blur"}
@@ -234,10 +236,12 @@ class AdaptiveImageEnhancementService:
                 except PoolFull:
                     record["notes"].append("The candidate limit was reached.")
                     break
+                validation_started = time.perf_counter()
                 candidate.verdict = validator.evaluate(
                     current.image, candidate.image, step.operation, report, expected_scale=scale if step.operation == ops.UPSCALE else 1,
                     refine=bool(variant.get("refine")),
                 )
+                candidate.validation_seconds = time.perf_counter() - validation_started
                 engine_produced.append(candidate)
                 if not candidate.verdict["accepted"]:
                     candidate.release()          # refused: its pixels are never used again, and it must not use up the pool the later operations (the polish) need
@@ -292,6 +296,7 @@ class AdaptiveImageEnhancementService:
 
         checkpoint("analyze_original")
         report0 = analyzer.analyze(original)
+        analysis_seconds = time.perf_counter() - started          # the analysis of the original (faces, exposure, noise, blur): where the time goes before any operation
         recorder.json("01_quality_analysis", report0.as_dict())
         identity = IdentityChecker(original, allow_biometric_processing and report0.faces != [])
         if not report0.faces:
@@ -302,7 +307,8 @@ class AdaptiveImageEnhancementService:
         current, report = pool.original, report0
         done, stages, skipped, warnings = set(), [], [], []
         if not allow_biometric_processing and report0.faces:
-            skipped.append({"operation": ops.FACE, "reason": "Biometric processing is not permitted, so faces are not restored."})
+            # ``needs_consent`` is true only when this photograph's own faces called for restoration: then the result says so in plain words (summary, skipped_stages, hd_unavailable_reason).
+            skipped.append({"operation": ops.FACE, "reason": FACE_CONSENT_REASON, "needs_consent": ops.FACE in report0.recommended_operations})
             done.add(ops.FACE)
         if report0.faces and not identity.available and allow_biometric_processing:
             warnings.append(identity.reason)
@@ -426,10 +432,11 @@ class AdaptiveImageEnhancementService:
                 # The full candidate record (models, timings, verdicts) is for development; a user-facing result keeps the gist.
                 "candidates": pool.describe() if recorder.enabled else [
                     {"id": c.id, "operation": c.operation, "variant": c.variant, "selected": c.selected,
-                     "accepted": None if c.verdict is None else c.verdict["accepted"]} for c in pool.items],
+                     "accepted": None if c.verdict is None else c.verdict["accepted"],
+                     "seconds": round(c.seconds, 2), "validation_seconds": round(c.validation_seconds, 2)} for c in pool.items],
                 "debug_artifacts": recorder.location,
                 "limits": {"max_candidates": self.config.max_candidates, "time_budget_seconds": self.config.time_budget_seconds},
-                "seconds": round(time.perf_counter() - started, 2),
+                "seconds": round(time.perf_counter() - started, 2), "analysis_seconds": round(analysis_seconds, 2),
             },
         }
         self._log_run(parameters, report0, identity_block)
@@ -462,6 +469,15 @@ class AdaptiveImageEnhancementService:
 
     @staticmethod
     def _summary(outcome, stages, skipped, remaining):
+        text = AdaptiveImageEnhancementService._summary_text(outcome, stages, skipped, remaining)
+        if any(item.get("needs_consent") for item in skipped):
+            if text.startswith("The photograph did not need enhancement"):
+                text = "The original photograph was kept: it has a degraded face."
+            text += " " + FACE_CONSENT_SENTENCE
+        return text
+
+    @staticmethod
+    def _summary_text(outcome, stages, skipped, remaining):
         words = {ops.LOW_LIGHT: "brightened the dark subject", ops.DENOISE: "reduced noise", ops.DEBLUR: "reduced motion blur",
                  ops.FACE: "restored a degraded face", ops.UPSCALE: "enlarged the photograph",
                  ops.DETAIL: "restored fine detail and reduced compression blocking",

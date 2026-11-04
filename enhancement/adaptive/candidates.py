@@ -19,7 +19,8 @@ class Candidate:
     models: list = field(default_factory=list)   # [{"model", "checkpoint", "device", "seconds", ...}]
     verdict: dict | None = None
     selected: bool = False
-    seconds: float = 0.0
+    seconds: float = 0.0            # the model's own time for this candidate
+    validation_seconds: float = 0.0  # the validator's time for it (every gate, the face and identity checks included)
     size: tuple | None = None       # (width, height), kept when the pixels are released
 
     def __post_init__(self):
@@ -35,7 +36,7 @@ class Candidate:
         return {
             "id": self.id, "parent": self.parent, "operation": self.operation, "variant": self.variant,
             "dimensions": [int(self.size[0]), int(self.size[1])], "models": self.models,
-            "seconds": round(self.seconds, 3), "selected": self.selected, "verdict": self.verdict,
+            "seconds": round(self.seconds, 3), "validation_seconds": round(self.validation_seconds, 3), "selected": self.selected, "verdict": self.verdict,
         }
 
 

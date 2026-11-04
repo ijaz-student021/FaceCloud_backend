@@ -471,7 +471,12 @@ face is small is no longer **rejected**: it is kept (`needs_review` in the face 
   version; `POST /api/privacy/consents/ {granted, policy_version}` grants or
   withdraws. Withdrawing with `erase_facial_data: true` also deletes the data.
   Show a consent screen before the first upload and disable the People page
-  until consent exists.
+  until consent exists. **The one answer a screen needs is `face_processing_allowed`** (boolean, top level of that response: faces may be processed for this person right now,
+  because consent is not required or is active against the current policy); each purpose has `covers`, plain lines for what the switch allows (person folders; face restoration
+  in an enhancement; the check that an enhancement did not change who is in a photograph). **Face restoration needs this consent** (2026-11-04): when a photograph's own face was
+  degraded and consent is not given, the enhancement result says so in plain words, in `enhancement_summary` ("... Face restoration needs the person's face-processing consent."),
+  in `skipped_stages` (`{"stage": "face_restore", "reason": "Face restoration needs the person's face-processing consent, which is not given, so no face was restored."}`)
+  and in `hd_unavailable_reason`; the batch progress carries the same summary. A photograph whose face did not need restoring is not told about consent.
 - `GET /api/identities/groups/` and `/{id}/` list and show folders
   (`display_name`, `member_count`, `confirmed_count`, `suggested_count`, `preview_image`). `confirmed_count` is the faces placed in the folder (the same number
   as `member_count`); `suggested_count` is the faces that look like this person but wait for a decision (`membership_state: "needs_review"` on a photo of
@@ -1279,6 +1284,12 @@ hide these routes, but never rely on that for security.
   `camera_snapshots_bytes` is already inside `originals_and_outputs_bytes`.
 * The older `success_rate_percent` is the share of *quality decisions* that were accepted, not the share of enhancements that worked; the weekly
   enhancement success is `enhancement_success_per_week`. `totals.images.accepted` counts photographs not refused at upload.
+
+**Which enhancement stages are on (2026-11-04).** `checks.models.stages` is a list in pipeline order, in plain words: `[{stage, label, active, model, reason?, instead?, needs_consent?}]` for
+`low_light`, `denoise`, `deblur`, `face_restore`, `upscale`, `detail` (the detail model, the last layer of every photograph) and `colourize`. `active` is true when one of the stage's models is
+healthy (`model` names it); when none is, `reason` says why ("nafnet: its setting is off", an unreadable or unverified file) and `instead` what the engine does in its place ("an OpenCV noise
+filter"); `face_restore` carries `needs_consent`. Show it as the "what is switched on" panel instead of reading it from the results; the models list beside it (`checks.models.models`) is unchanged.
+A Celery worker logs the same list when it is ready ("Enhancement stages: ...").
 
 **Background jobs running inside the request.** `GET /api/system/health/` has a top-level `background_jobs_inline` (boolean, always present) and, when it is
 `true`, `checks.celery.eager: true` and the celery row of `services` has `detail: "eager"` (instead of `no_workers`): `CELERY_TASK_ALWAYS_EAGER` is on, so
