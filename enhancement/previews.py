@@ -168,6 +168,11 @@ def create_preview(result, owner, *, revision, mode, adjustments, size=None, cla
         baseline = _baseline(source, result)
         if baseline is not None and baseline.shape[:2] != bgr.shape[:2]:
             baseline = cv2.resize(baseline, (bgr.shape[1], bgr.shape[0]), interpolation=cv2.INTER_AREA)
+    elif mode == "auto":
+        # Auto compares a dark photograph's black level with the unenhanced photograph (auto_edit.py): a loader, so that it is read only when the photograph turns out to be low-key.
+        def baseline():
+            return _baseline(source, result)
+
     rendered, metadata = apply_gallery_adjustments(visible_for_measurement(bgr, alpha), mode, adjustments, baseline=baseline)
     rendered = restore_hidden(rendered, bgr, alpha)
     image = attach(rendered, alpha)

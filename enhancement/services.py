@@ -33,6 +33,7 @@ from uploads.models import ImagePreprocessingResult, UploadBatch
 from quality_control.models import ImageQualityDecision
 
 from . import policy as rendering_policy
+from .auto_edit import recommend_adaptive_adjustments
 from .controls import (
     CONTROL_NAMES, INTENTS, RENDERER_POLICY_NAME, RENDERER_VERSION, is_neutral,
     recommend_local_adjustments, validate_controls,
@@ -3056,9 +3057,11 @@ def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline
         intent = requested_raw.get("intent", "auto")
         if intent not in INTENTS:
             raise ValidationError({"intent": f"Choose one of: {', '.join(INTENTS)}."})
-        recommendation = recommend_local_adjustments(
-            before, intent, blockiness_detected=measure_compression_artifacts(source)["detected"],
-        )
+        blockiness_detected = measure_compression_artifacts(source)["detected"]
+        if intent == "auto":      # read the photograph's nature first (auto_edit.py); "preserve" and "brighten" keep the earlier recipe
+            recommendation = recommend_adaptive_adjustments(source, before, blockiness_detected=blockiness_detected, baseline=baseline)
+        else:
+            recommendation = recommend_local_adjustments(before, intent, blockiness_detected=blockiness_detected)
         controls = recommendation["controls"]
         intensity = 100.0
     else:
@@ -3159,7 +3162,7 @@ def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline
         },
     }
     if recommendation is not None:
-        metadata["auto"] = {key: recommendation[key] for key in ("action", "intent", "rationale", "caution_flags")}
+        metadata["auto"] = {key: recommendation[key] for key in ("action", "intent", "rationale", "caution_flags", "nature", "scene") if key in recommendation}
     return rendered, metadata
 
 
