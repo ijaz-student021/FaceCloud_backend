@@ -81,10 +81,7 @@ class AdaptiveEnhancementRouter:
             # "Soft" is the frame reading blurred AND, when there is a face, that face not being sharp: a portrait with a sharp face against a defocused background reads as blurred
             # for the frame and is not soft (a professional 1600 px portrait did exactly that and wasted two minutes of model time before the validator refused it).
             soft = report.blur["status"] in ("low", "high") and not (report.main_face is not None and report.face_blur.get("status") == "none")
-            # Always-enhance: a photograph on which no defect was found is not left alone; it goes through the same model (the compact "general" network that restores detail for light
-            # photographs), as a refinement. ``refine`` is only true when the analyzer recommends no correction at all.
-            refine = settings.ADAPTIVE_ALWAYS_ENHANCE and not (heavy_compression or soft) and not report.recommended_operations
-            if not settings.ADAPTIVE_DETAIL_ENABLED or ops.UPSCALE in done or not (heavy_compression or soft or refine):
+            if not settings.ADAPTIVE_DETAIL_ENABLED or ops.UPSCALE in done or not (heavy_compression or soft):
                 return None, ""
             if report.resolution["status"] == "low":
                 return None, ""                       # a small photograph is enlarged (UPSCALE), not restored a second time
@@ -96,13 +93,6 @@ class AdaptiveEnhancementRouter:
             # want the best, everything else the fast one (4x-UltraSharp is then only reached when the fast models are not there).
             best_first = profile.style == "ai_max" or profile.level == "high"
             engines = sorted(engines, key=lambda engine: ("ultrasharp", "general", "realesrgan").index(engine) if best_first else ("general", "realesrgan", "ultrasharp").index(engine))
-            if refine:
-                # The model for light photographs only (the compact "general" network, seconds): the slower networks are not a fallback here, the finishing polish is. Its strength share is 0.45,
-                # so the two variants ask for about 1.0 and 0.7 of the model's own output.
-                if "general" not in engines:
-                    return None, ""
-                variants = [{"name": "refine full", "blend": 2.2, "refine": True}, {"name": "refine 0.7", "blend": 1.6, "refine": True}]
-                return Step(operation, ["general"], variants, "No defect was found; the enhancement model refines the detail.", optional=True), ""
             why = "heavy compression" if heavy_compression and not soft else "softness" if soft and not heavy_compression else "softness and heavy compression"
             return Step(operation, engines, blends, f"The photograph shows {why}.", optional=True), ""
         if operation == ops.COLORIZE:
@@ -183,6 +173,26 @@ class AdaptiveEnhancementRouter:
                         "The photograph is small." if small_image else "The face is small.",
                         optional=small_image and report.resolution["status"] != "low"), ""
         return None, ""
+
+    @staticmethod
+    def final_layer_step(report):
+        """The LAST layer of every photograph (``ADAPTIVE_ALWAYS_ENHANCE``): the enhancement model for light photographs (the compact ``general`` network) applied to whatever the earlier steps
+        left, whether anything needed correcting or not. The service asks for it once, after the router has nothing more to do. ``None`` when it cannot run: the setting or the detail model is
+        off, or the photograph is over ``ADAPTIVE_DETAIL_MAX_PIXELS`` (the model's time and memory grow with the pixels). Only the compact model, which takes seconds: the slower networks
+        are not its fallback. Its strength share is 0.45, so the two variants ask for about 1.0 and 0.7 of the model's own output."""
+        if not (settings.ADAPTIVE_ALWAYS_ENHANCE and settings.ADAPTIVE_DETAIL_ENABLED) or "general" not in ops.enabled_engines(ops.DETAIL):
+            return None
+        if report.width * report.height > settings.ADAPTIVE_DETAIL_MAX_PIXELS:
+            return None
+        variants = [{"name": "final full", "blend": 2.2, "refine": True}, {"name": "final 0.7", "blend": 1.6, "refine": True}]
+        return Step(ops.DETAIL, ["general"], variants, "Final layer: the enhancement model is applied to every photograph.", optional=True)
+
+    def finish_step(self, report, profile=None):
+        """The finishing polish as the fallback of the final layer (``ADAPTIVE_ALWAYS_ENHANCE``): asked for by the service only when nothing else was accepted."""
+        profile = profile or DEFAULT_PROFILE
+        if not settings.ADAPTIVE_ALWAYS_ENHANCE or not profile.polish_style:
+            return None
+        return self._consider_polish(report, {"style": profile.polish_style}, ops.enabled_engines(ops.POLISH), profile)[0]
 
     @staticmethod
     def _consider_polish(report, polish, engines, profile=None):

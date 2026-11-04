@@ -99,25 +99,29 @@ Turn restoration on only after validating it on a larger, more diverse set of fa
 * **Denoising** offers blend 1.0 and 0.65 and lets the validator choose, because 65 % beat full strength on light-to-moderate noise and
   full strength won on heavy noise (`docs/evaluation/2026-10-15-denoising.md`).
 
-## 5.0 Every photograph is enhanced (`ADAPTIVE_ALWAYS_ENHANCE`, on by default; 2026-11-03)
+## 5.0 Every photograph is enhanced: the final layer (`ADAPTIVE_ALWAYS_ENHANCE`, on by default; 2026-11-03)
 
-The owner's rule: a photograph that needs no correction is enhanced with the model used for light photographs, never returned as "it did not need enhancement".
-When the analyzer recommends no correction (and while no step has been accepted):
+The owner's rule: the model used for light photographs is the **last layer of every photograph**, whether anything needed correcting or not ("just apply it"). After the router has nothing
+more to do (the corrective steps, then colourization), the service asks for two more things (`router.final_layer_step`, `router.finish_step`):
 
-1. **Refine**: the compact `realesr-general-x4v3` network (`general` only; the slower networks are not its fallback) at about 1.0 and 0.7 of its own output.
-   Kept if the structure energy rises by at least `ADAPTIVE_REFINE_MIN_GAIN` (1.01), not by an invented amount (at most 1.6), the main face does not grow past
-   `max(260, 1.1 x its detail before)`, and every other gate (identity, face geometry, halo, clipping, colour) passes. 2-9 s for a 1400 px photograph; a photograph over
-   `ADAPTIVE_DETAIL_MAX_PIXELS` (4 MP) skips it.
-2. **Finish** (the polish, as the fallback): `ADAPTIVE_FINISH_STRENGTH` (3) times the gentle share, vibrance `ADAPTIVE_FINISH_VIBRANCE` (15 percent instead of 6) and a ladder of five
-   variants, strongest first (finish, finish blended 0.65, finish with soft edges, finish gentle, finish colour: no sharpening at all). Kept if every safety gate passes, no measure
-   falls below `ADAPTIVE_FINISH_TOLERANCE` (0.97) of what it was, and the photograph really changes (mean change of at least `ADAPTIVE_FINISH_MIN_CHANGE`, 1.5 of 255). The gentle
-   polish needed a 5 percent gain, which a photograph that is already balanced and sharp does not give, so 26 of the owner's 48 results had been returned unchanged.
-   The main face's detail ratio is not asked to hold here (the detector can pick another face after a small change); a face that gets too sharp is still refused by the ceiling.
-3. A refused candidate releases its pixels and no longer counts against `ADAPTIVE_MAX_CANDIDATES`: refused lift and model candidates used to fill the pool, so the polish was
-   only offered its first one or two (strongest) variants.
+1. **The final layer**: the compact `realesr-general-x4v3` network (`general` only; the slow networks are not its fallback) at about 1.0 and 0.7 of its own output, stacked on whatever the
+   earlier steps accepted (a lifted dark photograph, a deblurred and face-restored one, an enlarged one). It is skipped when the router's own detail step already accepted the same model,
+   when the compact model is off, or when the photograph is over `ADAPTIVE_DETAIL_MAX_PIXELS` (4 MP: the model's time and memory grow with the pixels). It is **applied unless** it smooths the
+   photograph by more than `ADAPTIVE_REFINE_MIN_GAIN` allows (structure energy x0.75; on a brightened dark photograph the model cleans amplified noise and JPEG blocks, which reads as 0.6-0.9; a
+   defocused portrait is smoothed to 0.94), adds an invented amount (> 1.6), changes nothing visible (mean change under `ADAPTIVE_REFINE_MIN_CHANGE`, 0.5 of 255), a face grows past
+   `max(260, 1.1 x its detail before)`, or any other gate (identity, face geometry, halo, clipping, colour) refuses it. 2-9 s for a 1400 px photograph. What is left unresolved is judged
+   before this layer (its smoothing can read as a blur to the analyzer).
+2. **The finishing polish, as the fallback**, only when nothing at all was accepted (also when a corrective step was refused, and without `ADAPTIVE_POLISH_ENABLED`): `ADAPTIVE_FINISH_STRENGTH` (3)
+   times the gentle share, vibrance `ADAPTIVE_FINISH_VIBRANCE` (15 percent instead of 6) and a ladder of five variants, strongest first (finish, finish blended 0.65, finish with soft edges,
+   finish gentle, finish colour: no sharpening at all). Kept if every safety gate passes, no measure falls below `ADAPTIVE_FINISH_TOLERANCE` (0.97) and the photograph really changes
+   (mean change of at least `ADAPTIVE_FINISH_MIN_CHANGE`, 1.5 of 255). The gentle polish needed a 5 percent gain, which a balanced, sharp photograph does not give, so 26 of the owner's 48
+   results had been returned unchanged. The main face's detail ratio is not asked to hold here (the detector can pick another face after a small change); a face that gets too sharp is still
+   refused by the ceiling.
+3. A refused candidate releases its pixels and no longer counts against `ADAPTIVE_MAX_CANDIDATES` (the total ever proposed is capped at 6 times the limit): refused lift and model candidates
+   used to fill the pool, so the polish was only offered its first one or two (strongest) variants.
 
-Evidence (20 of the owner's photographs that had come back unchanged, 1400 px long edge, `natural` / `auto`, `docs/evaluation/2026-11-03-always-enhance.md`): 19 changed (3 by the
-refine model, 14 by the finish, 2 by super-resolution), 1 kept because every candidate was refused by the identity, face-geometry and highlight gates.
+Evidence (`docs/evaluation/2026-11-03-always-enhance.md`): of 14 photographs, the final layer was applied to 8 (4 of them stacked on a lift, a deblur and face restoration, or a
+super-resolution); 5 got the finishing polish; 1 stayed as it was because every candidate was refused by the identity, face-geometry and highlight gates.
 
 ## 5a. Polish: a gentle improvement for a photograph with nothing to fix (`ADAPTIVE_POLISH_ENABLED`, off by default)
 

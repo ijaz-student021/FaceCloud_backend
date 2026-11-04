@@ -505,15 +505,21 @@ class FinalImageQualityValidator:
             blur_better = (before.blur["status"] != "none" and after.blur["status"] == "none") or (before.blur["retention"] - after.blur["retention"] >= 0.02)
             face = after.main_face
             face_ok = face is None or face.detail is None or face.detail <= limits.face_max_detail
-            # Always-enhance, a photograph with no defect (``refine``): there is no defect to resolve, so it is judged on adding real structure (at least ADAPTIVE_REFINE_MIN_GAIN, not an
-            # invented amount) and on a face that does not grow past the ceiling or by more than the polish allows (a sharp face is already above 260), besides every other gate.
+            # The final layer (``refine``, ADAPTIVE_ALWAYS_ENHANCE): the light-photo model is applied to every photograph, so there is no defect to resolve. It is kept unless it smooths the
+            # photograph by more than ADAPTIVE_REFINE_MIN_GAIN allows (the structure energy counts noise and JPEG blocks too, so on a brightened dark photograph the model's cleaning reads as a
+            # loss), it adds an invented amount (> detail_max_gain), it changes nothing visible (ADAPTIVE_REFINE_MIN_CHANGE grey levels of 255) or a face grows past the ceiling or by
+            # more than the polish allows (a sharp face is already above 260); every other gate (identity, face geometry, halo, clipping, colour) still applies.
+            minimum, visible, change = limits.detail_min_gain, True, None
             if refine:
                 face_before = before.main_face.detail if before.main_face is not None and before.main_face.detail is not None else None
                 face_ok = face is None or face.detail is None or face.detail <= max(limits.face_max_detail, (face_before or 0.0) * limits.polish_face_growth_max)
-            minimum = float(settings.ADAPTIVE_REFINE_MIN_GAIN) if refine else limits.detail_min_gain
-            gate("improves_defect", minimum <= gain <= limits.detail_max_gain and (True if refine else (compression_better or blur_better)) and face_ok,
+                minimum = float(settings.ADAPTIVE_REFINE_MIN_GAIN)
+                change = float(np.abs(candidate[::4, ::4].astype(np.int16) - parent[::4, ::4].astype(np.int16)).mean())
+                visible = change >= float(settings.ADAPTIVE_REFINE_MIN_CHANGE)
+            gate("improves_defect", minimum <= gain <= limits.detail_max_gain and visible and (True if refine else (compression_better or blur_better)) and face_ok,
                  {"structure_gain": round(gain, 3), "compression_before": before.compression["status"], "compression_after": after.compression["status"],
-                  "blur_before": before.blur["status"], "blur_after": after.blur["status"], "face_detail_after": None if face is None else face.detail},
+                  "blur_before": before.blur["status"], "blur_after": after.blur["status"], "face_detail_after": None if face is None else face.detail,
+                  **({"mean_change": round(change, 2)} if change is not None else {})},
                  "no_added_detail_or_invented_detail")
             return float(min(1.0, np.clip((gain - 1.0) / 0.2, 0, 1) + (0.25 if compression_better else 0.0) + (0.25 if blur_better else 0.0)))
         if operation == "colourization":
