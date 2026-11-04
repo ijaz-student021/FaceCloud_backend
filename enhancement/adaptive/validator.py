@@ -74,6 +74,7 @@ class Limits:
     # enlarged. A displacement under this many pixels of the ORIGINAL photograph is detection noise, not a changed face. It never applies to a
     # generative face restoration (always strict) nor to polish (its own 0.02 gate), and a face that is no longer found is still a loss.
     landmark_pixel_floor: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_LANDMARK_PIXEL_FLOOR", 2.0)))
+    geometry_ignores_tiny_faces: bool = field(default_factory=lambda: bool(getattr(settings, "ADAPTIVE_GEOMETRY_IGNORES_TINY_FACES", True)))   # a face under 48 px cannot be judged: it does not veto
     # An upscaled candidate's landmarks are found again on an interpolated image, so a little jitter is not a changed face: plain bicubic
     # enlargement of three 240 px portraits already shifted them by 0.019, 0.026 and 0.037 (measured on real photographs).
     face_landmark_shift_max_upscale: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX", 0.06)))
@@ -370,16 +371,25 @@ class FinalImageQualityValidator:
             verdict["gates"]["identity"] = {"passed": True, "status": "no_face"}
             return
         scale = candidate_report.width / self.original_report.width if self.original_report.width else 1.0
-        shift = landmark_shift(self.original_report.faces, candidate_report.faces, scale)
+        faces = self.original_report.faces
+        tiny = 0
+        if self.limits.geometry_ignores_tiny_faces and operation != "face_restoration":
+            # A face the analyzer calls ``too_small`` (short edge under 48 px: it is not restored and its identity cannot be checked) is not held to the landmark limit either: on a silhouette or a
+            # distant head the five landmarks are guesses and moved by 12 % of the face width when the photograph was merely enlarged, which refused the enlargement of a whole sunset photograph.
+            kept = [face for face in faces if face.quality != "too_small"]
+            tiny, faces = len(faces) - len(kept), kept
+        shift = landmark_shift(faces, candidate_report.faces, scale) if faces else 0.0
         shift_max = self.limits.face_landmark_shift_max_upscale if operation == "super_resolution" else self.limits.face_landmark_shift_max
         if operation == "polish":
             shift_max = self.limits.polish_face_landmark_shift_max
         elif operation != "face_restoration" and self.limits.landmark_pixel_floor > 0:
-            widths = [face.box[2] for face in self.original_report.faces if face.landmarks and len(face.landmarks) == 5 and face.box[2] > 0]
+            widths = [face.box[2] for face in faces if face.landmarks and len(face.landmarks) == 5 and face.box[2] > 0]
             if widths:
                 shift_max = max(shift_max, self.limits.landmark_pixel_floor / (sum(widths) / len(widths)))
         landmarks_ok = shift is not None and shift <= shift_max
         status = {"landmark_shift": None if shift is None else round(shift, 4)}
+        if tiny:
+            status["tiny_faces_not_checked"] = tiny
         if operation == "polish" and not landmarks_ok:
             holds, worst = self._face_structure_holds(parent, candidate)
             if holds is not None:

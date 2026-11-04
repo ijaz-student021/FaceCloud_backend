@@ -15,16 +15,16 @@ TINY = (278, 59, 21, 28)       # the silhouette: 21 px wide
 LARGE = (150, 100, 180, 220)
 
 
-def face(box, scale=1, dx=0.0):
+def face(box, scale=1, dx=0.0, quality="good"):
     scaled = tuple(int(v * scale) for v in box)
     landmarks = [(x * scale + dx, y * scale) for x, y in base.landmarks_for(box)]
     return FaceObservation(box=scaled, confidence=0.9, landmarks=landmarks, area_ratio=0.01, short_edge=scaled[2],
-                           luminance={}, detail=80.0, visibility="good", quality="good")
+                           luminance={}, detail=80.0, visibility="good", quality=quality)
 
 
-def gate(operation, box, dx_original_px, identity=None, scale=2):
+def gate(operation, box, dx_original_px, identity=None, scale=2, quality="good"):
     """The identity gate for a candidate ``scale`` times larger whose landmarks moved ``dx_original_px`` pixels of the ORIGINAL photograph."""
-    original = SimpleNamespace(faces=[face(box)], width=640)
+    original = SimpleNamespace(faces=[face(box, quality=quality)], width=640)
     candidate = SimpleNamespace(faces=[face(box, scale, dx=dx_original_px * scale)], width=640 * scale)
     verdict = {"reasons": [], "gates": {}}
     FinalImageQualityValidator(None, original, identity=identity)._identity_gate(verdict, None, candidate, operation)
@@ -123,3 +123,49 @@ class PolishFaceStructureTests(SimpleTestCase):
         candidate_report = SimpleNamespace(faces=[face(self.box, 1, dx=0.05 * self.box[2])], width=640)
         FinalImageQualityValidator(None, self.original, identity=None)._identity_gate(verdict, self.polished(), candidate_report, "denoising", self.parent)
         self.assertFalse(verdict["gates"]["identity"]["passed"])
+
+
+SILHOUETTE = (281, 65, 43, 66)      # the sunset photograph: a silhouetted head the analyzer calls too_small (43 px); its landmarks moved 5.3 px of the original when the photograph was enlarged
+
+
+class TinyFaceGeometryTests(SimpleTestCase):
+    """A face the analyzer calls ``too_small`` does not veto an operation (ADAPTIVE_GEOMETRY_IGNORES_TINY_FACES)."""
+
+    def test_the_default_is_on(self):
+        from django.conf import settings
+
+        self.assertIs(settings.ADAPTIVE_GEOMETRY_IGNORES_TINY_FACES, True)
+        self.assertIs(Limits().geometry_ignores_tiny_faces, True)
+
+    def test_a_too_small_silhouette_that_moved_five_pixels_does_not_refuse_the_enlargement(self):
+        status = gate("super_resolution", SILHOUETTE, 5.3, quality="too_small")
+        self.assertTrue(status["passed"], status)
+        self.assertEqual(status["tiny_faces_not_checked"], 1)
+
+    @override_settings(ADAPTIVE_GEOMETRY_IGNORES_TINY_FACES=False)
+    def test_with_the_setting_off_it_is_refused_as_before(self):
+        self.assertFalse(gate("super_resolution", SILHOUETTE, 5.3, quality="too_small")["passed"])
+
+    def test_the_same_move_on_a_face_that_is_not_too_small_is_still_refused(self):
+        self.assertFalse(gate("super_resolution", SILHOUETTE, 5.3, quality="good")["passed"])
+
+    def test_a_large_face_still_vetoes_whatever_the_setting(self):
+        self.assertFalse(gate("super_resolution", LARGE, 20.0)["passed"])
+
+    def test_face_restoration_is_never_relaxed_for_a_too_small_face(self):
+        self.assertFalse(gate("face_restoration", SILHOUETTE, 5.3, identity=VERIFIED, quality="too_small")["passed"])
+
+    def test_a_large_face_next_to_a_tiny_one_is_still_checked(self):
+        original = SimpleNamespace(faces=[face(LARGE), face(SILHOUETTE, quality="too_small")], width=640)
+        moved_large = face(LARGE, 2, dx=40.0)
+        candidate = SimpleNamespace(faces=[moved_large, face(SILHOUETTE, 2)], width=1280)
+        verdict = {"reasons": [], "gates": {}}
+        FinalImageQualityValidator(None, original, identity=None)._identity_gate(verdict, None, candidate, "super_resolution")
+        self.assertFalse(verdict["gates"]["identity"]["passed"])
+        self.assertEqual(verdict["gates"]["identity"]["tiny_faces_not_checked"], 1)
+
+    def test_a_tiny_face_that_is_the_only_face_leaves_nothing_to_check(self):
+        original = SimpleNamespace(faces=[face(SILHOUETTE, quality="too_small")], width=640)
+        verdict = {"reasons": [], "gates": {}}
+        FinalImageQualityValidator(None, original, identity=None)._identity_gate(verdict, None, SimpleNamespace(faces=[], width=1280), "super_resolution")
+        self.assertTrue(verdict["gates"]["identity"]["passed"], verdict)
