@@ -27,6 +27,7 @@ commercially usable.
   RetinaFace detector, or (under a non-default render policy) Zero-DCE is enabled, unless `NONCOMMERCIAL_MODELS_ACKNOWLEDGED=True` is set.
   The setting records a deliberate decision; it is not a licence. It also refuses `ADAPTIVE_DEBUG_ARTIFACTS=True`.
 * Defaults keep all of these off (CodeFormer, GFPGAN) or non-routing (ArcFace, RetinaFace, Zero-DCE under `lightweight_v1`).
+* **Owner's decision, 2026-11-04:** Zero-DCE is run in the deployment prepared for the defence, with `NONCOMMERCIAL_MODELS_ACKNOWLEDGED=True` (`zero-dce-owner-decision.md`). The Zero-DCE row above is unchanged: it is still not licensed for commercial use. The acknowledgement is ONE switch for every model in the list, so enabling another of them later is a separate decision, not covered by this one.
 
 ## What a commercial release needs (owner decisions, not done here)
 
