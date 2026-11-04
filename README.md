@@ -201,6 +201,15 @@ in its own terminal:
 .\scripts\run_beat.ps1
 ```
 
+**One command on macOS or Linux:** `bash scripts/dev_up.sh` checks Redis (starts one if it can), the migrations and `manage.py check_restoration --require upscale`, then starts a Celery
+worker (the `solo` pool on macOS), Celery beat and Django on `http://127.0.0.1:8000` with `CELERY_TASK_ALWAYS_EAGER=False`, and stops them when you press Ctrl-C. An upload then
+answers in about a second (`"processing_mode": "background"`) and `GET /api/images/batches/<id>/progress/` moves through the real stages
+(measured 2026-11-04: `quality_analysis` -> `enhancement` 75 % -> `completed` 100 % in 29 s for a 12 MP dark portrait).
+
+**Demonstration profile.** `.env.demo.example` switches the restoration stages on (blur removal, face restoration, upscaling, Zero-DCE) with the limits that keep a photograph fast;
+append it to your `.env` (`cat .env.demo.example >> .env`) and run `python manage.py check_restoration --require deblur face_restore upscale`. Face restoration needs the person's
+face-processing consent (`GET /api/privacy/consents/`); without it the result says so in plain words.
+
 On macOS or Linux run the same processes by hand (the scripts above are for Windows):
 
 ```bash

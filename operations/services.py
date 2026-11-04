@@ -180,6 +180,40 @@ def _model_status(path_value, expected_checksum, enabled=True, disabled_reason="
     }
 
 
+# The pipeline's stages in plain words, with the models that can do each (in order of preference), what runs when none can, and whether it needs the person's face-processing consent.
+PIPELINE_STAGES = (
+    ("low_light", "Dark photographs are brightened", ("zero_dce", "retinexformer"), "a plain OpenCV exposure correction", False),
+    ("denoise", "Noise is reduced", ("nafnet_sidd",), "an OpenCV noise filter", False),
+    ("deblur", "Motion blur is removed", ("nafnet",), "", False),
+    ("face_restore", "Degraded faces are restored", ("codeformer", "gfpgan"), "", True),
+    ("upscale", "Small photographs are enlarged", ("realesrgan",), "", False),
+    ("detail", "The detail model, the last layer of every photograph", ("realesrgan_general",), "the finishing polish", False),
+    ("colourize", "Black-and-white photographs get colour", ("ddcolor",), "", False),
+)
+
+
+def pipeline_stages(models):
+    """Which enhancement stages are on and which are off, and why, from the models check: nobody has to guess from the results.
+
+    ``[{stage, label, active, model, reason?, instead?, needs_consent?}]``: ``model`` is the first model of the stage that is healthy; when none is, ``reason`` says why each cannot run
+    ("its setting is off", an unreadable or unverified file) and ``instead`` what the engine does in its place, when it does anything.
+    """
+    stages = []
+    for key, label, names, instead, needs_consent in PIPELINE_STAGES:
+        present = [(name, models[name]) for name in names if name in models]
+        active = next((name for name, item in present if item["status"] == HEALTHY), None)
+        item = {"stage": key, "label": label, "active": active is not None, "model": active}
+        if active is None:
+            reasons = [f"{name}: {state.get('reason') or 'its file cannot be used (' + str(state.get('code') or 'unavailable') + ')'}" for name, state in present]
+            item["reason"] = "; ".join(reasons) or "no model is configured"
+            if instead:
+                item["instead"] = instead
+        if needs_consent:
+            item["needs_consent"] = "Face restoration needs the person's face-processing consent."
+        stages.append(item)
+    return stages
+
+
 def check_models():
     started = time.perf_counter()
     from enhancement import policy
@@ -214,7 +248,7 @@ def check_models():
     status = DEGRADED if any(
         item["status"] == DEGRADED for item in models.values()
     ) else HEALTHY
-    return _result(status, started, models=models, render_policy=policy.active_policy())
+    return _result(status, started, models=models, stages=pipeline_stages(models), render_policy=policy.active_policy())
 
 
 def job_counts():
