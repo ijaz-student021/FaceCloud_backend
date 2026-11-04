@@ -686,6 +686,10 @@ DDCOLOR_MAX_CHROMA = env.float("DDCOLOR_MAX_CHROMA", default=60.0)
 # compact model, about 30 s with x4plus or UltraSharp, which only AI Enhance / Strong prefer or the fallback uses).
 ADAPTIVE_DETAIL_ENABLED = env.bool("ADAPTIVE_DETAIL_ENABLED", default=True)
 ADAPTIVE_DETAIL_MAX_PIXELS = env.int("ADAPTIVE_DETAIL_MAX_PIXELS", default=4_000_000)
+# The slow detail networks (Real-ESRGAN x4plus and 4x-UltraSharp), when they are only the FALLBACK after the compact one was refused (a style or strength that puts one first still gets it), are not run on a photograph above this many pixels: measured on an Apple M1 (GPU) about 3 s plus
+# 42 s per megapixel (19 s at 0.37 MP, 35 s at 0.75 MP, 44 s inside a whole run), minutes on a CPU, against 3.6 s per megapixel for the compact network. 500,000 keeps a default run of a 1000 px
+# photograph near the 30 s target; the result says so in operations_skipped. 0 = no limit (the old behaviour: only the time budget stops it).
+ADAPTIVE_SLOW_DETAIL_MAX_PIXELS = env.int("ADAPTIVE_SLOW_DETAIL_MAX_PIXELS", default=500_000)
 # The compact Real-ESRGAN network (realesr-general-x4v3, BSD-3-Clause, xinntao/Real-ESRGAN): the first choice for detail restoration (5-6 s against 69 s for x4plus on the same photograph).
 # Its switch is HD_RESTORATION_ENABLED. The hash is that of the file the owner downloaded on 2026-10-17 (not compared with a published hash: none was found; docs/model-licenses/ultrasharp.md).
 REALESRGAN_GENERAL_MODEL_PATH = env("REALESRGAN_GENERAL_MODEL_PATH", default=str(BASE_DIR / ".runtime" / "models" / "realesr-general-x4v3.pth"))

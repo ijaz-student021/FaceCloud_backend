@@ -210,9 +210,18 @@ class AdaptiveImageEnhancementService:
         errors = self._unavailable_errors()
         scale = next((variant["scale"] for variant in step.variants if "scale" in variant), 1)
         tried, produced = 0, []
+        pixels = current.image.shape[0] * current.image.shape[1]
+        slow_limit = int(settings.ADAPTIVE_SLOW_DETAIL_MAX_PIXELS)
         for engine in step.engines:
             if tried >= self.config.max_engines_per_step:
                 break
+            if step.operation == ops.DETAIL and engine in ops.SLOW_DETAIL_ENGINES and engine != step.engines[0] and 0 < slow_limit < pixels:
+                # A FALLBACK (the compact network was tried first and refused), not a style that asked for the slow one by name. Not a failure and not an attempt: it is simply not run on a
+                # photograph this large (about a minute on a GPU, minutes on a CPU).
+                record["skipped_engines"].append({"engine": engine, "size_limit": True, "reason": (
+                    f"The slow detail model was not used: this photograph is {pixels / 1e6:.2f} megapixels and the model takes tens of seconds per megapixel "
+                    f"(the limit is {slow_limit / 1e6:.2f}).")})
+                continue
             engine_produced = []
             for variant in step.variants:
                 started = time.perf_counter()
@@ -367,6 +376,9 @@ class AdaptiveImageEnhancementService:
                 stages.append(record)
                 continue
             produced = self._propose(step, current, report, pool, validator, identity if identity.available else None, record)
+            for item in record["skipped_engines"]:
+                if item.get("size_limit") and not any(entry["reason"] == item["reason"] for entry in skipped):
+                    skipped.append({"operation": step.operation, "reason": item["reason"]})
             timed_out = timed_out or bool(record.get("timed_out"))
             record["candidates"] = [candidate.id for candidate in produced]
             record["seconds"] = round(sum(candidate.seconds for candidate in produced), 2)

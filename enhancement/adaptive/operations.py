@@ -40,6 +40,9 @@ ENGINES = {
 }
 
 
+SLOW_DETAIL_ENGINES = ("realesrgan", "ultrasharp")   # the 4x networks run at 2x for the detail step: Real-ESRGAN x4plus about 3 s plus 42 s per megapixel on a GPU (Apple M1, measured; 49 s for 0.75 MP with 4x-UltraSharp), minutes on a CPU; the compact "general" network takes 3.6 s
+
+
 def _blend(parent, candidate, blend):
     if blend >= 0.999:
         return candidate
@@ -97,26 +100,44 @@ def run_low_light(image, engine, blend):
     return _blend(image, raw, blend), [_record(engine, metadata, seconds, chroma=chroma)]
 
 
+_NETWORK_OUTPUT = {}   # operation -> (input image, engine, the network's output, its metadata): the last one, per operation
+
+
+def _network_output(operation, image, engine, compute):
+    """``(output, metadata, reused)``: the network's output for ``image``, computed ONCE for all the blends of one step. The variants of a step differ only in how that output is blended
+    with the input, which is cheap; the network is not (measured: NAFNet deblurring 10-13 s for a 0.75 MP photograph, which the second blend used to repeat)."""
+    hit = _NETWORK_OUTPUT.get(operation)
+    if hit is not None and hit[0] is image and hit[1] == engine:
+        return hit[2], hit[3], True
+    raw, metadata = compute()
+    _NETWORK_OUTPUT[operation] = (image, engine, raw, metadata)
+    return raw, metadata, False
+
+
+def _reuse_note(reused):
+    return {"model_reused": True} if reused else {}
+
+
 def run_denoise(image, engine, blend):
     started = time.perf_counter()
     if engine == "nafnet_sidd":
         from enhancement.hd_restoration import denoise_with_nafnet
 
-        raw, metadata = denoise_with_nafnet(image)
+        raw, metadata, reused = _network_output(DENOISE, image, engine, lambda: denoise_with_nafnet(image))
     else:
         from enhancement import services
 
-        raw, metadata = services._edge_aware_denoise(image, 10), {"provider": "edge_aware_nlm"}
+        raw, metadata, reused = _network_output(DENOISE, image, engine, lambda: (services._edge_aware_denoise(image, 10), {"provider": "edge_aware_nlm"}))
     seconds = time.perf_counter() - started
-    return _blend(image, raw, blend), [_record(engine, metadata, seconds)]
+    return _blend(image, raw, blend), [_record(engine, metadata, seconds, **_reuse_note(reused))]
 
 
 def run_deblur(image, engine, blend):
     from enhancement.hd_restoration import deblur_with_nafnet
 
     started = time.perf_counter()
-    raw, metadata = deblur_with_nafnet(image)
-    return _blend(image, raw, blend), [_record(engine, metadata, time.perf_counter() - started)]
+    raw, metadata, reused = _network_output(DEBLUR, image, engine, lambda: deblur_with_nafnet(image))
+    return _blend(image, raw, blend), [_record(engine, metadata, time.perf_counter() - started, **_reuse_note(reused))]
 
 
 def run_face_restoration(image, engine, fidelity):
@@ -138,7 +159,9 @@ _DETAIL_OUTPUT = {"image": None, "engine": None, "raw": None, "metadata": None}
 
 
 def clear_detail_cache():
+    """Forget the models' kept outputs (the detail step's and the deblurring and denoising networks'): none of them is kept past a run."""
     _DETAIL_OUTPUT.update(image=None, engine=None, raw=None, metadata=None)
+    _NETWORK_OUTPUT.clear()
 
 
 def _detail_model_output(image, engine):
