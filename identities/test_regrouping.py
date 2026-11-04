@@ -24,7 +24,7 @@ from .storage import protect_embedding
 
 User = get_user_model()
 State = IdentityMembership.State
-LIMITS = dict(new_group_threshold=0.30, match_threshold=0.45, ambiguity_margin=0.06, guard_min_similarity=0.80)
+LIMITS = dict(new_group_threshold=0.36, match_threshold=0.45, ambiguity_margin=0.06, guard_min_similarity=0.80)
 
 
 def vec(x=0.0, y=0.0, z=0.0):
@@ -136,14 +136,14 @@ class SamePersonJoinsOneFolderTests(Base):
         self.assertEqual(IdentityGroup.objects.count(), 2)
 
     def test_a_face_between_the_two_limits_waits_for_review_and_a_clearly_other_face_opens_a_folder(self):
-        Provider.vectors = {1: angle(0), 2: angle(68), 3: angle(80)}                            # 0.37 (between 0.30 and 0.45) and 0.17 (below 0.30)
+        Provider.vectors = {1: angle(0), 2: angle(68), 3: angle(80)}                            # 0.37 (between 0.36 and 0.45) and 0.17 (below 0.36)
         self.analyse(self.photo([a_face(1)]))
         uncertain, stranger = self.photo([a_face(2)]), self.photo([a_face(3)])
         self.assertEqual(self.analyse(uncertain).status, "needs_review")
         waiting = IdentityMembership.objects.get(identity_face__image=uncertain)
         self.assertEqual(waiting.state, State.NEEDS_REVIEW)
         self.assertEqual(waiting.evidence["threshold"], 0.45)                                  # the provider's own limits are what the evidence records
-        self.assertEqual(waiting.evidence["new_group_threshold"], 0.30)
+        self.assertEqual(waiting.evidence["new_group_threshold"], 0.36)
         self.analyse(stranger)
         self.assertEqual(IdentityGroup.objects.count(), 2)
 

@@ -879,7 +879,10 @@ ARCFACE_AMBIGUITY_MARGIN = env.float("ARCFACE_AMBIGUITY_MARGIN", default=0.06)
 # SFACE_GUARD_MIN_SIMILARITY is the enhancement identity guard (the same photograph before and after), not a grouping limit.
 SFACE_GUARD_MIN_SIMILARITY = env.float("SFACE_GUARD_MIN_SIMILARITY", default=0.80)
 SFACE_MATCH_THRESHOLD = env.float("SFACE_MATCH_THRESHOLD", default=0.45)
-SFACE_NEW_GROUP_THRESHOLD = env.float("SFACE_NEW_GROUP_THRESHOLD", default=0.30)
+# 0.36 (was 0.30): two different men who scored 0.312 against each other were put in the same folder's review list and the second never got a folder of his own. 0.363 is the
+# cosine at which the model's own authors (OpenCV zoo, face_recognition_sface/sface.py) call two faces the same person; below it, a face opens its own folder
+# (docs/evaluation/2026-10-19-sface-thresholds.md, "Update 2026-11-04"). The merge suggestion minimum (0.40) catches the rare one person who is split.
+SFACE_NEW_GROUP_THRESHOLD = env.float("SFACE_NEW_GROUP_THRESHOLD", default=0.36)
 SFACE_AMBIGUITY_MARGIN = env.float("SFACE_AMBIGUITY_MARGIN", default=0.06)
 SFACE_MERGE_SUGGESTION_MIN_SIMILARITY = env.float("SFACE_MERGE_SUGGESTION_MIN_SIMILARITY", default=0.40)
 # The generic limits: what a provider that defines none of its own falls back to (a stand-in provider, for instance).
