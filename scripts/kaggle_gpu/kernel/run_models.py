@@ -6,6 +6,7 @@ run is expected to need a fix or two. That is why every model runs on its own, a
 Input: the kit's dataset (``config.json``, ``lq/<kind>/<id>.png``). Output in /kaggle/working: ``out/<model>/<kind>/<id>.png``, ``timings.json``, ``summary.json``, ``log.txt``.
 """
 import json
+import shlex
 import shutil
 import subprocess
 import sys
@@ -28,9 +29,10 @@ def log(message):
 
 
 def sh(command, cwd=None):
-    """Run a shell command, append everything it prints to the log, and return its exit code."""
-    log(f"$ {command}")
-    process = subprocess.run(command, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    """Run a command (a list of arguments, or a string split like a shell would, with NO shell), append everything it prints to the log, and return its exit code."""
+    arguments = shlex.split(command) if isinstance(command, str) else [str(part) for part in command]
+    log("$ " + " ".join(shlex.quote(part) for part in arguments))
+    process = subprocess.run(arguments, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     with LOG.open("a", encoding="utf-8") as handle:
         handle.write(process.stdout[-20000:] + f"\n[exit {process.returncode}]\n")
     return process.returncode
@@ -116,7 +118,7 @@ def codeformer(kit, kinds, ids, timings, summary):
     sh("python scripts/download_pretrained_models.py facelib", cwd=root)
     sh("python scripts/download_pretrained_models.py CodeFormer", cwd=root)
     for weight in (1.0, 0.7):
-        run_variant(f"codeformer_w{weight}", kit, kinds, ids, lambda i, o, w=weight: (f"python inference_codeformer.py -w {w} --has_aligned --input_path {i} --output_path {o}", root), timings, summary)
+        run_variant(f"codeformer_w{weight}", kit, kinds, ids, lambda i, o, w=weight: (["python", "inference_codeformer.py", "-w", str(w), "--has_aligned", "--input_path", i, "--output_path", o], root), timings, summary)
 
 
 def gfpgan(kit, kinds, ids, timings, summary):
@@ -125,16 +127,18 @@ def gfpgan(kit, kinds, ids, timings, summary):
     package = installed_package_dir("basicsr")
     if package:
         patch_torchvision(package)
-    sh("mkdir -p experiments/pretrained_models && wget -q https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth -P experiments/pretrained_models", cwd=root)
-    run_variant("gfpgan_v1.4", kit, kinds, ids, lambda i, o: (f"python inference_gfpgan.py -i {i} -o {o} -v 1.4 -s 1 --aligned", root), timings, summary)
+    weights = root / "experiments" / "pretrained_models"
+    weights.mkdir(parents=True, exist_ok=True)
+    sh(["wget", "-q", "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth", "-P", weights], cwd=root)
+    run_variant("gfpgan_v1.4", kit, kinds, ids, lambda i, o: (["python", "inference_gfpgan.py", "-i", i, "-o", o, "-v", "1.4", "-s", "1", "--aligned"], root), timings, summary)
 
 
 def diffbir(kit, kinds, ids, timings, summary):
     root = clone("DiffBIR", "https://github.com/XPixelGroup/DiffBIR")
     sh("pip install -q -r requirements.txt", cwd=root)
-    command = ("python -u inference.py --task face --upscale 1 --version v2 --sampler spaced --steps 50 --captioner none --pos_prompt '' "
-               f"--neg_prompt '{NEG_PROMPT}' --cfg_scale 4.0 --input {{i}} --output {{o}} --device cuda --precision fp32")
-    run_variant("diffbir_v2", kit, kinds, ids, lambda i, o: (command.format(i=i, o=o), root), timings, summary)
+    arguments = ["python", "-u", "inference.py", "--task", "face", "--upscale", "1", "--version", "v2", "--sampler", "spaced", "--steps", "50", "--captioner", "none", "--pos_prompt", "",
+                 "--neg_prompt", NEG_PROMPT, "--cfg_scale", "4.0", "--device", "cuda", "--precision", "fp32"]
+    run_variant("diffbir_v2", kit, kinds, ids, lambda i, o: ([*arguments, "--input", i, "--output", o], root), timings, summary)
 
 
 def pmrf(kit, kinds, ids, timings, summary):
@@ -144,7 +148,8 @@ def pmrf(kit, kinds, ids, timings, summary):
     package = installed_package_dir("basicsr")
     if package:
         patch_torchvision(package)
-    run_variant("pmrf_k25", kit, kinds, ids, lambda i, o: (f"python inference.py --ckpt_path ohayonguy/PMRF_blind_face_image_restoration --ckpt_path_is_huggingface --lq_data_path {i} --output_dir {o} --batch_size 16 --num_flow_steps 25", root), timings, summary)
+    run_variant("pmrf_k25", kit, kinds, ids, lambda i, o: (["python", "inference.py", "--ckpt_path", "ohayonguy/PMRF_blind_face_image_restoration", "--ckpt_path_is_huggingface", "--lq_data_path", i, "--output_dir", o,
+                                                            "--batch_size", "16", "--num_flow_steps", "25"], root), timings, summary)
 
 
 MODELS = {"codeformer": codeformer, "gfpgan": gfpgan, "diffbir": diffbir, "pmrf": pmrf}
@@ -157,7 +162,8 @@ def main():
     config = json.loads((kit / "config.json").read_text(encoding="utf-8"))
     ids, kinds = config["ids"], config["kinds"]
     log(f"kit {kit}: {len(ids)} faces, degradations {kinds}, models {config['models']}")
-    sh("nvidia-smi | head -15; python -c \"import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())\"")
+    sh(["nvidia-smi"])
+    sh(["python", "-c", "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())"])
     timings, summary = {}, {}
     for name in config["models"]:
         log(f"===== {name}")

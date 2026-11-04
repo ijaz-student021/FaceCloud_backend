@@ -151,6 +151,17 @@ class RunnerHelperTests(SimpleTestCase):
             self.assertEqual(int(cv2.imread(str(destination / "0001.png")).mean()), 30)
             self.assertFalse((destination / "0002.png").exists())
 
+    def test_commands_run_without_a_shell(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as folder, patch.object(runner, "LOG", Path(folder) / "log.txt"), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(runner.sh(["python3", "-c", "print('listed')"]), 0)
+            self.assertEqual(runner.sh("echo a && echo b"), 0)          # a string is split into arguments: the && is text for echo, not a second command
+            log = (Path(folder) / "log.txt").read_text()
+        self.assertIn("listed", log)
+        self.assertIn("a && echo b", log)
+        self.assertNotIn("shell=True", (KIT / "kernel" / "run_models.py").read_text().replace("with NO shell", ""))
+
     def test_the_models_in_the_kits_config_are_the_ones_the_runner_knows(self):
         self.assertEqual(set(prepare.MODELS), set(runner.MODELS))
 
