@@ -321,7 +321,7 @@ class ValidatorTests(SimpleTestCase):
 
     def test_a_failed_identity_check_rejects_even_a_good_looking_candidate(self):
         class Fails:
-            def check(self, candidate):
+            def check(self, candidate, restoring=False):
                 return {"status": "failed", "similarity": 0.31, "threshold": 0.7}
 
         validator = FinalImageQualityValidator(self.analyzer, self.report, identity=Fails())

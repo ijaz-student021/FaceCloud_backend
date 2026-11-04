@@ -394,7 +394,7 @@ class FinalImageQualityValidator:
                 status["passed"] = False
                 verdict["reasons"].append("identity_unverifiable")
         else:
-            checked = self.identity.check(candidate)
+            checked = self.identity.check(candidate, restoring=operation == "face_restoration")
             status.update(embedding=checked["status"], similarity=checked.get("similarity"), threshold=checked.get("threshold"))
             if checked["status"] == "failed":
                 status["passed"] = False

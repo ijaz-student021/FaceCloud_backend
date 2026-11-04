@@ -83,7 +83,7 @@ class IdentityChecker:
     """The original's faces embedded once; ``check`` compares any candidate with them."""
 
     def __init__(self, original, allowed):
-        self.reference, self.reason, self.threshold = None, "", None
+        self.reference, self.reason, self.threshold, self.restore_threshold = None, "", None, None
         if not allowed:
             self.reason = "Biometric processing is not permitted for this account, so identity was not checked."
             return
@@ -95,7 +95,9 @@ class IdentityChecker:
         except IdentityGuardUnavailable as error:
             self.reason = str(error)
         if self.reference is not None:
-            self.threshold = thresholds_for(self.reference.provider)["guard"]
+            limits = thresholds_for(self.reference.provider)
+            self.threshold = limits["guard"]
+            self.restore_threshold = limits.get("restore_guard", limits["guard"])        # a face restoration is held to its own, measured limit
 
     @property
     def available(self):
@@ -106,12 +108,14 @@ class IdentityChecker:
 
         return compare_faces(self.reference, candidate)
 
-    def check(self, candidate):
+    def check(self, candidate, restoring=False):
+        """``restoring``: the candidate is (or contains) a face restoration, which is held to ``restore_threshold``."""
+        threshold = self.restore_threshold if restoring else self.threshold
         found = [item["similarity"] for item in self.faces(candidate) if item["similarity"] is not None]
         if not found:
-            return {"status": "inconclusive", "similarity": None, "threshold": self.threshold}
+            return {"status": "inconclusive", "similarity": None, "threshold": threshold}
         worst = round(min(found), 4)
-        return {"status": "verified" if worst >= self.threshold else "failed", "similarity": worst, "threshold": self.threshold}
+        return {"status": "verified" if worst >= threshold else "failed", "similarity": worst, "threshold": threshold}
 
 
 def identity_report(report0, identity, accepted_operations, final_check, allow_biometric_processing):
@@ -141,6 +145,7 @@ def identity_report(report0, identity, accepted_operations, final_check, allow_b
                           "photograph were not compared with the original."}
     status = final_check["status"]
     base["similarity"] = final_check.get("similarity")
+    base["threshold"] = final_check.get("threshold", base["threshold"])      # the limit that was applied (a restored face has its own)
     if status == "verified":
         return {**base, "status": "verified", "state": "verified", "verified": True, "notice": "", "reason": ""}
     if status == "failed":   # the validator does not accept such a candidate; reported rather than assumed
@@ -273,7 +278,7 @@ class AdaptiveImageEnhancementService:
             trial = (parent.astype(np.float32) * (1 - mask) + restored.astype(np.float32) * mask)
             trial = np.clip(np.rint(trial), 0, 255).astype(np.uint8)
             similarities = [item["similarity"] for item in identity.faces(trial) if item["similarity"] is not None]
-            passed = bool(similarities) and min(similarities) >= identity.threshold
+            passed = bool(similarities) and min(similarities) >= (getattr(identity, "restore_threshold", None) or identity.threshold)
             summary.append({"box": list(face.box), "restored": passed, "worst_similarity": round(min(similarities), 4) if similarities else None})
             if passed:
                 keep = np.maximum(keep, mask[..., 0])
@@ -410,7 +415,7 @@ class AdaptiveImageEnhancementService:
             outcome = PARTIALLY_ENHANCED
         else:
             outcome = ENHANCED
-        final_identity = identity.check(final) if identity.available and accepted_operations else None
+        final_identity = identity.check(final, restoring=ops.FACE in accepted_operations) if identity.available and accepted_operations else None
         identity_block = identity_report(report0, identity, accepted_operations, final_identity, allow_biometric_processing)
         if any("brightened photograph" in warning for warning in warnings):
             identity_block["scope"] = ("Compared with the brightened photograph, because the uploaded face was too dark to embed; "

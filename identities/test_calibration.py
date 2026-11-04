@@ -44,14 +44,14 @@ class TwoDifferentPeopleTests(SimpleTestCase):
 class LimitsPerProviderTests(SimpleTestCase):
     def test_sface_has_limits_of_its_own_not_the_generic_ones(self):
         limits = thresholds_for(SFaceOnnxProvider())
-        self.assertEqual(limits, {"guard": 0.80, "match": 0.45, "new_group": 0.36, "margin": 0.06})
+        self.assertEqual(limits, {"guard": 0.80, "restore_guard": 0.65, "match": 0.45, "new_group": 0.36, "margin": 0.06})
         self.assertLess(limits["new_group"], limits["match"])
         generic = thresholds_for(type("Stand", (IdentityEmbeddingProvider,), {"name": "x", "healthcheck": lambda self: True, "embed": lambda self, f: f})())
         self.assertEqual((generic["new_group"], generic["match"]), (0.68, 0.82))             # a provider with none of its own still falls back to these
 
     def test_each_limit_can_be_set_from_the_settings(self):
         with override_settings(SFACE_NEW_GROUP_THRESHOLD=0.2, SFACE_MATCH_THRESHOLD=0.5, SFACE_AMBIGUITY_MARGIN=0.1, SFACE_GUARD_MIN_SIMILARITY=0.7):
-            self.assertEqual(thresholds_for(SFaceOnnxProvider()), {"guard": 0.7, "match": 0.5, "new_group": 0.2, "margin": 0.1})
+            self.assertEqual(thresholds_for(SFaceOnnxProvider()), {"guard": 0.7, "restore_guard": 0.65, "match": 0.5, "new_group": 0.2, "margin": 0.1})
 
     def test_arcface_keeps_its_own_and_the_generic_settings_no_longer_move_sface(self):
         arcface = thresholds_for(ArcFaceOnnxProvider())

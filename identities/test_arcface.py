@@ -39,13 +39,14 @@ class ProviderSelectionTests(SimpleTestCase):
     def test_sface_and_arcface_each_have_their_own_thresholds(self):
         sface = SFaceOnnxProvider().thresholds()
         self.assertEqual(sface, {         # SFace's own, measured (settings.SFACE_*); the generic IDENTITY_* ones are only a fallback
-            "guard": float(settings.SFACE_GUARD_MIN_SIMILARITY), "match": float(settings.SFACE_MATCH_THRESHOLD),
+            "guard": float(settings.SFACE_GUARD_MIN_SIMILARITY), "restore_guard": float(settings.SFACE_RESTORE_GUARD_MIN_SIMILARITY), "match": float(settings.SFACE_MATCH_THRESHOLD),
             "new_group": float(settings.SFACE_NEW_GROUP_THRESHOLD), "margin": float(settings.SFACE_AMBIGUITY_MARGIN),
         })
         arcface = ArcFaceOnnxProvider().thresholds()
         self.assertEqual(arcface["guard"], settings.ARCFACE_GUARD_MIN_SIMILARITY)
         self.assertLess(arcface["new_group"], arcface["match"])  # the same ordering rule the system check enforces
         self.assertNotEqual(arcface["guard"], sface["guard"])
+        self.assertEqual(arcface["restore_guard"], arcface["guard"])      # only SFace has a measured restoration limit; another model keeps its guard
 
 
 class ArcFaceProviderTests(SimpleTestCase):

@@ -16,6 +16,8 @@ class IdentityEmbeddingProvider(ABC):
     # Similarity scales differ between models, so thresholds belong to the provider. ``None`` means "use the
     # SFace-calibrated settings" (IDENTITY_GUARD_MIN_SIMILARITY, IDENTITY_MATCH_THRESHOLD, ...).
     guard_min_similarity = None
+    # The enhancement guard's limit for a FACE RESTORATION (the restored face against a degraded upload); ``None`` = the guard's own limit, i.e. no difference.
+    restore_guard_min_similarity = None
     match_threshold = None
     new_group_threshold = None
     ambiguity_margin = None
@@ -26,8 +28,10 @@ class IdentityEmbeddingProvider(ABC):
     def thresholds(self):
         """``{guard, match, new_group, margin}`` for this provider, falling back to the settings."""
         pick = lambda own, fallback: float(fallback if own is None else own)  # noqa: E731
+        guard = pick(self.guard_min_similarity, settings.IDENTITY_GUARD_MIN_SIMILARITY)
         return {
-            "guard": pick(self.guard_min_similarity, settings.IDENTITY_GUARD_MIN_SIMILARITY),
+            "guard": guard,
+            "restore_guard": min(guard, pick(self.restore_guard_min_similarity, guard)),      # a restoration is never held to MORE than the guard
             "match": pick(self.match_threshold, settings.IDENTITY_MATCH_THRESHOLD),
             "new_group": pick(self.new_group_threshold, settings.IDENTITY_NEW_GROUP_THRESHOLD),
             "margin": pick(self.ambiguity_margin, settings.IDENTITY_AMBIGUITY_MARGIN),
@@ -110,7 +114,7 @@ class SFaceOnnxProvider(IdentityEmbeddingProvider):
         self.model_checksum = settings.IDENTITY_MODEL_SHA256.lower()
         # SFace's own limits (measured, see settings.SFACE_*), not the generic ones; a subclass that sets its own keeps them.
         for attribute, name in (
-            ("guard_min_similarity", "SFACE_GUARD_MIN_SIMILARITY"), ("match_threshold", "SFACE_MATCH_THRESHOLD"),
+            ("guard_min_similarity", "SFACE_GUARD_MIN_SIMILARITY"), ("restore_guard_min_similarity", "SFACE_RESTORE_GUARD_MIN_SIMILARITY"), ("match_threshold", "SFACE_MATCH_THRESHOLD"),
             ("new_group_threshold", "SFACE_NEW_GROUP_THRESHOLD"), ("ambiguity_margin", "SFACE_AMBIGUITY_MARGIN"),
             ("merge_suggestion_similarity", "SFACE_MERGE_SUGGESTION_MIN_SIMILARITY"),
         ):

@@ -82,7 +82,7 @@ class FakeIdentity:
         vector = crop.astype(np.float32).ravel() - float(crop.mean())
         return vector / max(float(np.linalg.norm(vector)), 1e-6)
 
-    def check(self, candidate):
+    def check(self, candidate, restoring=False):
         similarity = float(np.dot(self.reference, self._vector(candidate)))
         return {"status": "verified" if similarity >= self.threshold else "failed", "similarity": round(similarity, 4),
                 "threshold": self.threshold}
