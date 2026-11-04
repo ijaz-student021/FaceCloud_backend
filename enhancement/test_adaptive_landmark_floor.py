@@ -31,7 +31,7 @@ def gate(operation, box, dx_original_px, identity=None, scale=2):
     return verdict["gates"]["identity"]
 
 
-VERIFIED = SimpleNamespace(check=lambda _image: {"status": "verified", "similarity": 0.9, "threshold": 0.4})
+VERIFIED = SimpleNamespace(check=lambda _image, restoring=False: {"status": "verified", "similarity": 0.9, "threshold": 0.4})
 
 
 class LandmarkPixelFloorTests(SimpleTestCase):
