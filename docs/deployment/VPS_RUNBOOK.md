@@ -103,7 +103,7 @@ unless marked optional; `python manage.py check` refuses to start production if 
 | `BIOMETRIC_CONSENT_REQUIRED`, `FACIAL_DATA_RETENTION_DAYS` | `True`, a number of days you decided |
 | `MEDIA_ROOT`, `STATIC_ROOT`, `STORAGE_BACKEND` | `/var/lib/facecloud/media`, `/srv/facecloud/static`, `filesystem` (or `s3` with `AWS_STORAGE_BUCKET_NAME`, see `aws-s3-private-storage.md`) |
 | `LOG_FILE` (optional) | `/var/log/facecloud/app.log` (rotating; otherwise logs go to the journal) |
-| model switches (optional) | start from `ec2-small-cpu.env.example`; anything non-commercial needs `NONCOMMERCIAL_MODELS_ACKNOWLEDGED` decided by the owner |
+| model switches | `vps.env.example` already carries the engine policy (`ENHANCEMENT_RENDER_POLICY=adaptive_v1`) and the owner's decision to run Zero-DCE (`ZERO_DCE_ENABLED=True`, `NONCOMMERCIAL_MODELS_ACKNOWLEDGED=True`, recorded in `docs/model-licenses/zero-dce-owner-decision.md`); any OTHER non-commercial model (CodeFormer, GFPGAN, ArcFace, 4x-UltraSharp) is a separate decision of the owner; the light profile is `ec2-small-cpu.env.example` |
 
 Never put the file in git, a chat or a ticket. Back the **keys** up separately from the data (a password manager or secret store): the database dump and the
 media are useless without `IMAGE_ENCRYPTION_KEY` and `IDENTITY_EMBEDDING_KEY`.
