@@ -502,7 +502,10 @@ class FinalImageQualityValidator:
         if operation == "detail_restoration":
             gain = structure_energy(candidate) / max(structure_energy(parent), 1e-6)
             compression_better = before.compression["status"] == "heavy" and after.compression["status"] != "heavy"
-            blur_better = (before.blur["status"] != "none" and after.blur["status"] == "none") or (before.blur["retention"] - after.blur["retention"] >= 0.02)
+            # A photograph too small for the blur analysis has no retention (None) before or after: that is "no evidence", never an error that fails the whole enhancement.
+            retention_before, retention_after = before.blur.get("retention"), after.blur.get("retention")
+            retention_better = retention_before is not None and retention_after is not None and retention_before - retention_after >= 0.02
+            blur_better = (before.blur["status"] != "none" and after.blur["status"] == "none") or retention_better
             face = after.main_face
             face_ok = face is None or face.detail is None or face.detail <= limits.face_max_detail
             # The final layer (``refine``, ADAPTIVE_ALWAYS_ENHANCE): the light-photo model is applied to every photograph, so there is no defect to resolve. It is kept unless it smooths the

@@ -166,6 +166,11 @@ class EngineTests(SimpleTestCase):
         _out, _level, parameters = run(self.source(), runners={ops.DETAIL: runner_detail_adds_structure}, ADAPTIVE_DETAIL_MAX_PIXELS=1000)
         self.assertEqual(parameters["adaptive"]["operations_applied"], [ops.POLISH])
 
+    def test_a_photograph_without_strong_edges_is_enhanced_or_kept_never_failed(self):
+        flat = np.full((240, 320, 3), 120, np.uint8)
+        _out, _level, parameters = run(flat, runners={ops.DETAIL: runner_detail_adds_structure}, identity=False, analyzer=analyzer_with())
+        self.assertIn(parameters["adaptive"]["outcome"], ("enhanced", "partially_enhanced", "original_preserved"))
+
     def test_it_does_not_need_the_polish_switch(self):
         _out, _level, parameters = run(self.source(), runners={ops.DETAIL: runner_detail_changes_nothing}, ADAPTIVE_POLISH_ENABLED=False)
         self.assertEqual(parameters["adaptive"]["operations_applied"], [ops.POLISH])
@@ -242,6 +247,18 @@ class ValidatorTests(SimpleTestCase):
         self.assertTrue(gate["passed"], gate)
         smoothed = cv2.GaussianBlur(noisy, (0, 0), 3.0)
         self.assertFalse(validator.evaluate(noisy, smoothed, "detail_restoration", report, refine=True)["gates"]["improves_defect"]["passed"])
+
+    def test_a_photograph_without_strong_edges_has_no_blur_retention_and_that_is_not_an_error(self):
+        """Fog, a plain wall or a smooth gradient has no strong edges, so the analyzer reports blur retention None before and after; the gate used to subtract the two and fail the
+        whole enhancement ("The image could not be enhanced safely") now that the detail model is the last layer of every photograph."""
+        flat = np.full((240, 320, 3), 120, np.uint8)
+        report = self.analyzer.analyze(flat)
+        self.assertIsNone(report.blur["retention"])
+        validator = FinalImageQualityValidator(self.analyzer, report, None)
+        candidate = cv2.GaussianBlur(flat, (0, 0), 0.8)
+        for refine in (True, False):
+            verdict = validator.evaluate(flat, candidate, "detail_restoration", report, refine=refine)      # must not raise
+            self.assertIn("improves_defect", verdict["gates"])
 
     def test_an_invented_amount_of_structure_is_still_refused(self):
         verdict = self.validator.evaluate(self.source, mild_sharpen(self.source, 6.0), "detail_restoration", self.report, refine=True)
