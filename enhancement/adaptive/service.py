@@ -308,6 +308,8 @@ class AdaptiveImageEnhancementService:
             warnings.append(identity.reason)
 
         timed_out = False
+        final_tried = finish_tried = False
+        defect_report = report0
         profile = profile_for(style, requested_level)     # what the style and the strength change (profile.py); the validator's gates are the same for all
         while True:
             if time.perf_counter() - started > self.config.time_budget_seconds or timed_out:
@@ -318,15 +320,25 @@ class AdaptiveImageEnhancementService:
             # Not after an operation that was accepted or that a defect called for; a refused attempt the style or strength asked for left the photograph as it was.
             # Always-enhance: a corrective step the safety gates refused does not keep the photograph from the finishing polish (nothing was accepted, so nothing is stacked).
             nothing_changed = all(s["status"] != "accepted" and (s.get("optional") or settings.ADAPTIVE_ALWAYS_ENHANCE) for s in stages)
-            polish_on = settings.ADAPTIVE_POLISH_ENABLED or settings.ADAPTIVE_ALWAYS_ENHANCE
+            polish_on = settings.ADAPTIVE_POLISH_ENABLED and not settings.ADAPTIVE_ALWAYS_ENHANCE      # always-enhance: the polish is the fallback of the final layer, below
             polish = {"style": profile.polish_style} if polish_on and nothing_changed and profile.polish_style else None
             decision = self.router.next_step(report, done, polish, profile)
             for item in decision.skipped:
                 if item not in skipped:
                     skipped.append(item)
-            if decision.step is None:
-                break
             step = decision.step
+            if step is None and settings.ADAPTIVE_ALWAYS_ENHANCE:
+                # The router has nothing more to do. Every photograph still gets the final layer (the light-photo model, stacked on whatever was accepted, unless that model already ran as a
+                # step), and the finishing polish if, after that, nothing at all was accepted.
+                if not final_tried:
+                    final_tried = True
+                    if not any(s["operation"] == ops.DETAIL and s["status"] == "accepted" for s in stages):
+                        step = self.router.final_layer_step(report)
+                if step is None and not finish_tried and not any(s["status"] == "accepted" for s in stages):
+                    finish_tried = True
+                    step = self.router.finish_step(report, profile)
+            if step is None:
+                break
             if (step.operation == ops.FACE and not identity.available and allow_biometric_processing
                     and "too dark" in identity.reason and current is not pool.original):
                 # The original face was too dark to embed; the validated, lifted image is the best available reference.
@@ -365,13 +377,15 @@ class AdaptiveImageEnhancementService:
             stages.append(record)
             recorder.image(self._debug_name(step.operation), chosen.image)
             current, report = chosen, analyzer.analyze(chosen.image)
+            if not str(step.reason).startswith("Final layer"):
+                defect_report = report          # the final layer is not a correction: what is left unresolved is judged before it (its smoothing can read as a blur)
 
         final = current.image
         accepted_operations = [s["operation"] for s in stages if s["status"] == "accepted"]
         # A defect is unresolved only if the ORIGINAL had it and the result still does. (Counting whatever the analyzer finds in the
         # result was wrong: a brightened photograph is smoother and read as "blurred", which then reported a defect that was never there.)
-        remaining = [c for c in report.conditions if c in ADDRESSABLE and c in report0.conditions] if accepted_operations else []
-        introduced = [c for c in report.conditions if c in ADDRESSABLE and c not in report0.conditions] if accepted_operations else []
+        remaining = [c for c in defect_report.conditions if c in ADDRESSABLE and c in report0.conditions] if accepted_operations else []
+        introduced = [c for c in defect_report.conditions if c in ADDRESSABLE and c not in report0.conditions] if accepted_operations else []
         if not accepted_operations:
             outcome = ORIGINAL_PRESERVED
         elif remaining:
@@ -452,7 +466,7 @@ class AdaptiveImageEnhancementService:
                  ops.FACE: "restored a degraded face", ops.UPSCALE: "enlarged the photograph",
                  ops.DETAIL: "restored fine detail and reduced compression blocking",
                  ops.POLISH: "balanced the contrast and sharpened lightly", ops.COLORIZE: "colourized the black-and-white photograph"}
-        done = [("refined the fine detail with the enhancement model" if s["operation"] == ops.DETAIL and str(s.get("reason", "")).startswith("No defect") else words[s["operation"]])
+        done = [("refined the fine detail with the enhancement model" if s["operation"] == ops.DETAIL and str(s.get("reason", "")).startswith("Final layer") else words[s["operation"]])
                 for s in stages if s["status"] == "accepted"]
         if outcome == ORIGINAL_PRESERVED:
             # A polish that was tried and refused is not a defect that could not be fixed: it says "nothing to improve", not "unsafe".
