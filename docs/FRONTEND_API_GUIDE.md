@@ -384,7 +384,10 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}     -> 201
     Stages: `low_light`, `denoise`, `deblur`, `face_restore`, `upscale`, and `polish` (a gentle contrast and sharpness polish of a
     photograph with nothing to fix, only when the operator turned `ADAPTIVE_POLISH_ENABLED` on: `{"stage": "polish", "engine":
     "opencv_polish", "variant": "blend 0.65"}`, summary "Polished: balanced the contrast and sharpened lightly.", outcome
-    `enhanced`; give it a label such as "Polish"). `[]` when nothing changed.
+    `enhanced`; give it a label such as "Polish"), `detail` (the detail model for light photographs, `{"stage": "detail", "engine": "general", "variant": "final 0.7"}`; it is also
+    the **final layer of every photograph**, so expect it on most results; label it "Detail" or "Refined detail") and `colourize` (DDColor on a black-and-white photograph; label it
+    "Colour"). **`stage` is never null** (2026-11-04: until then `detail` and `colourize` were sent as `null`, which broke a client that reads it as text); a name this list does not
+    know yet is the engine's own operation name, so show unknown names as plain text. `[]` when nothing changed.
   - `skipped_stages`: restoration the photograph called for that did not run (and, with polish on, `{"stage": "polish", "reason":
     "Already balanced and sharp: nothing to improve."}` when a polish was tried and the photograph was left as it was; that is not a
     failure and never feeds `hd_unavailable_reason`): `[{"stage": "face_restore", "reason": "codeformer: switched

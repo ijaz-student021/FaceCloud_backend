@@ -172,7 +172,7 @@ class ImageEditVersionSerializer(serializers.ModelSerializer):
 
 
 class AppliedStageSerializer(serializers.Serializer):
-    stage = serializers.CharField(help_text="low_light, denoise, deblur, face_restore or upscale.")
+    stage = serializers.CharField(help_text="low_light, denoise, deblur, face_restore, upscale, polish, detail (the detail model, which is also the final layer of every photograph) or colourize. Never null.")
     engine = serializers.CharField(allow_null=True, help_text="The model that produced it, e.g. nafnet_gopro or realesrgan.")
     variant = serializers.CharField(allow_null=True, required=False)
     scale = serializers.IntegerField(allow_null=True, required=False, help_text="Upscale only: 2 means twice the width and height.")
