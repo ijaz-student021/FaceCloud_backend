@@ -9,7 +9,7 @@ Measurements are in the renderer's units: CIE L on the 0-255 scale and a/b of fl
 
 Natures:
 
-* ``low_key``: at least half of the pixels are near black (L below 40), there is a lit subject (at least 5 % of the pixels above L 60, the 95th percentile above 90). The automatic enhancement
+* ``low_key``: at least half of the pixels are near black (L below 40), there is a lit subject (at least 5 % of the pixels above L 60, the 95th percentile above 120). The automatic enhancement
   tends to lift the black floor of such a photograph (measured on the owner's portrait: the dark mass went from L 8.7 in the upload to 23.7, a milky background). Auto compares the floor with the
   unenhanced photograph (``baseline``): only a floor the enhancement LIFTED is put back (``brightness``: the way down divided by the renderer's 0.35, to 15 % of the original floor, as the owner did),
   so a photograph that is naturally dark grey is not crushed to black; without the unenhanced photograph the exposure is left alone. The darkest tones are deepened (``shadows``), the subject
@@ -40,8 +40,9 @@ CONTRAST_K = 0.005                # tone.py: contrast scales L about the median 
 SHADOWS_K = 0.45                  # tone.py: shadows adds value * 0.45 * (1 - L/255)^2
 
 LOW_KEY_DARK_SHARE = 0.50
-LOW_KEY_MIN_P95 = 90.0
+LOW_KEY_MIN_P95 = 120.0           # a lit subject that is properly exposed: the owner's portrait is at 136 in the upload; a dim night photograph of a person (95th percentile 97) is under-exposed, not low-key
 LOW_KEY_MIN_LIT_SHARE = 0.05
+LOW_KEY_MAX_ORIGINAL_FLOOR = 12.0     # a BLACK background: the owner's portrait is at 8.7 in the upload; a night photograph whose dark part is 15 and shows a wall and trees is not
 LOW_KEY_BLACK_RATIO = 0.15        # owner: the dark mass's median after the edit, over its median in the upload (1.2 / 8.7 = 0.14)
 LOW_KEY_DEADBAND = 3.0            # a floor the enhancement raised by no more than this is not touched
 LOW_KEY_SUBJECT = 155.0           # owner: the 95th percentile after the edit (152.6 by hand)
@@ -86,6 +87,8 @@ def _low_key(scene, baseline_scene, controls, rationale):
     brightness = 0.0
     if original is None:
         rationale.append("A dark photograph with a lit subject; the unenhanced photograph was not available to tell whether its blacks were lifted, so the exposure was left alone.")
+    elif original > LOW_KEY_MAX_ORIGINAL_FLOOR:
+        rationale.append("A dark photograph with a lit subject, but its dark part is not black in the unenhanced photograph (it shows detail), so the exposure was left alone.")
     elif floor - original > LOW_KEY_DEADBAND:
         target = LOW_KEY_BLACK_RATIO * original
         brightness = -min((floor - target) / BRIGHTNESS_K, -ADAPTIVE_RANGE["brightness"][0])
@@ -141,3 +144,12 @@ def recommend_adaptive_adjustments(source, quality, *, blockiness_detected=False
         rationale = ["No clear technical fault was measured; nothing was changed."]
     return {"action": action, "controls": controls, "rationale": rationale, "caution_flags": flags, "intent": "auto", "nature": nature,
             "scene": {key: (None if value is None else round(value, 2)) for key, value in scene.items()}}
+
+
+def is_black_backdrop_low_key(image):
+    """Whether ``image`` (the UPLOAD) is a low-key photograph on a BLACK background: a lit, properly exposed subject (95th percentile at least ``LOW_KEY_MIN_P95``) and a near-black dark part
+    (median at most ``LOW_KEY_MAX_ORIGINAL_FLOOR``). The automatic enhancement does not brighten such a photograph: the low-light step lifts the black floor into a milky grey (measured on the
+    owner's portrait, L 8.7 to 23.4 or 23.7) and the owner pulled it back by hand. A night photograph of a person (dark part 15 showing a wall, subject at 97) is under-exposed, not low-key.
+    """
+    scene = measure_scene(image)
+    return classify_scene(scene) == "low_key" and scene["dark_median"] is not None and scene["dark_median"] <= LOW_KEY_MAX_ORIGINAL_FLOOR
