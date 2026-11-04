@@ -689,6 +689,10 @@ DDCOLOR_MAX_CHROMA = env.float("DDCOLOR_MAX_CHROMA", default=60.0)
 # ADAPTIVE_DETAIL_ENABLED=False switches the operation off. ADAPTIVE_DETAIL_MAX_PIXELS: a larger photograph is left alone (the time grows with the pixels: about 3 s per megapixel with the
 # compact model, about 30 s with x4plus or UltraSharp, which only AI Enhance / Strong prefer or the fallback uses).
 ADAPTIVE_DETAIL_ENABLED = env.bool("ADAPTIVE_DETAIL_ENABLED", default=True)
+# The low-light step does not brighten a LOW-KEY photograph (a lit subject on a BLACK background) for the Natural and Dynamic styles at the Auto, Low and Medium strengths: it lifts the black floor into a
+# milky grey. Measured on the owner's portrait (docs/evaluation/2026-11-04-lowkey-floor.md): the floor went from L 8.7 to 23.4 and the owner pulled it back by hand. AI Enhance and the High strength still lift
+# dark scenes as asked, and a dark photograph with a dim subject (a night photograph of a person) is still lifted. False restores the earlier behaviour.
+ADAPTIVE_LOWKEY_SKIP_LIFT = env.bool("ADAPTIVE_LOWKEY_SKIP_LIFT", default=True)
 ADAPTIVE_DETAIL_MAX_PIXELS = env.int("ADAPTIVE_DETAIL_MAX_PIXELS", default=4_000_000)
 # The slow detail networks (Real-ESRGAN x4plus and 4x-UltraSharp), when they are only the FALLBACK after the compact one was refused (a style or strength that puts one first still gets it), are not run on a photograph above this many pixels: measured on an Apple M1 (GPU) about 3 s plus
 # 42 s per megapixel (19 s at 0.37 MP, 35 s at 0.75 MP, 44 s inside a whole run), minutes on a CPU, against 3.6 s per megapixel for the compact network. 500,000 keeps a default run of a 1000 px
