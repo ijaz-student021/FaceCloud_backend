@@ -26,6 +26,14 @@ The low-light step does not run for a **low-key photograph with a black backgrou
 
 Two outputs changed (the owner's portrait in two versions, results 65 and 117); the other **42 are identical**. Photographs the earlier, looser criteria also read as low-key kept their lift: results 60 and 61 (dark part L 26 and 18), 87 (bright subject, dark part 26), 38 (the night photograph); 32 and 57 (dark part 0 and 2, bright subjects) did not reach the low-light step either way.
 
+## Correction (the same day): a backlit portrait was read as low-key
+
+A backlit portrait of a woman in front of a bright city (the dark part is the PERSON, the surround is bright) was read as "a lit subject on a black background" by the first version of this rule (dark share 0.53,
+95th percentile 249, dark part 3.8), so its low-light lift was skipped and the face stayed dark. The rule now also needs **the dark part to be the surround of the frame** (at least half of the outer 15 % of the
+frame near black: the owner's portrait 0.91, library results 32 / 57 0.84 / 0.63, the backlit portrait **0.33**) **and the analyzer to see the subject as lit** (`dark_scene`; the backlit portrait is
+`low_light_subject`). The editor's Auto uses the border condition through `classify_scene`. With both conditions the backlit portrait is lifted again (low-light, face restoration, detail) and the owner's portrait
+(results 65 and 117) is still left alone; the library's other candidates behave as before.
+
 ## Not verified
 
 * **One photograph (two versions) is the only positive example**, and the two thresholds (95th percentile 120, dark part 12) are read between it (136, 8.7) and one negative (97, 15). Other portraits on black are untested; the setting undoes it.

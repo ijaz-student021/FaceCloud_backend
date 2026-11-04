@@ -333,8 +333,10 @@ class AdaptiveImageEnhancementService:
         final_tried = finish_tried = False
         defect_report = report0
         profile = profile_for(style, requested_level)     # what the style and the strength change (profile.py); the validator's gates are the same for all
-        if settings.ADAPTIVE_LOWKEY_SKIP_LIFT and style != "ai_max" and requested_level != "high" and is_black_backdrop_low_key(original):
-            # A lit subject on a black background (auto_edit.is_black_backdrop_low_key): the low-light step would lift the black into a milky grey, so it does not run (AI Enhance and the High strength still lift as asked).
+        if (settings.ADAPTIVE_LOWKEY_SKIP_LIFT and style != "ai_max" and requested_level != "high" and report0.exposure.get("status") == "dark_scene"
+                and is_black_backdrop_low_key(original)):
+            # A lit subject on a black background (auto_edit.is_black_backdrop_low_key) that the analyzer also sees as lit (``dark_scene``, not ``low_light_subject``: a dark FACE against a bright background is backlit and is lifted): the
+            # low-light step would lift the black into a milky grey, so it does not run (AI Enhance and the High strength still lift as asked).
             done.add(ops.LOW_LIGHT)
             skipped.append({"operation": ops.LOW_LIGHT, "reason": LOW_KEY_REASON})
         while True:
