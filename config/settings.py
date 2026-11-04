@@ -693,6 +693,10 @@ ADAPTIVE_DETAIL_ENABLED = env.bool("ADAPTIVE_DETAIL_ENABLED", default=True)
 # milky grey. Measured on the owner's portrait (docs/evaluation/2026-11-04-lowkey-floor.md): the floor went from L 8.7 to 23.4 and the owner pulled it back by hand. AI Enhance and the High strength still lift
 # dark scenes as asked, and a dark photograph with a dim subject (a night photograph of a person) is still lifted. False restores the earlier behaviour.
 ADAPTIVE_LOWKEY_SKIP_LIFT = env.bool("ADAPTIVE_LOWKEY_SKIP_LIFT", default=True)
+# The face-geometry gate (landmark shift) ignores faces the analyzer calls too small (short edge under 48 px) for every operation but face restoration: such a face is not restored and its identity cannot be
+# checked, and on a silhouette or a distant head its landmarks are guesses (12 % of the face width of shift on a sunset photograph, which refused the enlargement of the whole photograph).
+# docs/evaluation/2026-11-04-tiny-face-geometry.md. False restores the earlier behaviour.
+ADAPTIVE_GEOMETRY_IGNORES_TINY_FACES = env.bool("ADAPTIVE_GEOMETRY_IGNORES_TINY_FACES", default=True)
 ADAPTIVE_DETAIL_MAX_PIXELS = env.int("ADAPTIVE_DETAIL_MAX_PIXELS", default=4_000_000)
 # The slow detail networks (Real-ESRGAN x4plus and 4x-UltraSharp), when they are only the FALLBACK after the compact one was refused (a style or strength that puts one first still gets it), are not run on a photograph above this many pixels: measured on an Apple M1 (GPU) about 3 s plus
 # 42 s per megapixel (19 s at 0.37 MP, 35 s at 0.75 MP, 44 s inside a whole run), minutes on a CPU, against 3.6 s per megapixel for the compact network. 500,000 keeps a default run of a 1000 px
