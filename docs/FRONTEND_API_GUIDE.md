@@ -440,6 +440,13 @@ While you poll (every 1.5 s is fine), the edit says how far it is: `stage` is `q
 Show client-side previews while the user drags sliders and submit the final
 values for the full-resolution server render.
 
+**Auto in the editor** (`mode: "auto"`, `intent: "auto"`, the default) now reads what kind of photograph it is before it chooses the sliders, and `applied_adjustments` is what to put the
+sliders on. A dark photograph with a lit subject (a portrait on a black background) that the automatic enhancement made greyer comes back with a **negative** brightness and shadows (up to
+-70 and -25), a little contrast and, where the lit part is coloured and warm, saturation and warmth: the values are not limited to the old +-16 (`auto_minimum` / `auto_maximum` in the
+configuration still describe the cloud advisor's range). Any other photograph gets the earlier recipe unchanged; `intent: "preserve"` and `"brighten"` are unchanged too. The preview and saved
+edit say what was recognised in `render.auto` / `quality_metadata.auto`: `nature` (`low_key` or `balanced`), `rationale` (plain sentences you can show), `scene` (the measurements) and `caution_flags`.
+`docs/evaluation/2026-11-04-auto-edit.md` has the evidence and what was not checked.
+
 ## 5. People (identity groups)
 
 Faces are grouped into "person folders". A photo with no detectable face is

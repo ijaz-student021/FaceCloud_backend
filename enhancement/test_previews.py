@@ -89,6 +89,18 @@ class PreviewBasicsTests(PreviewFixture):
         self.assertEqual(response["Content-Type"], "image/jpeg")
         self.assertEqual(Image.open(io.BytesIO(data)).size, (body["width"], body["height"]))
 
+    def test_an_auto_preview_is_given_a_lazy_loader_for_the_unenhanced_photograph_and_a_manual_one_is_not(self):
+        from . import services
+
+        with patch("enhancement.services.apply_gallery_adjustments", wraps=services.apply_gallery_adjustments) as render:
+            auto = self.preview(1, {"mode": "auto", "intent": "auto"})
+            self.assertEqual(auto.status_code, 201)
+            self.assertIn(auto.json()["render"]["auto"]["nature"], ("low_key", "balanced"))
+            self.assertEqual(self.preview(2).status_code, 201)
+        auto_baseline, manual_baseline = (call.kwargs["baseline"] for call in render.call_args_list)
+        self.assertTrue(callable(auto_baseline))
+        self.assertIsNone(manual_baseline)
+
     def test_the_dashboard_sliders_drive_a_preview_including_noise_reduction(self):
         """The five dashboard sliders (strength, brightness, contrast, skin detail, noise reduction), as the
         frontend maps them (docs/enhancement/dashboard-sliders.md), at their default positions."""
