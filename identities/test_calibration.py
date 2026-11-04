@@ -22,10 +22,29 @@ from .providers import (ArcFaceOnnxProvider, DisabledIdentityProvider, IdentityE
 from .services import decide_group
 
 
+class TwoDifferentPeopleTests(SimpleTestCase):
+    """The reported case: two different men scored 0.312 against each other. Between 0.30 and 0.45 a face waits for review and gets no folder of its own, so the second man's photographs
+    (uploaded four times) were listed as "suggested" in the first man's folder and he had no folder. The limit is now SFace's own same-person cosine (0.363, OpenCV zoo)."""
+
+    def decide(self, similarity):
+        return decide_group([(similarity, object())], thresholds_for(SFaceOnnxProvider()))[0]
+
+    def test_a_face_that_scores_0_312_against_the_only_folder_opens_a_folder_of_its_own(self):
+        self.assertEqual(self.decide(0.312), "new")
+
+    def test_the_limits_in_order(self):
+        self.assertEqual([self.decide(value) for value in (0.10, 0.312, 0.359, 0.363, 0.42, 0.449, 0.45, 0.80)], ["new", "new", "new", "review", "review", "review", "match", "match"])
+
+    def test_the_new_folder_limit_is_below_the_merge_suggestion_minimum_which_is_below_match(self):
+        limits = thresholds_for(SFaceOnnxProvider())
+        self.assertLess(limits["new_group"], merge_suggestion_minimum(SFaceOnnxProvider()))
+        self.assertLess(merge_suggestion_minimum(SFaceOnnxProvider()), limits["match"])
+
+
 class LimitsPerProviderTests(SimpleTestCase):
     def test_sface_has_limits_of_its_own_not_the_generic_ones(self):
         limits = thresholds_for(SFaceOnnxProvider())
-        self.assertEqual(limits, {"guard": 0.80, "match": 0.45, "new_group": 0.30, "margin": 0.06})
+        self.assertEqual(limits, {"guard": 0.80, "match": 0.45, "new_group": 0.36, "margin": 0.06})
         self.assertLess(limits["new_group"], limits["match"])
         generic = thresholds_for(type("Stand", (IdentityEmbeddingProvider,), {"name": "x", "healthcheck": lambda self: True, "embed": lambda self, f: f})())
         self.assertEqual((generic["new_group"], generic["match"]), (0.68, 0.82))             # a provider with none of its own still falls back to these
@@ -45,7 +64,7 @@ class LimitsPerProviderTests(SimpleTestCase):
             match_threshold = 0.61
 
         self.assertEqual(thresholds_for(Own())["match"], 0.61)
-        self.assertEqual(thresholds_for(Own())["new_group"], 0.30)
+        self.assertEqual(thresholds_for(Own())["new_group"], 0.36)
 
     def test_the_merge_suggestion_is_on_the_providers_scale_unless_a_number_is_set(self):
         self.assertEqual(merge_suggestion_minimum(SFaceOnnxProvider()), 0.40)

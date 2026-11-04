@@ -85,3 +85,21 @@ python manage.py cleanup_rejected_folder_members --apply
 
 On the development database (read-only dry run): owner 1 has 2 folders of 7 and 2 faces plus 2 faces waiting for review; with the new limits they would be one folder of 11 and nothing
 waiting. Owner 4 has 3 folders of 1; two of them would merge. Nothing was applied.
+
+
+## Update 2026-11-04: `new_group` 0.30 -> 0.36
+
+**What was seen.** On the owner's account two different men scored **0.312** against each other. That is above `new_group` (0.30) and below `match` (0.45), so the face was not given a folder: it
+waited for review "suggested for" the other man's folder. The same photograph had been uploaded four times, and none of the four got a folder (a face in the review band is compared with
+folders only, never with another face waiting for review), so the folder page listed four photographs of one man as "suggested, 31 % match" beside the other man's two.
+
+**Why 0.30 was too low.** It is the 1st percentile of the *same-person* distribution (see above), chosen to lose 1 % of true matches; but on the *different-people* side the same figure is the
+99th percentile (0.297): **about 1 % of different-people pairs reach 0.30**, and a review list full of other people is what the person saw. 0.363 is the cosine at which the model's own authors
+call two faces the same person (`face_recognition_sface/sface.py` in the OpenCV model zoo: `_threshold_cosine = 0.363`; checked 2026-11-04).
+
+**New value: 0.36.** Different-people pairs at 0.40: 0.03 % (measured, table above); at 0.36 the figure lies between that and the 0.92 % at 0.30 (interpolated, not measured at 0.36). Same-person pairs below
+0.36: between 1 % (0.30) and 2.3 % (0.40) of pairs (interpolated). A same person whose photograph falls under it now opens a second folder instead of waiting for review; the merge suggestion
+(folder pairs from 0.40, 93 % of split folders in the measurement above) offers the merge. `match` (0.45) and `margin` are unchanged.
+
+**Not verified.** The album simulation was run at 0.30 / 0.45 only; it was not repeated at 0.36. LFW is not phone photographs in poor light. Existing accounts are regrouped with
+`python manage.py regroup_identities --owner N` (a dry run first).
