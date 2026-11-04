@@ -652,6 +652,10 @@ CODEFORMER_MODEL_SHA256 = env(
 )
 CODEFORMER_DEVICE = env("CODEFORMER_DEVICE", default="auto")
 CODEFORMER_FIDELITY = env.float("CODEFORMER_FIDELITY", default=0.7)
+# The adaptive engine's face-restoration attempts as CodeFormer fidelity weights (0-1; higher keeps more of the input). EVERY value is run (the best that passes the gates is kept), so each extra one costs a CodeFormer
+# pass (about 2 s on an Apple M1 GPU, about 8 s on a CPU). Measured on the owner's photographs (docs/evaluation/2026-11-04-face-fidelity.md): a lower weight bought no more face detail and lost identity, and a
+# second attempt never rescued a refusal, so the default is the single weight 1.0 (the earlier default was 0.85 then 0.65).
+ADAPTIVE_FACE_FIDELITIES = tuple(float(value) for value in env.list("ADAPTIVE_FACE_FIDELITIES", default=["1.0"]))
 CODEFORMER_MAX_FACES = env.int("CODEFORMER_MAX_FACES", default=5)
 CODEFORMER_MAX_INPUT_PIXELS = env.int("CODEFORMER_MAX_INPUT_PIXELS", default=12_000_000)
 
@@ -885,6 +889,10 @@ ARCFACE_AMBIGUITY_MARGIN = env.float("ARCFACE_AMBIGUITY_MARGIN", default=0.06)
 # from SFACE_MATCH_THRESHOLD up, and at least SFACE_AMBIGUITY_MARGIN ahead of the runner-up, it joins the folder; in between it waits for review.
 # SFACE_GUARD_MIN_SIMILARITY is the enhancement identity guard (the same photograph before and after), not a grouping limit.
 SFACE_GUARD_MIN_SIMILARITY = env.float("SFACE_GUARD_MIN_SIMILARITY", default=0.80)
+# The same guard for a FACE RESTORATION. The restored face is compared with the face in the UPLOAD, and when that upload is blurred its own embedding is poor, so even a faithful restoration scores
+# well below 0.80 against it. Measured (docs/evaluation/2026-11-04-face-fidelity.md): on the owner's photographs the limit refused 9 of 24 restorations that were closer to the CLEAN face than the upload
+# was, and no limit between 0.5 and 0.8 caught a worse one; the same shape on 12 people of LFW. 0.65 accepts 22 of 24 with the same single worse one. Set it to 0.80 to restore the earlier behaviour.
+SFACE_RESTORE_GUARD_MIN_SIMILARITY = env.float("SFACE_RESTORE_GUARD_MIN_SIMILARITY", default=0.65)
 SFACE_MATCH_THRESHOLD = env.float("SFACE_MATCH_THRESHOLD", default=0.45)
 # 0.36 (was 0.30): two different men who scored 0.312 against each other were put in the same folder's review list and the second never got a folder of his own. 0.363 is the
 # cosine at which the model's own authors (OpenCV zoo, face_recognition_sface/sface.py) call two faces the same person; below it, a face opens its own folder

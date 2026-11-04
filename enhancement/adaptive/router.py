@@ -149,7 +149,7 @@ class AdaptiveEnhancementRouter:
                 return None, ""
             if not engines:
                 return None, "No face-restoration model is switched on."
-            return Step(operation, engines, [{"name": "fidelity 0.85", "fidelity": 0.85}, {"name": "fidelity 0.65", "fidelity": 0.65}],
+            return Step(operation, engines, [{"name": f"fidelity {weight:g}", "fidelity": weight} for weight in settings.ADAPTIVE_FACE_FIDELITIES],
                         "The main face is degraded."), ""
         if operation == ops.UPSCALE:
             small_image = report.resolution["status"] == "low" or (

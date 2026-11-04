@@ -48,7 +48,7 @@ def run(image, runners=None, style="natural", identity=True, analyzer=None, **se
 class ChangedIdentity(polish_tests.FakeIdentity):
     """An identity check that says every candidate is somebody else."""
 
-    def check(self, candidate):
+    def check(self, candidate, restoring=False):
         return {"status": "failed", "similarity": 0.2, "threshold": self.threshold}
 
 
