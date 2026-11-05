@@ -322,12 +322,25 @@ personal workspace whose checks doubted it:
 ## 4. Enhancement
 
 ```text
-POST /api/enhancements/images/{image_id}/   {level, style}     -> 202
-POST /api/enhancements/batches/{batch_id}/  {level, style}     -> 201
+POST /api/enhancements/images/{image_id}/   {level, style}  or  {preset}     -> 202
+POST /api/enhancements/batches/{batch_id}/  {level, style}  or  {preset}     -> 201
 ```
 
 - `level`: `auto` (default), `low`, `medium`, `high`.
 - `style`: `natural` (default), `dynamic`, `ai_max`.
+- **`preset` (new, 2026-11-05): one field instead of two.** `preset` is a name for a `level` + `style` pair that already exists, so a client can send `{"preset": "pro"}` and need not know the pair:
+
+  | `preset` | `level` | `style` |
+  |---|---|---|
+  | `auto` | `auto` | `natural` (what a request with neither field already means, and what an automatic enhancement after upload uses) |
+  | `standard` | `high` | `natural` (a stronger result that stays natural: a black-and-white photograph **stays** black and white, and faces are restored only when they can be checked) |
+  | `pro` | `high` | `ai_max` (AI Enhance at the strongest level) |
+
+  The preset is a **default setter**: it fills in whichever of `level` and `style` you do not send, and a `level` or `style` you do send **wins** over the preset's value for that field
+  (`{"preset": "auto", "level": "high"}` is level `high` with style `natural`; `{"preset": "pro", "style": "dynamic"}` is level `high` with style `dynamic`). The backend resolves it before anything
+  is queued, so the result's `requested_level` / `requested_style` show the pair that was actually used (never the preset's name) and nothing else in the API changes. A request without
+  `preset` works exactly as before. An unknown preset name (values are lower-case, like `level` and `style`), or an invalid `level` / `style`, is a **400**.
+  `pro` uses `ai_max`, so everything under "`ai_max` and identity" below applies to it: read `identity_check_bypassed` and `identity_notice` on the result.
 - **What `style` and `level` do in the adaptive engine** (the default policy; `applied_parameters.adaptive.profile` echoes what was used). They change *when* an operation is
   tried and how strongly; the safety checks are the same for every choice, so a stronger choice can still end in "nothing needed fixing" or "kept the original":
   - `natural` (and what an automatic enhancement uses): defect-driven; a black-and-white photograph **stays** black and white.
