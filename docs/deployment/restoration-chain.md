@@ -71,6 +71,9 @@ finish and keeps the original.
 | `CODEFORMER_ENABLED` / `GFPGAN_ENABLED` | False | non-commercial face restorers |
 | `ADAPTIVE_FACE_BLUR_HIGH` | 25 | face detail below this is "strongly blurred" (deblur) |
 | `ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN` | 1.25 | a deblur chosen for a blurred face must raise the face's detail this many times |
+| `ADAPTIVE_AI_MAX_FACE_DEBLUR_MIN_DETAIL_GAIN` | 1.10 | the same limit for AI Enhance (the `pro` preset) only; 1.25 gives it the common limit. The ceilings (face detail 260, edge gain 2.5) and every other gate are unchanged |
+| `IDENTITY_GUARD_MIN_FACE_LUMINANCE` | 15 | a face whose box mean grey level is below this gets no identity reference (no face restoration). Was 45 |
+| `IDENTITY_GUARD_DARK_FACE_BRIGHTNESS_THRESHOLD` / `IDENTITY_GUARD_DARK_FACE_GAIN` | 40 / 2.5 | a face crop darker than the threshold is brightened by the gain before it is embedded (reference and candidates alike); 0 = off |
 | `ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX` | 0.06 | largest landmark shift (share of face width) an upscaled candidate may show; other operations 0.04 |
 | `ADAPTIVE_LANDMARK_ENLARGEMENT_SHIFT_MAX` | 0.035 | a candidate that shift limit refused is still accepted when its landmarks stay this close (share of face width) to the landmarks found on a plain enlargement of the original; 0 = off. Never stricter than before |
 | `HD_RESTORATION_OUTPUT_SCALE` | 2 | upscale factor (x2 keeps memory and time bounded) |

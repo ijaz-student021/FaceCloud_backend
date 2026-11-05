@@ -15,6 +15,7 @@ loaded when a face is actually found.
 """
 
 import cv2
+import numpy as np
 from django.conf import settings
 from rest_framework.exceptions import ValidationError
 
@@ -81,6 +82,25 @@ def _detect_faces(image, detector, min_edge):
     return [(box, landmarks) for _area, box, landmarks in candidates[: settings.IDENTITY_GUARD_MAX_FACES]]
 
 
+def _brightened_for_embedding(aligned):
+    """The aligned face crop as the embedding model should see it: a DARK crop is brightened first, any other crop is returned as it is.
+
+    SFace sees a dark face less well. Public LFW faces darkened to a face mean of 12 (160 different people, the real model): the same face matched itself at a median 0.786 (10th percentile 0.663) as it
+    was, and at 0.865 (0.778) with the crop brightened by x2.5; at a mean of 20 it was 0.889 and 0.930. A look-alike impostor stayed at 0.45 or less in every setting (0 of 160 above the 0.65 restoration
+    limit), so brightening does not make another person look like the one in the photograph (docs/evaluation/2026-11-05-dark-face-identity.md).
+
+    Used for the embedding ONLY, in the one place faces are embedded: the reference and every candidate are treated alike, so both sides of a comparison are brightened by the same rule, and neither the
+    photograph, nor the candidate, nor the face that a restoration model is given is ever changed. ``IDENTITY_GUARD_DARK_FACE_BRIGHTNESS_THRESHOLD`` is the crop's mean grey level below which it is brightened
+    (0 switches this off); ``IDENTITY_GUARD_DARK_FACE_GAIN`` is the factor.
+    """
+    threshold = float(settings.IDENTITY_GUARD_DARK_FACE_BRIGHTNESS_THRESHOLD)
+    if threshold <= 0 or not isinstance(aligned, np.ndarray) or aligned.ndim != 3 or aligned.shape[2] != 3 or aligned.dtype != np.uint8:
+        return aligned
+    if float(cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY).mean()) >= threshold:
+        return aligned
+    return cv2.convertScaleAbs(aligned, alpha=float(settings.IDENTITY_GUARD_DARK_FACE_GAIN), beta=0)
+
+
 def _embed_faces(image, faces, provider):
     records = []
     for box, landmarks in faces:
@@ -89,7 +109,7 @@ def _embed_faces(image, faces, provider):
             aligned = provider.prepare_face(
                 image, {"x": x, "y": y, "width": width, "height": height}, landmarks
             )
-            embedding = provider.embed(aligned)
+            embedding = provider.embed(_brightened_for_embedding(aligned))
         except ValidationError:
             continue
         records.append({"box": (x, y, width, height), "embedding": embedding})

@@ -332,6 +332,11 @@ if AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES < 1:
 #   or polish (docs/evaluation/2026-11-05-small-face-geometry.md).
 ADAPTIVE_FACE_BLUR_HIGH = env.float("ADAPTIVE_FACE_BLUR_HIGH", default=25.0)
 ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN = env.float("ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN", default=1.25)
+# ADAPTIVE_AI_MAX_FACE_DEBLUR_MIN_DETAIL_GAIN: the same limit for AI Enhance (the `pro` preset) only. NAFNet-GoPro on 210 LFW faces with a known clean photograph: a deblur whose face-detail gain is
+#   1.10 to 1.25 is closer to the truth for 100 % of defocus-blurred faces (+1.06 dB median) and 90 % of low-resolution ones (+0.91 dB), so 1.25 turned away real, small improvements; for motion
+#   blur that band is not better (17 %, -0.26 dB). The face's detail ceiling (260), the edge-gain ceiling (2.5), consistency, identity and geometry still apply. 1.25 gives AI Enhance the common
+#   limit again (docs/evaluation/2026-11-05-dark-face-identity.md).
+ADAPTIVE_AI_MAX_FACE_DEBLUR_MIN_DETAIL_GAIN = env.float("ADAPTIVE_AI_MAX_FACE_DEBLUR_MIN_DETAIL_GAIN", default=1.10)
 ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX = env.float("ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX", default=0.06)
 ADAPTIVE_LANDMARK_PIXEL_FLOOR = env.float("ADAPTIVE_LANDMARK_PIXEL_FLOOR", default=2.0)
 ADAPTIVE_LANDMARK_ENLARGEMENT_SHIFT_MAX = env.float("ADAPTIVE_LANDMARK_ENLARGEMENT_SHIFT_MAX", default=0.035)
@@ -501,9 +506,20 @@ IDENTITY_GUARD_MIN_SIMILARITY = env.float("IDENTITY_GUARD_MIN_SIMILARITY", defau
 # SFace embeddings of very dark faces are unreliable (faithful brightening of
 # frames with a face luminance of 6-22/255 measured 0.45-0.87 similarity, and
 # grain often stops the detector re-finding the face at all), so faces below
-# this mean grey level are not judged rather than penalising correct
-# enhancement.
-IDENTITY_GUARD_MIN_FACE_LUMINANCE = env.float("IDENTITY_GUARD_MIN_FACE_LUMINANCE", default=45.0)
+# this mean grey level (of the detected face box) are not judged rather than
+# penalising correct enhancement. The floor was 45, which also refused a face at
+# 41 (a 47 px face in a dim photograph: no identity, so no face restoration).
+# Measured on 160 public LFW faces darkened to a known mean, real SFace, with the
+# crop brightened for the embedding (IDENTITY_GUARD_DARK_FACE_BRIGHTNESS_THRESHOLD):
+# the same face still matches itself at 0.91 (mean 16) and 0.86 (mean 12), 99-100 %
+# above the 0.65 restoration limit, and falls apart below about 8 (0.76 at 8, 0.67 at 6,
+# 0.47 at 4); look-alike impostors stay at 0.45 or less. 15 keeps clear of that edge.
+# docs/evaluation/2026-11-05-dark-face-identity.md. Set 45 to restore the earlier floor.
+IDENTITY_GUARD_MIN_FACE_LUMINANCE = env.float("IDENTITY_GUARD_MIN_FACE_LUMINANCE", default=15.0)
+# A face crop darker than this mean grey level is brightened (by IDENTITY_GUARD_DARK_FACE_GAIN) before it is EMBEDDED, the reference and every candidate alike; the
+# photograph, the candidate and the crop a restoration model receives are never changed. 0 switches it off.
+IDENTITY_GUARD_DARK_FACE_BRIGHTNESS_THRESHOLD = env.float("IDENTITY_GUARD_DARK_FACE_BRIGHTNESS_THRESHOLD", default=40.0)
+IDENTITY_GUARD_DARK_FACE_GAIN = env.float("IDENTITY_GUARD_DARK_FACE_GAIN", default=2.5)
 IDENTITY_GUARD_STRENGTHS = tuple(
     float(value)
     for value in env.list(
