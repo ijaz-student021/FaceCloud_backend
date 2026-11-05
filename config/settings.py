@@ -345,6 +345,13 @@ ADAPTIVE_LANDMARK_ENLARGEMENT_SHIFT_MAX = env.float("ADAPTIVE_LANDMARK_ENLARGEME
 #   a restored face at 0.807 left the enlargement at 0.7993 refused, and the photograph lost its enlargement and detail layer by 0.0007
 #   (docs/evaluation/2026-11-05-baseline-after-face-restoration.md). False gives the earlier behaviour.
 ADAPTIVE_BASELINE_AFTER_FACE_RESTORATION = env.bool("ADAPTIVE_BASELINE_AFTER_FACE_RESTORATION", default=True)
+# ADAPTIVE_BACKGROUND_DEFOCUS_NOT_A_DEFECT: a frame the analyzer reads as defocused while its MAIN face is sharp (face_blur "none") and prominent (the face covers at least
+#   ADAPTIVE_BACKGROUND_DEFOCUS_MIN_FACE_AREA of the frame) is a shallow-depth-of-field portrait, not a photograph whose blur could not be recovered: it is no longer listed under
+#   "Not fully corrected" and its outcome is not "partially_enhanced" because of it. Reporting only: no pixel changes, and the analysis still records the condition. Library (live
+#   configuration): of 19 photographs read as defocused, 15 have a sharp main face covering 0.045 to 0.162 of the frame; the two small or far-away faces cover 0.004 and 0.020, so 0.03
+#   sits between them (docs/evaluation/2026-11-05-background-defocus-note.md). False gives the earlier behaviour.
+ADAPTIVE_BACKGROUND_DEFOCUS_NOT_A_DEFECT = env.bool("ADAPTIVE_BACKGROUND_DEFOCUS_NOT_A_DEFECT", default=True)
+ADAPTIVE_BACKGROUND_DEFOCUS_MIN_FACE_AREA = env.float("ADAPTIVE_BACKGROUND_DEFOCUS_MIN_FACE_AREA", default=0.03)
 NAFNET_MODEL_PATH = env(
     "NAFNET_MODEL_PATH",
     default=str(BASE_DIR / ".runtime" / "models" / "NAFNet-GoPro-width64.pth"),
