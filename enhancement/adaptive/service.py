@@ -13,7 +13,8 @@ Outcomes (``parameters["adaptive"]["outcome"]``):
 
 * ``enhanced``: at least one candidate was accepted and the analyzer no longer finds a defect it can address;
 * ``partially_enhanced``: something was accepted, but a defect remains (defocus blur, a face too small to restore, a
-  rejected operation): the summary says which;
+  rejected operation): the summary says which. The soft background of a portrait with a sharp, prominent face is not
+  such a defect (``background_defocus_only``);
 * ``original_preserved``: no acceptable candidate (or nothing needed doing), so the output *is* the original pixels.
 
 ``FAILED`` is not an outcome here: an exception propagates to the job code, which records the failure and keeps the
@@ -63,6 +64,19 @@ UNADDRESSABLE_REASONS = {
     "visible_noise": "Noise remains.", "low_light": "The subject is still dark.",
     "motion_blur": "Motion blur remains.", "mixed_blur": "Blur remains.",
 }
+BACKGROUND_DEFOCUS_REASON = "The main face is sharp and the soft areas are the background (shallow depth of field), so this is not a blur that was left unrecovered."
+
+
+def background_defocus_only(report):
+    """True when the frame reads as defocused but the MAIN face is sharp and prominent: the soft areas are the background of a portrait, not a defect that was left.
+
+    Reporting only (``ADAPTIVE_BACKGROUND_DEFOCUS_NOT_A_DEFECT``): the analysis still records ``defocus_blur`` and nothing about the pixels depends on this.
+    A far-away face is no evidence about the frame, so the face must cover ``ADAPTIVE_BACKGROUND_DEFOCUS_MIN_FACE_AREA`` of it.
+    """
+    main = report.main_face
+    if not settings.ADAPTIVE_BACKGROUND_DEFOCUS_NOT_A_DEFECT or main is None or "defocus_blur" not in report.conditions:
+        return False
+    return report.face_blur.get("status") == "none" and main.area_ratio >= settings.ADAPTIVE_BACKGROUND_DEFOCUS_MIN_FACE_AREA
 
 
 @dataclass
@@ -452,7 +466,9 @@ class AdaptiveImageEnhancementService:
         accepted_operations = [s["operation"] for s in stages if s["status"] == "accepted"]
         # A defect is unresolved only if the ORIGINAL had it and the result still does. (Counting whatever the analyzer finds in the
         # result was wrong: a brightened photograph is smoother and read as "blurred", which then reported a defect that was never there.)
-        remaining = [c for c in defect_report.conditions if c in ADDRESSABLE and c in report0.conditions] if accepted_operations else []
+        # The soft background of a portrait with a sharp, prominent face is not "defocus blur that cannot be recovered" (background_defocus_only): neither listed nor counted.
+        background_defocus = background_defocus_only(report0)
+        remaining = [c for c in defect_report.conditions if c in ADDRESSABLE and c in report0.conditions and not (background_defocus and c == "defocus_blur")] if accepted_operations else []
         introduced = [c for c in defect_report.conditions if c in ADDRESSABLE and c not in report0.conditions] if accepted_operations else []
         if not accepted_operations:
             outcome = ORIGINAL_PRESERVED
@@ -472,7 +488,8 @@ class AdaptiveImageEnhancementService:
             len(accepted_operations), EnhancementLevel.HIGH)
         algorithm = "adaptive_v1" + "".join(f"+{self._chosen_model(pool, s)}" for s in stages if s["status"] == "accepted")
         quality_comparison = compare_image_quality(original, final)
-        summary = self._summary(outcome, stages, skipped, remaining)
+        # The deblur step's own record ("the blur is defocus ...") stays in operations_skipped; only the verdict sentence leaves it out when the defocus is the background's.
+        summary = self._summary(outcome, stages, [item for item in skipped if not (background_defocus and "defocus" in item["reason"])], remaining)
         parameters = {
             "algorithm": algorithm if accepted_operations else "adaptive_v1+original_preserved",
             "pipeline_version": PIPELINE_VERSION,
@@ -490,6 +507,7 @@ class AdaptiveImageEnhancementService:
                 "outcome": outcome, "summary": summary, "operations_applied": accepted_operations, "profile": profile.describe(),
                 "operations_skipped": skipped, "stages": stages, "unresolved_defects": remaining,
                 "conditions_seen_only_after_enhancement": introduced,
+                "conditions_not_counted_as_defects": [{"condition": "defocus_blur", "reason": BACKGROUND_DEFOCUS_REASON}] if background_defocus else [],
                 "quality_report": report0.as_dict(), "final_quality_report": report.as_dict(),
                 # The full candidate record (models, timings, verdicts) is for development; a user-facing result keeps the gist.
                 "candidates": pool.describe() if recorder.enabled else [
