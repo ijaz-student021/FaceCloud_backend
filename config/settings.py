@@ -763,8 +763,9 @@ GFPGAN_MAX_HIGHLIGHT_CLIPPING_GROWTH = env.float(
 )
 # Generative face restoration only runs when the result can be compared with a
 # source face (consent, an identity model, and a face reliable enough to embed).
-# The explicit AI Max style is exempt. See enhancement/services.py
-# _face_restoration_gate.
+# In the staged pipeline the explicit AI Max style is exempt (enhancement/services.py
+# _face_restoration_gate); the adaptive engine has no exemption: every style needs a
+# verifiable identity for a face restoration (enhancement/adaptive/service.py).
 GFPGAN_REQUIRE_IDENTITY_CHECK = env.bool("GFPGAN_REQUIRE_IDENTITY_CHECK", default=True)
 # Face-region fidelity (enhancement/face_fidelity.py): each detected face is
 # compared with the image as it was before restoration and sharpening, and

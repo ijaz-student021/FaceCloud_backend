@@ -340,7 +340,7 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}  or  {preset}     -> 
   (`{"preset": "auto", "level": "high"}` is level `high` with style `natural`; `{"preset": "pro", "style": "dynamic"}` is level `high` with style `dynamic`). The backend resolves it before anything
   is queued, so the result's `requested_level` / `requested_style` show the pair that was actually used (never the preset's name) and nothing else in the API changes. A request without
   `preset` works exactly as before. An unknown preset name (values are lower-case, like `level` and `style`), or an invalid `level` / `style`, is a **400**.
-  `pro` uses `ai_max`, so everything under "`ai_max` and identity" below applies to it: read `identity_check_bypassed` and `identity_notice` on the result.
+  `pro` uses `ai_max`: see "`ai_max` and identity" below. It does **not** skip the identity check, so never say that it restores faces without one; read `identity_status` and `identity_notice` on the result.
 - **What `style` and `level` do in the adaptive engine** (the default policy; `applied_parameters.adaptive.profile` echoes what was used). They change *when* an operation is
   tried and how strongly; the safety checks are the same for every choice, so a stronger choice can still end in "nothing needed fixing" or "kept the original":
   - `natural` (and what an automatic enhancement uses): defect-driven; a black-and-white photograph **stays** black and white.
@@ -363,15 +363,22 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}  or  {preset}     -> 
 - `applied_parameters.no_correction_needed` is `true` when the photo had nothing to
   correct and was left as it is; say that rather than showing an identical
   before/after as an enhancement.
-- **`ai_max` and identity.** `natural` and `dynamic` restore faces only when the
-  result can be checked against the original. `ai_max` skips that requirement.
-  Say so where the user picks it, and on every result read these three fields:
+- **`ai_max` and identity.** Under the adaptive engine (`ENHANCEMENT_RENDER_POLICY=adaptive_v1`) **no style skips the identity
+  requirement, `ai_max` and the `pro` preset included**: a face is restored only when it can be compared with the upload
+  (face-processing consent, an identity model, a face large and bright enough to embed), and a restored face is kept only if
+  it still matches the upload. When identity cannot be verified the engine **skips the face restoration** and says so; the
+  other steps (noise, blur, detail, enlargement, polish) still run. Never tell the user that `pro` restores faces without a
+  check: it does not. On every result read these three fields:
   - `identity_status`: `verified` (faces were compared with the original and
     matched), `inconclusive`, `unavailable` (no check ran) or `failed`. Only
     `verified` means a check passed; never present the others as "verified".
-  - `identity_check_bypassed`: `true` when faces were generatively restored
-    without a verified check. Show a visible notice on that result.
-  - `identity_notice`: the sentence to show; empty when there is nothing to say.
+  - `identity_check_bypassed`: `true` only when faces were generatively restored
+    without a verified check, which only the earlier staged pipeline can do (`ai_max`, or an operator setting that
+    switches the requirement off). **Always `false` for a result of the adaptive engine.** Show a visible notice on a
+    result where it is `true`.
+  - `identity_notice`: the sentence to show; empty when there is nothing to say. The adaptive engine fills it when identity
+    could not be verified or confirmed ("Identity could not be verified (...). No face restoration was applied; ..."): show
+    it, the photograph was enhanced in every other way.
   The same three fields are on every entry of a model comparison's `outputs`
   (`GET /api/enhancements/comparisons/{id}/`) and at the end of its CSV report,
   with the same meaning, so a profile reads there as it would on the result it

@@ -49,10 +49,14 @@ class EnhancementRequestSerializer(serializers.Serializer):
     style = serializers.ChoiceField(
         choices=EnhancementStyle.choices, default=EnhancementStyle.NATURAL,
         help_text=(
-            "`natural` and `dynamic` restore faces only when the result can be checked against "
-            "the original. `ai_max` skips that requirement: it may restore faces without a "
-            "verified identity check. The result says so in `identity_check_bypassed` and "
-            "`identity_notice`."
+            "No style skips the identity requirement for a face restoration. The adaptive engine "
+            "(`ENHANCEMENT_RENDER_POLICY=adaptive_v1`) restores a face only when it can be compared "
+            "with the upload and keeps the restored face only if it still matches, for `ai_max` too; "
+            "when identity cannot be verified it skips the face restoration (the other steps still run) "
+            "and says so in `identity_status` and `identity_notice`, and `identity_check_bypassed` stays "
+            "false. Only the earlier staged pipeline (the other policies, when they run it) lets `ai_max` "
+            "restore faces without a verified identity check; it reports that in `identity_check_bypassed` "
+            "and `identity_notice`."
         ),
     )
 
@@ -138,11 +142,15 @@ IDENTITY_STATUS_HELP = (
     "match. Null when nothing was enhanced, and for records made before this field existed."
 )
 IDENTITY_BYPASSED_HELP = (
-    "True when faces were generatively restored without a verified identity check, "
-    "which only AI Max (or an operator setting) allows. Show `identity_notice` to the user."
+    "True when faces were generatively restored without a verified identity check. Only the earlier "
+    "staged pipeline can do that (the AI Max style, or an operator setting that switches the requirement "
+    "off); the adaptive engine never does, so this is false for its results. Show `identity_notice` to "
+    "the user whenever it is not empty."
 )
 IDENTITY_NOTICE_HELP = (
-    "A sentence for the user when identity was not verified under a bypass; otherwise empty."
+    "A sentence for the user when identity could not be verified or confirmed: the adaptive engine says "
+    "that no face restoration was applied; the earlier staged pipeline says so when faces were restored "
+    "without a verified check (the AI Max bypass). Empty when there is nothing to say."
 )
 
 
