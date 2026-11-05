@@ -442,6 +442,8 @@ class FinalImageQualityValidator:
         else:
             checked = self.identity.check(candidate, restoring=operation == "face_restoration")
             status.update(embedding=checked["status"], similarity=checked.get("similarity"), threshold=checked.get("threshold"))
+            if checked.get("baseline"):
+                status["baseline"] = checked["baseline"]            # after an accepted face restoration (service.RestoredBaseline): which comparison decided, the upload or the restored face
             if checked["status"] == "failed":
                 status["passed"] = False
                 verdict["reasons"].append("identity_changed")

@@ -120,6 +120,37 @@ class IdentityChecker:
         return {"status": "verified" if worst >= threshold else "failed", "similarity": worst, "threshold": threshold}
 
 
+class RestoredBaseline:
+    """The identity judge for the steps AFTER an accepted face restoration (``validator.identity`` is swapped for it, ``IdentityChecker`` is still what ``final_identity`` uses).
+
+    The restoration was held to its own limit against the UPLOAD (SFACE_RESTORE_GUARD_MIN_SIMILARITY, 0.65) and the saved photograph is judged at that limit too, yet a later step (the enlargement, the detail
+    layer) was still held to the ordinary 0.80 against the upload: a restored face that sat at 0.807 left the enlargement at 0.7993 refused, so a photograph lost its enlargement and its detail layer by 0.0007
+    (docs/evaluation/2026-11-05-baseline-after-face-restoration.md). A later step is now held to two limits: the RESTORATION limit against the UPLOAD (it can never leave a face that the final check refuses) and the
+    ORDINARY limit against the RESTORED face (it may not change that face more than any step may change its parent). ``restored`` is None when the restored face cannot be embedded: only the first limit applies.
+    """
+
+    def __init__(self, upload, restored):
+        self.upload, self.restored = upload, restored
+        self.reference, self.reason = getattr(upload, "reference", None), getattr(upload, "reason", "")
+        self.threshold, self.restore_threshold = upload.threshold, getattr(upload, "restore_threshold", upload.threshold)
+
+    @property
+    def available(self):
+        return True
+
+    def faces(self, candidate):
+        return self.upload.faces(candidate)
+
+    def check(self, candidate, restoring=False):
+        results = [dict(self.upload.check(candidate, restoring=True), baseline="upload")]
+        if self.restored is not None:
+            results.append(dict(self.restored.check(candidate, restoring=restoring), baseline="restored face"))
+        known = [result for result in results if result["status"] != "inconclusive"]
+        if not known:
+            return results[0]
+        return min(known, key=lambda result: result["similarity"] - result["threshold"])      # the limit with the least room; a failure has a negative room, so it decides
+
+
 def identity_report(report0, identity, accepted_operations, final_check, allow_biometric_processing):
     """What was and was not established about identity, in terms that cannot be mistaken for a guarantee.
 
@@ -413,6 +444,9 @@ class AdaptiveImageEnhancementService:
             current, report = chosen, analyzer.analyze(chosen.image)
             if not str(step.reason).startswith("Final layer"):
                 defect_report = report          # the final layer is not a correction: what is left unresolved is judged before it (its smoothing can read as a blur)
+            if step.operation == ops.FACE and settings.ADAPTIVE_BASELINE_AFTER_FACE_RESTORATION and validator.identity is not None:
+                restored = IdentityChecker(chosen.image, allow_biometric_processing)        # the restored faces, embedded once; the steps that follow are judged against them (RestoredBaseline)
+                validator.identity = RestoredBaseline(validator.identity, restored if restored.available else None)
 
         final = current.image
         accepted_operations = [s["operation"] for s in stages if s["status"] == "accepted"]
