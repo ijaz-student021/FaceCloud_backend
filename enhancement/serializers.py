@@ -21,7 +21,30 @@ from .models import (
 )
 
 
+# Friendly names for a strength + look pair that already exists. A preset is a DEFAULT SETTER, resolved here before anything is queued: it fills in the `level` and the `style` the client did
+# not send, a `level` or `style` that was sent wins, and the job, the batch and the stored `requested_level` / `requested_style` carry the pair that was used, so the engine never sees a preset.
+# "auto" is what a request with neither field already means; "pro" is ai_max at the strongest level; "standard" (the owner's decision, 2026-11-05) is a stronger result that stays natural: the
+# strongest level with the natural style, which never colourizes a black-and-white photograph (adaptive/profile.py) and keeps the identity requirement. A test pins all three pairs.
+PRESETS = {
+    "auto": (EnhancementLevel.AUTO, EnhancementStyle.NATURAL),
+    "standard": (EnhancementLevel.HIGH, EnhancementStyle.NATURAL),
+    "pro": (EnhancementLevel.HIGH, EnhancementStyle.AI_MAX),
+}
+PRESET_CHOICES = [("auto", "Auto"), ("standard", "Standard"), ("pro", "Pro")]
+
+
 class EnhancementRequestSerializer(serializers.Serializer):
+    preset = serializers.ChoiceField(
+        choices=PRESET_CHOICES, required=False,
+        help_text=(
+            "A name for a `level` + `style` pair, so a client can send one field: "
+            + "; ".join(f"`{name}` = level `{level}` + style `{style}`" for name, (level, style) in PRESETS.items())
+            + ". It fills in whichever of `level` and `style` is not sent; a `level` or `style` that is sent wins over the preset's value "
+            "(`{\"preset\": \"auto\", \"level\": \"high\"}` is level `high` with style `natural`). "
+            "Without a preset, `level` and `style` work exactly as before. The result's `requested_level` and `requested_style` "
+            "show the pair that was used, never the preset's name. `pro` uses the `ai_max` style: see `style` about the identity check."
+        ),
+    )
     level = serializers.ChoiceField(choices=EnhancementLevel.choices, default=EnhancementLevel.AUTO)
     style = serializers.ChoiceField(
         choices=EnhancementStyle.choices, default=EnhancementStyle.NATURAL,
@@ -32,6 +55,16 @@ class EnhancementRequestSerializer(serializers.Serializer):
             "`identity_notice`."
         ),
     )
+
+    def validate(self, attrs):
+        preset = attrs.get("preset")
+        if preset is None:
+            return attrs
+        # level and style have defaults, so `attrs` cannot tell a field the client sent from one it left out: the raw input can. The preset fills in what was left out; what was sent wins.
+        for name, value in zip(("level", "style"), PRESETS[preset]):
+            if name not in self.initial_data:
+                attrs[name] = value
+        return attrs
 
 
 class WatermarkOptionsSerializer(serializers.Serializer):
