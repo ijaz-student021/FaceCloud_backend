@@ -333,15 +333,14 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}  or  {preset}     -> 
   | `preset` | `level` | `style` |
   |---|---|---|
   | `auto` | `auto` | `natural` (what a request with neither field already means, and what an automatic enhancement after upload uses) |
-  | `standard` | `medium` | `dynamic` |
+  | `standard` | `high` | `natural` (a stronger result that stays natural: a black-and-white photograph **stays** black and white, and faces are restored only when they can be checked) |
   | `pro` | `high` | `ai_max` (AI Enhance at the strongest level) |
 
-  The backend resolves it before anything is queued, so the result's `requested_level` / `requested_style` show the real pair (never the preset's name) and nothing else in the API changes.
-  A request without `preset` works exactly as before. Send the preset **alone**: a `level` or `style` that disagrees with it is a **400** with the message under the key `preset` (for example
-  "pro means level high and style ai_max, which disagrees with the level sent. Send the preset alone, or a level and style that match it."), one that matches it is accepted, and an
-  unknown name (values are lower-case, like `level` and `style`) is a 400 too.
-  `pro` uses `ai_max`, so everything under "`ai_max` and identity" below applies to it: read `identity_check_bypassed` and `identity_notice` on the result. `standard` uses `dynamic`, so
-  a black-and-white photograph is colourized (see the list below).
+  The preset is a **default setter**: it fills in whichever of `level` and `style` you do not send, and a `level` or `style` you do send **wins** over the preset's value for that field
+  (`{"preset": "auto", "level": "high"}` is level `high` with style `natural`; `{"preset": "pro", "style": "dynamic"}` is level `high` with style `dynamic`). The backend resolves it before anything
+  is queued, so the result's `requested_level` / `requested_style` show the pair that was actually used (never the preset's name) and nothing else in the API changes. A request without
+  `preset` works exactly as before. An unknown preset name (values are lower-case, like `level` and `style`), or an invalid `level` / `style`, is a **400**.
+  `pro` uses `ai_max`, so everything under "`ai_max` and identity" below applies to it: read `identity_check_bypassed` and `identity_notice` on the result.
 - **What `style` and `level` do in the adaptive engine** (the default policy; `applied_parameters.adaptive.profile` echoes what was used). They change *when* an operation is
   tried and how strongly; the safety checks are the same for every choice, so a stronger choice can still end in "nothing needed fixing" or "kept the original":
   - `natural` (and what an automatic enhancement uses): defect-driven; a black-and-white photograph **stays** black and white.

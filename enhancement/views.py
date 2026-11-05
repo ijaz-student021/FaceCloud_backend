@@ -107,7 +107,7 @@ class ImageEnhanceView(APIView):
         summary="Enhance one image",
         description=(
             "Queues an enhancement. `style` picks the look (natural, dynamic, ai_max); "
-            "`level` the strength; `preset` (auto, standard, pro) is one name for a level + style pair. "
+            "`level` the strength; `preset` (auto, standard, pro) is one name for a level + style pair that fills in whichever of the two is not sent. "
             "Returns 202 immediately; poll the result for progress."
         ),
         request=EnhancementRequestSerializer,
@@ -120,6 +120,7 @@ class ImageEnhanceView(APIView):
             OpenApiExample("Natural, automatic strength", value={"level": "auto", "style": "natural"}, request_only=True),
             OpenApiExample("Full AI enhance", value={"level": "high", "style": "ai_max"}, request_only=True),
             OpenApiExample("Preset Pro (the same as the line above)", value={"preset": "pro"}, request_only=True),
+            OpenApiExample("Preset Pro with a lighter strength (a level that is sent wins)", value={"preset": "pro", "level": "medium"}, request_only=True),
             OpenApiExample(
                 "Too many enhancements in progress",
                 value={"detail": "You already have 10 image enhancements in progress (limit 10). Wait for some to finish, then try again."},

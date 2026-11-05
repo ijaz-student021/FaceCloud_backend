@@ -1,19 +1,26 @@
-"""`preset` on the enhancement request: one name (auto, standard, pro) for a level + style pair that already exists.
+"""`preset` on the enhancement request: one name (auto, standard, pro) for a level + style pair that already exists, used as a DEFAULT SETTER.
 
-The preset is resolved in EnhancementRequestSerializer.validate, before anything is queued, so the job, the batch and the stored `requested_level` / `requested_style` carry the real pair and
-the engine never sees a preset. A request without a preset behaves exactly as before. "pro" is the pair the owner named (ai_max at the strongest level); "auto" is what a request with neither
-field already means; "standard" is the one pair nobody named: the test that pins it is there so that changing it is a decision.
+The preset fills in whichever of `level` and `style` the client did not send; a `level` or `style` that was sent wins (the owner's decision, 2026-11-05). It is resolved in
+EnhancementRequestSerializer.validate, before anything is queued, so the job, the batch and the stored `requested_level` / `requested_style` carry the pair that was used and the engine never
+sees a preset. A request without a preset behaves exactly as before. The pairs are the owner's: "pro" is ai_max at the strongest level, "auto" is what a request with neither field already
+means, and "standard" is the strongest level with the natural style, a stronger result that never colourizes a black-and-white photograph.
 """
 from unittest.mock import patch
 
+import numpy as np
 from django.contrib.auth import get_user_model
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIClient
 
+from . import test_adaptive_engine as engine_tests
+from .adaptive import operations as ops
 from .adaptive.profile import profile_for
+from .adaptive.service import AdaptiveImageEnhancementService, EngineConfig
 from .models import EnhancementBatchJob, EnhancementLevel, EnhancementStyle, ImageEnhancementResult
 from .serializers import PRESET_CHOICES, PRESETS, EnhancementRequestSerializer
+from .test_adaptive_polish import _no_identity
+from .test_adaptive_profile import COLOUR_ON, grey, warm_colourization
 from .test_pipeline_regressions import ResultFixture
 
 
@@ -32,7 +39,7 @@ class PresetMappingTests(SimpleTestCase):
     def test_the_three_presets_and_their_pairs(self):
         self.assertEqual(
             {name: (str(level), str(style)) for name, (level, style) in PRESETS.items()},
-            {"auto": ("auto", "natural"), "standard": ("medium", "dynamic"), "pro": ("high", "ai_max")},
+            {"auto": ("auto", "natural"), "standard": ("high", "natural"), "pro": ("high", "ai_max")},
         )
         self.assertEqual([name for name, _label in PRESET_CHOICES], list(PRESETS))
 
@@ -54,17 +61,44 @@ class PresetMappingTests(SimpleTestCase):
     def test_auto_is_what_a_request_with_nothing_in_it_already_means(self):
         self.assertEqual(pair({"preset": "auto"}), pair({}))
 
-    def test_the_premise_behind_standard_the_engine_treats_auto_and_medium_alike(self):
-        """If this fails, `standard` and `auto` can differ by strength too and the choice of `standard` should be looked at again."""
-        for style in ("natural", "dynamic", "ai_max"):
-            self.assertEqual(profile_for(style, "auto").describe() | {"level": ""}, profile_for(style, "medium").describe() | {"level": ""}, style)
-        self.assertNotEqual(profile_for("natural", "auto").describe(), profile_for("dynamic", "medium").describe())
+    def test_standard_is_a_stronger_result_than_auto_that_never_colourizes(self):
+        """Why `high` + `natural`: a visible step over Auto (polish, noise, dark scenes, small photographs) without the one thing `dynamic` and `ai_max` add that can look like an invention."""
+        auto, standard = (profile_for(str(style), str(level)) for level, style in (PRESETS["auto"], PRESETS["standard"]))
+        self.assertFalse(standard.colourize)
+        self.assertGreater(standard.polish_scale, auto.polish_scale)
+        self.assertTrue(standard.treat_low_noise and not auto.treat_low_noise)
+        self.assertGreater(standard.upscale_below_edge, auto.upscale_below_edge)
+        self.assertEqual(standard.polish_style, "natural")
 
     def test_the_documentation_lists_the_pairs_from_the_same_table(self):
         help_text = EnhancementRequestSerializer().fields["preset"].help_text
         for name, (level, style) in PRESETS.items():
             self.assertIn(f"`{name}` = level `{level}` + style `{style}`", help_text)
         self.assertIn("ai_max", help_text)
+        self.assertIn("wins over the preset", help_text)
+
+
+@override_settings(**COLOUR_ON, ADAPTIVE_ALWAYS_ENHANCE=False)
+class PresetsThroughTheEngineTests(SimpleTestCase):
+    """The reason `standard` is `natural`, shown on the real engine (stand-in colourization model): a black-and-white photograph stays black and white for Auto and Standard, and is colourized by Pro."""
+
+    def run_engine(self, image, preset):
+        level, style = PRESETS[preset]
+        service = AdaptiveImageEnhancementService(analyzer=engine_tests.analyzer_with(None), config=EngineConfig(), runners={ops.COLORIZE: warm_colourization})
+        with patch("enhancement.adaptive.service.IdentityChecker", _no_identity):
+            return service.enhance(image, requested_level=level, style=style)
+
+    def test_a_black_and_white_photograph_stays_black_and_white_for_auto_and_standard(self):
+        source = grey(engine_tests.portrait())
+        for preset in ("auto", "standard"):
+            with self.subTest(preset):
+                out, _level, parameters = self.run_engine(source, preset)
+                np.testing.assert_array_equal(out, source)
+                self.assertNotIn(ops.COLORIZE, parameters["adaptive"]["operations_applied"])
+
+    def test_pro_colourizes_it_which_is_why_it_is_not_the_standard(self):
+        _out, _level, parameters = self.run_engine(grey(engine_tests.portrait()), "pro")
+        self.assertEqual(parameters["adaptive"]["operations_applied"], [ops.COLORIZE])
 
 
 class RequestWithoutAPresetTests(SimpleTestCase):
@@ -90,29 +124,45 @@ class RequestWithoutAPresetTests(SimpleTestCase):
                 validated(data)
 
 
-class PresetWithLevelAndStyleTests(SimpleTestCase):
-    def test_a_level_and_style_that_match_the_preset_are_accepted(self):
-        self.assertEqual(pair({"preset": "pro", "level": "high", "style": "ai_max"}), ("high", "ai_max"))
-        self.assertEqual(pair({"preset": "pro", "style": "ai_max"}), ("high", "ai_max"))
-        self.assertEqual(pair({"preset": "auto", "level": "auto"}), ("auto", "natural"))
-
-    def test_a_level_or_style_that_disagrees_is_refused_not_guessed(self):
-        for data in ({"preset": "pro", "level": "low"}, {"preset": "pro", "style": "natural"}, {"preset": "standard", "level": "high"}, {"preset": "auto", "style": "ai_max"},
-                     {"preset": "pro", "level": "auto", "style": "natural"}):
+class PresetAsADefaultSetterTests(SimpleTestCase):
+    def test_a_level_that_is_sent_wins(self):
+        cases = (
+            ({"preset": "auto", "level": "high"}, ("high", "natural")),        # the owner's own example
+            ({"preset": "pro", "level": "low"}, ("low", "ai_max")),
+            ({"preset": "standard", "level": "medium"}, ("medium", "natural")),
+        )
+        for data, expected in cases:
             with self.subTest(data):
-                with self.assertRaises(ValidationError) as caught:
-                    validated(data)
-                message = str(caught.exception.detail["preset"][0])
-                self.assertIn(f"`{data['preset']}` means level", message)
-                self.assertIn("Send the preset alone", message)
+                self.assertEqual(pair(data), expected)
 
-    def test_the_message_names_the_field_that_disagrees(self):
-        with self.assertRaises(ValidationError) as caught:
-            validated({"preset": "pro", "level": "low"})
-        self.assertIn("level sent", str(caught.exception.detail["preset"][0]))
-        with self.assertRaises(ValidationError) as caught:
-            validated({"preset": "pro", "level": "low", "style": "natural"})
-        self.assertIn("level and style sent", str(caught.exception.detail["preset"][0]))
+    def test_a_style_that_is_sent_wins(self):
+        cases = (
+            ({"preset": "pro", "style": "natural"}, ("high", "natural")),
+            ({"preset": "standard", "style": "dynamic"}, ("high", "dynamic")),
+            ({"preset": "auto", "style": "ai_max"}, ("auto", "ai_max")),
+        )
+        for data, expected in cases:
+            with self.subTest(data):
+                self.assertEqual(pair(data), expected)
+
+    def test_both_sent_win_over_the_whole_preset(self):
+        self.assertEqual(pair({"preset": "pro", "level": "low", "style": "natural"}), ("low", "natural"))
+
+    def test_a_value_that_equals_the_default_is_still_what_was_sent(self):
+        """`level` and `style` have defaults (auto, natural): only the raw input can tell that "auto" was SENT. This is the case that a check on the validated value gets wrong."""
+        self.assertEqual(pair({"preset": "pro", "level": "auto"}), ("auto", "ai_max"))
+        self.assertEqual(pair({"preset": "pro", "style": "natural"}), ("high", "natural"))
+        self.assertEqual(pair({"preset": "standard", "level": "auto", "style": "natural"}), ("auto", "natural"))
+
+    def test_a_level_and_style_that_match_the_preset_change_nothing(self):
+        self.assertEqual(pair({"preset": "pro", "level": "high", "style": "ai_max"}), ("high", "ai_max"))
+        self.assertEqual(pair({"preset": "standard", "level": "high"}), ("high", "natural"))
+
+    def test_an_invalid_level_or_style_is_still_refused_with_a_preset(self):
+        for data, field in (({"preset": "pro", "level": "extreme"}, "level"), ({"preset": "pro", "style": "wild"}, "style"), ({"preset": "auto", "level": ""}, "level")):
+            with self.subTest(data), self.assertRaises(ValidationError) as caught:
+                validated(data)
+            self.assertIn(field, caught.exception.detail)
 
     def test_an_unknown_or_malformed_preset_is_refused(self):
         for value in ("ultra", "", "Pro", "PRO", None, 3, ["pro"]):
@@ -147,7 +197,7 @@ class PresetEndpointTests(ResultFixture):
         self.assertEqual(response.status_code, 202, response.content)
         self.assertEqual(self.stored(image), ("high", "ai_max"))
         body = response.json()
-        self.assertEqual((body["requested_level"], body["requested_style"]), ("high", "ai_max"))      # the real pair, never the preset's name
+        self.assertEqual((body["requested_level"], body["requested_style"]), ("high", "ai_max"))      # the pair that was used, never the preset's name
 
     def test_each_preset_queues_its_pair(self):
         for name, (level, style) in PRESETS.items():
@@ -164,12 +214,23 @@ class PresetEndpointTests(ResultFixture):
                 self.assertEqual(self.enhance(image, body).status_code, 202)
                 self.assertEqual(self.stored(image), expected)
 
-    def test_a_conflict_is_a_400_and_nothing_is_queued(self):
+    def test_a_level_or_style_sent_with_a_preset_wins_and_is_what_is_queued(self):
+        cases = (({"preset": "auto", "level": "high"}, ("high", "natural")), ({"preset": "pro", "level": "low"}, ("low", "ai_max")), ({"preset": "pro", "style": "natural"}, ("high", "natural")),
+                 ({"preset": "standard", "style": "dynamic"}, ("high", "dynamic")), ({"preset": "pro", "level": "auto"}, ("auto", "ai_max")))
+        for index, (body, expected) in enumerate(cases):
+            with self.subTest(body):
+                image = self.photo(f"override{index}.jpg")
+                response = self.enhance(image, body)
+                self.assertEqual(response.status_code, 202, response.content)
+                self.assertEqual(self.stored(image), expected)
+                self.assertEqual((response.json()["requested_level"], response.json()["requested_style"]), expected)
+
+    def test_an_invalid_value_with_a_preset_is_a_400_and_nothing_is_queued(self):
         image = self.photo()
         with patch("enhancement.tasks.process_enhancement_image.apply_async") as queued:
-            response = self.client.post(f"/api/enhancements/images/{image.pk}/", {"preset": "pro", "level": "low"}, format="json")
+            response = self.client.post(f"/api/enhancements/images/{image.pk}/", {"preset": "pro", "level": "extreme"}, format="json")
         self.assertEqual(response.status_code, 400)
-        self.assertIn("preset", response.json())
+        self.assertIn("level", response.json())
         queued.assert_not_called()
         self.assertFalse(ImageEnhancementResult.objects.filter(image=image).exists())
 
@@ -180,11 +241,12 @@ class PresetEndpointTests(ResultFixture):
         self.assertIn("preset", response.json())
         self.assertFalse(ImageEnhancementResult.objects.filter(image=image).exists())
 
-    def test_a_form_encoded_request_works_the_same_and_its_conflicts_are_found(self):
-        ok, clash = self.photo("form_ok.jpg"), self.photo("form_clash.jpg")
-        self.assertEqual(self.enhance(ok, {"preset": "pro"}, format="multipart").status_code, 202)
-        self.assertEqual(self.stored(ok), ("high", "ai_max"))
-        self.assertEqual(self.enhance(clash, {"preset": "pro", "level": "low"}, format="multipart").status_code, 400)
+    def test_a_form_encoded_request_works_the_same_and_its_overrides_are_found(self):
+        plain, overridden = self.photo("form_plain.jpg"), self.photo("form_override.jpg")
+        self.assertEqual(self.enhance(plain, {"preset": "pro"}, format="multipart").status_code, 202)
+        self.assertEqual(self.stored(plain), ("high", "ai_max"))
+        self.assertEqual(self.enhance(overridden, {"preset": "pro", "level": "low"}, format="multipart").status_code, 202)
+        self.assertEqual(self.stored(overridden), ("low", "ai_max"))
 
     def test_a_batch_takes_a_preset_too(self):
         photos = [self.photo(f"batch{index}.jpg") for index in range(2)]
@@ -195,10 +257,19 @@ class PresetEndpointTests(ResultFixture):
         job = EnhancementBatchJob.objects.get()
         self.assertEqual((job.requested_level, job.requested_style), ("high", "ai_max"))
 
-    def test_a_batch_conflict_creates_nothing(self):
+    def test_a_batch_override_is_what_every_photograph_and_the_job_get(self):
+        photos = [self.photo(f"batch_override{index}.jpg") for index in range(2)]
+        with patch("enhancement.tasks.process_enhancement_batch.apply_async"):
+            response = self.client.post(f"/api/enhancements/batches/{self.batch.pk}/", {"preset": "standard", "style": "dynamic"}, format="json")
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual({self.stored(photo) for photo in photos}, {("high", "dynamic")})
+        job = EnhancementBatchJob.objects.get()
+        self.assertEqual((job.requested_level, job.requested_style), ("high", "dynamic"))
+
+    def test_a_batch_with_an_invalid_value_creates_nothing(self):
         self.photo()
         with patch("enhancement.tasks.process_enhancement_batch.apply_async"):
-            response = self.client.post(f"/api/enhancements/batches/{self.batch.pk}/", {"preset": "standard", "style": "natural"}, format="json")
+            response = self.client.post(f"/api/enhancements/batches/{self.batch.pk}/", {"preset": "standard", "style": "wild"}, format="json")
         self.assertEqual(response.status_code, 400)
         self.assertFalse(EnhancementBatchJob.objects.exists())
         self.assertFalse(ImageEnhancementResult.objects.exists())
