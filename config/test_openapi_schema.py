@@ -17,7 +17,10 @@ class OpenAPISchemaTests(SimpleTestCase):
         self.assertIn("ErrorDetail", text)
         self.assertIn("/api/system/queue/", text)
         schemas = yaml.safe_load(text)["components"]["schemas"]
-        # the enhancement result says which engine produced each stage
+        # the enhancement request takes a preset, and the result says which engine produced each stage
+        self.assertEqual(schemas["PresetEnum"]["enum"], ["auto", "standard", "pro"])
+        self.assertIn("preset", schemas["EnhancementRequest"]["properties"])
+        self.assertNotIn("preset", schemas["EnhancementRequest"].get("required", []))
         self.assertTrue(schemas["ImageEnhancementResult"]["properties"]["processing_summary"]["nullable"])
         self.assertEqual(set(schemas["ProcessingSummary"]["properties"]), {"ai_applied", "classical_fallback", "stages"})
         self.assertEqual(set(schemas["ProcessingStage"]["properties"]), {"stage", "engine", "kind", "fallback", "replaced"})

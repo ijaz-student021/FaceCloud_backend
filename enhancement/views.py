@@ -107,7 +107,8 @@ class ImageEnhanceView(APIView):
         summary="Enhance one image",
         description=(
             "Queues an enhancement. `style` picks the look (natural, dynamic, ai_max); "
-            "`level` the strength. Returns 202 immediately; poll the result for progress."
+            "`level` the strength; `preset` (auto, standard, pro) is one name for a level + style pair. "
+            "Returns 202 immediately; poll the result for progress."
         ),
         request=EnhancementRequestSerializer,
         responses={
@@ -118,6 +119,7 @@ class ImageEnhanceView(APIView):
         examples=[
             OpenApiExample("Natural, automatic strength", value={"level": "auto", "style": "natural"}, request_only=True),
             OpenApiExample("Full AI enhance", value={"level": "high", "style": "ai_max"}, request_only=True),
+            OpenApiExample("Preset Pro (the same as the line above)", value={"preset": "pro"}, request_only=True),
             OpenApiExample(
                 "Too many enhancements in progress",
                 value={"detail": "You already have 10 image enhancements in progress (limit 10). Wait for some to finish, then try again."},
@@ -185,6 +187,7 @@ class BatchEnhanceView(APIView):
         },
         examples=[
             OpenApiExample("Dynamic look", value={"level": "medium", "style": "dynamic"}, request_only=True),
+            OpenApiExample("Preset Pro", value={"preset": "pro"}, request_only=True),
             OpenApiExample(
                 "Images already in progress",
                 value={"detail": "Some images in this batch already have an enhancement queued or running.",
