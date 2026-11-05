@@ -340,6 +340,11 @@ ADAPTIVE_AI_MAX_FACE_DEBLUR_MIN_DETAIL_GAIN = env.float("ADAPTIVE_AI_MAX_FACE_DE
 ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX = env.float("ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX", default=0.06)
 ADAPTIVE_LANDMARK_PIXEL_FLOOR = env.float("ADAPTIVE_LANDMARK_PIXEL_FLOOR", default=2.0)
 ADAPTIVE_LANDMARK_ENLARGEMENT_SHIFT_MAX = env.float("ADAPTIVE_LANDMARK_ENLARGEMENT_SHIFT_MAX", default=0.035)
+# ADAPTIVE_BASELINE_AFTER_FACE_RESTORATION: once a face restoration is accepted (held to SFACE_RESTORE_GUARD_MIN_SIMILARITY against the upload), the steps that follow are judged against the
+#   RESTORED face at the ordinary limit and against the upload at the restoration limit (the one the saved photograph's identity is judged at), instead of the ordinary 0.80 against the upload:
+#   a restored face at 0.807 left the enlargement at 0.7993 refused, and the photograph lost its enlargement and detail layer by 0.0007
+#   (docs/evaluation/2026-11-05-baseline-after-face-restoration.md). False gives the earlier behaviour.
+ADAPTIVE_BASELINE_AFTER_FACE_RESTORATION = env.bool("ADAPTIVE_BASELINE_AFTER_FACE_RESTORATION", default=True)
 NAFNET_MODEL_PATH = env(
     "NAFNET_MODEL_PATH",
     default=str(BASE_DIR / ".runtime" / "models" / "NAFNet-GoPro-width64.pth"),
