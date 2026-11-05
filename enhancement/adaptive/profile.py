@@ -2,7 +2,8 @@
 
 Until this module the adaptive engine ignored both: "Natural", "Dynamic, more punch" and "AI Enhance, strongest restoration" (and Light, Moderate, Strong) all produced the
 same result, so choosing the strongest setting on a photograph could change nothing at all. A ``Profile`` says what a choice changes. It only changes **when an operation
-is tried and how strongly**; every safety gate of the validator (data consistency, colour, artifacts, identity, "did it improve") judges every candidate exactly as before.
+is tried and how strongly**; every safety gate of the validator (data consistency, colour, artifacts, identity, "did it improve") judges every candidate exactly as before, with ONE
+exception: AI Enhance accepts a deblur that raises a blurred face's detail by ``ADAPTIVE_AI_MAX_FACE_DEBLUR_MIN_DETAIL_GAIN`` (1.10) where the others need 1.25 (docs/evaluation/2026-11-05-dark-face-identity.md).
 
 * ``natural`` (the default, and what automatic enhancement after upload uses): keeps the photograph as it is. Operations the photograph's own defects call for, and a gentle
   polish when nothing is wrong (if ``ADAPTIVE_POLISH_ENABLED``). A black-and-white photograph stays black and white.
@@ -32,11 +33,13 @@ class Profile:
     treat_low_noise: bool = False       # noise at the "low" level is denoised too
     upscale_below_edge: int = 0         # a photograph whose long edge is under this is enlarged (0: only when the analyzer calls it low resolution)
     variant_blends: tuple = (1.0, 0.65)     # the blends tried for a lift or a denoise, strongest first
+    face_deblur_min_detail_gain: float | None = None    # a deblur chosen for a blurred face must raise the face's own detail this many times; None: the validator's own limit (ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN)
 
     def describe(self):
         return {"style": self.style, "level": self.level, "colourize": self.colourize, "polish_style": self.polish_style, "polish_scale": self.polish_scale,
                 "polish_dark_scenes": self.polish_dark_scenes, "lift_dark_scenes": self.lift_dark_scenes, "treat_low_noise": self.treat_low_noise,
-                "upscale_below_edge": self.upscale_below_edge, "variant_blends": list(self.variant_blends)}
+                "upscale_below_edge": self.upscale_below_edge, "variant_blends": list(self.variant_blends),
+                "face_deblur_min_detail_gain": self.face_deblur_min_detail_gain}
 
 
 DEFAULT = Profile()
@@ -54,6 +57,8 @@ def profile_for(style, level="auto"):
     style = str(getattr(style, "value", style) or "natural")
     level = str(getattr(level, "value", level) or "auto")
     profile = replace(_STYLES.get(style, DEFAULT), style=style if style in _STYLES else "natural", level=level)
+    if style == "ai_max":      # read here, not in _STYLES, so the setting is read when the engine runs
+        profile = replace(profile, face_deblur_min_detail_gain=float(settings.ADAPTIVE_AI_MAX_FACE_DEBLUR_MIN_DETAIL_GAIN))
     if level == "low":
         profile = replace(profile, polish_scale=round(profile.polish_scale * 0.6, 4), variant_blends=(0.65, 0.4))
     elif level == "high":

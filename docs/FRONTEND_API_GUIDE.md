@@ -345,7 +345,9 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}  or  {preset}     -> 
   tried and how strongly; the safety checks are the same for every choice, so a stronger choice can still end in "nothing needed fixing" or "kept the original":
   - `natural` (and what an automatic enhancement uses): defect-driven; a black-and-white photograph **stays** black and white.
   - `dynamic`: a stronger polish, also for a deliberately dark photograph, and **a black-and-white photograph is colourized** (`operations_applied` contains `colourization`).
-  - `ai_max`: all of `dynamic`, a stronger polish, a dark scene with a visible subject may be lifted, light noise is treated, and a photograph under 1280 px is enlarged.
+  - `ai_max`: all of `dynamic`, a stronger polish, a dark scene with a visible subject may be lifted, light noise is treated, a photograph under 1280 px is enlarged, and a face deblur that raises
+    the face's detail 1.10 times is accepted (the other styles need 1.25; every other safety check is the same). A dim face (mean grey level 15 or more) now has its identity checked, so a face
+    restoration is judged instead of skipped with "the source face is too dark"; it can still be refused (`face_geometry_changed`, identity, invented detail), and the result says which.
   - `level`: `low` = gentler (blends 0.65 and 0.4, polish x0.6); `auto`/`medium` = the style as it is; `high` = polish x1.4, a dark scene may be lifted, light noise is treated,
     a photograph under 960 px is enlarged.
   - **`detail_restoration`** (in `adaptive.operations_applied`, summary "restored fine detail and reduced compression blocking"): a soft or heavily compressed photograph (a WhatsApp copy)

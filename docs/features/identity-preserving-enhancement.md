@@ -14,7 +14,10 @@ identity grouping (Feature 18) already uses:
 
 1. Detect the largest faces in the source (up to `IDENTITY_GUARD_MAX_FACES`),
    ignoring faces smaller than `IDENTITY_GUARD_MIN_FACE_EDGE` px or darker than
-   `IDENTITY_GUARD_MIN_FACE_LUMINANCE`.
+   `IDENTITY_GUARD_MIN_FACE_LUMINANCE` (15 of 255 since 2026-11-05; it was 45). A crop darker than
+   `IDENTITY_GUARD_DARK_FACE_BRIGHTNESS_THRESHOLD` (40) is brightened by `IDENTITY_GUARD_DARK_FACE_GAIN`
+   (x2.5) before it is embedded, the reference and every candidate alike, and for the embedding only
+   (`docs/evaluation/2026-11-05-dark-face-identity.md`).
 2. Embed them, then detect and embed the faces in the enhanced image (compared
    on the source pixel grid, so upscaled outputs are handled).
 3. Match faces by box overlap; the **worst** matched face decides.
@@ -73,4 +76,5 @@ can be calibrated later.
 `IDENTITY_GUARD_ENABLED`, `IDENTITY_GUARD_MIN_SIMILARITY`,
 `IDENTITY_GUARD_STRENGTHS`, `IDENTITY_GUARD_MAX_FACES`,
 `IDENTITY_GUARD_MAX_EDGE`, `IDENTITY_GUARD_MIN_FACE_EDGE`,
-`IDENTITY_GUARD_MIN_FACE_LUMINANCE`.
+`IDENTITY_GUARD_MIN_FACE_LUMINANCE`, `IDENTITY_GUARD_DARK_FACE_BRIGHTNESS_THRESHOLD`,
+`IDENTITY_GUARD_DARK_FACE_GAIN`.

@@ -27,7 +27,7 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import cv2
 import numpy as np
@@ -43,7 +43,7 @@ from .candidates import CandidatePool, PoolFull
 from .debug import DebugRecorder
 from .profile import profile_for
 from .router import AdaptiveEnhancementRouter
-from .validator import FinalImageQualityValidator
+from .validator import FinalImageQualityValidator, Limits
 
 logger = logging.getLogger(__name__)
 
@@ -318,7 +318,11 @@ class AdaptiveImageEnhancementService:
         if not report0.faces:
             identity.reason = "No face was found, so there was no identity to check."
         pool = CandidatePool(original, self.config.max_candidates)
-        validator = FinalImageQualityValidator(analyzer, report0, identity if identity.available else None, original=original)
+        profile = profile_for(style, requested_level)     # what the style and the strength change (profile.py); the validator's gates are the same for all, but for one limit AI Enhance may lower (below)
+        limits = Limits()
+        if profile.face_deblur_min_detail_gain is not None:
+            limits = replace(limits, face_deblur_min_detail_gain=min(limits.face_deblur_min_detail_gain, profile.face_deblur_min_detail_gain))      # never raises the limit the operator set
+        validator = FinalImageQualityValidator(analyzer, report0, identity if identity.available else None, limits=limits, original=original)
 
         current, report = pool.original, report0
         done, stages, skipped, warnings = set(), [], [], []
@@ -332,7 +336,6 @@ class AdaptiveImageEnhancementService:
         timed_out = False
         final_tried = finish_tried = False
         defect_report = report0
-        profile = profile_for(style, requested_level)     # what the style and the strength change (profile.py); the validator's gates are the same for all
         if (settings.ADAPTIVE_LOWKEY_SKIP_LIFT and style != "ai_max" and requested_level != "high" and report0.exposure.get("status") == "dark_scene"
                 and is_black_backdrop_low_key(original)):
             # A lit subject on a black background (auto_edit.is_black_backdrop_low_key) that the analyzer also sees as lit (``dark_scene``, not ``low_light_subject``: a dark FACE against a bright background is backlit and is lifted): the
