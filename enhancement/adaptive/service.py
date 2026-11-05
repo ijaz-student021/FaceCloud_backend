@@ -318,7 +318,7 @@ class AdaptiveImageEnhancementService:
         if not report0.faces:
             identity.reason = "No face was found, so there was no identity to check."
         pool = CandidatePool(original, self.config.max_candidates)
-        validator = FinalImageQualityValidator(analyzer, report0, identity if identity.available else None)
+        validator = FinalImageQualityValidator(analyzer, report0, identity if identity.available else None, original=original)
 
         current, report = pool.original, report0
         done, stages, skipped, warnings = set(), [], [], []

@@ -78,6 +78,13 @@ class Limits:
     # An upscaled candidate's landmarks are found again on an interpolated image, so a little jitter is not a changed face: plain bicubic
     # enlargement of three 240 px portraits already shifted them by 0.019, 0.026 and 0.037 (measured on real photographs).
     face_landmark_shift_max_upscale: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX", 0.06)))
+    # The share limits above are measured against the ORIGINAL photograph's landmarks, but the detector places the landmarks of ANY enlargement of a small or soft face somewhere else with no model
+    # involved: on 93 public LFW faces (68-134 px wide) a plain bicubic x2 alone moved them by 0.040 (median) and 0.066 (90th percentile), so 15 of the 93 enlargements were refused for a face
+    # that nothing had touched (on a 114 px face of the library: plain 0.078, Real-ESRGAN 0.080). What the MODEL moved is the candidate's landmarks against the landmarks the detector finds on a plain
+    # enlargement of the original to the same size: 0.005 (median) and 0.035 (99th percentile) on the same faces. A candidate refused by the share limit is accepted when it stays within this much
+    # of the plain enlargement. Never stricter than before (a candidate that passed still passes); 0 switches it off; never for a generative face restoration (always strict) nor for polish (its own
+    # gate); a face that is no longer found is still a loss. docs/evaluation/2026-11-05-small-face-geometry.md.
+    landmark_enlargement_shift_max: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_LANDMARK_ENLARGEMENT_SHIFT_MAX", 0.035)))
     upscale_detail_gain_max: float = 3.0
     # polish (a gentle improvement of a photograph with nothing to fix): it must be clearly the same photograph and measurably better
     polish_min_gain: float = 1.05                  # the main face's detail, or the frame's contrast (std of luminance), must rise at least 5 percent
@@ -249,11 +256,13 @@ def reference_metrics(clean, image):
 class FinalImageQualityValidator:
     """Judge candidates against the original and the image they were made from."""
 
-    def __init__(self, analyzer, original_report, identity=None, limits=None):
+    def __init__(self, analyzer, original_report, identity=None, limits=None, original=None):
         self.analyzer = analyzer
         self.original_report = original_report
         self.identity = identity            # an object with .check(image) -> dict, or None
         self.limits = limits or Limits()
+        self.original = original            # the original's pixels (optional): the plain enlargement the geometry gate may compare an enlarged candidate with
+        self._plain_enlargements = {}       # (width, height) -> the faces found on a plain bicubic enlargement of the original to that size
 
     def evaluate(self, parent, candidate, operation, parent_report, expected_scale=1, candidate_report=None, refine=False):
         """``{accepted, reasons, gates, metrics, improvement, change_cost}`` for one candidate. ``refine``: a detail-restoration candidate for a photograph with no defect (always-enhance)."""
@@ -366,6 +375,28 @@ class FinalImageQualityValidator:
             worst = min(worst, structure_ssim(parent[y0:y1, x0:x1], candidate[y0:y1, x0:x1]))
         return worst >= self.limits.polish_face_structure_ssim_min, worst
 
+    def _shift_beyond_plain_enlargement(self, faces, candidate, candidate_report, scale):
+        """The mean landmark shift (a share of the face width) of an enlarged candidate against the landmarks the detector finds on a plain bicubic enlargement of the ORIGINAL to the candidate's size:
+        what the model moved, with the detector's own scale-dependent placement taken out. ``None`` when there is nothing to compare with: the setting is 0, the candidate is not a different size
+        from the original (the plain enlargement would be the original itself), the original's pixels were not given, or a face is not found on the plain enlargement or on the candidate.
+        The plain enlargement is analysed once per size, and only when the share limit has already refused the candidate."""
+        if (self.limits.landmark_enlargement_shift_max <= 0 or self.original is None or self.analyzer is None or candidate is None or not faces
+                or abs(scale - 1.0) < 0.02):
+            return None
+        size = (int(candidate.shape[1]), int(candidate.shape[0]))
+        if size not in self._plain_enlargements:
+            self._plain_enlargements[size] = self.analyzer.analyze(cv2.resize(self.original, size, interpolation=cv2.INTER_CUBIC)).faces
+        found = [other for other in self._plain_enlargements[size] if other.landmarks and len(other.landmarks) == 5]
+        reference = []
+        for face in faces:             # each original face, found again on the plain enlargement (the same matching as landmark_shift)
+            centre = scale * np.array([face.box[0] + face.box[2] / 2, face.box[1] + face.box[3] / 2])
+            near = [(float(np.linalg.norm(centre - np.array([other.box[0] + other.box[2] / 2, other.box[1] + other.box[3] / 2]))), other) for other in found]
+            near = [pair for pair in near if pair[0] < scale * face.box[2]]
+            if not near:
+                return None
+            reference.append(min(near, key=lambda pair: pair[0])[1])
+        return landmark_shift(reference, candidate_report.faces, 1.0)
+
     def _identity_gate(self, verdict, candidate, candidate_report, operation, parent=None):
         if not self.original_report.faces:
             verdict["gates"]["identity"] = {"passed": True, "status": "no_face"}
@@ -390,6 +421,11 @@ class FinalImageQualityValidator:
         status = {"landmark_shift": None if shift is None else round(shift, 4)}
         if tiny:
             status["tiny_faces_not_checked"] = tiny
+        if not landmarks_ok and shift is not None and operation not in ("face_restoration", "polish"):
+            beyond = self._shift_beyond_plain_enlargement(faces, candidate, candidate_report, scale)
+            if beyond is not None:
+                status["landmark_shift_beyond_plain_enlargement"] = round(beyond, 4)
+                landmarks_ok = beyond <= self.limits.landmark_enlargement_shift_max
         if operation == "polish" and not landmarks_ok:
             holds, worst = self._face_structure_holds(parent, candidate)
             if holds is not None:

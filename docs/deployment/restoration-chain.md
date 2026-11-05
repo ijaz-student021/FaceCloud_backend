@@ -72,6 +72,7 @@ finish and keeps the original.
 | `ADAPTIVE_FACE_BLUR_HIGH` | 25 | face detail below this is "strongly blurred" (deblur) |
 | `ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN` | 1.25 | a deblur chosen for a blurred face must raise the face's detail this many times |
 | `ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX` | 0.06 | largest landmark shift (share of face width) an upscaled candidate may show; other operations 0.04 |
+| `ADAPTIVE_LANDMARK_ENLARGEMENT_SHIFT_MAX` | 0.035 | a candidate that shift limit refused is still accepted when its landmarks stay this close (share of face width) to the landmarks found on a plain enlargement of the original; 0 = off. Never stricter than before |
 | `HD_RESTORATION_OUTPUT_SCALE` | 2 | upscale factor (x2 keeps memory and time bounded) |
 | `HD_RESTORATION_MAX_NATIVE_OUTPUT_PIXELS` / `HD_RESTORATION_MAX_OUTPUT_PIXELS` | 20,000,000 | output size bounds |
 | `ADAPTIVE_MAX_OUTPUT_EDGE` | 4096 | the engine will not enlarge beyond this long edge |

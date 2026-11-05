@@ -325,10 +325,16 @@ if AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES < 1:
 # ADAPTIVE_LANDMARK_PIXEL_FLOOR: a landmark displacement under this many pixels of the ORIGINAL photograph is detector jitter on a tiny
 #   face, not a changed face (a 21 px face moved 1.6 px = 0.078 of its width for a candidate that passed every other gate). It raises the
 #   share limit only for faces under limit-share/floor wide, never for face restoration or polish; 0 switches it off.
+# ADAPTIVE_LANDMARK_ENLARGEMENT_SHIFT_MAX: the detector places the landmarks of any enlargement of a small or soft face somewhere else with no model involved
+#   (public LFW faces, 68-134 px: a plain bicubic x2 moved them 0.040 median, 0.066 at the 90th percentile; 15 of 93 enlargements were refused for a face nothing had touched).
+#   A candidate refused by the share limit is accepted when its landmarks stay within this share of the face width of the landmarks found on a plain enlargement of the
+#   original to the same size (what the MODEL moved: 0.005 median, 0.035 at the 99th percentile). Never stricter than before; 0 switches it off; never for face restoration
+#   or polish (docs/evaluation/2026-11-05-small-face-geometry.md).
 ADAPTIVE_FACE_BLUR_HIGH = env.float("ADAPTIVE_FACE_BLUR_HIGH", default=25.0)
 ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN = env.float("ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN", default=1.25)
 ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX = env.float("ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX", default=0.06)
 ADAPTIVE_LANDMARK_PIXEL_FLOOR = env.float("ADAPTIVE_LANDMARK_PIXEL_FLOOR", default=2.0)
+ADAPTIVE_LANDMARK_ENLARGEMENT_SHIFT_MAX = env.float("ADAPTIVE_LANDMARK_ENLARGEMENT_SHIFT_MAX", default=0.035)
 NAFNET_MODEL_PATH = env(
     "NAFNET_MODEL_PATH",
     default=str(BASE_DIR / ".runtime" / "models" / "NAFNet-GoPro-width64.pth"),
