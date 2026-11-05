@@ -192,6 +192,24 @@ class LightingSerializer(serializers.Serializer):
     brightened = serializers.BooleanField(help_text="Whether a brightening step really changed the photograph. A dark photograph can be detected dark and still not be brightened when the brightening was not safe to apply.")
 
 
+class ProcessingStageSerializer(serializers.Serializer):
+    stage = serializers.CharField(help_text="The same names as applied_stages[].stage: low_light, denoise, deblur, face_restore, upscale, polish, detail or colourize.")
+    engine = serializers.CharField(allow_null=True, help_text="The engine whose result was kept, e.g. zero_dce (a learned model) or opencv_exposure (classical OpenCV).")
+    kind = serializers.ChoiceField(choices=["ai", "classical", "unknown"], help_text=(
+        "ai: a learned model. classical: OpenCV / NumPy only, no model. unknown: an engine this version does not classify (it is never counted as ai)."))
+    fallback = serializers.BooleanField(help_text=(
+        "True when an engine that stood ahead of this one did not produce the result: it was not available on this server, or its result did not pass the safety checks."))
+    replaced = serializers.ListField(child=serializers.CharField(), help_text="The engines that stood ahead of this one, in order of preference. Empty when fallback is false.")
+
+
+class ProcessingSummarySerializer(serializers.Serializer):
+    ai_applied = serializers.BooleanField(help_text="A learned model produced at least one stage of the result.")
+    classical_fallback = serializers.BooleanField(help_text=(
+        "A classical OpenCV engine produced at least one stage because the learned model for it was unavailable or its result was refused. "
+        "False when the classical stages are classical by design (the polish) or have no learned model switched on."))
+    stages = ProcessingStageSerializer(many=True, help_text="One entry per stage that changed the photograph, in order. Empty when the original was kept.")
+
+
 class ImageEnhancementResultSerializer(serializers.ModelSerializer):
     download_url = serializers.SerializerMethodField()
     original_download_url = serializers.SerializerMethodField()
@@ -216,13 +234,18 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
     hd_unavailable_reason = serializers.SerializerMethodField(help_text=(
         "A plain sentence when restoration was needed but could not be done (a model is switched off, not installed or its result was "
         "not safe to use); null otherwise. A barely changed photograph always has either applied_stages or this."))
+    processing_summary = serializers.SerializerMethodField(help_text=(
+        "Which engine produced each stage and whether AI restoration or a classical OpenCV fallback did the work: {ai_applied, classical_fallback, "
+        "stages: [{stage, engine, kind (ai|classical|unknown), fallback, replaced}]}. ai_applied: a learned model produced at least one stage. "
+        "classical_fallback: an OpenCV engine produced a stage in place of a learned model that was unavailable or refused. stages is empty when the "
+        "original was kept. null for a failed job and for results made by the staged pipeline, which keeps no per-stage record."))
 
     class Meta:
         model = ImageEnhancementResult
         fields = [
             "id", "image", "batch_job", "requested_level", "applied_level",
             "requested_style", "trigger", "status", "enhancement_outcome", "enhancement_summary", "lighting",
-            "applied_stages", "skipped_stages", "hd_unavailable_reason",
+            "applied_stages", "skipped_stages", "hd_unavailable_reason", "processing_summary",
             "identity_status", "identity_check_bypassed", "identity_notice",
             "output_name", "output_format", "output_width", "output_height",
             "output_file_size", "processing_duration_ms", "task_id", "applied_parameters",
@@ -264,6 +287,12 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
 
     def get_hd_unavailable_reason(self, obj) -> str | None:
         return self._stages(obj)["hd_unavailable_reason"]
+
+    @extend_schema_field(ProcessingSummarySerializer(allow_null=True))
+    def get_processing_summary(self, obj):
+        from .restoration import processing_summary
+
+        return processing_summary(obj.applied_parameters, failed=obj.status == "failed")
 
     def get_identity_status(self, obj) -> str | None:
         return self._identity(obj)[0]

@@ -397,6 +397,19 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}     -> 201
     restoration is not available on this server", and do not claim the photograph was improved when `applied_stages` is empty.
   Because the output can be larger than the upload, read `output_width` / `output_height` (and `applied_stages[].output_size`) rather
   than assuming the original size.
+- **Which engine did it: AI or classical OpenCV (new, 2026-11-05).** Every result carries `processing_summary`, read from the stored record of the run (no engine is touched):
+  `{"ai_applied": true, "classical_fallback": false, "stages": [{"stage": "low_light", "engine": "zero_dce", "kind": "ai", "fallback": false, "replaced": []}, ...]}`,
+  or `null` for a failed job and for a result made by the staged pipeline (it keeps no per-stage record), like `lighting`. `stages` has one entry per stage that changed the photograph,
+  in order, and is `[]` when the original was kept (then both flags are `false`: do not call that "AI restoration").
+  - `kind`: `ai` (a learned model), `classical` (OpenCV / NumPy only, no model) or `unknown` (an engine this version does not classify; never show it as AI).
+  - `ai_applied`: a learned model produced at least one stage.
+  - `classical_fallback`: a classical engine produced a stage **in place of** a learned model that was not available on this server or whose result did not pass the safety
+    checks (`stages[].fallback` is `true` and `replaced` lists the engines that stood ahead of it, e.g. `["zero_dce"]`; for the finishing polish it is the final layer's `["general"]`).
+    It is `false` for a classical stage that replaced nothing: the polish is classical by design, and a stage whose model is switched off has no learned engine ahead of it.
+  - How to read the two flags: `ai_applied` and not `classical_fallback` = "AI restoration"; both true = AI, with a classical fallback for the stages marked `fallback`; `classical_fallback`
+    only = "no AI model could be used, a classical fallback was applied"; neither, with `stages` not empty = "classical enhancement only"; neither, `stages` empty = original kept.
+  - `stage` uses the same names as `applied_stages[].stage`, and `engine` agrees with `applied_stages[].engine`. (Until 2026-11-05 `applied_stages[].engine` could name the first model
+    that ran instead of the one whose result was kept, when a refused model was followed by a fallback; the engine named is now the one that produced the pixels.)
 - **Blur and low resolution do not reject a photograph that has a face.** The quality decision (`GET /api/quality/images/{id}/` and
   `quality_decision` in `GET /api/images/my/`) measures sharpness on the face: `measurements.sharpness_basis` is `face` or `frame`,
   `measurements.face_blur_warning` is `true` for a blurred face (show a "will be sharpened" hint, not an error), and

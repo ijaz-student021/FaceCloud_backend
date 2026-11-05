@@ -151,7 +151,7 @@ CATALOGUE = {
 
     # ---- enhancements --------------------------------------------------------------------------------------------------
     "enhancements_images_create": ("Enhance an image", "Queues an enhancement of one image and returns **202** with a result (`status: queued`). `level` is `auto` (recommended), `low`, `medium` or `high`; `style` is `natural`, `dynamic` or `ai_max` (AI Enhance). With the adaptive engine on, one input yields **one** output: only the models the photograph's defects call for run, every result is validated, and the original is returned when nothing safe was found. 409 if this image already has an enhancement queued or running; 429 when the user's job limit is reached."),
-    "enhancements_results_retrieve": ("Get an enhancement result", "Poll this until `status` is `completed` or `failed`. `enhancement_outcome`: `enhanced`, `partially_enhanced`, `original_preserved` (the output is the original pixels), `failed`. `enhancement_summary` is one plain sentence safe to show. `identity_status` and `applied_parameters.identity_verification.state` (`verified`, `uncertain`, `not_verifiable`, `not_applicable`) say what was and was not compared; they are evidence, not a guarantee. `applied_parameters.adaptive` has the analysis, the stages and the reasons operations were skipped or rejected."),
+    "enhancements_results_retrieve": ("Get an enhancement result", "Poll this until `status` is `completed` or `failed`. `enhancement_outcome`: `enhanced`, `partially_enhanced`, `original_preserved` (the output is the original pixels), `failed`. `enhancement_summary` is one plain sentence safe to show. `identity_status` and `applied_parameters.identity_verification.state` (`verified`, `uncertain`, `not_verifiable`, `not_applicable`) say what was and was not compared; they are evidence, not a guarantee. `processing_summary` says which engine produced each stage and whether AI restoration or a classical OpenCV fallback did the work (`ai_applied`, `classical_fallback`, `stages`; `null` for a failed job). `applied_parameters.adaptive` has the analysis, the stages and the reasons operations were skipped or rejected."),
     "enhancements_results_list": ("List enhancement results", "The user's results, newest first."),
     "enhancements_results_download_retrieve": ("Download the enhanced image", "Streams the one final image (or the original pixels when `enhancement_outcome` is `original_preserved`). 404 until the job has completed."),
     "enhancements_results_comparison_retrieve": ("Before and after comparison", "Quality measurements of the original and the result."),
@@ -368,6 +368,8 @@ EXAMPLES = {
         "responses": {"200": {
             "id": 31, "image": 12, "status": "completed", "requested_level": "auto", "applied_level": "low", "requested_style": "natural",
             "enhancement_outcome": "enhanced", "enhancement_summary": "Enhanced: brightened the dark subject.",
+            "processing_summary": {"ai_applied": True, "classical_fallback": False,
+                                   "stages": [{"stage": "low_light", "engine": "retinexformer", "kind": "ai", "fallback": False, "replaced": []}]},
             "identity_status": "verified", "output_width": 1200, "output_height": 1600, "output_format": "jpeg", "processing_duration_ms": 5600,
             "applied_parameters": {"algorithm": "adaptive_v1+retinexformer",
                                    "identity_verification": {"state": "verified", "status": "verified", "verified": True, "similarity": 0.95,
