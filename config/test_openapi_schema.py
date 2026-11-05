@@ -1,6 +1,7 @@
 import tempfile
 from pathlib import Path
 
+import yaml
 from django.core.management import call_command
 from django.test import SimpleTestCase
 
@@ -15,3 +16,8 @@ class OpenAPISchemaTests(SimpleTestCase):
             text = target.read_text(encoding="utf-8")
         self.assertIn("ErrorDetail", text)
         self.assertIn("/api/system/queue/", text)
+        schemas = yaml.safe_load(text)["components"]["schemas"]
+        # the enhancement result says which engine produced each stage
+        self.assertTrue(schemas["ImageEnhancementResult"]["properties"]["processing_summary"]["nullable"])
+        self.assertEqual(set(schemas["ProcessingSummary"]["properties"]), {"ai_applied", "classical_fallback", "stages"})
+        self.assertEqual(set(schemas["ProcessingStage"]["properties"]), {"stage", "engine", "kind", "fallback", "replaced"})

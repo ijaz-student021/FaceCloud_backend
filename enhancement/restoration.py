@@ -8,7 +8,9 @@ fallback, each gated by the validator. This module answers three questions witho
 * ``restoration_check(image)``: does *this* photograph need restoration, and could this server do it (used to send such a photograph
   through the chain when the rendering policy would otherwise leave it to the lightweight pipeline);
 * ``describe_stages(parameters)``: what a stored result did, as the ``applied_stages`` / ``skipped_stages`` / ``hd_unavailable_reason``
-  the API returns, so a barely changed photograph is never presented as restored.
+  the API returns, so a barely changed photograph is never presented as restored;
+* ``processing_summary(parameters)``: the same stored record read the other way round, as the API's ``processing_summary``: which engine
+  produced each stage, whether it is a learned model or classical OpenCV, and whether a classical engine stood in for a learned one.
 
 Licences (docs/model-licenses/): NAFNet is MIT and Real-ESRGAN BSD-3-Clause, so they are switched on by default. CodeFormer (S-Lab
 non-commercial) and GFPGAN are off by default and the production guard refuses them unless NONCOMMERCIAL_MODELS_ACKNOWLEDGED.
@@ -29,6 +31,14 @@ OPERATION_STAGE = {
 }
 POLISH_REFUSED_REASON = "Already balanced and sharp: nothing to improve."
 RESTORATION_OPERATIONS = ("motion_deblurring", "face_restoration", "super_resolution")
+
+# The engines of adaptive/operations.ENGINES by what they are: a learned model, or classical OpenCV / NumPy with no model. test_processing_summary.py fails when an engine of
+# that table is in neither set (or in both), so a new engine has to be classified before it can ship; one this table does not know is reported as "unknown", never as "ai".
+AI_ENGINES = frozenset({"retinexformer", "zero_dce", "nafnet_sidd", "nafnet_gopro", "codeformer", "gfpgan", "realesrgan", "ultrasharp", "general", "ddcolor"})
+CLASSICAL_ENGINES = frozenset({"opencv_exposure", "opencv_nlm", "opencv_polish"})
+# How the router names the two steps that are a fallback for each other (adaptive/router.py final_layer_step and _consider_polish); the same test pins both against the router.
+FINAL_LAYER_PREFIX = "Final layer"      # the reason of the detail model every photograph gets as its last layer
+FINISH_VARIANT_PREFIX = "finish"        # the variants of the finishing polish, which stands in for that layer when nothing else was accepted
 
 # stage -> engines in preference order: (engine, enabled setting, checkpoint path setting, checksum setting, licence)
 STAGE_ENGINES = {
@@ -119,9 +129,83 @@ def describe_stages(parameters, failed=False):
     return _from_staged(parameters, empty)
 
 
+def processing_summary(parameters, failed=False):
+    """Which engine produced each stage of a stored result and whether a classical engine stood in for a learned one, for the API's ``processing_summary``; ``None`` when there is no such record.
+
+    ``{"ai_applied", "classical_fallback", "stages": [{"stage", "engine", "kind", "fallback", "replaced"}]}`` with one entry per stage that changed the photograph, in order (empty when the
+    original was kept). ``kind`` is ``ai``, ``classical`` or ``unknown``; ``replaced`` lists the engines that stood ahead of this one and did not produce the kept result (not available on this
+    server, or refused by the safety checks), and ``fallback`` is true when there are any. ``ai_applied``: a learned model produced at least one stage. ``classical_fallback``: a classical engine
+    produced a stage in place of a learned one. A classical stage with no learned engine ahead of it (the polish, or a stage whose model is switched off) is ``classical`` but not a fallback.
+
+    ``None`` for a failed job, and for a result of the staged pipeline, which keeps no per-stage record. Read from the stored parameters only: no engine is touched and nothing is recomputed.
+    """
+    if failed or not isinstance(parameters, dict):
+        return None
+    adaptive = parameters.get("adaptive")
+    if not isinstance(adaptive, dict):
+        return None
+    records = [record for record in adaptive.get("stages") or [] if isinstance(record, dict)]
+    stages = []
+    for record in records:
+        if record.get("status") != "accepted":
+            continue
+        engine = winning_engine(record)
+        replaced = _replaced_engines(record, engine, records)
+        stages.append({"stage": _stage_name(record.get("operation")), "engine": engine, "kind": engine_kind(engine), "fallback": bool(replaced), "replaced": replaced})
+    return {
+        "ai_applied": any(item["kind"] == "ai" for item in stages),
+        "classical_fallback": any(item["kind"] == "classical" and item["fallback"] for item in stages),
+        "stages": stages,
+    }
+
+
+def _replaced_engines(record, engine, records):
+    """The engines that stood ahead of ``engine`` for this stage and did not produce the kept result.
+
+    Within the step: every engine listed before the winner. The engine walks the list in order and stops at the first engine with an accepted candidate, so each of those was run and refused, could
+    not run, or was left out for the photograph's size. Across steps: the finishing polish exists only as the fallback of the final layer, so when the final layer was refused or could not run, the
+    polish replaced the final layer's engine.
+    """
+    if engine is None:
+        return []
+    engines = _names(record.get("engines"))
+    if engine in engines and engines.index(engine) > 0:
+        return engines[: engines.index(engine)]
+    if _stage_name(record.get("operation")) == "polish" and str(record.get("variant") or "").startswith(FINISH_VARIANT_PREFIX):
+        for other in records:
+            if str(other.get("reason") or "").startswith(FINAL_LAYER_PREFIX) and other.get("status") != "accepted":
+                return _names(other.get("engines"))
+    return []
+
+
 def _stage_name(operation):
     """The API's name for an engine operation. Never ``None``: an operation this table does not know yet is reported under its own name, so a client that reads ``stage`` as text does not break."""
     return OPERATION_STAGE.get(operation) or str(operation or "unknown")
+
+
+def _names(value):
+    return [str(item) for item in value] if isinstance(value, (list, tuple)) else []
+
+
+def winning_engine(stage):
+    """The engine whose result an accepted stage record kept, or ``None``.
+
+    The engine tries a step's ``engines`` in preference order and stops at the first one with an accepted candidate (``AdaptiveImageEnhancementService._propose``), so the engine that
+    produced the result is the LAST of ``engines`` that ran. ``models_run`` is sorted by name, not by order of use: its first entry is a refused engine whenever a fallback produced the result
+    (nafnet_sidd before opencv_nlm, codeformer before gfpgan). A record without ``engines`` (older than the field) keeps the old answer, the first model run.
+    """
+    ran = _names(stage.get("models_run"))
+    for engine in reversed(_names(stage.get("engines"))):
+        if engine in ran:
+            return engine
+    return ran[0] if ran else None
+
+
+def engine_kind(engine):
+    """``ai`` (a learned model), ``classical`` (OpenCV / NumPy only) or ``unknown`` (an engine this version does not classify, which is never claimed to be AI)."""
+    if engine in CLASSICAL_ENGINES:
+        return "classical"
+    return "ai" if engine in AI_ENGINES else "unknown"
 
 
 def _from_adaptive(parameters, adaptive):
@@ -133,7 +217,7 @@ def _from_adaptive(parameters, adaptive):
     for stage in adaptive.get("stages", []):
         name = _stage_name(stage.get("operation"))
         if stage.get("status") == "accepted":
-            item = {"stage": name, "engine": (stage.get("models_run") or [None])[0], "variant": stage.get("variant")}
+            item = {"stage": name, "engine": winning_engine(stage), "variant": stage.get("variant")}
             if name == "upscale":
                 variant = str(stage.get("variant") or "")
                 item["scale"] = int(variant[1:]) if variant.startswith("x") and variant[1:].isdigit() else None
