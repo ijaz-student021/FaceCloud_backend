@@ -564,6 +564,37 @@ class ServiceTests(SimpleTestCase):
         self.assertEqual(calls, [])
         self.assertTrue(any(item["operation"] == ops.FACE for item in parameters["adaptive"]["operations_skipped"]))
 
+    def test_no_style_skips_the_identity_requirement_for_a_face_restoration(self):
+        """The earlier staged pipeline let ai_max restore faces without a verified identity and said so (identity_check_bypassed). The adaptive
+        engine has no such exemption for any style; the API help texts and docs/FRONTEND_API_GUIDE.md say so."""
+        from .serializers import identity_fields
+
+        x, y, w, h = (150, 100, 180, 220)
+        dark_blurry_face = portrait(brightness=0.12, face_box=(x, y, w, h))      # dark, so the lift is accepted and the identity report has something to say
+        dark_blurry_face[y:y + h, x:x + w] = cv2.GaussianBlur(dark_blurry_face[y:y + h, x:x + w], (0, 0), 6.0)
+        for style in ("natural", "dynamic", "ai_max"):
+            with self.subTest(style=style):
+                calls = []
+
+                def restore(image, engine, variant):
+                    calls.append(1)
+                    return image, [{"model": engine}]
+
+                _out, _level, parameters = self.run_service(
+                    dark_blurry_face, runners={ops.FACE: restore, ops.LOW_LIGHT: runner_lift}, requested_level="high", style=style,
+                )
+                adaptive = parameters["adaptive"]
+                self.assertEqual(calls, [])
+                self.assertIn(ops.LOW_LIGHT, adaptive["operations_applied"])
+                self.assertNotIn(ops.FACE, adaptive["operations_applied"])
+                skipped = [item for item in adaptive["operations_skipped"] if item["operation"] == ops.FACE]
+                self.assertEqual(len(skipped), 1)
+                self.assertIn("Identity could not be verified", skipped[0]["reason"])
+                status, bypassed, notice = identity_fields(parameters["identity_verification"])
+                self.assertEqual(status, "unavailable")
+                self.assertIs(bypassed, False)
+                self.assertIn("No face restoration was applied", notice)
+
     def test_no_biometric_permission_means_no_face_restoration_and_no_embedding(self):
         _out, _level, parameters = self.run_service(portrait(), allow_biometric_processing=False)
         self.assertTrue(any("face-processing consent" in item["reason"] for item in parameters["adaptive"]["operations_skipped"]))
