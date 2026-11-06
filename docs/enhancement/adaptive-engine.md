@@ -185,6 +185,11 @@ identity embedding and the face-landmark checks, which read the upload. Neither 
   refused gets a second opinion against the lit image it was given (`validator._lifted_input_opinion`): its landmarks within its own limit of that image's, or, for an enlargement, within
   `ADAPTIVE_LANDMARK_ENLARGEMENT_SHIFT_MAX` of a plain enlargement of it. Never for a face restoration or polish; a face no longer found is still a loss; the identity embedding is judged as before (the brief's
   proposal to move that baseline too was not applied: no measured photograph was lost to it). `ADAPTIVE_BASELINE_AFTER_LIGHTING=False` gives the earlier behaviour.
+* **The enlargement factor** (`ADAPTIVE_UPSCALE_SCALE`, default 2). The router proposes 2x for a small photograph (Real-ESRGAN is a x4 network; its output is resized and blended with the plain enlargement at
+  `REALESRGAN_OUTPUT_BLEND`). Set to 4 it proposes 4x, and falls back to 2x when 4x would pass `ADAPTIVE_MAX_OUTPUT_EDGE`; any other value means 2. Every gate judges the 4x candidate as it judges a 2x one. Measured
+  (`docs/evaluation/2026-11-06-enlargement-after-lift.md`, section 6): six small photographs all passed at 4x, but on 25.jpg the face restoration is refused at 4x (the detector places a bigger enlargement's
+  landmarks further away: 0.042 against the strict 0.04), so its 4x face is the lifted one and the 2x face is the restored one. The front end's "HD restoration is not available on this server" is its own text for
+  any result with `hd_unavailable_reason` (a restoration the photograph needed was not completed), not a statement about the models.
 
 ## 5. Outcomes and the API contract
 

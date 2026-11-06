@@ -382,6 +382,11 @@ ADAPTIVE_UPSCALE_HIGHLIGHT_GUARD = env.bool("ADAPTIVE_UPSCALE_HIGHLIGHT_GUARD", 
 #   restoration or polish; a face no longer found is still a loss; identity (the embedding) is judged as before. Library 29.jpg (lift and face restoration accepted): the enlargement read 0.073 / 0.046 against
 #   the dark original (limits 0.06 / 0.035) and 0.042 against what it was given (docs/evaluation/2026-11-06-enlargement-after-lift.md). False gives the earlier behaviour.
 ADAPTIVE_BASELINE_AFTER_LIGHTING = env.bool("ADAPTIVE_BASELINE_AFTER_LIGHTING", default=True)
+# ADAPTIVE_UPSCALE_SCALE: the size factor of the enlargement the engine proposes for a small photograph: 2 (the default: both sides doubled) or 4 (quadrupled). Real-ESRGAN is a x4 network; 2 is its output resized.
+#   4 falls back to 2 when it would pass ADAPTIVE_MAX_OUTPUT_EDGE, and any other value means 2. Measured with real models (docs/evaluation/2026-11-06-enlargement-after-lift.md, section 6): six small
+#   photographs were all enlarged 4x (a 1.4 to 3 megapixel result in 15 to 38 s), but on 25.jpg the face restoration the 2x run accepts is refused at 4x (face_geometry_changed, 0.042 against the strict 0.04), the
+#   identity margin of the dark photographs is thinner (0.8085 against 0.80), and the pixels are the plain enlargement's plus REALESRGAN_OUTPUT_BLEND of the model's, so 4x is more pixels, not more detail per pixel.
+ADAPTIVE_UPSCALE_SCALE = env.int("ADAPTIVE_UPSCALE_SCALE", default=2)
 NAFNET_MODEL_PATH = env(
     "NAFNET_MODEL_PATH",
     default=str(BASE_DIR / ".runtime" / "models" / "NAFNet-GoPro-width64.pth"),

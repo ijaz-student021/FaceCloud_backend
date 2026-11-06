@@ -86,12 +86,14 @@ class EngineConfig:
     max_output_edge: int = 4096
     face_upscale_below: int = 0
     max_engines_per_step: int = 2
+    upscale_scale: int = 2          # the size factor of the enlargement proposed for a small photograph: 2 or 4 (ADAPTIVE_UPSCALE_SCALE)
 
     @classmethod
     def from_settings(cls):
         return cls(
             max_candidates=int(settings.ADAPTIVE_MAX_CANDIDATES), time_budget_seconds=float(settings.ADAPTIVE_TIME_BUDGET_SECONDS),
             max_output_edge=int(settings.ADAPTIVE_MAX_OUTPUT_EDGE), face_upscale_below=int(settings.ADAPTIVE_FACE_UPSCALE_BELOW),
+            upscale_scale=int(settings.ADAPTIVE_UPSCALE_SCALE),
         )
 
 

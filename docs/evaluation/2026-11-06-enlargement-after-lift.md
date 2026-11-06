@@ -74,7 +74,36 @@ speed otherwise differ in the steps they reach):
 Where nothing was refused, nothing changed: the retry and the second opinion are not even evaluated. The unit tests (`enhancement/test_adaptive_upscale_highlight_guard.py`, `enhancement/test_adaptive_lifted_baseline.py`)
 fix the rules; every new rule was broken once in a copy of the tree and a test failed (mutation run, below).
 
-## 6. Not verified
+## 6. A second brief, the same day: force the lift, relax the gates, make it 4x
+
+A second brief asked for three things; each was checked against the owner's whole database (148 results) and the real models before anything was changed.
+
+**Force the lift for a dark face (face luminance under 40) and the NAFNet deblur for a blurred one; tell the validator to expect a large brightness change.** The router already lifts a face the analyzer calls
+dark (`face_median_dark` 75, wider than 40, when the frame is dark too; a back-lit subject is the shadow lift, for the `ai_max` style or the person's own "Dark photo"), and the validator has a lift-specific branch
+for exactly that (brightness-normalised SSIM, chromaticity in linear light, no overshoot gate, a noise allowance). The lift stage was refused 5 times in 39 attempts, never for its SSIM. The deblur is already proposed
+for a blurred face or motion blur; of 36 attempts 28 were refused, 26 of them for `face_not_clearer_or_over_sharpened` (the model ran and the face was not clearer): forcing it would ship what the engine's own
+measure calls no better. A defocus is left alone on purpose (the motion model cannot recover it, `router.py`). A back-lit face with a bright frame is lifted for Auto/Standard only when the person says "Dark photo"
+(`lighting`): lifting it unasked damaged 6 of 11 library photographs before the compression gate existed.
+
+**Relax the geometry limit to 0.12 and the SSIM limit to 0.50 for a poor input.** Why each stage was refused (all 148 results): enlargement 15 geometry and 1 highlights; detail layer 14 `no_added_detail_or_invented_detail`,
+7 highlights, 6 halo, 5 geometry, 1 identity; lift 3 `subject_not_clearer_or_too_bright`, 2 geometry, 1 identity, 1 compression blocks, 1 enlarged source; face restoration 1 geometry, 1 identity, 1 detail invented.
+The lift's SSIM limit (0.70) has never refused a lift, and the real lifts sit far above it (structure SSIM 0.90-0.97 on 25.jpg, 29.jpg, 1.jpg, 9.jpg and the Jodhpur photograph, measured with the engine's own `structure_ssim`), so lowering it changes nothing and
+can only let a distorted lift through. A geometry limit of 0.12 for every step would also open the generative face restoration, whose geometry gate stays strict (CodeFormer invented sunglasses on library 173); the second
+opinion of section 3 does the same job for the steps that need it, against the right reference instead of a looser limit. Re-run with today's code (real models), the photographs once refused for geometry,
+identity or highlights (one batch of 11 photograph/request pairs: Jodhpur x3, dark-054-040, 1.jpg x2, a 1251x1349 photograph x2, 10.JPG, 4.jpg, 9.jpg Pro; and 472x708, 29.jpg and 25.jpg before it): **every enlargement that
+was refused is now accepted**. What is still refused is legitimate: the face restoration of 4.jpg (geometry, strict), the lift of 9.jpg Pro and of Jodhpur Pro (their shadows show the compression blocks; 9.jpg is a 13 KB
+JPEG and with every gate off its lift reads face median 3 to 23 with heavy blocks), and the detail layer of the 1251x1349 photograph (halo, highlights).
+
+**Make it 4x HD / "HD restoration is not available".** The banner is the frontend's text for any result whose `hd_unavailable_reason` is set; the backend sets it whenever a restoration the photograph needed (deblur, face
+restoration, enlargement) was not completed ("Restoration was needed but not completed: upscale (the result did not pass the safety checks: highlight_clipping_increased)", `restoration.py`). The models are available (the live
+`.env` has `HD_RESTORATION_ENABLED=True`; 37 of 53 enlargements were accepted): the banner's wording is wrong, not the server. The engine enlarges 2x by design (Real-ESRGAN is a x4 network, its output is resized to 2x and
+blended with the plain enlargement at `REALESRGAN_OUTPUT_BLEND` 0.35). **`ADAPTIVE_UPSCALE_SCALE` (default 2) now lets the engine ask for 4x** (4 falls back to 2 under `ADAPTIVE_MAX_OUTPUT_EDGE`). Measured with real
+models, all with every gate passing: 25.jpg 414x277 to 1656x1108 (35 s), 29.jpg 293 to 1172, 1.jpg Pro 448x296 to 1792x1184, 2.jpg 448x296 to 1792x1184, Jodhpur 480x270 to 1920x1080 (32 s), 10.JPG 375x500 to 1500x2000.
+**4x is not better on every photograph:** on 25.jpg the face restoration that the 2x run accepted is refused at 4x (`face_geometry_changed`, 0.042 against the strict 0.04: the detector places the landmarks of a bigger
+enlargement further away), so the 4x face is the lifted face, blocky, where the 2x face is restored; the identity margin of the dark photographs is thin (0.8085 against 0.80), and the pixels are the plain enlargement's plus
+35 percent of the model's, so 4x is more pixels, not more detail per pixel. The default stays 2.
+
+## 7. Not verified
 
 * Through the API and the UI on the live server (the engine was called directly; the live server runs `main` until this is merged).
 * PostgreSQL (CI runs it; these tests are database-free).

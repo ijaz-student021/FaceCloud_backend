@@ -180,7 +180,8 @@ class AdaptiveEnhancementRouter:
             if not engines:
                 return None, "No super-resolution model is switched on."
             longest = max(report.width, report.height)
-            scale = 2 if longest * 2 <= self.config.max_output_edge else 0
+            wanted = self.config.upscale_scale if self.config.upscale_scale in (2, 4) else 2          # ADAPTIVE_UPSCALE_SCALE: the model is x4, 2 is its output resized
+            scale = next((size for size in (wanted, 2) if longest * size <= self.config.max_output_edge), 0)         # 4 falls back to 2 when it would pass the output limit
             if not scale:
                 return None, "Upscaling would exceed the output size limit."
             return Step(operation, engines, [{"name": f"x{scale}", "scale": scale}],
