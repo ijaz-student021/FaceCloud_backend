@@ -369,6 +369,14 @@ ADAPTIVE_BACKLIT_SUBJECT_LIFT = env.bool("ADAPTIVE_BACKLIT_SUBJECT_LIFT", defaul
 ADAPTIVE_BACKLIT_SUBJECT_BRIGHTNESS_MAX = env.float("ADAPTIVE_BACKLIT_SUBJECT_BRIGHTNESS_MAX", default=60.0)
 ADAPTIVE_BACKLIT_SUBJECT_MAX_RATIO = env.float("ADAPTIVE_BACKLIT_SUBJECT_MAX_RATIO", default=0.40)
 ADAPTIVE_BACKLIT_MIN_SCENE_MEDIAN = env.float("ADAPTIVE_BACKLIT_MIN_SCENE_MEDIAN", default=70.0)
+# ADAPTIVE_BACKLIT_LIFT_ALL_PRESETS (OFF by default): the shadow lift above is for AI Enhance (the `pro` preset) only; switched on, Natural, Dynamic and Auto propose it too (still only with
+#   ADAPTIVE_BACKLIT_SUBJECT_LIFT on, and every gate of the validator judges it; "Light photo" still turns it off). In the owner's database 29 results (9 distinct photographs) whose main face had a median
+#   luminance under 60 in a BRIGHT frame (the analyzer's ``backlit_subject``) came back with no lift under Natural / Dynamic, because those presets leave a dark face in a bright frame alone (a global lift would
+#   burn the window); AI Enhance lifted 3 such results and refused 2. Measured on the 11 back-lit library photographs with every gate: 7 lifted (1 clean, 4 with a dark outline along the subject, 2 damaged), 4
+#   refused (docs/evaluation/2026-11-05-backlit-subject-lift.md), so it ships OFF; the person's own "Dark photo" (``lighting``) asks for the same lift per request. The rule keeps its guards (a crushed tonal
+#   range, and a face under ADAPTIVE_BACKLIT_SUBJECT_BRIGHTNESS_MAX that is also dark next to the frame): a face merely under 60 is also what a dark skin tone looks like in a correct exposure (9 more
+#   results of the same 42 sit in a normally exposed frame), which must not be brightened.
+ADAPTIVE_BACKLIT_LIFT_ALL_PRESETS = env.bool("ADAPTIVE_BACKLIT_LIFT_ALL_PRESETS", default=False)
 # ADAPTIVE_UPSCALE_HIGHLIGHT_GUARD: an enlargement the validator refuses ONLY for ``highlight_clipping_increased`` (more than 3 points of newly clipped pixels against the image it was made from) is judged
 #   once more with the brightening the model added to ALREADY bright pixels taken back (operations.keep_highlights). The retry is a new candidate that must pass every gate; an enlargement the
 #   validator accepts, or refuses for any other reason, is never touched, so no result that exists without this changes. After a whole-frame lift a bright window or sky sits at the top of the range:

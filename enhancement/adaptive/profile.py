@@ -35,7 +35,7 @@ class Profile:
     polish_scale: float = 1.0           # multiplies the polish shares (the router caps the result)
     polish_dark_scenes: bool = False    # a deliberately dark photograph may be polished (contrast and sharpness only; polish never lifts shadows)
     lift_dark_scenes: bool = True       # a dark scene with a visible subject is treated as low light (the owner: "the darkness should be removed"; the validator's gates still decide)
-    lift_backlit_subjects: bool = False     # the crushed subject of a back-lit photograph (analyzer: subject_exposure.backlit) gets a SHADOW lift (ADAPTIVE_BACKLIT_SUBJECT_LIFT); AI Enhance only
+    lift_backlit_subjects: bool = False     # the crushed subject of a back-lit photograph (analyzer: subject_exposure.backlit) gets a SHADOW lift (ADAPTIVE_BACKLIT_SUBJECT_LIFT); AI Enhance only, or every style with ADAPTIVE_BACKLIT_LIFT_ALL_PRESETS
     treat_low_noise: bool = False       # noise at the "low" level is denoised too
     upscale_below_edge: int = 0         # a photograph whose long edge is under this is enlarged (0: only when the analyzer calls it low resolution)
     variant_blends: tuple = (1.0, 0.65)     # the blends tried for a lift or a denoise, strongest first
@@ -69,6 +69,8 @@ def profile_for(style, level="auto", lighting="auto"):
     profile = replace(_STYLES.get(style, DEFAULT), style=style if style in _STYLES else "natural", level=level)
     if style == "ai_max":      # read here, not in _STYLES, so the setting is read when the engine runs
         profile = replace(profile, face_deblur_min_detail_gain=float(settings.ADAPTIVE_AI_MAX_FACE_DEBLUR_MIN_DETAIL_GAIN))
+    if settings.ADAPTIVE_BACKLIT_LIFT_ALL_PRESETS:      # every preset may shadow-lift a back-lit subject (the router still needs ADAPTIVE_BACKLIT_SUBJECT_LIFT); "light" below turns it off again
+        profile = replace(profile, lift_backlit_subjects=True)
     if level == "low":
         profile = replace(profile, polish_scale=round(profile.polish_scale * 0.6, 4), variant_blends=(0.65, 0.4))
     elif level == "high":

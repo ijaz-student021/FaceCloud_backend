@@ -118,7 +118,24 @@ enlargement further away), so the 4x face is the lifted face, blocky, where the 
   `SKIPPED realesrgan for Photo ID 225 (result 183). Reason: face_geometry failed (face_geometry_changed). Metric: landmark_shift=0.0734, Threshold: 0.06; beyond a plain enlargement of the original 0.0356 against 0.035`.
   A refusal that took a hair's breadth (0.0356 against 0.035) is now readable from the log instead of from a re-run.
 
-## 8. Not verified
+## 8. A review of the Zero-DCE notebook (the same evening): route by the face, relax the gates for Zero-DCE, check the iterative curve
+
+* **Route by the face's brightness.** The engine already judges the face (the lift's reason reads "judged on the face"). What it does not do for Natural / Dynamic is lift a dark face in a BRIGHT frame. Of
+  the 42 results of those presets whose main face had a median luminance under 60 and that got no lift: 29 (9 photographs) were exactly that (the analyzer's `backlit_subject`), 4 a dark scene whose subject
+  is visible, and 9 a face under 60 in a normally exposed or over-exposed frame, which is also what a dark skin tone looks like and must not be brightened (a rule of "face under 60" alone would have lifted
+  those 13 too). A global Zero-DCE of a bright frame burns the window (the highlights gate refuses it), so the lift for the first group is the SHADOW lift AI Enhance has: on those faces it accepted 3 and
+  refused 2. `ADAPTIVE_BACKLIT_LIFT_ALL_PRESETS` (default off) gives it to every preset; the person's "Dark photo" asks for it per request.
+* **Relax the SSIM (0.70 to 0.50) and the geometry limit when Zero-DCE ran.** The lift's structure SSIM is brightness-normalised: 0.90-0.97 on five real photographs, and 0 of the 39 lifts in the database
+  were refused for it. The 5 lifts that were refused: three on well-lit faces (median 111-148: "not clearer or too bright"), one near-black face of a 13 KB JPEG (geometry and compression blocks) and one enlarged
+  source. None was refused for being "too different"; a looser limit changes none of them and can only let a distorted lift through.
+* **Is it the paper's iterative curve?** Yes, measured. The ONNX is DCE-Net only (the official Epoch99 weights: seven convolutions and a tanh, 24 channels = 8 iterations x 3 curve channels) and
+  `enhancement/zero_dce.py` applies `x = x + r (x^2 - x)` eight times on RGB in [0, 1] at the photograph's full resolution. With the real network on 47.jpg (414x277), the adapter and an independent NumPy
+  implementation of the formula differ by 0 grey levels, and by at most 1 on the path that predicts the curves at 1024 px and interpolates them (a 2200x1470 enlargement). The classical `opencv_exposure`
+  engine (a gamma, 0.6) is a separate engine and records itself as one. `enhancement/test_zero_dce_curve.py` pins the formula, the 24-channel layout, the RGB order and the interpolation (a gamma, a blend,
+  seven iterations or a swapped channel fails it). The engine then keeps the photograph's colour and takes only the brightness from the network (the raw output is paler and hue-shifted:
+  `ADAPTIVE_LOWLIGHT_COLOUR`), and blends; the curve network runs on the CPU (OpenCV DNN, 0.1 to 1.5 s), not on MPS.
+
+## 9. Not verified
 
 * Through the API and the UI on the live server (the engine was called directly; the live server runs `main` until this is merged).
 * PostgreSQL (CI runs it; these tests are database-free).

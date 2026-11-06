@@ -190,6 +190,14 @@ identity embedding and the face-landmark checks, which read the upload. Neither 
   (`docs/evaluation/2026-11-06-enlargement-after-lift.md`, section 6): six small photographs all passed at 4x, but on 25.jpg the face restoration is refused at 4x (the detector places a bigger enlargement's
   landmarks further away: 0.042 against the strict 0.04), so its 4x face is the lifted one and the 2x face is the restored one. The front end's "HD restoration is not available on this server" is its own text for
   any result with `hd_unavailable_reason` (a restoration the photograph needed was not completed), not a statement about the models.
+* **The back-lit lift for every preset** (`ADAPTIVE_BACKLIT_LIFT_ALL_PRESETS`, default off). The shadow lift of a back-lit subject is AI Enhance's; switched on, Natural, Dynamic and Auto propose it too, with the
+  same switch (`ADAPTIVE_BACKLIT_SUBJECT_LIFT`), the same guards and every gate; "Light photo" still turns it off, and the person's "Dark photo" asks for it per request without the switch. It is a SHADOW lift, never a
+  global Zero-DCE of a bright frame (that burns the window: the highlights gate refuses it). 29 results (9 photographs) with a face under 60 in a bright frame had none under Natural / Dynamic.
+* **Zero-DCE is the paper's** (`enhancement/zero_dce.py`, pinned by `enhancement/test_zero_dce_curve.py`): the ONNX is DCE-Net only (official Epoch99 weights; 24 tanh channels = 8 iterations x 3 curve channels), and
+  the adapter applies `x = x + r (x^2 - x)` eight times on RGB in [0, 1] at the photograph's full resolution (curves predicted at most `ZERO_DCE_MAX_INFERENCE_EDGE` wide and interpolated); with the real network on a
+  real photograph it equals an independent implementation of the formula to 0 grey levels (1 on the interpolating path). The engine then keeps the photograph's own colour and takes only the brightness
+  (`ADAPTIVE_LOWLIGHT_COLOUR=chromaticity`: the raw output is paler and hue-shifted), and blends. The classical `opencv_exposure` engine (a gamma) names itself as such. The curve network runs on the CPU
+  (OpenCV DNN), 0.1 to 1.5 s: there is nothing to run on MPS.
 * **Reading the log** (`worker.log`; `adaptive_stage` when a stage starts, `adaptive_enhancement` at the end with `size` and `refused`, and one `SKIPPED` line per failed gate): `SKIPPED <model> for Photo ID <image>
   (result <id>). Reason: <gate> failed (<reason>). Metric: <reading>=<value>, Threshold: <limit>`. A model that cannot run, an operation the router left out and a face restoration refused for want of a verifiable
   identity are logged the same way. `python scripts/time_pipeline.py PHOTO` prints the same for any file, with the limits in force.
