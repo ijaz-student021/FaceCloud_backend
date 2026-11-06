@@ -110,3 +110,19 @@ Mutation check: 34 mutations (17 of the detection, router, operations and profil
 | `is_backlit_scene()`, histogram bimodality | not used | misses 8 of 11, flags the white-background studio portraits |
 | force Zero-DCE when back-lit or subject < 50 | a shadow-only lift, AI Enhance only, switch off by default | a forced whole-frame lift changes the whole frame, sky included (+23 to +55 grey levels on the frame mean) and "subject < 50" alone flags 8 photographs that are not back-lit |
 | `BACKLIT_SUBJECT_BRIGHTNESS_THRESHOLD=50` | `ADAPTIVE_BACKLIT_SUBJECT_BRIGHTNESS_MAX=60` and two more limits | the prefix of the other settings; id 177's face median is 50 |
+
+## Addendum 2026-11-06: what the live pipeline showed, and what this evaluation missed
+
+Every row above fed the engine the photograph's **original file**. The live pipeline does not always: when preprocessing enlarges a very small photograph (the small-image enlargement, on by default;
+`enhancement/services.py` `_read_enhancement_source`, strategy `standardized_enlarged`), the engine sees the **enlarged copy**. On 2026-11-06 the owner enhanced `14.jpg` with Pro through the app
+(results 162 and 164). It is library id 182 (260 x 194, 8 KB), the photograph this note calls "lift refused". The source the engine saw was **1040 x 776**, its compression reading was `none`
+(blockiness 1.19 / 1.10, the same as the clean photographs 157, 169 and 177), the shadow lift was accepted, and the face came back with 8 x 8 blocks across the eyes and cheeks: a 4x enlargement of
+a blocky JPEG has blocks 32 px wide, and the reading looks for 8 px.
+
+A reading at 1/2 and 1/4 scale of the enlarged copy does not separate it either (1.16 / 1.12 and 1.22 / 1.16, against 1.14 / 1.09 and 1.20 / 1.13 for the clean photograph 157), so a multi-scale
+reading was measured and **not** used. What decides instead is the one thing that is known: the pipeline enlarged the photograph. `process_enhancement_result` tells the engine (`source_enlarged`, only
+when it is true) and the validator refuses a **shadow lift** of such a source (gate `compression_blocks`, reason `lift_on_enlarged_source`): a photograph small enough to be enlarged is small enough to be a
+compressed one. Whole-frame lifts, every other operation and every photograph the pipeline did not enlarge are unchanged (`enhancement/test_adaptive_backlit_subject.py`).
+
+Still not covered: a photograph the person enlarged themselves before uploading (id 188, 1040 x 776 with 32 px blocks, which the pipeline does not enlarge again), and the pink face of id 160.
+Of the eleven library photographs only id 182 is enlarged by the pipeline.

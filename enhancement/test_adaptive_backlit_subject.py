@@ -200,13 +200,13 @@ class RouterTests(SimpleTestCase):
 
 @override_settings(**CLASSICAL, ADAPTIVE_ALWAYS_ENHANCE=False, ADAPTIVE_BACKLIT_SUBJECT_LIFT=True)
 class EngineTests(SimpleTestCase):
-    def run_engine(self, image, style, head=HEAD):
+    def run_engine(self, image, style, head=HEAD, **options):
         service = AdaptiveImageEnhancementService(analyzer=analyzer_with(head), config=EngineConfig(), runners={})
         with patch("enhancement.adaptive.service.IdentityChecker") as checker:
             checker.return_value.available = False
             checker.return_value.threshold = None
             checker.return_value.reason = "No identity model is configured, so identity was not checked."
-            output, _level, parameters = service.enhance(image, requested_level="auto", style=style)
+            output, _level, parameters = service.enhance(image, requested_level="auto", style=style, **options)
         return output, parameters["adaptive"]
 
     def test_ai_enhance_lifts_the_subject_and_leaves_the_sky(self):
@@ -255,6 +255,19 @@ class EngineTests(SimpleTestCase):
         self.assertFalse(measure_compression_artifacts(image)["detected"])
         output, adaptive = self.run_engine(image, "ai_max")
         self.assertIn(ops.LOW_LIGHT, adaptive["operations_applied"])
+
+    def test_a_photograph_the_pipeline_enlarged_is_not_lifted_and_the_stage_says_why(self):
+        """The same clean-reading photograph is lifted when the engine sees it as uploaded and refused when preprocessing enlarged it first (the blocks of a tiny JPEG are then 32 px wide and unseen)."""
+        image = scene(**SUBJECT_WITH_STRUCTURE)
+        _output, adaptive = self.run_engine(image, "ai_max")
+        self.assertIn(ops.LOW_LIGHT, adaptive["operations_applied"])
+        output, adaptive = self.run_engine(image, "ai_max", source_enlarged=True)
+        stage = next(item for item in adaptive["stages"] if item["operation"] == ops.LOW_LIGHT)
+        self.assertEqual(stage["status"], "rejected")
+        self.assertIn("lift_on_enlarged_source", stage["rejection_reasons"])
+        self.assertNotIn("lift_shows_compression_blocks", stage["rejection_reasons"])
+        self.assertNotIn(ops.LOW_LIGHT, adaptive["operations_applied"])
+        np.testing.assert_array_equal(output, image)
 
     def test_a_weaker_lift_is_refused_too_when_the_full_strength_lift_shows_the_blocks(self):
         """In the library the gentler blend of two blocky photographs (ids 182 and 200) read under the analyzer's limit and the result was still damaged."""
@@ -385,6 +398,34 @@ class CompressionGateTests(SimpleTestCase):
         verdict = self.verdict(jpeg(scene(**SUBJECT_WITH_STRUCTURE), 40), None)
         self.assertNotIn("compression_blocks", verdict["gates"])
         self.assertNotIn("lift_shows_compression_blocks", verdict["reasons"])
+
+    # -- a photograph the pipeline enlarged before the engine saw it -----------------------------------------------------------------
+    def enlarged_verdict(self, image, local="shadows", source_enlarged=True):
+        analyzer = analyzer_with(HEAD)
+        report = analyzer.analyze(image)
+        candidate, _models = ops.run_low_light(image, "opencv_exposure", 1.0, "shadows")
+        validator = FinalImageQualityValidator(analyzer, report, source_enlarged=source_enlarged)
+        return validator.evaluate(image, candidate, ops.LOW_LIGHT, report, **({"local": local} if local else {}))
+
+    def test_a_shadow_lift_of_a_photograph_the_pipeline_enlarged_is_refused_even_though_it_reads_clean(self):
+        """A 260 px JPEG enlarged 4x reads "no compression" (its blocks are 32 px wide) and its lift came back as a blocky face (library id 182, run through the app on 2026-11-06)."""
+        image = scene(**SUBJECT_WITH_STRUCTURE)
+        self.assertTrue(self.enlarged_verdict(image, source_enlarged=False)["accepted"])           # the same photograph, not enlarged by the pipeline: lifted
+        verdict = self.enlarged_verdict(image)
+        self.assertFalse(verdict["accepted"])
+        self.assertEqual(verdict["gates"]["compression_blocks"]["status"], "none")                 # the reading did not see anything
+        self.assertTrue(verdict["gates"]["compression_blocks"]["source_enlarged"])
+        self.assertFalse(verdict["gates"]["compression_blocks"]["passed"])
+        self.assertEqual(verdict["reasons"], ["lift_on_enlarged_source"])                          # (and says why, not "shows blocks")
+
+    def test_a_whole_frame_lift_of_an_enlarged_photograph_is_not_judged_on_it(self):
+        verdict = self.enlarged_verdict(scene(**SUBJECT_WITH_STRUCTURE), local=None)
+        self.assertNotIn("compression_blocks", verdict["gates"])
+        self.assertNotIn("lift_on_enlarged_source", verdict["reasons"])
+
+    def test_the_gate_keeps_its_own_reason_for_a_photograph_that_was_not_enlarged(self):
+        verdict = self.enlarged_verdict(jpeg(scene(**SUBJECT_WITH_STRUCTURE), 40), source_enlarged=False)
+        self.assertEqual(verdict["reasons"], ["lift_shows_compression_blocks"])
 
 
 class WeakerLiftTests(SimpleTestCase):

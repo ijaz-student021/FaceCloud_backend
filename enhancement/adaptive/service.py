@@ -358,17 +358,21 @@ class AdaptiveImageEnhancementService:
 
     # -- the whole run ------------------------------------------------------------------------------------------
     def enhance(self, image, requested_level=EnhancementLevel.AUTO, style="natural", allow_biometric_processing=True,
-                checkpoint=None, debug=None):
-        """The whole run under one wall-clock budget: it stops between operations *and* between the tiles of a model call."""
+                checkpoint=None, debug=None, lighting="auto", source_enlarged=False):
+        """The whole run under one wall-clock budget: it stops between operations *and* between the tiles of a model call.
+
+        ``lighting`` is the person's own word on the photograph's lighting: ``"dark"`` or ``"light"`` forces that method, ``"auto"`` (the default) lets the analyzer decide.
+        ``source_enlarged`` says the pipeline enlarged ``image`` before the engine saw it (preprocessing's small-image enlargement): a shadow lift of such a photograph is refused.
+        """
         from enhancement import runtime
 
         try:
             with runtime.deadline_until(time.monotonic() + self.config.time_budget_seconds):
-                return self._enhance(image, requested_level, style, allow_biometric_processing, checkpoint, debug)
+                return self._enhance(image, requested_level, style, allow_biometric_processing, checkpoint, debug, lighting, source_enlarged)
         finally:
             ops.clear_detail_cache()      # the detail step keeps the model's output for its blends; it is not kept past the run
 
-    def _enhance(self, image, requested_level, style, allow_biometric_processing, checkpoint, debug):
+    def _enhance(self, image, requested_level, style, allow_biometric_processing, checkpoint, debug, lighting="auto", source_enlarged=False):
         from enhancement.services import analyze_image_quality, compare_image_quality
 
         checkpoint = checkpoint or (lambda _name: None)
@@ -386,11 +390,11 @@ class AdaptiveImageEnhancementService:
         if not report0.faces:
             identity.reason = "No face was found, so there was no identity to check."
         pool = CandidatePool(original, self.config.max_candidates)
-        profile = profile_for(style, requested_level)     # what the style and the strength change (profile.py); the validator's gates are the same for all, but for one limit AI Enhance may lower (below)
+        profile = profile_for(style, requested_level, lighting)     # what the style, the strength and the person's word on the lighting change (profile.py); the validator's gates are the same for all, but for one limit AI Enhance may lower (below)
         limits = Limits()
         if profile.face_deblur_min_detail_gain is not None:
             limits = replace(limits, face_deblur_min_detail_gain=min(limits.face_deblur_min_detail_gain, profile.face_deblur_min_detail_gain))      # never raises the limit the operator set
-        validator = FinalImageQualityValidator(analyzer, report0, identity if identity.available else None, limits=limits, original=original)
+        validator = FinalImageQualityValidator(analyzer, report0, identity if identity.available else None, limits=limits, original=original, source_enlarged=source_enlarged)
 
         current, report = pool.original, report0
         done, stages, skipped, warnings = set(), [], [], []
@@ -513,11 +517,14 @@ class AdaptiveImageEnhancementService:
         quality_comparison = compare_image_quality(original, final)
         # The deblur step's own record ("the blur is defocus ...") stays in operations_skipped; only the verdict sentence leaves it out when the defocus is the background's.
         summary = self._summary(outcome, stages, [item for item in skipped if not (background_defocus and "defocus" in item["reason"])], remaining)
+        lighting_sentence = self._lighting_sentence(profile, stages, accepted_operations)
+        if lighting_sentence:
+            summary = f"{lighting_sentence} {summary}"
         parameters = {
             "algorithm": algorithm if accepted_operations else "adaptive_v1+original_preserved",
             "pipeline_version": PIPELINE_VERSION,
             "render_policy": rendering_policy.describe(),
-            "requested_level": str(requested_level), "style": str(style),
+            "requested_level": str(requested_level), "style": str(style), "requested_lighting": profile.lighting,
             "quality_before": analyze_image_quality(original), "quality_after": analyze_image_quality(
                 cv2.resize(final, (original.shape[1], original.shape[0]), interpolation=cv2.INTER_AREA) if final.shape != original.shape else final),
             "quality_comparison": quality_comparison, "warnings": warnings,
@@ -569,6 +576,22 @@ class AdaptiveImageEnhancementService:
     def _chosen_model(pool, stage):
         chosen = next((c for c in pool.items if c.id == stage.get("chosen")), None)
         return (chosen.models[0].get("model") if chosen and chosen.models and chosen.models[0].get("model") else stage["operation"])
+
+    @staticmethod
+    def _lighting_sentence(profile, stages, accepted_operations):
+        """What the person's own word on the lighting did, in one plain sentence; empty when they left it to the engine. It never says a method ran that did not."""
+        if profile.lighting == "light":
+            return "As you asked, the light-photo method was used: the brightness was kept."
+        if profile.lighting != "dark":
+            return ""
+        if ops.LOW_LIGHT in accepted_operations:
+            return "As you asked, the dark-photo method brightened the photograph."
+        stage = next((s for s in stages if s["operation"] == ops.LOW_LIGHT), None)
+        if stage is not None and stage["status"] == "rejected":
+            return "Brightening was not safe to apply, so the dark-photo method changed nothing."
+        if stage is not None and stage["status"] in ("unavailable", "no_engine"):
+            return "The brightening model was not available, so the dark-photo method changed nothing."
+        return "The dark-photo method could not brighten this photograph, so it changed nothing."
 
     @staticmethod
     def _summary(outcome, stages, skipped, remaining):

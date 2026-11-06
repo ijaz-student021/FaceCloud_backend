@@ -79,7 +79,7 @@ def _finalize_batch(batch):
 
 
 @transaction.atomic
-def create_image_batch(owner, upload_type, files, organization=None, auto_enhance=False):
+def create_image_batch(owner, upload_type, files, organization=None, auto_enhance=False, enhancement_options=None):
     if not files:
         raise ValidationError("At least one image file is required.")
     from django.conf import settings
@@ -88,6 +88,7 @@ def create_image_batch(owner, upload_type, files, organization=None, auto_enhanc
     from organizations.services import get_default_organization
     batch = UploadBatch.objects.create(
         owner=owner, upload_type=upload_type, organization=organization or get_default_organization(owner), auto_enhance=bool(auto_enhance),
+        auto_enhance_options=dict(enhancement_options or {}),      # what the automatic enhancement is asked to do (level, style, lighting); empty = the defaults, as before
     )
     from notifications.events import notify_upload_received
     transaction.on_commit(
@@ -135,7 +136,7 @@ def create_image_batch(owner, upload_type, files, organization=None, auto_enhanc
 
 
 @transaction.atomic
-def create_zip_batch(owner, uploaded_zip, organization=None, auto_enhance=False):
+def create_zip_batch(owner, uploaded_zip, organization=None, auto_enhance=False, enhancement_options=None):
     members = validate_zip_archive(uploaded_zip)
     from organizations.services import get_default_organization
     batch = UploadBatch.objects.create(
@@ -144,6 +145,7 @@ def create_zip_batch(owner, uploaded_zip, organization=None, auto_enhance=False)
         original_archive_name=safe_original_name(uploaded_zip.name),
         organization=organization or get_default_organization(owner),
         auto_enhance=bool(auto_enhance),
+        auto_enhance_options=dict(enhancement_options or {}),
     )
     from notifications.events import notify_upload_received
 

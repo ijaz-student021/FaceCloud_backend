@@ -207,18 +207,21 @@ class BatchImageSerializer(ImageUploadSerializer):
 
 class UploadBatchSerializer(serializers.ModelSerializer):
     images = BatchImageSerializer(many=True, read_only=True)
+    auto_enhance_options = serializers.JSONField(read_only=True, help_text=(
+        "What the automatic enhancement of this upload was asked to do: {level, style, lighting}, from the upload's `preset` / `level` / `style` / `lighting` form fields "
+        "(`{}` when it sent none: automatic strength, natural, the lighting left to the engine). Only used when `auto_enhance` is true."))
 
     class Meta:
         model = UploadBatch
         fields = [
-            "id", "upload_type", "original_archive_name", "display_name", "status", "total_files", "auto_enhance",
+            "id", "upload_type", "original_archive_name", "display_name", "status", "total_files", "auto_enhance", "auto_enhance_options",
             "accepted_files", "rejected_files", "total_size", "processing_status",
             "processed_files", "processing_failed_files", "processing_task_id",
             "processing_error", "processing_started_at", "processing_finished_at",
             "created_at", "updated_at", "images",
         ]
         read_only_fields = [
-            "upload_type", "original_archive_name", "status", "total_files", "auto_enhance", "accepted_files",
+            "upload_type", "original_archive_name", "status", "total_files", "auto_enhance", "auto_enhance_options", "accepted_files",
             "rejected_files", "total_size", "processing_status", "processed_files",
             "processing_failed_files", "processing_task_id", "processing_error",
             "processing_started_at", "processing_finished_at", "created_at", "updated_at", "images",

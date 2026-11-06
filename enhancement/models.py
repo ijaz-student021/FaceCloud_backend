@@ -40,6 +40,18 @@ class EnhancementStyle(models.TextChoices):
     AI_MAX = "ai_max", "AI Enhance"
 
 
+class EnhancementLighting(models.TextChoices):
+    """What a person says about the photograph's lighting. ``auto`` lets the analyzer decide (every request before this choice existed); ``dark`` runs the dark-photo
+    method whatever the analyzer saw (brighten the shadows first, then reduce noise); ``light`` runs the light-photo method (the brightness is kept)."""
+    AUTO = "auto", "Let the engine decide"
+    DARK = "dark", "Dark photo"
+    LIGHT = "light", "Light photo"
+
+
+# The two methods a result can report (its ``lighting`` block's ``detected`` and ``used``): named once for the OpenAPI schema (config/settings.py ENUM_NAME_OVERRIDES).
+LIGHTING_METHODS = ["dark", "light"]       # a flat list: drf-spectacular hashes a list of (value, label) pairs differently from the ChoiceField's own values, so a pair list would never match
+
+
 class EnhancementTrigger(models.TextChoices):
     MANUAL = "manual", "Asked for by a person"
     AUTO = "auto", "Automatic, after upload"
@@ -143,6 +155,12 @@ class ImageEnhancementResult(models.Model):
         max_length=8,
         choices=EnhancementStyle.choices,
         default=EnhancementStyle.NATURAL,
+    )
+    # The person's own word on the lighting (the request's `lighting`); "auto", the default, is what every result made before the choice existed means.
+    requested_lighting = models.CharField(
+        max_length=8,
+        choices=EnhancementLighting.choices,
+        default=EnhancementLighting.AUTO,
     )
     # Who started it. An automatic one (enhancement/auto.py) runs under AUTO_ENHANCEMENT_RENDER_POLICY and tells the owner once per batch, not per photograph.
     trigger = models.CharField(

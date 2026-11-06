@@ -363,6 +363,8 @@ ADAPTIVE_BACKGROUND_DEFOCUS_MIN_FACE_AREA = env.float("ADAPTIVE_BACKGROUND_DEFOC
 #   ``compression_blocks`` gate (the analyzer reads the LIFTED photograph as heavily compressed; the weaker blends and the fallback engine are refused with it) turns 4 of those 6 back into "left as
 #   before"; the other 2 (a 4x enlargement of a blocky photograph, and the pink face) are not caught. Of the 7 that are lifted, 1 has no artifact, 4 a dark outline along the subject and 2 are damaged,
 #   so it ships OFF: switch it on for sharp, high-quality photographs. Natural, Dynamic and Auto are untouched (docs/evaluation/2026-11-05-backlit-subject-lift.md).
+#   A photograph the pipeline ITSELF enlarged first (preprocessing's small-image enlargement) is never lifted this way (``lift_on_enlarged_source``): its blocks are 32 px wide and the reading cannot see them;
+#   the live run of the library's id 182 through the app (2026-11-06) came back with a blocky face (the same note, addendum). The person's own "Dark photo" (``lighting``) is held to the same gate.
 ADAPTIVE_BACKLIT_SUBJECT_LIFT = env.bool("ADAPTIVE_BACKLIT_SUBJECT_LIFT", default=False)
 ADAPTIVE_BACKLIT_SUBJECT_BRIGHTNESS_MAX = env.float("ADAPTIVE_BACKLIT_SUBJECT_BRIGHTNESS_MAX", default=60.0)
 ADAPTIVE_BACKLIT_SUBJECT_MAX_RATIO = env.float("ADAPTIVE_BACKLIT_SUBJECT_MAX_RATIO", default=0.40)
@@ -1475,6 +1477,8 @@ SPECTACULAR_SETTINGS = {
         "SecurityAlertSeverityEnum": "security.models.SecurityAlert.Severity",
         "EnhancementLevelEnum": "enhancement.models.EnhancementLevel",
         "EnhancementStyleEnum": "enhancement.models.EnhancementStyle",
+        "EnhancementLightingEnum": "enhancement.models.EnhancementLighting",
+        "LightingMethodEnum": "enhancement.models.LIGHTING_METHODS",
         "PackageStatusEnum": "downloads.models.DownloadPackage.Status",
         "ProcessingReportStatusEnum": "reports.models.ProcessingReport.Status",
         "IdentityAnalysisStatusEnum": "identities.models.IdentityAnalysis.Status",
