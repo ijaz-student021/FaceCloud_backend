@@ -256,16 +256,17 @@ def reference_metrics(clean, image):
 class FinalImageQualityValidator:
     """Judge candidates against the original and the image they were made from."""
 
-    def __init__(self, analyzer, original_report, identity=None, limits=None, original=None):
+    def __init__(self, analyzer, original_report, identity=None, limits=None, original=None, source_enlarged=False):
         self.analyzer = analyzer
         self.original_report = original_report
         self.identity = identity            # an object with .check(image) -> dict, or None
         self.limits = limits or Limits()
+        self.source_enlarged = bool(source_enlarged)        # the pipeline enlarged this photograph before the engine saw it (preprocessing's small-image enlargement): see the shadow-lift gate
         self.original = original            # the original's pixels (optional): the plain enlargement the geometry gate may compare an enlarged candidate with
         self._plain_enlargements = {}       # (width, height) -> the faces found on a plain bicubic enlargement of the original to that size
 
-    def evaluate(self, parent, candidate, operation, parent_report, expected_scale=1, candidate_report=None, refine=False):
-        """``{accepted, reasons, gates, metrics, improvement, change_cost}`` for one candidate. ``refine``: a detail-restoration candidate for a photograph with no defect (always-enhance)."""
+    def evaluate(self, parent, candidate, operation, parent_report, expected_scale=1, candidate_report=None, refine=False, local=None):
+        """``{accepted, reasons, gates, metrics, improvement, change_cost}`` for one candidate. ``refine``: a detail-restoration candidate for a photograph with no defect (always-enhance). ``local``: ``"shadows"`` for a lift of the shadows only (a back-lit subject)."""
         limits = self.limits
         lowlight = operation == "low_light_enhancement"
         polish = operation == "polish"
@@ -334,6 +335,16 @@ class FinalImageQualityValidator:
 
         candidate_report = candidate_report or self.analyzer.analyze(candidate)
         verdict["metrics"]["candidate_conditions"] = candidate_report.conditions
+        if lowlight and local == "shadows":
+            # A shadow lift raises what the shadows hold several times, so on a small, heavily compressed JPEG it makes the blocks of the compression visible (a blocky face: the library's ids 130, 182,
+            # 200; docs/evaluation/2026-11-05-backlit-subject-lift.md). The analyzer's own reading of the lifted photograph decides, as it does when it refuses to sharpen a compressed photograph.
+            # A photograph the pipeline ENLARGED first (a 260 px JPEG becomes 1040 px) hides what that reading looks for: its blocks are 32 px wide, not 8, so a blocky photograph reads clean (the same
+            # reading, 1.19 / 1.10, as the clean library photographs at 1/1, 1/2 and 1/4 scale), and the lift of its shadows came back as a blocky face (library id 182, run through the app on 2026-11-06).
+            # A photograph small enough to be enlarged is small enough to be a compressed one: its shadows are not lifted.
+            blocks = candidate_report.compression
+            gate("compression_blocks", blocks["status"] != "heavy" and not self.source_enlarged,
+                 {"status": blocks["status"], "blockiness": blocks["blockiness"], "source_enlarged": self.source_enlarged},
+                 "lift_on_enlarged_source" if self.source_enlarged else "lift_shows_compression_blocks")
         clip_growth = candidate_report.base["highlight_clipping_percent"] - parent_report.base["highlight_clipping_percent"]
         gate("highlights", clip_growth <= (limits.polish_clip_growth_max if polish else limits.highlight_clip_growth_max),
              {"clipping_growth": round(clip_growth, 2)}, "highlight_clipping_increased")

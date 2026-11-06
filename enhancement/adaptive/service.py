@@ -233,6 +233,8 @@ class AdaptiveImageEnhancementService:
         if operation in self.runners:
             return self.runners[operation](image, engine, variant)
         if operation == ops.LOW_LIGHT:
+            if variant.get("local"):
+                return ops.run_low_light(image, engine, variant["blend"], variant["local"])
             return ops.run_low_light(image, engine, variant["blend"])
         if operation == ops.DENOISE:
             return ops.run_denoise(image, engine, variant["blend"])
@@ -298,19 +300,40 @@ class AdaptiveImageEnhancementService:
                     record["notes"].append("The candidate limit was reached.")
                     break
                 validation_started = time.perf_counter()
+                local = {"local": variant["local"]} if variant.get("local") else {}      # only a shadow lift says so: every other call is as it was
                 candidate.verdict = validator.evaluate(
                     current.image, candidate.image, step.operation, report, expected_scale=scale if step.operation == ops.UPSCALE else 1,
-                    refine=bool(variant.get("refine")),
+                    refine=bool(variant.get("refine")), **local,
                 )
                 candidate.validation_seconds = time.perf_counter() - validation_started
                 engine_produced.append(candidate)
                 if not candidate.verdict["accepted"]:
                     candidate.release()          # refused: its pixels are never used again, and it must not use up the pool the later operations (the polish) need
+            blocked = step.operation == ops.LOW_LIGHT and self._refuse_weaker_shadow_lifts(engine_produced)
             tried += 1
             produced.extend(engine_produced)
+            if blocked:
+                break  # the photograph's shadows show the blocks of its compression whichever engine lifts them: a fallback engine would show them too
             if any(candidate.verdict["accepted"] for candidate in engine_produced):
                 break  # an engine whose candidate passed is enough; a second engine is a fallback, not a second opinion
         return produced
+
+    @staticmethod
+    def _refuse_weaker_shadow_lifts(candidates):
+        """Whether a shadow lift of this photograph shows the blocks of its compression (the validator's ``compression_blocks`` gate failed for one of ``candidates``); if so, the weaker blends of it are refused too.
+
+        A weaker blend only shows the same blocks, fainter: each variant is judged on its own pixels, and the analyzer's reading of a fainter lift can fall under its "heavy" limit while the face is still
+        blocky (library ids 182 and 200, where the weaker blend passed and the result was still damaged; docs/evaluation/2026-11-05-backlit-subject-lift.md). The caller then tries no other engine.
+        """
+        if not any(candidate.verdict["gates"].get("compression_blocks", {}).get("passed") is False for candidate in candidates):
+            return False
+        for candidate in candidates:
+            if candidate.verdict["accepted"]:
+                candidate.verdict["accepted"] = False
+                candidate.verdict["gates"]["compression_blocks"] = {"passed": False, "status": "a stronger lift of this photograph shows the compression blocks"}
+                candidate.verdict["reasons"].append("lift_shows_compression_blocks")
+                candidate.release()
+        return True
 
     def _per_face_recomposition(self, parent, restored, report, identity):
         """Keep each restored face only if that face's identity survives; the others stay as they were."""
@@ -335,17 +358,21 @@ class AdaptiveImageEnhancementService:
 
     # -- the whole run ------------------------------------------------------------------------------------------
     def enhance(self, image, requested_level=EnhancementLevel.AUTO, style="natural", allow_biometric_processing=True,
-                checkpoint=None, debug=None):
-        """The whole run under one wall-clock budget: it stops between operations *and* between the tiles of a model call."""
+                checkpoint=None, debug=None, lighting="auto", source_enlarged=False):
+        """The whole run under one wall-clock budget: it stops between operations *and* between the tiles of a model call.
+
+        ``lighting`` is the person's own word on the photograph's lighting: ``"dark"`` or ``"light"`` forces that method, ``"auto"`` (the default) lets the analyzer decide.
+        ``source_enlarged`` says the pipeline enlarged ``image`` before the engine saw it (preprocessing's small-image enlargement): a shadow lift of such a photograph is refused.
+        """
         from enhancement import runtime
 
         try:
             with runtime.deadline_until(time.monotonic() + self.config.time_budget_seconds):
-                return self._enhance(image, requested_level, style, allow_biometric_processing, checkpoint, debug)
+                return self._enhance(image, requested_level, style, allow_biometric_processing, checkpoint, debug, lighting, source_enlarged)
         finally:
             ops.clear_detail_cache()      # the detail step keeps the model's output for its blends; it is not kept past the run
 
-    def _enhance(self, image, requested_level, style, allow_biometric_processing, checkpoint, debug):
+    def _enhance(self, image, requested_level, style, allow_biometric_processing, checkpoint, debug, lighting="auto", source_enlarged=False):
         from enhancement.services import analyze_image_quality, compare_image_quality
 
         checkpoint = checkpoint or (lambda _name: None)
@@ -363,11 +390,11 @@ class AdaptiveImageEnhancementService:
         if not report0.faces:
             identity.reason = "No face was found, so there was no identity to check."
         pool = CandidatePool(original, self.config.max_candidates)
-        profile = profile_for(style, requested_level)     # what the style and the strength change (profile.py); the validator's gates are the same for all, but for one limit AI Enhance may lower (below)
+        profile = profile_for(style, requested_level, lighting)     # what the style, the strength and the person's word on the lighting change (profile.py); the validator's gates are the same for all, but for one limit AI Enhance may lower (below)
         limits = Limits()
         if profile.face_deblur_min_detail_gain is not None:
             limits = replace(limits, face_deblur_min_detail_gain=min(limits.face_deblur_min_detail_gain, profile.face_deblur_min_detail_gain))      # never raises the limit the operator set
-        validator = FinalImageQualityValidator(analyzer, report0, identity if identity.available else None, limits=limits, original=original)
+        validator = FinalImageQualityValidator(analyzer, report0, identity if identity.available else None, limits=limits, original=original, source_enlarged=source_enlarged)
 
         current, report = pool.original, report0
         done, stages, skipped, warnings = set(), [], [], []
@@ -490,11 +517,14 @@ class AdaptiveImageEnhancementService:
         quality_comparison = compare_image_quality(original, final)
         # The deblur step's own record ("the blur is defocus ...") stays in operations_skipped; only the verdict sentence leaves it out when the defocus is the background's.
         summary = self._summary(outcome, stages, [item for item in skipped if not (background_defocus and "defocus" in item["reason"])], remaining)
+        lighting_sentence = self._lighting_sentence(profile, stages, accepted_operations)
+        if lighting_sentence:
+            summary = f"{lighting_sentence} {summary}"
         parameters = {
             "algorithm": algorithm if accepted_operations else "adaptive_v1+original_preserved",
             "pipeline_version": PIPELINE_VERSION,
             "render_policy": rendering_policy.describe(),
-            "requested_level": str(requested_level), "style": str(style),
+            "requested_level": str(requested_level), "style": str(style), "requested_lighting": profile.lighting,
             "quality_before": analyze_image_quality(original), "quality_after": analyze_image_quality(
                 cv2.resize(final, (original.shape[1], original.shape[0]), interpolation=cv2.INTER_AREA) if final.shape != original.shape else final),
             "quality_comparison": quality_comparison, "warnings": warnings,
@@ -546,6 +576,22 @@ class AdaptiveImageEnhancementService:
     def _chosen_model(pool, stage):
         chosen = next((c for c in pool.items if c.id == stage.get("chosen")), None)
         return (chosen.models[0].get("model") if chosen and chosen.models and chosen.models[0].get("model") else stage["operation"])
+
+    @staticmethod
+    def _lighting_sentence(profile, stages, accepted_operations):
+        """What the person's own word on the lighting did, in one plain sentence; empty when they left it to the engine. It never says a method ran that did not."""
+        if profile.lighting == "light":
+            return "As you asked, the light-photo method was used: the brightness was kept."
+        if profile.lighting != "dark":
+            return ""
+        if ops.LOW_LIGHT in accepted_operations:
+            return "As you asked, the dark-photo method brightened the photograph."
+        stage = next((s for s in stages if s["operation"] == ops.LOW_LIGHT), None)
+        if stage is not None and stage["status"] == "rejected":
+            return "Brightening was not safe to apply, so the dark-photo method changed nothing."
+        if stage is not None and stage["status"] in ("unavailable", "no_engine"):
+            return "The brightening model was not available, so the dark-photo method changed nothing."
+        return "The dark-photo method could not brighten this photograph, so it changed nothing."
 
     @staticmethod
     def _summary(outcome, stages, skipped, remaining):

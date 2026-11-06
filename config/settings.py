@@ -352,6 +352,23 @@ ADAPTIVE_BASELINE_AFTER_FACE_RESTORATION = env.bool("ADAPTIVE_BASELINE_AFTER_FAC
 #   sits between them (docs/evaluation/2026-11-05-background-defocus-note.md). False gives the earlier behaviour.
 ADAPTIVE_BACKGROUND_DEFOCUS_NOT_A_DEFECT = env.bool("ADAPTIVE_BACKGROUND_DEFOCUS_NOT_A_DEFECT", default=True)
 ADAPTIVE_BACKGROUND_DEFOCUS_MIN_FACE_AREA = env.float("ADAPTIVE_BACKGROUND_DEFOCUS_MIN_FACE_AREA", default=0.03)
+# ADAPTIVE_BACKLIT_SUBJECT_LIFT (OFF by default): the subject of a back-lit photograph (a person against a window, a bright sky or a sunset) is crushed in the shadows while the frame is bright,
+#   so no exposure rule of the frame calls the photograph dark and the person stays a silhouette. The analyzer reports ``subject_exposure.backlit`` (always) when the MAIN face has a crushed
+#   tonal range (``visibility`` poor), its median luminance is under ADAPTIVE_BACKLIT_SUBJECT_BRIGHTNESS_MAX (60) and under ADAPTIVE_BACKLIT_SUBJECT_MAX_RATIO (0.40) of the frame's mean, and
+#   the frame's median is at least ADAPTIVE_BACKLIT_MIN_SCENE_MEDIAN (70). Switched on, AI Enhance (the `pro` preset) proposes the low-light lift as a SHADOW lift: the network's output is
+#   blended in only where the original is clearly darker than the frame's own median (a sky, a window or a lit wall is left as photographed) and every gate of the validator judges it.
+#   Detection, library (62 photographs, 45 with a face): met by the 11 back-lit ones (face median 8 to 50, ratio 0.09 to 0.36) and by no other photograph; a histogram rule (a dark third and a
+#   bright third) also flags white-background studio portraits and was not used. Result, AI Enhance, real models, the 11: a lift raises what the shadows hold several times, which makes the blocks
+#   of a small, heavily compressed JPEG visible, so without a guard 6 were visibly damaged (blocky faces on 4, an outline and faint blocks on 1, a smoothed pink face on 1). The validator's
+#   ``compression_blocks`` gate (the analyzer reads the LIFTED photograph as heavily compressed; the weaker blends and the fallback engine are refused with it) turns 4 of those 6 back into "left as
+#   before"; the other 2 (a 4x enlargement of a blocky photograph, and the pink face) are not caught. Of the 7 that are lifted, 1 has no artifact, 4 a dark outline along the subject and 2 are damaged,
+#   so it ships OFF: switch it on for sharp, high-quality photographs. Natural, Dynamic and Auto are untouched (docs/evaluation/2026-11-05-backlit-subject-lift.md).
+#   A photograph the pipeline ITSELF enlarged first (preprocessing's small-image enlargement) is never lifted this way (``lift_on_enlarged_source``): its blocks are 32 px wide and the reading cannot see them;
+#   the live run of the library's id 182 through the app (2026-11-06) came back with a blocky face (the same note, addendum). The person's own "Dark photo" (``lighting``) is held to the same gate.
+ADAPTIVE_BACKLIT_SUBJECT_LIFT = env.bool("ADAPTIVE_BACKLIT_SUBJECT_LIFT", default=False)
+ADAPTIVE_BACKLIT_SUBJECT_BRIGHTNESS_MAX = env.float("ADAPTIVE_BACKLIT_SUBJECT_BRIGHTNESS_MAX", default=60.0)
+ADAPTIVE_BACKLIT_SUBJECT_MAX_RATIO = env.float("ADAPTIVE_BACKLIT_SUBJECT_MAX_RATIO", default=0.40)
+ADAPTIVE_BACKLIT_MIN_SCENE_MEDIAN = env.float("ADAPTIVE_BACKLIT_MIN_SCENE_MEDIAN", default=70.0)
 NAFNET_MODEL_PATH = env(
     "NAFNET_MODEL_PATH",
     default=str(BASE_DIR / ".runtime" / "models" / "NAFNet-GoPro-width64.pth"),
@@ -1460,6 +1477,8 @@ SPECTACULAR_SETTINGS = {
         "SecurityAlertSeverityEnum": "security.models.SecurityAlert.Severity",
         "EnhancementLevelEnum": "enhancement.models.EnhancementLevel",
         "EnhancementStyleEnum": "enhancement.models.EnhancementStyle",
+        "EnhancementLightingEnum": "enhancement.models.EnhancementLighting",
+        "LightingMethodEnum": "enhancement.models.LIGHTING_METHODS",
         "PackageStatusEnum": "downloads.models.DownloadPackage.Status",
         "ProcessingReportStatusEnum": "reports.models.ProcessingReport.Status",
         "IdentityAnalysisStatusEnum": "identities.models.IdentityAnalysis.Status",

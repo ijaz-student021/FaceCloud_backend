@@ -179,6 +179,15 @@ on the upload page ("Enhance my photos automatically"), pre-set from the prefere
 works as before, and a photograph that already has a result is never enhanced a second time. Every photograph in the answer carries `enhancement` (below), so **in
 `inline` mode the finished results are already in the upload answer**; with a worker they are `queued` and move as you poll.
 
+**What the automatic enhancement is asked to do (new): `preset`, `level`, `style`, `lighting` on the upload.** The three upload calls take four more optional form fields, with exactly
+the meaning, the names, the preset rule and the validation of an enhancement request (section 4): `preset` (`auto`, `standard`, `pro`; it fills in whichever of `level` and `style` is not sent, and one
+that is sent wins), `level` (`auto`, `low`, `medium`, `high`), `style` (`natural`, `dynamic`, `ai_max`) and `lighting` (`auto`, `dark`, `light`). They are checked **before** anything is stored (a value that is not
+allowed is a 400 `{"<field>": ["..."]}` and no batch is made), kept on the batch and used by that batch's **automatic** enhancement, so the person chooses **once, on the upload page**: no second
+call, no upload with `auto_enhance=false` followed by an enhancement request. A request that sends none of the four is enhanced exactly as before (automatic strength, natural, lighting by the engine). The batch
+answer carries what was kept as `auto_enhance_options: {level, style, lighting}` (`{}` when the upload sent none); the result of each photograph carries `requested_level`, `requested_style` and
+`requested_lighting` as ever. The four fields only matter while `auto_enhance` is on: with `auto_enhance=false` they are stored and unused (the later enhancement request carries its own).
+A person who picks **Pro** sends `preset=pro` (level `high`, style `ai_max`); **Standard** `preset=standard` (level `high`, natural); **Auto** nothing. Pro takes a minute or two per photograph on a laptop.
+
 **`processing_mode`** (new, upload answers only): `"background"` when a Celery worker does the work, `"inline"` when the background jobs run inside this very request
 (`CELERY_TASK_ALWAYS_EAGER` is on, normally a development server without a worker). In `inline` mode the answer already holds the finished batch and **there is no
 progress to show**: do not draw a progress bar or poll, show the result, and (in development) a one-line hint "background jobs run inside the request: start the
@@ -322,12 +331,21 @@ personal workspace whose checks doubted it:
 ## 4. Enhancement
 
 ```text
-POST /api/enhancements/images/{image_id}/   {level, style}  or  {preset}     -> 202
-POST /api/enhancements/batches/{batch_id}/  {level, style}  or  {preset}     -> 201
+POST /api/enhancements/images/{image_id}/   {level, style}  or  {preset}     [+ lighting] -> 202
+POST /api/enhancements/batches/{batch_id}/  {level, style}  or  {preset}     [+ lighting] -> 201
 ```
 
 - `level`: `auto` (default), `low`, `medium`, `high`.
 - `style`: `natural` (default), `dynamic`, `ai_max`.
+- **`lighting` (new): the person's own word on the lighting.** `auto` (default; what a request without the field means, byte for byte as before), `dark` or `light`. `dark` runs the **dark-photo
+  method** whatever the engine saw: the shadows are lifted first (a dark scene, the shadows of a back-lit subject while the bright background stays as photographed, or the whole frame) and noise is
+  then reduced. `light` runs the **light-photo method**: no lift is tried, only detail, blur, size and polish are worked on. It works with every style and level, and with `preset`
+  (`{"preset": "pro", "lighting": "dark"}`). It is also sent with an upload (section 3), and applies to **every photograph** of a batch request. Any other value is a **400**
+  `{"lighting": ["\"x\" is not a valid choice."]}` and nothing is queued. A forced method goes through every safety gate and limit an automatic lift does (identity, colour, halo, size, face geometry,
+  compression blocks, the time budget): when the lift is **not safe**, it is refused, the photograph keeps whatever else passed, and the result says so (below). `requested_lighting` on the
+  result shows what was asked. Only the adaptive engine (`ENHANCEMENT_RENDER_POLICY=adaptive_v1`) follows it; the older policies ignore it and their results carry no `lighting` block.
+  **Expect refusals on very small photographs:** one the server itself enlarges first (a short edge under a few hundred pixels) is never given a shadow lift, because the blocks of such a tiny JPEG
+  cannot be seen in the enlarged copy and a lift of its shadows came back as a blocky face; for those, "Dark photo" reads `used: "dark"`, `forced: true`, `brightened: false`, with the sentence above.
 - **`preset` (new, 2026-11-05): one field instead of two.** `preset` is a name for a `level` + `style` pair that already exists, so a client can send `{"preset": "pro"}` and need not know the pair:
 
   | `preset` | `level` | `style` |
@@ -345,7 +363,9 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}  or  {preset}     -> 
   tried and how strongly; the safety checks are the same for every choice, so a stronger choice can still end in "nothing needed fixing" or "kept the original":
   - `natural` (and what an automatic enhancement uses): defect-driven; a black-and-white photograph **stays** black and white.
   - `dynamic`: a stronger polish, also for a deliberately dark photograph, and **a black-and-white photograph is colourized** (`operations_applied` contains `colourization`).
-  - `ai_max`: all of `dynamic`, a stronger polish, a dark scene with a visible subject may be lifted, light noise is treated, a photograph under 1280 px is enlarged, and a face deblur that raises
+  - `ai_max`: all of `dynamic`, a stronger polish, a dark scene with a visible subject may be lifted, **when the server switch `ADAPTIVE_BACKLIT_SUBJECT_LIFT` is on (off by default: on a small, heavily compressed photograph the lift can make the compression blocks visible), the crushed subject of a back-lit
+    photograph (a person against a window, a bright sky or a sunset) has its shadows lifted while the bright background is left as photographed** (`operations_applied` contains `low_light_enhancement`;
+    otherwise, and for the other styles, such a photograph is left as photographed), light noise is treated, a photograph under 1280 px is enlarged, and a face deblur that raises
     the face's detail 1.10 times is accepted (the other styles need 1.25; every other safety check is the same). A dim face (mean grey level 15 or more) now has its identity checked, so a face
     restoration is judged instead of skipped with "the source face is too dark"; it can still be refused (`face_geometry_changed`, identity, invented detail), and the result says which.
   - `level`: `low` = gentler (blends 0.65 and 0.4, polish x0.6); `auto`/`medium` = the style as it is; `high` = polish x1.4, a dark scene may be lifted, light noise is treated,
@@ -391,13 +411,18 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}  or  {preset}     -> 
   from the requested level (the backend adapts to the image), so show what was
   actually applied.
 - **Dark-photo and light-photo method (new, 2026-11-03).** Every enhancement result (`GET /api/enhancements/results/{id}/`) carries
-  `lighting: {detected, exposure, scene_median, brightened}`, or `null` for a result made before this field existed, by the staged pipeline, or that failed.
+  `lighting: {detected, exposure, scene_median, brightened, used, forced}`, or `null` for a result made before this field existed, by the staged pipeline, or that failed.
   `detected` is `dark` (an under-exposed photo or a dark scene: the dark-photo method may brighten it) or `light` (normal, over-exposed or back-lit: no
-  brightening, only detail, deblur, upscale and polish). `exposure` is the engine's own status (`low_light`, `low_light_subject`, `dark_scene`,
+  whole-frame brightening, only detail, deblur, upscale and polish; with the back-lit switch on (above) AI Enhance also lifts the shadows of a back-lit subject, and then `brightened` is `true` while `detected` stays `light`). `exposure` is the engine's own status (`low_light`, `low_light_subject`, `dark_scene`,
   `backlit_subject`, `normal`, `overexposed`), `scene_median` the median grey level of the frame (0-255) and `brightened` whether a brightening step really
   changed the photograph. Draw a badge from it: "Dark-photo method" / "Light-photo method"; for `detected: "dark"` with `brightened: false` say the photo was
-  recognised as dark but brightening was not safe to apply (the identity and quality checks refused it), never that it was brightened. The server decides on
-  its own; there is no way to force a method yet.
+  recognised as dark but brightening was not safe to apply (the identity and quality checks refused it), never that it was brightened.
+  **`used` and `forced` (new, with the request's `lighting`).** The block also carries `used` (`dark` or `light`: the method the engine **followed**) and `forced` (`true` when the person chose
+  Dark photo or Light photo and the engine followed it, `false` for `auto`). Draw the badge from `used`, and add "chosen by you" when `forced` ("Dark-photo method · chosen by you"). `used` is the
+  method that was followed, not a promise that it changed anything: **a forced `dark` whose lift was refused reads `used: "dark"`, `forced: true`, `brightened: false`**, and `enhancement_summary`
+  begins with one plain sentence about it: "As you asked, the dark-photo method brightened the photograph." / "Brightening was not safe to apply, so the dark-photo method changed nothing." /
+  "As you asked, the light-photo method was used: the brightness was kept." Show that sentence, not a success badge, when `forced` and `brightened` is `false` for a dark choice. A result made before
+  the choice existed has `forced: false` and `used` equal to `detected`. Without the person's word the server decides on its own, exactly as before.
 - **What was done (restoration).** A blurred face or a low-resolution photograph goes through the restoration chain when the server can
   run it (deblur, face restoration, upscale to HD; `docs/deployment/restoration-chain.md`). Every result carries three fields that
   say so, so a barely changed photograph is never presented as restored:
@@ -713,6 +738,44 @@ POST   /api/images/location/remove/  {image_ids: [..up to 200]} -> {removed_ids,
 duplicates. Confirm or dismiss with
 `PATCH /api/duplicates/matches/{id}/review/`. An exact checksum match cannot be
 dismissed (the API returns a 400).
+
+## 5a-matches. A list of every match, and decisions that survive "find duplicates again" (new)
+
+Two additions to the duplicates calls. No existing response key changed.
+
+```text
+GET  /api/duplicates/matches/?page=1&page_size=50&review_status=&match_type=&image=
+       -> {count, next, previous, results: [..the same rows as GET /api/duplicates/matches/{id}/..]}
+POST /api/duplicates/images/{id}/   {"force": true}      (the "Find duplicates again" button; unchanged request, 202 as before)
+```
+
+**The list.** Every duplicate match of the signed-in person in one paged call, newest first (`created_at`, then `id`, both descending). The rows are exactly the ones of the detail call
+(`source_image`, `matched_image`, the two filenames and download URLs, `match_type`, `similarity_score`, `review_status`, `reviewed_at` ...). Use it instead of reading the checks
+(`/results/`) and then every photograph's `/images/{id}/matches/`.
+
+- **Dismissed pairs are in it.** A pair marked `not_duplicate` stops counting in its photographs' `match_count` and `decision`, so no filter of `/results/` leads to it any more. This list does:
+  `?review_status=not_duplicate` is the "dismissed" tab.
+- **Filters** (all optional, combinable): `review_status` = `suspected` | `confirmed` | `not_duplicate`; `match_type` = `exact` | `perceptual` | `face_region`; `image` = a photograph id, giving the pairs that
+  have it on **either** side (`source_image` or `matched_image`). Anything else is a **400** with one plain sentence, for example `{"review_status": "Choose a valid review status: suspected, confirmed or not_duplicate."}`
+  or `{"image": "Image must be a positive integer."}`. An empty value is no filter. An `image` that is not yours (or does not exist) gives an empty list, never a 404.
+- **Paging** is the same as the other lists: `page` (a page past the end is a 404, page 1 of an empty list is a 200 with `count: 0`) and `page_size` (20 by default, **at most 100**). Always send `page`; without
+  `page` and `page_size` the whole list comes back as a plain array, as it does for the other lists.
+- **The trash.** A pair with a photograph in the trash is left out, exactly as the detail and review calls treat it (they answer 404 for it); it is listed again when the photograph is restored.
+- Only the signed-in person's own matches are ever listed. Same rate limit as the other duplicate calls.
+
+**A person's decision survives a re-check.** `force: true` used to delete the photograph's matches and create them again as `suspected` with new ids, so one click on "Find duplicates again" threw away every
+confirm and dismiss made on that photograph. Now the check reconciles instead of rebuilding:
+
+- A pair the check **finds again** keeps its match **`id`**, `review_status`, `reviewed_by`, `reviewed_at` and `created_at`. Only the measured values (`similarity_score`, `hash_distance`, `face_similarity`, `evidence`)
+  are brought up to date. Nothing is deleted when the request is made; the check runs afterwards, as before, and the photograph's matches stay readable and decidable meanwhile.
+- A pair counts as the same pair **whichever photograph is stored as its `source_image`**, and each kind (`exact`, `perceptual`, `face_region`) of a pair keeps its own decision.
+- A pair the check **no longer finds** is deleted (its id then answers 404), and the summaries (`match_count`, `decision`) of **both** photographs are recounted. A pair found for the first time is `suspected`.
+  A pair that was deleted and is found again later is a new match with a new id, `suspected`.
+- A pair is **not** deleted when the check could not look for it: the other photograph's own check is not finished (it is being checked again at the same time, or its check failed), it is further back than the
+  server's candidate limit, or one of the two photographs is in the trash (restoring it brings the pair back as it was).
+- After a re-check the summaries are recounted from the kept decisions: a photograph with a confirmed pair is `duplicate`, one whose pairs are all dismissed is `no_duplicate` with `match_count: 0`.
+- An exact checksum match is still created `confirmed` and still cannot be dismissed (400).
+- A check that fails leaves the stored pairs and decisions exactly as they were.
 
 ## 5b. Events (moments timeline)
 
