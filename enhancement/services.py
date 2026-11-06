@@ -47,6 +47,7 @@ from .models import (
     EditMode,
     EnhancementBatchJob,
     EnhancementLevel,
+    EnhancementLighting,
     EnhancementStatus,
     EnhancementStyle,
     EnhancementTrigger,
@@ -2147,9 +2148,13 @@ def _face_restoration_needs_withdrawing(context):
 
 def enhance_bgr(
     image, requested_level=EnhancementLevel.AUTO, style=EnhancementStyle.NATURAL,
-    allow_biometric_processing=True, use_zero_dce=True, checkpoint=None,
+    allow_biometric_processing=True, use_zero_dce=True, checkpoint=None, lighting="auto", source_enlarged=False,
 ):
     """Return an enhanced BGR image, applied level, and auditable parameters.
+
+    ``lighting`` is the person's own word on the lighting (``"dark"`` or ``"light"``; ``"auto"`` lets the engine decide). Only the adaptive engine follows it: the older
+    policies' own pipelines decide the lighting themselves, and a result they make carries no ``lighting`` block. ``source_enlarged`` says the pipeline enlarged ``image`` before this
+    call (preprocessing's small-image enlargement): the adaptive engine then refuses a shadow lift, whose blocks it could not see.
 
     ``style`` is a separate axis from ``requested_level`` (which controls
     exposure-correction strength): "natural" is the default pipeline
@@ -2166,12 +2171,15 @@ def enhance_bgr(
     The source array is never modified. Every stage that changes pixels proposes
     a candidate; ``stage_reports`` records whether it was accepted and why not.
     """
+    adaptive_options = {} if str(getattr(lighting, "value", lighting) or "auto") == "auto" else {"lighting": str(getattr(lighting, "value", lighting))}     # "auto" is not passed: the call stays what it was
+    if source_enlarged:
+        adaptive_options["source_enlarged"] = True                                                                                                          # (only when it is true, for the same reason)
     if rendering_policy.active_policy() == rendering_policy.ADAPTIVE:
         # The adaptive engine (enhancement/adaptive/) analyses, routes, validates candidates and returns one image.
         from .adaptive.service import AdaptiveImageEnhancementService
 
         return AdaptiveImageEnhancementService().enhance(
-            image, requested_level, style, allow_biometric_processing=allow_biometric_processing, checkpoint=checkpoint,
+            image, requested_level, style, allow_biometric_processing=allow_biometric_processing, checkpoint=checkpoint, **adaptive_options,
         )
     restoration_check = None
     if settings.ENHANCEMENT_RESTORATION_ESCALATION and rendering_policy.active_policy() in (
@@ -2186,7 +2194,7 @@ def enhance_bgr(
             from .adaptive.service import AdaptiveImageEnhancementService
 
             enhanced, applied_level, parameters = AdaptiveImageEnhancementService().enhance(
-                image, requested_level, style, allow_biometric_processing=allow_biometric_processing, checkpoint=checkpoint,
+                image, requested_level, style, allow_biometric_processing=allow_biometric_processing, checkpoint=checkpoint, **adaptive_options,
             )
             parameters["restoration_escalation"] = {
                 "reason": "The photograph needs restoration: " + ", ".join(restoration_check["needed"]) + ".",
@@ -2642,7 +2650,7 @@ def ensure_enhancement_capacity(owner, *, batch):
 
 def create_enhancement_result(
     image, requested_level=EnhancementLevel.AUTO, batch_job=None,
-    requested_style=EnhancementStyle.NATURAL, trigger=EnhancementTrigger.MANUAL,
+    requested_style=EnhancementStyle.NATURAL, trigger=EnhancementTrigger.MANUAL, requested_lighting=EnhancementLighting.AUTO,
 ):
     if image.owner_id != (batch_job.owner_id if batch_job else image.owner_id):
         raise ValidationError("The enhancement owner does not match the image owner.")
@@ -2659,6 +2667,7 @@ def create_enhancement_result(
         batch_job=batch_job,
         requested_level=requested_level,
         requested_style=requested_style,
+        requested_lighting=requested_lighting,
         trigger=trigger,
         status=EnhancementStatus.PENDING,
     )
@@ -2878,14 +2887,18 @@ def _process_claimed_result(result, token):
         else:
             source, source_strategy = _read_enhancement_source(result, decoding)
             alpha = None
+        enlarged = source_strategy == "standardized_enlarged"         # preprocessing enlarged a very small photograph: the engine sees the enlarged copy
         source, pixel_budget = _fit_pixel_budget(source)
         if pixel_budget["reduced"]:
             source_strategy = "original_reduced_to_pixel_budget"
         from privacy.services import biometric_processing_allowed
+        engine_options = {} if result.requested_lighting == EnhancementLighting.AUTO else {"lighting": result.requested_lighting}      # "auto" is not passed: the call stays what it was
+        if enlarged:
+            engine_options["source_enlarged"] = True                                                                                    # (only when it is true, for the same reason)
         enhanced, applied_level, parameters = enhance_bgr(
             source, result.requested_level, style=result.requested_style,
             allow_biometric_processing=biometric_processing_allowed(result.owner),
-            checkpoint=checkpoint,
+            checkpoint=checkpoint, **engine_options,
         )
         parameters["source_resolution_strategy"] = source_strategy
         if decoding:

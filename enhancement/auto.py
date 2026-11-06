@@ -37,7 +37,7 @@ from rest_framework.exceptions import ValidationError
 
 from uploads.models import ImageUpload, UploadBatch
 
-from .models import AutoEnhancement, EnhancementLevel, EnhancementStatus, EnhancementStyle, EnhancementTrigger, ImageEnhancementResult
+from .models import AutoEnhancement, EnhancementLevel, EnhancementLighting, EnhancementStatus, EnhancementStyle, EnhancementTrigger, ImageEnhancementResult
 from .outcome import result_outcome, result_summary
 
 logger = logging.getLogger(__name__)
@@ -76,6 +76,13 @@ def parse_auto_enhance(value):
     if text in FALSE_WORDS:
         return False
     raise ValueError("auto_enhance must be true or false.")
+
+
+def batch_enhancement_options(batch):
+    """``(level, style, lighting)`` the automatic enhancement of ``batch`` runs with: what the upload said (``UploadBatch.auto_enhance_options``, from its ``preset`` / ``level`` / ``style`` /
+    ``lighting`` form fields), else what it always did (automatic strength, natural, the lighting left to the engine)."""
+    options = batch.auto_enhance_options if isinstance(batch.auto_enhance_options, dict) else {}
+    return (options.get("level") or EnhancementLevel.AUTO, options.get("style") or EnhancementStyle.NATURAL, options.get("lighting") or EnhancementLighting.AUTO)
 
 
 def resolve_auto_enhance(user, requested=None):
@@ -207,8 +214,9 @@ def _release(record):
         return CAPACITY_FULL
     try:
         with transaction.atomic():
+            level, style, lighting = batch_enhancement_options(image.batch)
             result = create_enhancement_result(
-                image, EnhancementLevel.AUTO, requested_style=EnhancementStyle.NATURAL, trigger=EnhancementTrigger.AUTO,
+                image, level, requested_style=style, requested_lighting=lighting, trigger=EnhancementTrigger.AUTO,
             )
             task_id = uuid.uuid4().hex
             result.status = EnhancementStatus.QUEUED

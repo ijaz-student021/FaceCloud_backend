@@ -107,7 +107,8 @@ class ImageEnhanceView(APIView):
         summary="Enhance one image",
         description=(
             "Queues an enhancement. `style` picks the look (natural, dynamic, ai_max); "
-            "`level` the strength; `preset` (auto, standard, pro) is one name for a level + style pair that fills in whichever of the two is not sent. "
+            "`level` the strength; `preset` (auto, standard, pro) is one name for a level + style pair that fills in whichever of the two is not sent; "
+            "`lighting` (auto, dark, light) is the person's own word on the lighting and defaults to auto. "
             "Returns 202 immediately; poll the result for progress."
         ),
         request=EnhancementRequestSerializer,
@@ -121,6 +122,7 @@ class ImageEnhanceView(APIView):
             OpenApiExample("Full AI enhance", value={"level": "high", "style": "ai_max"}, request_only=True),
             OpenApiExample("Preset Pro (the same as the line above)", value={"preset": "pro"}, request_only=True),
             OpenApiExample("Preset Pro with a lighter strength (a level that is sent wins)", value={"preset": "pro", "level": "medium"}, request_only=True),
+            OpenApiExample("Dark-photo method, chosen by the person", value={"style": "natural", "lighting": "dark"}, request_only=True),
             OpenApiExample(
                 "Too many enhancements in progress",
                 value={"detail": "You already have 10 image enhancements in progress (limit 10). Wait for some to finish, then try again."},
@@ -143,6 +145,7 @@ class ImageEnhanceView(APIView):
             result = create_enhancement_result(
                 image, payload.validated_data["level"],
                 requested_style=payload.validated_data["style"],
+                requested_lighting=payload.validated_data["lighting"],
             )
         except IntegrityError as error:
             raise ValidationError("This image already has an active enhancement operation.") from error
@@ -215,6 +218,7 @@ class BatchEnhanceView(APIView):
         ensure_enhancement_capacity(request.user, batch=True)
         job = start_batch_enhancement(
             batch, level=payload.validated_data["level"], style=payload.validated_data["style"],
+            lighting=payload.validated_data["lighting"],
         )
         job.refresh_from_db()
         return Response(

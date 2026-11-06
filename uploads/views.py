@@ -57,6 +57,34 @@ AUTO_ENHANCE_FIELD = {"type": "boolean", "description": (
 )}
 
 
+ENHANCEMENT_FIELDS = {
+    "preset": {"type": "string", "enum": ["auto", "standard", "pro"], "description": (
+        "Optional. A name for a level + style pair, as on `POST /api/enhancements/images/{id}/`: it fills in whichever of `level` and `style` is not sent.")},
+    "level": {"type": "string", "enum": ["auto", "low", "medium", "high"], "description": "Optional. The strength of the automatic enhancement (default auto)."},
+    "style": {"type": "string", "enum": ["natural", "dynamic", "ai_max"], "description": "Optional. The look of the automatic enhancement (default natural; ai_max is AI Enhance, the Pro preset)."},
+    "lighting": {"type": "string", "enum": ["auto", "dark", "light"], "description": (
+        "Optional. The person's word on the lighting: dark runs the dark-photo method, light the light-photo method, auto (default) lets the engine decide.")},
+}
+"""The four optional form fields of an upload that say what ITS automatic enhancement does. They mean exactly what they mean on an enhancement request (same names, same preset rule,
+same validation, a value that is not allowed is a 400), they are stored on the batch (``UploadBatch.auto_enhance_options``) and ignored when ``auto_enhance`` is false."""
+
+
+def _upload_enhancement(request):
+    """What the automatic enhancement of this upload is asked to do: the ``preset`` / ``level`` / ``style`` / ``lighting`` form fields, validated exactly like an enhancement request.
+
+    ``{}`` when the upload sent none of them (every upload before this was enhanced with automatic strength, natural, the lighting left to the engine). Raised before the batch is created.
+    """
+    from enhancement.serializers import EnhancementRequestSerializer
+
+    sent = {name: request.data.get(name) for name in ENHANCEMENT_FIELDS if request.data.get(name) not in (None, "")}
+    if not sent:
+        return {}
+    payload = EnhancementRequestSerializer(data=sent)
+    payload.is_valid(raise_exception=True)
+    values = payload.validated_data
+    return {"level": str(values["level"]), "style": str(values["style"]), "lighting": str(values["lighting"])}
+
+
 def _upload_organization(request):
     from organizations.services import resolve_upload_organization
 
@@ -91,7 +119,7 @@ class SingleImageUploadView(APIView):
 
     @extend_schema(
         request={"multipart/form-data": {"type": "object", "properties": {
-            "file": {"type": "string", "format": "binary"}, "organization_id": ORGANIZATION_FIELD, "auto_enhance": AUTO_ENHANCE_FIELD,
+            "file": {"type": "string", "format": "binary"}, "organization_id": ORGANIZATION_FIELD, "auto_enhance": AUTO_ENHANCE_FIELD, **ENHANCEMENT_FIELDS,
         }}},
         responses={201: UploadBatchCreatedSerializer},
     )
@@ -101,6 +129,7 @@ class SingleImageUploadView(APIView):
             raise ValidationError({"file": "Select exactly one image for single-image upload."})
         batch = create_image_batch(
             request.user, "single", files, organization=_upload_organization(request), auto_enhance=_upload_auto_enhance(request),
+            enhancement_options=_upload_enhancement(request),
         )
         return _batch_response(request, batch)
 
@@ -113,7 +142,7 @@ class MultipleImageUploadView(APIView):
     @extend_schema(
         request={"multipart/form-data": {"type": "object", "properties": {
             "files": {"type": "array", "items": {"type": "string", "format": "binary"}}, "organization_id": ORGANIZATION_FIELD,
-            "auto_enhance": AUTO_ENHANCE_FIELD,
+            "auto_enhance": AUTO_ENHANCE_FIELD, **ENHANCEMENT_FIELDS,
         }}},
         responses={201: UploadBatchCreatedSerializer},
     )
@@ -125,6 +154,7 @@ class MultipleImageUploadView(APIView):
             raise ValidationError({"files": "Submit all images using the repeated 'files' field."})
         batch = create_image_batch(
             request.user, "multiple", files, organization=_upload_organization(request), auto_enhance=_upload_auto_enhance(request),
+            enhancement_options=_upload_enhancement(request),
         )
         batch = enqueue_batch_preprocessing(batch)
         return _batch_response(request, batch)
@@ -137,7 +167,7 @@ class ZipImageUploadView(APIView):
 
     @extend_schema(
         request={"multipart/form-data": {"type": "object", "properties": {
-            "file": {"type": "string", "format": "binary"}, "organization_id": ORGANIZATION_FIELD, "auto_enhance": AUTO_ENHANCE_FIELD,
+            "file": {"type": "string", "format": "binary"}, "organization_id": ORGANIZATION_FIELD, "auto_enhance": AUTO_ENHANCE_FIELD, **ENHANCEMENT_FIELDS,
         }}},
         responses={201: UploadBatchCreatedSerializer},
     )
@@ -148,6 +178,7 @@ class ZipImageUploadView(APIView):
         uploaded_zip = files[0]
         batch = create_zip_batch(
             request.user, uploaded_zip, organization=_upload_organization(request), auto_enhance=_upload_auto_enhance(request),
+            enhancement_options=_upload_enhancement(request),
         )
         batch = enqueue_batch_preprocessing(batch)
         return _batch_response(request, batch)

@@ -63,11 +63,12 @@ def _busy_image_ids(images):
     )
 
 
-def start_batch_enhancement(batch, *, level, style):
+def start_batch_enhancement(batch, *, level, style, lighting="auto"):
     """Create a job for every eligible image of ``batch`` and queue it.
 
     The job and its results belong to the batch owner (results must belong to
-    the image owner); who asked is for the caller to audit.
+    the image owner); who asked is for the caller to audit. ``lighting`` (the
+    person's own word, ``auto`` by default) is carried by every result of the job.
     """
     from .tasks import process_enhancement_batch
 
@@ -84,7 +85,7 @@ def start_batch_enhancement(batch, *, level, style):
                 status=EnhancementStatus.PENDING, total_images=len(images),
             )
             for image in images:
-                create_enhancement_result(image, level, batch_job=job, requested_style=style)
+                create_enhancement_result(image, level, batch_job=job, requested_style=style, requested_lighting=lighting)
     except IntegrityError as error:
         # Another request started work on one of these images in between.
         logger.warning("Batch %s enhancement raced another request: %s", batch.pk, error)

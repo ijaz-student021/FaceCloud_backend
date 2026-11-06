@@ -25,11 +25,12 @@ DARK_EXPOSURES = ("low_light", "low_light_subject", "dark_scene")          # the
 
 
 def result_lighting(result):
-    """How the engine saw the photograph's lighting: ``{detected, exposure, scene_median, brightened}``, or ``None`` when there is no adaptive report.
+    """How the engine saw the photograph's lighting and which method it followed: ``{detected, exposure, scene_median, brightened, used, forced}``, or ``None`` when there is no adaptive report.
 
     ``detected`` is ``dark`` or ``light`` (a normal, over-exposed or back-lit photograph is ``light``), ``exposure`` the analyzer's own status,
     ``scene_median`` the median grey level of the frame (0-255) and ``brightened`` whether a brightening step really changed the photograph: a dark
-    photograph whose brightening was not safe to apply is ``dark`` with ``brightened`` false.
+    photograph whose brightening was not safe to apply is ``dark`` with ``brightened`` false. ``forced`` is true when the person chose Dark photo or Light photo and the engine
+    followed it (the engine records what it followed in its profile, so a request an older policy ignored never reads as forced), and ``used`` is that method, else ``detected``.
     """
     parameters = result.applied_parameters if isinstance(result.applied_parameters, dict) else {}
     adaptive = parameters.get("adaptive")
@@ -38,9 +39,15 @@ def result_lighting(result):
     if not isinstance(exposure, dict) or not exposure.get("status"):
         return None
     status = str(exposure["status"])
+    detected = "dark" if status in DARK_EXPOSURES else "light"
+    profile = adaptive.get("profile") if isinstance(adaptive, dict) else None
+    followed = profile.get("lighting") if isinstance(profile, dict) else None
+    forced = followed in ("dark", "light")
     return {
-        "detected": "dark" if status in DARK_EXPOSURES else "light",
+        "detected": detected,
         "exposure": status,
         "scene_median": exposure.get("scene_median"),
         "brightened": "low_light_enhancement" in (adaptive.get("operations_applied") or []),
+        "used": followed if forced else detected,
+        "forced": forced,
     }
