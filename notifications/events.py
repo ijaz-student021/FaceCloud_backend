@@ -214,22 +214,12 @@ def notify_member_of_review_decision(review, actor):
     if review.status not in (ModeratorReview.Status.APPROVED, ModeratorReview.Status.REJECTED, ModeratorReview.Status.CORRECTED):
         return None
     image = review.image
-    owner = image.owner
-    if owner.pk == actor.pk:
+    if image.owner.pk == actor.pk:
         return None
-    rejected = review.status == ModeratorReview.Status.REJECTED
-    outcome = "rejected" if rejected else "approved"
-    notification, created = create_user_notification(
-        recipient=owner,
-        event_type=UserNotification.EventType.PHOTO_REVIEW_REJECTED if rejected else UserNotification.EventType.PHOTO_REVIEW_APPROVED,
-        idempotency_key=f"review:{review.pk}:member:{outcome}",
-        title="Your photo was not accepted" if rejected else "Your photo was approved",
-        message=message_for_member(review, outcome),
-        severity=UserNotification.Severity.WARNING if rejected else UserNotification.Severity.SUCCESS,
-        resource_type="image",
-        resource_id=image.pk,
-        action_path=f"/dashboard/images/{image.pk}",
-        metadata={"image_id": image.pk, "review_id": review.pk, "organization_id": review.organization_id, "filename": image.original_name},
+    outcome = "rejected" if review.status == ModeratorReview.Status.REJECTED else "approved"
+    notification, created = _tell_member_of_decision(
+        image, outcome, message_for_member(review, outcome), f"review:{review.pk}:member:{outcome}",
+        review_id=review.pk, organization_id=review.organization_id,
     )
     if created and notification is not None:
         record_audit_event(
@@ -237,6 +227,35 @@ def notify_member_of_review_decision(review, actor):
             target_type="ModeratorReview", target_id=review.pk, new_value={"outcome": outcome},
         )
     return notification
+
+
+def notify_member_of_image_decision(image, actor, outcome, message, idempotency_key):
+    """Tell the member whose photograph an administrator decided on what was decided, when no review carried the decision (a photograph the checks accepted or rejected on their own, or one in a personal workspace).
+
+    The same in-app message as ``notify_member_of_review_decision`` (``_tell_member_of_decision``), so the member cannot tell the two apart: ``outcome`` is ``approved`` or ``rejected``, ``message`` is what they read
+    (the administrator's reason) and ``idempotency_key`` names this one decision, so a decision recorded once is told once. Never to the administrator's own photographs. Returns the notification, or ``None``.
+    """
+    if image.owner_id == actor.pk:
+        return None
+    notification, _created = _tell_member_of_decision(image, outcome, message, idempotency_key)
+    return notification
+
+
+def _tell_member_of_decision(image, outcome, message, idempotency_key, **metadata):
+    """The in-app message to the owner of ``image`` that a person decided about it (``approved`` or ``rejected``): the one place for its type, title, severity and link. Returns ``(notification, created)``."""
+    rejected = outcome == "rejected"
+    return create_user_notification(
+        recipient=image.owner,
+        event_type=UserNotification.EventType.PHOTO_REVIEW_REJECTED if rejected else UserNotification.EventType.PHOTO_REVIEW_APPROVED,
+        idempotency_key=idempotency_key,
+        title="Your photo was not accepted" if rejected else "Your photo was approved",
+        message=message,
+        severity=UserNotification.Severity.WARNING if rejected else UserNotification.Severity.SUCCESS,
+        resource_type="image",
+        resource_id=image.pk,
+        action_path=f"/dashboard/images/{image.pk}",
+        metadata={"image_id": image.pk, **metadata, "filename": image.original_name},
+    )
 
 
 def notify_folders_may_match(batch, pairs):

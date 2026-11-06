@@ -332,9 +332,16 @@ CATALOGUE = {
     "system_analytics_retrieve": ("Platform analytics", "Platform-wide totals, rates and charts."),
     "system_audit_retrieve": ("Platform audit feed", "A combined, platform-wide feed of authentication and activity events."),
     "system_moderation_retrieve": ("Platform moderation overview", "Platform-wide moderation totals and organizations needing attention. Personal workspaces are not included: they have no moderator, so no review is opened there."),
-    "system_images_list": ("List every user's images", "Newest first."),
+    "system_images_list": ("List every user's images", "Newest first unless `ordering` says otherwise."),
     "system_images_retrieve": ("Get any image", ""),
     "system_images_preview_retrieve": ("Preview any image", ""),
+    "system_images_decision_create": (
+        "Decide on any image",
+        "Accept (`approve`), reject (`reject`, a reason is required) or put a photo back under review (`keep_in_review`). An open review of the photo is closed by the same decision "
+        "a moderator would make, with the administrator as the one who decided; the owner is told of an approval or a rejection (the reason is the message) and not of a hold. "
+        "Deciding what is already decided changes nothing (200, no second message, no second audit row). Answers with the same body as getting the image. "
+        "409 for a photo refused at upload, in the trash, or whose quality check has no verdict yet.",
+    ),
     "system_jobs_failed_retrieve": ("Most recent failed jobs", "The most recent failed job of every kind, across all owners."),
     "system_batches_failed_list": ("Failed upload batches", "Platform-wide failed or stuck upload batches."),
     "system_batches_retry_create": ("Retry any user's failed batch", "Reuses the owner's retry path."),

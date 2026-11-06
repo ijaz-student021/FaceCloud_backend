@@ -162,8 +162,31 @@ def create_review_for_identity_membership(membership):
     )
 
 
+def apply_quality_verdict(image, quality_decision_id, action, *, by="a moderator"):
+    """Write an approve or reject back into the photograph's quality decision and do what the pipeline does after that verdict.
+
+    Shared by a moderator's decision on a review (``decide_review``) and an administrator's decision on a photograph that has no open review
+    (``operations.image_decision``), so the two can never drift apart. ``by`` only words the reason written in the person folders' history.
+    """
+    ImageQualityDecision.objects.filter(pk=quality_decision_id).update(
+        decision=_QUALITY_WRITEBACK[action], updated_at=timezone.now(),
+    )
+    # The write above is a queryset update, so it sends no save signal: do what the verdict now means for the person folders explicitly. An approved
+    # photo is grouped now (identities/verdict.py: it was held back for exactly this); a rejected one is out of every folder.
+    if action == "approve":
+        from enhancement.auto import enhance_after_verdict
+        from identities.verdict import group_when_enhancement_ends
+
+        enhance_after_verdict(image, verdict="accepted")          # enhancement first, then the person folders (at once when none is coming)
+        group_when_enhancement_ends(image, verdict="accepted")
+    else:
+        from identities.services import remove_photo_from_folders
+
+        remove_photo_from_folders(image, reason=f"The photo was rejected by {by}.")
+
+
 @transaction.atomic
-def decide_review(*, review, actor, action, reason="", notes="", group_id=None, request=None, message_to_member=""):
+def decide_review(*, review, actor, action, reason="", notes="", group_id=None, request=None, message_to_member="", rejected_by="a moderator"):
     if action not in _REVIEW_STATUS_FOR_ACTION:
         raise ValidationError({"action": "Unknown review action."})
     locked = ModeratorReview.objects.select_for_update().get(pk=review.pk)
@@ -189,21 +212,7 @@ def decide_review(*, review, actor, action, reason="", notes="", group_id=None, 
         locked.source == ModeratorReview.Source.QUALITY
         and action in _QUALITY_WRITEBACK and locked.quality_decision_id
     ):
-        ImageQualityDecision.objects.filter(pk=locked.quality_decision_id).update(
-            decision=_QUALITY_WRITEBACK[action], updated_at=timezone.now(),
-        )
-        # The write above is a queryset update, so it sends no save signal: do what the verdict now means for the person folders explicitly. An approved
-        # photo is grouped now (identities/verdict.py: it was held back for exactly this); a rejected one is out of every folder.
-        if action == "approve":
-            from enhancement.auto import enhance_after_verdict
-            from identities.verdict import group_when_enhancement_ends
-
-            enhance_after_verdict(locked.image, verdict="accepted")          # enhancement first, then the person folders (at once when none is coming)
-            group_when_enhancement_ends(locked.image, verdict="accepted")
-        else:
-            from identities.services import remove_photo_from_folders
-
-            remove_photo_from_folders(locked.image, reason="The photo was rejected by a moderator.")
+        apply_quality_verdict(locked.image, locked.quality_decision_id, action, by=rejected_by)
     elif (
         locked.source == ModeratorReview.Source.DUPLICATE
         and action in _DUPLICATE_WRITEBACK and locked.duplicate_match_id
@@ -228,6 +237,39 @@ def decide_review(*, review, actor, action, reason="", notes="", group_id=None, 
         from notifications.events import notify_member_of_review_decision
 
         transaction.on_commit(lambda: notify_member_of_review_decision(locked, actor))
+    return locked
+
+
+@transaction.atomic
+def reopen_review(*, review, actor, reason="", request=None):
+    """Put a decided review back in the queue, because an administrator put its photograph back under review. An open review is returned as it is.
+
+    A photograph has one quality review for good (the database allows one per quality decision), so "back under review" has to reopen that row: it becomes ``pending``,
+    undecided, unassigned and unclaimed, with a fresh deadline, and the ``reason`` the administrator gave (if any) as its note, the way an escalation records its reason.
+    Who decided it, and what, stays in the organization's audit trail (the event is not rewritten, and this adds one).
+    """
+    locked = ModeratorReview.objects.select_for_update().get(pk=review.pk)
+    if locked.decided_at is None:
+        return locked
+    previous_status = locked.status
+    locked.status = ModeratorReview.Status.PENDING
+    locked.decided_by = None
+    locked.decided_at = None
+    locked.assigned_moderator = None
+    locked.claimed_by = None
+    locked.claimed_at = None
+    locked.decision_reason = reason
+    locked.decision_notes = ""
+    locked.message_to_member = ""
+    locked.due_at = review_deadline()
+    locked.sla_breached_at = None
+    locked.save()
+    record_audit_event(
+        locked.organization, actor, OrganizationAuditEvent.Action.MODERATOR_REVIEW_DECIDED,
+        target_type="ModeratorReview", target_id=locked.pk,
+        previous_value={"status": previous_status},
+        new_value={"action": "keep_in_review", "status": locked.status}, reason=reason, request=request,
+    )
     return locked
 
 

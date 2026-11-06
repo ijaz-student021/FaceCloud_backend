@@ -1297,7 +1297,7 @@ hide these routes, but never rely on that for security.
 | System Health, System Monitoring | `GET /api/system/health/` (`services`, `process`) and `GET /api/system/queue/` |
 | Audit Logs | `GET /api/system/audit/` (`?page=&page_size=&user=&category=&source=`) |
 | Security | `GET /api/system/security/alerts/`, `GET .../alerts/{id}/`, `POST .../alerts/{id}/acknowledge/ {note}`, `GET .../rules/` |
-| Image Monitoring | `GET /api/system/images/`, `.../{id}/`, `.../{id}/preview/` |
+| Image Monitoring | `GET /api/system/images/` (`?ordering=`), `.../{id}/`, `.../{id}/preview/`, `POST .../{id}/decision/` (see "Image Monitoring: decide on a photo, and sort the list" below) |
 | Users, Moderators | `GET/POST /api/user/admin/users/`, `PATCH /api/user/admin/users/{id}/` |
 
 
@@ -1418,6 +1418,35 @@ The account is created already verified; no email is sent and the password is ne
 administrator once and hand them over. `confirm password` is checked in the browser only. `role: "admin"` is refused. A moderator is
 added to an active non-personal organization, so the moderator panel (which takes the first non-personal organization of
 `GET /api/organizations/`) finds it; they log in with `role` and `dashboard` = `moderator`.
+
+### Image Monitoring: decide on a photo, and sort the list (new, administrators only)
+
+```text
+OPTIONS /api/system/images/{id}/decision/   -> 200 for an administrator (the call exists: switch the buttons on), 403 / 401 for anyone else; the id need not exist
+POST    /api/system/images/{id}/decision/   {"action": "approve" | "reject" | "keep_in_review", "reason": "<= 500 characters"}
+   -> 200 the SAME body as GET /api/system/images/{id}/, with the new decision already in "quality.decision": replace the console's copy of the photo with it
+   -> 400 {"reason": ["Give a reason for rejecting the photo: the owner is told it."]}    (reject without a reason; a reason over 500 characters is a 400 on "reason" too)
+   -> 400 {"action": ["\"x\" is not a valid choice."]}                                    (an unknown action; "correct" is a moderator's and is not offered here)
+   -> 404 {"detail": "..."} (JSON)                                                         (no such photo)
+   -> 409 {"detail": "<a sentence>"}                                                       (the photo cannot be decided now: see below)
+```
+
+* The action words are the moderator's own. `approve` makes `quality.decision` `accepted` and starts what follows any accepted verdict (the automatic enhancement, then the person folders).
+  `reject` makes it `rejected` and takes the photo out of its person folders. `keep_in_review` makes it `needs_review`; in a team the photo is then in the moderators' queue again.
+  `reason` is required for `reject` and optional otherwise.
+* **A moderator's open review of the photo is closed by the same decision**, with the administrator as the one who decided, so the moderator's queue, the team's log and the moderation overview
+  (`GET /api/system/moderation/`) count it like any decision. `keep_in_review` on a photo whose review a moderator had decided reopens that review (`pending`, a new deadline, `reason` as its note).
+  A review another moderator is working on right now is not taken from them: 409 with "<name> is reviewing this right now. Their claim expires shortly if they do not finish." (the claim ends by itself).
+* **The owner is told once per change** with the same in-app message a moderator's decision sends (`photo_review_approved` / `photo_review_rejected`): the `reason` is the message (an approval with no
+  reason gets a standard sentence). Nothing is sent for `keep_in_review`, for the administrator's own photo, or for deciding what is already decided: that is a plain 200 that changes and records nothing.
+* **Audit**: one `admin` event `admin_image_decided` per change (the photo, its owner, `action`, `previous_decision`, `decision`, `reason`), in `GET /api/system/audit/` next to `admin_image_viewed`.
+* **409 means "not now", and the sentence says why**: refused at upload (`status` is `rejected`, the file was never stored), in the trash (`trashed_at` is set), the quality check has not finished or failed
+  (`quality` is `null`, or `quality.decision` is empty), or the review is being worked on (above). The console keeps the buttons off for the first three. A 400 is for a request that is wrong whatever the photo is.
+
+`GET /api/system/images/?ordering=<field>` sorts the list (the filters and `page` / `page_size` still apply; every other key of the answer is unchanged). `<field>` is one of `created_at`, `original_name`,
+`file_size`, `owner__username`, `quality_decision__sharpness_score`, with a leading `-` for descending (`-file_size` is largest first). Names sort A to Z without regard to case; a photo with no sharpness
+score is last in both directions; ties are broken by id, newest first, so a page never repeats or skips a photo. Any other value is a 400 `{"ordering": ["Use one of ..."]}`; an empty `ordering=` or no
+parameter is the old order, newest first.
 
 ## 11. Things the UI must handle
 
