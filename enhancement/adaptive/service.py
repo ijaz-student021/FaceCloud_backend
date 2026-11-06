@@ -492,6 +492,8 @@ class AdaptiveImageEnhancementService:
                 record["notes"].append("No engine for this operation is switched on.")
                 stages.append(record)
                 continue
+            logger.info("adaptive_stage %s", json.dumps({"operation": step.operation, "engines": step.engines, "variants": [variant["name"] for variant in step.variants],
+                                                         "megapixels": round(current.image.shape[0] * current.image.shape[1] / 1e6, 2)}, separators=(",", ":")))      # the start of a stage: a slow model is not silent
             produced = self._propose(step, current, report, pool, validator, identity if identity.available else None, record)
             for item in record["skipped_engines"]:
                 if item.get("size_limit") and not any(entry["reason"] == item["reason"] for entry in skipped):
@@ -580,23 +582,41 @@ class AdaptiveImageEnhancementService:
                 "seconds": round(time.perf_counter() - started, 2), "analysis_seconds": round(analysis_seconds, 2),
             },
         }
-        self._log_run(parameters, report0, identity_block)
+        self._log_run(parameters, report0, identity_block, pool)
         return (final.copy() if final is original else final), applied_level, parameters
 
     # -- small helpers ------------------------------------------------------------------------------------------
     @staticmethod
-    def _log_run(parameters, report0, identity_block):
-        """One structured line per run for log aggregation: decisions, timings and reasons, never pixels, paths or user data."""
+    def _log_run(parameters, report0, identity_block, pool):
+        """One structured line per run for log aggregation: decisions, timings and reasons, never pixels, paths or user data.
+
+        ``refused``: each candidate the validator refused with the gates that failed and their READINGS (landmark shifts, clipping growth, similarity, ...), the numbers behind ``rejected_for``;
+        ``size``: the photograph's size and the result's."""
         adaptive = parameters["adaptive"]
+        contract = parameters.get("resolution_contract") or {}
         logger.info("adaptive_enhancement %s", json.dumps({
             "outcome": adaptive["outcome"], "operations": adaptive["operations_applied"], "seconds": adaptive["seconds"],
             "megapixels": round(report0.width * report0.height / 1e6, 2), "faces": report0.face_count,
+            "size": {"input": contract.get("source_dimensions"), "output": contract.get("actual_output_dimensions")},
             "conditions": report0.conditions, "identity_state": identity_block["state"],
             "stages": [{"operation": s["operation"], "status": s["status"], "seconds": s.get("seconds"), "models": s.get("models_run"),
                         "rejected_for": s.get("rejection_reasons")} for s in adaptive["stages"]],
+            "refused": AdaptiveImageEnhancementService._refusals(pool),
             "skipped": [item["operation"] for item in adaptive["operations_skipped"]], "unresolved": adaptive["unresolved_defects"],
             "colour_method": settings.ADAPTIVE_LOWLIGHT_COLOUR,
-        }, separators=(",", ":")))
+        }, separators=(",", ":"), default=str))
+
+    @staticmethod
+    def _refusals(pool):
+        """The candidates the validator refused, each with the gates that failed and what they read: ``[{"operation", "variant", "reasons", "failed": {gate: {reading: value}}}]``."""
+        refused = []
+        for candidate in pool.items:
+            verdict = candidate.verdict
+            if verdict is None or verdict["accepted"]:
+                continue
+            failed = {name: {key: value for key, value in gate.items() if key != "passed"} for name, gate in verdict["gates"].items() if not gate.get("passed")}
+            refused.append({"operation": candidate.operation, "variant": candidate.variant, "reasons": verdict["reasons"], "failed": failed})
+        return refused
 
     @staticmethod
     def _debug_name(operation):
