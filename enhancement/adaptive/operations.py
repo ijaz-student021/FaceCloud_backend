@@ -71,7 +71,25 @@ def _record(name, metadata, seconds, **extra):
             "provider": metadata.get("provider"), "seconds": round(seconds, 3), **extra}
 
 
-def run_low_light(image, engine, blend):
+SHADOW_REACH = (0.5, 0.9)    # a shadow lift is full below 0.5 and gone at 0.9 of the frame's own median luminance
+
+
+def shadow_weight(image):
+    """0..1 per pixel: 1 where the photograph is clearly darker than its own median luminance (a silhouette, a face in shadow), 0 from 0.9 of the median up (a sky, a window, a lit wall).
+
+    Relative to the frame, not absolute: a sunset sky of 0.4 and a window of 0.7 are both "background" in their own photograph. The luminance is smoothed a little (0.4 % of the long edge) so
+    the weight follows regions and not noise; an edge between a dark subject and a bright sky is still followed because the weight depends on each pixel's own luminance.
+    """
+    luminance = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
+    median = max(float(np.median(luminance)), 0.2)
+    luminance = cv2.GaussianBlur(luminance, (0, 0), max(1.0, 0.004 * max(image.shape[:2])))
+    low, high = SHADOW_REACH
+    t = np.clip((high * median - luminance) / ((high - low) * median), 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
+
+
+def run_low_light(image, engine, blend, local=None):
+    """The low-light lift at ``blend``; ``local="shadows"`` blends the network's output in only where the original is dark (``shadow_weight``), so a bright background is left as photographed."""
     from enhancement import services
 
     started = time.perf_counter()
@@ -97,6 +115,10 @@ def run_low_light(image, engine, blend):
     else:
         raw, chroma = chromaticity_linear(image, raw), {"method": "chromaticity_linear"}
     seconds = time.perf_counter() - started
+    if local == "shadows":
+        share = (shadow_weight(image) * float(blend))[:, :, None]
+        candidate = np.clip(image.astype(np.float32) * (1.0 - share) + raw.astype(np.float32) * share, 0, 255).astype(np.uint8)
+        return candidate, [_record(engine, metadata, seconds, chroma=chroma, local="shadows")]
     return _blend(image, raw, blend), [_record(engine, metadata, seconds, chroma=chroma)]
 
 

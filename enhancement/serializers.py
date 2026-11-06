@@ -227,7 +227,7 @@ class SkippedStageSerializer(serializers.Serializer):
 
 
 class LightingSerializer(serializers.Serializer):
-    detected = serializers.ChoiceField(choices=["dark", "light"], help_text="dark: the photograph is under-exposed or a dark scene (the dark-photo method may brighten it); light: normal, over-exposed or back-lit.")
+    detected = serializers.ChoiceField(choices=["dark", "light"], help_text="dark: the photograph is under-exposed or a dark scene (the dark-photo method may brighten it); light: normal, over-exposed or back-lit (with the server's back-lit switch on, AI Enhance lifts the shadows of a back-lit subject: `brightened` is then true while this stays light).")
     exposure = serializers.CharField(help_text="The analyzer's own status: low_light, low_light_subject, dark_scene, backlit_subject, normal or overexposed.")
     scene_median = serializers.FloatField(allow_null=True, help_text="Median grey level of the frame, 0 (black) to 255.")
     brightened = serializers.BooleanField(help_text="Whether a brightening step really changed the photograph. A dark photograph can be detected dark and still not be brightened when the brightening was not safe to apply.")

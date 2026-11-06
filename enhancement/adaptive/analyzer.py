@@ -111,6 +111,7 @@ class QualityReport:
     colour: dict
     faces: list = field(default_factory=list)
     face_blur: dict = field(default_factory=dict)   # the main face's own blur: {"status": none|low|high|unknown, "detail": ...}
+    subject_exposure: dict = field(default_factory=dict)    # the main face against the frame: {"backlit": bool, "subject_median", "frame_mean", "ratio", "judged_on"}
     conditions: list = field(default_factory=list)
     recommended_operations: list = field(default_factory=list)
     limitations: list = field(default_factory=list)
@@ -140,7 +141,7 @@ class QualityReport:
             "face_quality": main.quality if main else "none",
             "exposure": self.exposure, "noise": self.noise, "blur": self.blur, "resolution": self.resolution,
             "compression": self.compression, "colour": self.colour, "faces": faces, "face_blur": self.face_blur,
-            "conditions": self.conditions,
+            "subject_exposure": self.subject_exposure, "conditions": self.conditions,
             "recommended_operations": self.recommended_operations, "limitations": self.limitations,
         }
 
@@ -275,6 +276,24 @@ class ImageQualityAnalyzer:
         observations.sort(key=lambda face: face.box[2] * face.box[3], reverse=True)
         return observations[: self.max_faces], ""
 
+    @staticmethod
+    def _subject_exposure(gray, scene_median, main):
+        """Is the subject (the main face) crushed in the shadows while the frame is bright? ``{"backlit": bool, ...}``.
+
+        The frame's exposure status cannot say: a person against a window or a sunset leaves the frame bright, so no frame rule calls the photograph dark. The face is judged
+        (as everywhere here) by its tonal range first (``visibility`` poor: a compressed range or many crushed pixels, which a well-lit dark skin does not have), then by how dark
+        its typical pixel (the median of the inset face region, which the corners of the box do not pull up) is, alone and next to the frame. A silhouetted head under 48 px
+        (``too_small``) is judged the same way: its box is a guess, but its median is what the person looks like.
+        """
+        subject = main.luminance.get("p50") if main is not None else None
+        if subject is None:
+            return {"backlit": False, "judged_on": "no face"}
+        frame = float(gray.mean())
+        ratio = float(subject) / max(frame, 1e-6)
+        backlit = (main.visibility == "poor" and subject < settings.ADAPTIVE_BACKLIT_SUBJECT_BRIGHTNESS_MAX and ratio < settings.ADAPTIVE_BACKLIT_SUBJECT_MAX_RATIO
+                   and scene_median >= settings.ADAPTIVE_BACKLIT_MIN_SCENE_MEDIAN)
+        return {"backlit": bool(backlit), "subject_median": round(float(subject), 1), "frame_mean": round(frame, 1), "ratio": round(ratio, 3), "judged_on": "face"}
+
     # -- the report -------------------------------------------------------------------------------------------
     def analyze(self, image):
         from enhancement.services import analyze_image_quality, measure_compression_artifacts
@@ -316,6 +335,7 @@ class ImageQualityAnalyzer:
             "crushed_fraction": round(crushed, 3), "highlight_clipping_percent": base["highlight_clipping_percent"],
             "judged_on": "face" if main is not None and main.quality != "too_small" else "frame",
         }
+        report.subject_exposure = self._subject_exposure(gray, median, main)
 
         # noise
         noise = float(base["estimated_noise"])

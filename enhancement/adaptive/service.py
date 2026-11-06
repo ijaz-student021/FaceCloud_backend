@@ -233,6 +233,8 @@ class AdaptiveImageEnhancementService:
         if operation in self.runners:
             return self.runners[operation](image, engine, variant)
         if operation == ops.LOW_LIGHT:
+            if variant.get("local"):
+                return ops.run_low_light(image, engine, variant["blend"], variant["local"])
             return ops.run_low_light(image, engine, variant["blend"])
         if operation == ops.DENOISE:
             return ops.run_denoise(image, engine, variant["blend"])
@@ -298,19 +300,40 @@ class AdaptiveImageEnhancementService:
                     record["notes"].append("The candidate limit was reached.")
                     break
                 validation_started = time.perf_counter()
+                local = {"local": variant["local"]} if variant.get("local") else {}      # only a shadow lift says so: every other call is as it was
                 candidate.verdict = validator.evaluate(
                     current.image, candidate.image, step.operation, report, expected_scale=scale if step.operation == ops.UPSCALE else 1,
-                    refine=bool(variant.get("refine")),
+                    refine=bool(variant.get("refine")), **local,
                 )
                 candidate.validation_seconds = time.perf_counter() - validation_started
                 engine_produced.append(candidate)
                 if not candidate.verdict["accepted"]:
                     candidate.release()          # refused: its pixels are never used again, and it must not use up the pool the later operations (the polish) need
+            blocked = step.operation == ops.LOW_LIGHT and self._refuse_weaker_shadow_lifts(engine_produced)
             tried += 1
             produced.extend(engine_produced)
+            if blocked:
+                break  # the photograph's shadows show the blocks of its compression whichever engine lifts them: a fallback engine would show them too
             if any(candidate.verdict["accepted"] for candidate in engine_produced):
                 break  # an engine whose candidate passed is enough; a second engine is a fallback, not a second opinion
         return produced
+
+    @staticmethod
+    def _refuse_weaker_shadow_lifts(candidates):
+        """Whether a shadow lift of this photograph shows the blocks of its compression (the validator's ``compression_blocks`` gate failed for one of ``candidates``); if so, the weaker blends of it are refused too.
+
+        A weaker blend only shows the same blocks, fainter: each variant is judged on its own pixels, and the analyzer's reading of a fainter lift can fall under its "heavy" limit while the face is still
+        blocky (library ids 182 and 200, where the weaker blend passed and the result was still damaged; docs/evaluation/2026-11-05-backlit-subject-lift.md). The caller then tries no other engine.
+        """
+        if not any(candidate.verdict["gates"].get("compression_blocks", {}).get("passed") is False for candidate in candidates):
+            return False
+        for candidate in candidates:
+            if candidate.verdict["accepted"]:
+                candidate.verdict["accepted"] = False
+                candidate.verdict["gates"]["compression_blocks"] = {"passed": False, "status": "a stronger lift of this photograph shows the compression blocks"}
+                candidate.verdict["reasons"].append("lift_shows_compression_blocks")
+                candidate.release()
+        return True
 
     def _per_face_recomposition(self, parent, restored, report, identity):
         """Keep each restored face only if that face's identity survives; the others stay as they were."""
