@@ -31,6 +31,8 @@ REASON_SENTENCES = {
 
 APPROVED_DEFAULT = "A moderator looked at your photo and approved it."
 REJECTED_DEFAULT = "A moderator looked at your photo and it could not be accepted."
+# An administrator's approval with no reason typed (a rejection always has one): the member reads who decided.
+ADMIN_APPROVED_DEFAULT = "An administrator looked at your photo and approved it."
 
 SOURCE_LEAD = {
     "quality": "",
