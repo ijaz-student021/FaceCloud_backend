@@ -236,6 +236,23 @@ def run_upscale(image, engine, scale):
     return raw, [_record(engine, metadata, time.perf_counter() - started, scale=scale, candidate_blend=blend)]
 
 
+# -- an enlargement refused only for its highlights (ADAPTIVE_UPSCALE_HIGHLIGHT_GUARD; service._retry_with_highlights_kept) ----------------------------------------
+HIGHLIGHT_KEEP_FROM, HIGHLIGHT_KEEP_FULL = 215.0, 240.0       # luminance of the plain enlargement from which the cap fades in, and where it is complete
+
+
+def keep_highlights(candidate, reference):
+    """``candidate`` (an enlargement) with the brightening it added to bright pixels taken back. ``reference``: a plain bicubic enlargement of the same photograph, the size of ``candidate``.
+
+    Where ``reference`` is bright (luminance 215, fading in to 240) no channel of the result is brighter than the reference's, so the enlargement cannot push a bright window or sky over the top of
+    the range (the validator counts luminance 250 and above). Everything else is the candidate's own: a pixel the model made darker, and every mid-tone or face (the weight is zero under 215), keeps
+    what the model added. A new array; neither argument is changed."""
+    luma = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    ramp = np.clip((luma - HIGHLIGHT_KEEP_FROM) / (HIGHLIGHT_KEEP_FULL - HIGHLIGHT_KEEP_FROM), 0.0, 1.0)
+    weight = (ramp * ramp * (3.0 - 2.0 * ramp))[..., None]
+    capped = np.minimum(candidate, reference).astype(np.float32)
+    return np.clip(np.rint(candidate.astype(np.float32) * (1.0 - weight) + capped * weight), 0, 255).astype(np.uint8)
+
+
 # -- polish: a gentle, bounded improvement for a photograph on which nothing else was found ------------------------------------------
 # OpenCV and NumPy only (no model, no licence). It is offered by the router only when ADAPTIVE_POLISH_ENABLED is on, the analyzer
 # recommends no other operation, none was tried, and the scene is not a dark one left as photographed; and its result is kept only if

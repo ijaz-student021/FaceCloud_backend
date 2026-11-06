@@ -24,6 +24,7 @@ they could, because returning the original is a safe answer and returning an alt
 Reference-based metrics (PSNR, SSIM, optional LPIPS) exist for tests and benchmarks where a clean reference is known
 (``reference_metrics``); a photograph in the wild has none, and no no-reference number here replaces looking at it.
 """
+import logging
 from dataclasses import dataclass, field
 
 import cv2
@@ -31,6 +32,8 @@ import numpy as np
 from django.conf import settings
 
 from .colour import lift_colour_metrics
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -85,6 +88,10 @@ class Limits:
     # of the plain enlargement. Never stricter than before (a candidate that passed still passes); 0 switches it off; never for a generative face restoration (always strict) nor for polish (its own
     # gate); a face that is no longer found is still a loss. docs/evaluation/2026-11-05-small-face-geometry.md.
     landmark_enlargement_shift_max: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_LANDMARK_ENLARGEMENT_SHIFT_MAX", 0.035)))
+    # Both checks above read the ORIGINAL photograph, and the original of a dark or back-lit photograph has a face the detector can hardly see: its landmarks, and those of a plain enlargement of it, are
+    # guesses. Once a lift is accepted, a step those checks refuse is judged once more against the image it was GIVEN, which is lit (validator._lifted_input_opinion). Never stricter than before (a step that
+    # passed still passes); never for a generative face restoration (always strict) nor for polish; a face that is no longer found is still a loss. False gives the earlier behaviour.
+    baseline_after_lighting: bool = field(default_factory=lambda: bool(settings.ADAPTIVE_BASELINE_AFTER_LIGHTING))
     upscale_detail_gain_max: float = 3.0
     # polish (a gentle improvement of a photograph with nothing to fix): it must be clearly the same photograph and measurably better
     polish_min_gain: float = 1.05                  # the main face's detail, or the frame's contrast (std of luminance), must rise at least 5 percent
@@ -253,6 +260,48 @@ def reference_metrics(clean, image):
     return metrics
 
 
+def _identity_lines(verdict, gate):
+    """The identity gate's two ways to fail, each with what it read: the face geometry (landmark shifts) and the embedding (similarity)."""
+    lines = []
+    reasons = verdict["reasons"]
+    if "face_geometry_changed" in reasons or "face_lost" in reasons:
+        extra = ""
+        if "landmark_shift_beyond_plain_enlargement" in gate:
+            extra += f"; beyond a plain enlargement of the original {gate['landmark_shift_beyond_plain_enlargement']} against {gate.get('landmark_limit_beyond_plain_enlargement')}"
+        if "landmark_shift_from_lifted_input" in gate:
+            extra += f"; from the lit image the step was given {gate['landmark_shift_from_lifted_input']}"
+            if "landmark_shift_beyond_plain_enlargement_of_lifted_input" in gate:
+                extra += f", beyond a plain enlargement of it {gate['landmark_shift_beyond_plain_enlargement_of_lifted_input']}"
+        lines.append(f"face_geometry failed ({'face_lost' if 'face_lost' in reasons else 'face_geometry_changed'}). Metric: landmark_shift={gate.get('landmark_shift')}, Threshold: {gate.get('landmark_limit')}{extra}")
+    if "identity_changed" in reasons:
+        lines.append(f"identity failed (identity_changed). Metric: similarity={gate.get('similarity')}, Threshold: {gate.get('threshold')}")
+    if "identity_unverifiable" in reasons:
+        lines.append(f"identity failed (identity_unverifiable). Metric: embedding={gate.get('embedding')}, Threshold: verified")
+    return lines
+
+
+def refusal_lines(verdict):
+    """One readable line for every gate of a REFUSED candidate that failed: ``"<gate> failed (<reason>). Metric: <reading>=<value>, Threshold: <limit>"``.
+
+    The gates keep the reading they compared and the limit they were held to (``metric`` / ``limit`` in each gate's dictionary; for a gate with several conditions, those of the one that failed).
+    The identity gate gives a line for the face geometry (with the readings of the second opinions) and one for the embedding. A gate that names no reading lists its numbers with no threshold."""
+    lines = []
+    for name, gate in verdict["gates"].items():
+        if gate.get("passed"):
+            continue
+        if name == "identity":
+            lines.extend(_identity_lines(verdict, gate))
+            continue
+        reason = gate.get("reason") or ", ".join(verdict["reasons"])
+        metric = gate.get("metric")
+        if metric is None:
+            readings = ", ".join(f"{key}={value}" for key, value in gate.items() if key not in ("passed", "reason", "metric", "limit"))
+            lines.append(f"{name} failed ({reason}). Metric: {readings or 'n/a'}, Threshold: n/a")
+        else:
+            lines.append(f"{name} failed ({reason}). Metric: {metric}={gate.get(metric)}, Threshold: {gate.get('limit')}")
+    return lines
+
+
 class FinalImageQualityValidator:
     """Judge candidates against the original and the image they were made from."""
 
@@ -264,6 +313,8 @@ class FinalImageQualityValidator:
         self.source_enlarged = bool(source_enlarged)        # the pipeline enlarged this photograph before the engine saw it (preprocessing's small-image enlargement): see the shadow-lift gate
         self.original = original            # the original's pixels (optional): the plain enlargement the geometry gate may compare an enlarged candidate with
         self._plain_enlargements = {}       # (width, height) -> the faces found on a plain bicubic enlargement of the original to that size
+        self.lifted_input = False           # the service sets it once a lift is accepted: what the later steps are given is a lit photograph (ADAPTIVE_BASELINE_AFTER_LIGHTING)
+        self._lifted_enlargement = None     # (the step's input, the size, the faces found on a plain enlargement of it): the last second opinion's, kept for the step's other variants
 
     def evaluate(self, parent, candidate, operation, parent_report, expected_scale=1, candidate_report=None, refine=False, local=None):
         """``{accepted, reasons, gates, metrics, improvement, change_cost}`` for one candidate. ``refine``: a detail-restoration candidate for a photograph with no defect (always-enhance). ``local``: ``"shadows"`` for a lift of the shadows only (a back-lit subject)."""
@@ -273,14 +324,18 @@ class FinalImageQualityValidator:
         colourize = operation == "colourization"
         verdict = {"accepted": False, "reasons": [], "gates": {}, "metrics": {}, "improvement": 0.0, "change_cost": 0.0}
 
-        def gate(name, passed, detail, reason=None):
+        def gate(name, passed, detail, reason=None, metric=None, limit=None):
+            """``metric``: the key of ``detail`` that was compared with ``limit``; both are kept so that a refusal can say what it read and what it was held to (``refusal_lines``)."""
             verdict["gates"][name] = {"passed": bool(passed), **detail}
+            if metric is not None:
+                verdict["gates"][name].update(metric=metric, limit=limit)
             if not passed:
+                verdict["gates"][name]["reason"] = reason or name
                 verdict["reasons"].append(reason or name)
 
         expected = (parent.shape[0] * expected_scale, parent.shape[1] * expected_scale)
         gate("geometry", candidate.shape[:2] == expected and candidate.dtype == np.uint8,
-             {"expected": [expected[1], expected[0]], "actual": [candidate.shape[1], candidate.shape[0]]}, "wrong_dimensions")
+             {"expected": [expected[1], expected[0]], "actual": [candidate.shape[1], candidate.shape[0]]}, "wrong_dimensions", metric="actual", limit=[expected[1], expected[0]])
         if not verdict["gates"]["geometry"]["passed"]:
             return verdict
         if not np.isfinite(candidate.astype(np.float32)).all():
@@ -289,13 +344,16 @@ class FinalImageQualityValidator:
 
         if lowlight:
             ssim = structure_ssim(parent, candidate)
-            gate("data_consistency", ssim >= limits.structure_ssim_min_lowlight, {"structure_ssim": round(ssim, 3)}, "structure_changed")
+            gate("data_consistency", ssim >= limits.structure_ssim_min_lowlight, {"structure_ssim": round(ssim, 3)}, "structure_changed",
+                 metric="structure_ssim", limit=limits.structure_ssim_min_lowlight)
         elif colourize:   # the colour changes by design, so consistency is judged on the lightness, which colourization must not touch
             psnr = float(cv2.PSNR(_gray(parent), _gray(candidate))) if (_gray(parent) != _gray(candidate)).any() else 99.0
-            gate("data_consistency", psnr >= limits.colourize_luminance_psnr_min, {"luminance_psnr": round(psnr, 2)}, "lightness_changed")
+            gate("data_consistency", psnr >= limits.colourize_luminance_psnr_min, {"luminance_psnr": round(psnr, 2)}, "lightness_changed",
+                 metric="luminance_psnr", limit=limits.colourize_luminance_psnr_min)
         else:
             psnr = consistency_psnr(parent, candidate)
-            gate("data_consistency", psnr >= limits.consistency_psnr_min, {"psnr": round(psnr, 2)}, "content_not_consistent_with_input")
+            gate("data_consistency", psnr >= limits.consistency_psnr_min, {"psnr": round(psnr, 2)}, "content_not_consistent_with_input",
+                 metric="psnr", limit=limits.consistency_psnr_min)
         shift = chroma_shift(parent, candidate)
         if colourize:
             lab = cv2.cvtColor(candidate, cv2.COLOR_BGR2LAB).astype(np.float32)
@@ -304,9 +362,11 @@ class FinalImageQualityValidator:
             cast = float(np.hypot(lab[:, :, 1].mean() - 128.0, lab[:, :, 2].mean() - 128.0))
             detail = {"mean_chroma": round(mean, 1), "p99_chroma": round(p99, 1), "cast": round(cast, 1)}
             if mean > limits.colourize_mean_chroma_max or p99 > limits.colourize_p99_chroma_max:
-                gate("colour", False, detail, "colour_oversaturated")
+                over_mean = mean > limits.colourize_mean_chroma_max
+                gate("colour", False, detail, "colour_oversaturated", metric="mean_chroma" if over_mean else "p99_chroma",
+                     limit=limits.colourize_mean_chroma_max if over_mean else limits.colourize_p99_chroma_max)
             elif cast > limits.colourize_cast_max:
-                gate("colour", False, detail, "colour_cast")
+                gate("colour", False, detail, "colour_cast", metric="cast", limit=limits.colourize_cast_max)
             else:
                 gate("colour", True, detail)
         elif lowlight:
@@ -315,23 +375,23 @@ class FinalImageQualityValidator:
             detail = {"hue_shift": None if hue is None else round(hue, 2),
                       "saturation_ratio": None if saturation is None else round(saturation, 3), "chroma_shift": round(shift, 2)}
             if hue is not None and hue > limits.lift_hue_shift_max:
-                gate("colour", False, detail, "colour_drift")
+                gate("colour", False, detail, "colour_drift", metric="hue_shift", limit=limits.lift_hue_shift_max)
             elif saturation is not None and saturation < limits.lift_saturation_min:
-                gate("colour", False, detail, "colour_washed_out")
+                gate("colour", False, detail, "colour_washed_out", metric="saturation_ratio", limit=limits.lift_saturation_min)
             elif saturation is not None and saturation > limits.lift_saturation_max:
-                gate("colour", False, detail, "colour_oversaturated")
+                gate("colour", False, detail, "colour_oversaturated", metric="saturation_ratio", limit=limits.lift_saturation_max)
             else:
                 gate("colour", True, detail)
         else:
-            gate("colour", shift <= limits.chroma_shift_max, {"chroma_shift": round(shift, 2)}, "colour_drift")
+            gate("colour", shift <= limits.chroma_shift_max, {"chroma_shift": round(shift, 2)}, "colour_drift", metric="chroma_shift", limit=limits.chroma_shift_max)
         if lowlight:
             gate("artifacts", True, {"overshoot": "not applicable to a lift (it raises amplitude by design)"})
         else:
             overshoot = overshoot_fraction(parent, candidate) if expected_scale == 1 else overshoot_fraction(
                 cv2.resize(parent, (candidate.shape[1], candidate.shape[0]), interpolation=cv2.INTER_CUBIC), candidate)
             sharpening = operation in ("motion_deblurring", "face_restoration", "super_resolution", "polish", "detail_restoration")
-            gate("artifacts", overshoot <= (limits.overshoot_max_sharpening if sharpening else limits.overshoot_max),
-                 {"overshoot": round(overshoot, 4)}, "halo_or_ringing")
+            overshoot_limit = limits.overshoot_max_sharpening if sharpening else limits.overshoot_max
+            gate("artifacts", overshoot <= overshoot_limit, {"overshoot": round(overshoot, 4)}, "halo_or_ringing", metric="overshoot", limit=overshoot_limit)
 
         candidate_report = candidate_report or self.analyzer.analyze(candidate)
         verdict["metrics"]["candidate_conditions"] = candidate_report.conditions
@@ -344,10 +404,10 @@ class FinalImageQualityValidator:
             blocks = candidate_report.compression
             gate("compression_blocks", blocks["status"] != "heavy" and not self.source_enlarged,
                  {"status": blocks["status"], "blockiness": blocks["blockiness"], "source_enlarged": self.source_enlarged},
-                 "lift_on_enlarged_source" if self.source_enlarged else "lift_shows_compression_blocks")
+                 "lift_on_enlarged_source" if self.source_enlarged else "lift_shows_compression_blocks", metric="status", limit="not heavy, and not a photograph the pipeline enlarged")
         clip_growth = candidate_report.base["highlight_clipping_percent"] - parent_report.base["highlight_clipping_percent"]
-        gate("highlights", clip_growth <= (limits.polish_clip_growth_max if polish else limits.highlight_clip_growth_max),
-             {"clipping_growth": round(clip_growth, 2)}, "highlight_clipping_increased")
+        clip_limit = limits.polish_clip_growth_max if polish else limits.highlight_clip_growth_max
+        gate("highlights", clip_growth <= clip_limit, {"clipping_growth": round(clip_growth, 2)}, "highlight_clipping_increased", metric="clipping_growth", limit=clip_limit)
         # "level" is the larger of the two noise measures in units of the "moderate" threshold (1.0 = moderate); the 0.25 allowance
         # matches the earlier one level of the 3x3 estimator against its moderate threshold of 4.
         noise_before, noise_after = parent_report.noise["level"], candidate_report.noise["level"]
@@ -355,20 +415,22 @@ class FinalImageQualityValidator:
         # A lift may take grain up to the "moderate" level (1.0), where the denoise stage that follows takes over; the 3x growth bound
         # still applies beyond it.
         if polish:   # a polish may not add noise beyond 10 percent (and nothing absolute: it is for photographs that have none to spare)
-            gate("noise", noise_after <= noise_before * limits.polish_noise_growth_max + 0.02,
-                 {"before": noise_before, "after": noise_after}, "noise_increased")
+            noise_limit = noise_before * limits.polish_noise_growth_max + 0.02
+            gate("noise", noise_after <= noise_limit, {"before": noise_before, "after": noise_after}, "noise_increased", metric="after", limit=round(noise_limit, 3))
             delta_e = mean_delta_e(parent, candidate)
-            gate("same_photograph", delta_e <= limits.polish_delta_e_max, {"delta_e": round(delta_e, 2)}, "photograph_changed_too_much")
+            gate("same_photograph", delta_e <= limits.polish_delta_e_max, {"delta_e": round(delta_e, 2)}, "photograph_changed_too_much", metric="delta_e", limit=limits.polish_delta_e_max)
         else:
-            gate("noise", noise_after <= max(noise_before * allowed, noise_before + 0.25, 1.0 if lowlight else 0.0),
-                 {"before": noise_before, "after": noise_after}, "noise_increased")
+            noise_limit = max(noise_before * allowed, noise_before + 0.25, 1.0 if lowlight else 0.0)
+            gate("noise", noise_after <= noise_limit, {"before": noise_before, "after": noise_after}, "noise_increased", metric="after", limit=round(noise_limit, 3))
 
-        self._identity_gate(verdict, candidate, candidate_report, operation, parent)
+        self._identity_gate(verdict, candidate, candidate_report, operation, parent, parent_report)
         improvement = self._improvement(verdict, operation, parent, candidate, parent_report, candidate_report, expected_scale, refine=refine)
         verdict["improvement"] = round(float(improvement), 4)
         mean_change = float(np.mean(np.abs(_gray(_to_size(candidate, parent.shape)).astype(np.float32) - _gray(parent).astype(np.float32)))) / 255.0
         verdict["change_cost"] = round(mean_change, 4)
         verdict["accepted"] = all(item["passed"] for item in verdict["gates"].values())
+        if not verdict["accepted"] and logger.isEnabledFor(logging.DEBUG):
+            logger.debug("%s candidate refused: %s", operation, " | ".join(refusal_lines(verdict)))
         return verdict
 
     # -- identity ---------------------------------------------------------------------------------------------
@@ -386,18 +448,26 @@ class FinalImageQualityValidator:
             worst = min(worst, structure_ssim(parent[y0:y1, x0:x1], candidate[y0:y1, x0:x1]))
         return worst >= self.limits.polish_face_structure_ssim_min, worst
 
-    def _shift_beyond_plain_enlargement(self, faces, candidate, candidate_report, scale):
+    def _shift_beyond_plain_enlargement(self, faces, candidate, candidate_report, scale, source=None):
         """The mean landmark shift (a share of the face width) of an enlarged candidate against the landmarks the detector finds on a plain bicubic enlargement of the ORIGINAL to the candidate's size:
         what the model moved, with the detector's own scale-dependent placement taken out. ``None`` when there is nothing to compare with: the setting is 0, the candidate is not a different size
         from the original (the plain enlargement would be the original itself), the original's pixels were not given, or a face is not found on the plain enlargement or on the candidate.
-        The plain enlargement is analysed once per size, and only when the share limit has already refused the candidate."""
-        if (self.limits.landmark_enlargement_shift_max <= 0 or self.original is None or self.analyzer is None or candidate is None or not faces
+        The plain enlargement is analysed once per size, and only when the share limit has already refused the candidate.
+        ``source``: the pixels to enlarge instead of the original: the lit image a step was given, once a lift is accepted (``faces`` are then that image's; ``_lifted_input_opinion``)."""
+        original = self.original if source is None else source
+        if (self.limits.landmark_enlargement_shift_max <= 0 or original is None or self.analyzer is None or candidate is None or not faces
                 or abs(scale - 1.0) < 0.02):
             return None
         size = (int(candidate.shape[1]), int(candidate.shape[0]))
-        if size not in self._plain_enlargements:
-            self._plain_enlargements[size] = self.analyzer.analyze(cv2.resize(self.original, size, interpolation=cv2.INTER_CUBIC)).faces
-        found = [other for other in self._plain_enlargements[size] if other.landmarks and len(other.landmarks) == 5]
+        if source is None:
+            if size not in self._plain_enlargements:
+                self._plain_enlargements[size] = self.analyzer.analyze(cv2.resize(original, size, interpolation=cv2.INTER_CUBIC)).faces
+            plain = self._plain_enlargements[size]
+        else:
+            if self._lifted_enlargement is None or self._lifted_enlargement[0] is not source or self._lifted_enlargement[1] != size:
+                self._lifted_enlargement = (source, size, self.analyzer.analyze(cv2.resize(source, size, interpolation=cv2.INTER_CUBIC)).faces)
+            plain = self._lifted_enlargement[2]
+        found = [other for other in plain if other.landmarks and len(other.landmarks) == 5]
         reference = []
         for face in faces:             # each original face, found again on the plain enlargement (the same matching as landmark_shift)
             centre = scale * np.array([face.box[0] + face.box[2] / 2, face.box[1] + face.box[3] / 2])
@@ -408,7 +478,34 @@ class FinalImageQualityValidator:
             reference.append(min(near, key=lambda pair: pair[0])[1])
         return landmark_shift(reference, candidate_report.faces, 1.0)
 
-    def _identity_gate(self, verdict, candidate, candidate_report, operation, parent=None):
+    def _lifted_input_opinion(self, candidate, candidate_report, parent, parent_report, shift_max):
+        """The geometry of a step judged against the image it was GIVEN, once a lift was accepted (``ADAPTIVE_BASELINE_AFTER_LIGHTING``), after the checks against the ORIGINAL refused it.
+
+        The original of a dark or back-lit photograph has a face the detector can hardly see, so its landmarks (and those of a plain enlargement of it) are guesses; the lifted photograph the step was
+        given is lit, and what the step moved is read there: the candidate's landmarks against that image's at the step's own limit (``shift_max``) and, for an enlargement, against a plain enlargement of
+        that image, with the detector's own placement taken out (``landmark_enlargement_shift_max``). The library's 29.jpg (a 293 px photograph; the lift and the face restoration were accepted): the enlargement
+        read 0.073 against the original's landmarks (limit 0.06) and 0.046 beyond a plain enlargement of the DARK original (limit 0.035); against what it was given, 0.042 (docs/evaluation/2026-11-06-enlargement-after-lift.md).
+        ``None`` when there is nothing to compare with, or a face that was there is no longer found (a loss is not rescued); otherwise the readings and ``passed``."""
+        if parent is None or parent_report is None or not getattr(parent_report, "width", 0):
+            return None
+        faces = parent_report.faces
+        if self.limits.geometry_ignores_tiny_faces:
+            faces = [face for face in faces if face.quality != "too_small"]
+        if not faces:
+            return None
+        scale = candidate_report.width / parent_report.width
+        shift = landmark_shift(faces, candidate_report.faces, scale)
+        if shift is None:
+            return None
+        opinion = {"landmark_shift_from_lifted_input": round(shift, 4), "passed": shift <= shift_max}
+        if not opinion["passed"]:
+            beyond = self._shift_beyond_plain_enlargement(faces, candidate, candidate_report, scale, source=parent)
+            if beyond is not None:
+                opinion["landmark_shift_beyond_plain_enlargement_of_lifted_input"] = round(beyond, 4)
+                opinion["passed"] = beyond <= self.limits.landmark_enlargement_shift_max
+        return opinion
+
+    def _identity_gate(self, verdict, candidate, candidate_report, operation, parent=None, parent_report=None):
         if not self.original_report.faces:
             verdict["gates"]["identity"] = {"passed": True, "status": "no_face"}
             return
@@ -436,12 +533,19 @@ class FinalImageQualityValidator:
             beyond = self._shift_beyond_plain_enlargement(faces, candidate, candidate_report, scale)
             if beyond is not None:
                 status["landmark_shift_beyond_plain_enlargement"] = round(beyond, 4)
+                status["landmark_limit_beyond_plain_enlargement"] = self.limits.landmark_enlargement_shift_max
                 landmarks_ok = beyond <= self.limits.landmark_enlargement_shift_max
+            if not landmarks_ok and self.lifted_input and self.limits.baseline_after_lighting:
+                opinion = self._lifted_input_opinion(candidate, candidate_report, parent, parent_report, shift_max)
+                if opinion is not None:
+                    landmarks_ok = opinion.pop("passed")
+                    status.update(opinion)
         if operation == "polish" and not landmarks_ok:
             holds, worst = self._face_structure_holds(parent, candidate)
             if holds is not None:
                 status["face_structure_ssim"] = round(worst, 4)
                 landmarks_ok = bool(holds)
+        status["landmark_limit"] = round(shift_max, 4)
         status["passed"] = landmarks_ok
         if not landmarks_ok:
             verdict["reasons"].append("face_lost" if shift is None else "face_geometry_changed")
@@ -467,9 +571,13 @@ class FinalImageQualityValidator:
     def _improvement(self, verdict, operation, parent, candidate, before, after, scale, refine=False):
         limits = self.limits
 
-        def gate(name, passed, detail, reason):
+        def gate(name, passed, detail, reason, metric=None, limit=None):
+            """As in ``evaluate``: ``metric`` is the key of ``detail`` that was compared with ``limit`` (the one that FAILED when the gate has several conditions)."""
             verdict["gates"][name] = {"passed": bool(passed), **detail}
+            if metric is not None:
+                verdict["gates"][name].update(metric=metric, limit=limit)
             if not passed:
+                verdict["gates"][name]["reason"] = reason
                 verdict["reasons"].append(reason)
 
         if operation == "low_light_enhancement":
@@ -479,13 +587,17 @@ class FinalImageQualityValidator:
                 range_before, range_after = face_before.luminance["dynamic_range"], face_after.luminance["dynamic_range"]
                 gain = (range_after - range_before) / max(limits.lowlight_face_range_target - range_before, 1.0)
                 crushed_ok = face_after.luminance["crushed_fraction"] <= face_before.luminance["crushed_fraction"]
+                metric, limit = (("range_gain", 0.15) if gain <= 0.15 else ("crushed_fraction_after", face_before.luminance["crushed_fraction"]) if not crushed_ok
+                                 else ("scene_median_after", limits.lowlight_scene_median_ceiling))
                 gate("improves_defect", gain > 0.15 and crushed_ok and median_after <= limits.lowlight_scene_median_ceiling,
-                     {"face_range_before": range_before, "face_range_after": range_after}, "subject_not_clearer_or_too_bright")
+                     {"face_range_before": range_before, "face_range_after": range_after, "range_gain": round(float(gain), 3),
+                      "crushed_fraction_after": face_after.luminance["crushed_fraction"], "scene_median_after": median_after}, "subject_not_clearer_or_too_bright", metric=metric, limit=limit)
                 return float(np.clip(gain, 0, 1))
             gain = (median_after - median_before) / max(limits.lowlight_scene_median_target - median_before, 1.0)
-            gate("improves_defect", median_after - median_before >= limits.lowlight_min_gain
-                 and median_after <= limits.lowlight_scene_median_ceiling,
-                 {"median_before": median_before, "median_after": median_after}, "no_useful_lift_or_too_bright")
+            too_little = median_after - median_before < limits.lowlight_min_gain
+            gate("improves_defect", median_after - median_before >= limits.lowlight_min_gain and median_after <= limits.lowlight_scene_median_ceiling,
+                 {"median_before": median_before, "median_after": median_after, "median_gain": round(median_after - median_before, 2)}, "no_useful_lift_or_too_bright",
+                 metric="median_gain" if too_little else "median_after", limit=limits.lowlight_min_gain if too_little else limits.lowlight_scene_median_ceiling)
             return float(np.clip(gain, 0, 1))
         if operation == "denoising":
             reduction = 1.0 - after.noise["level"] / max(before.noise["level"], 0.125)
@@ -494,10 +606,12 @@ class FinalImageQualityValidator:
 
             _blended, guard = judge_candidate(DenoiseReference(parent), candidate)
             full_strength = bool(guard["accepted"]) and float(guard.get("applied_blend", 1.0)) >= 0.99
+            weak = reduction < limits.denoise_min_noise_reduction
             gate("improves_defect", reduction >= limits.denoise_min_noise_reduction and detail >= limits.denoise_min_detail_retention,
-                 {"noise_reduction": round(reduction, 3), "detail_retention": round(detail, 3)}, "noise_not_reduced_or_detail_lost")
+                 {"noise_reduction": round(reduction, 3), "detail_retention": round(detail, 3)}, "noise_not_reduced_or_detail_lost",
+                 metric="noise_reduction" if weak else "detail_retention", limit=limits.denoise_min_noise_reduction if weak else limits.denoise_min_detail_retention)
             gate("denoise_guard", full_strength, {"status": guard.get("status"), "applied_blend": guard.get("applied_blend")},
-                 "denoise_guard_rejected")
+                 "denoise_guard_rejected", metric="applied_blend", limit=0.99)
             return float(np.clip(reduction, 0, 1))
         if operation == "motion_deblurring":
             gain = edge_energy(candidate) / max(edge_energy(parent), 1e-6)
@@ -507,15 +621,17 @@ class FinalImageQualityValidator:
                 # face holds), while the frame as a whole is not over-sharpened.
                 face_before, face_after = before.face_blur["detail"], after.face_blur["detail"]
                 face_gain = face_after / max(face_before, 1.0)
+                metric, limit = (("face_detail_gain", limits.face_deblur_min_detail_gain) if face_gain < limits.face_deblur_min_detail_gain
+                                 else ("face_detail_after", limits.face_max_detail) if face_after > limits.face_max_detail else ("edge_gain", limits.deblur_max_edge_gain))
                 gate("improves_defect",
                      face_gain >= limits.face_deblur_min_detail_gain and face_after <= limits.face_max_detail
                      and gain <= limits.deblur_max_edge_gain,
                      {"face_detail_before": face_before, "face_detail_after": face_after, "face_detail_gain": round(face_gain, 3),
-                      "edge_gain": round(gain, 3)}, "face_not_clearer_or_over_sharpened")
+                      "edge_gain": round(gain, 3)}, "face_not_clearer_or_over_sharpened", metric=metric, limit=limit)
                 return float(np.clip((face_gain - 1.0) / 3.0, 0, 1))
             gate("improves_defect", limits.deblur_min_edge_gain <= gain <= limits.deblur_max_edge_gain,
                  {"edge_gain": round(gain, 3), "retention_before": retention_before, "retention_after": retention_after},
-                 "edges_not_restored_or_over_sharpened")
+                 "edges_not_restored_or_over_sharpened", metric="edge_gain", limit=f"{limits.deblur_min_edge_gain} to {limits.deblur_max_edge_gain}")
             return float(np.clip((gain - 1.0) / 0.6, 0, 1))
         if operation == "face_restoration":
             detail_before = [f.detail for f in before.faces if f.detail is not None]
@@ -523,7 +639,8 @@ class FinalImageQualityValidator:
             gain = float(np.mean(detail_after) / max(np.mean(detail_before), 1.0)) if detail_before and detail_after else 0.0
             ceiling = float(np.max(detail_after)) if detail_after else 0.0
             gate("improves_defect", gain >= limits.face_min_detail_gain and ceiling <= limits.face_max_detail,
-                 {"detail_gain": round(gain, 3), "detail_after": round(ceiling, 1)}, "face_not_clearer_or_detail_invented")
+                 {"detail_gain": round(gain, 3), "detail_after": round(ceiling, 1)}, "face_not_clearer_or_detail_invented",
+                 metric="detail_gain" if gain < limits.face_min_detail_gain else "detail_after", limit=limits.face_min_detail_gain if gain < limits.face_min_detail_gain else limits.face_max_detail)
             return float(np.clip((gain - 1.0) / 2.0, 0, 1))
         if operation == "polish":
             face_before, face_after = before.main_face, after.main_face
@@ -578,22 +695,26 @@ class FinalImageQualityValidator:
                 minimum = float(settings.ADAPTIVE_REFINE_MIN_GAIN)
                 change = float(np.abs(candidate[::4, ::4].astype(np.int16) - parent[::4, ::4].astype(np.int16)).mean())
                 visible = change >= float(settings.ADAPTIVE_REFINE_MIN_CHANGE)
-            gate("improves_defect", minimum <= gain <= limits.detail_max_gain and visible and (True if refine else (compression_better or blur_better)) and face_ok,
+            resolved = True if refine else bool(compression_better or blur_better)
+            metric, limit = (("structure_gain", minimum) if gain < minimum else ("structure_gain", limits.detail_max_gain) if gain > limits.detail_max_gain
+                             else ("mean_change", float(settings.ADAPTIVE_REFINE_MIN_CHANGE)) if not visible else ("defect_resolved", True) if not resolved
+                             else ("face_detail_after", limits.face_max_detail))
+            gate("improves_defect", minimum <= gain <= limits.detail_max_gain and visible and resolved and face_ok,
                  {"structure_gain": round(gain, 3), "compression_before": before.compression["status"], "compression_after": after.compression["status"],
                   "blur_before": before.blur["status"], "blur_after": after.blur["status"], "face_detail_after": None if face is None else face.detail,
-                  **({"mean_change": round(change, 2)} if change is not None else {})},
-                 "no_added_detail_or_invented_detail")
+                  "defect_resolved": resolved, **({"mean_change": round(change, 2)} if change is not None else {})},
+                 "no_added_detail_or_invented_detail", metric=metric, limit=limit)
             return float(min(1.0, np.clip((gain - 1.0) / 0.2, 0, 1) + (0.25 if compression_better else 0.0) + (0.25 if blur_better else 0.0)))
         if operation == "colourization":
             lab = cv2.cvtColor(candidate, cv2.COLOR_BGR2LAB).astype(np.float32)
             mean = float(np.hypot(lab[:, :, 1] - 128.0, lab[:, :, 2] - 128.0).mean())
-            gate("improves_defect", mean >= limits.colourize_min_mean_chroma, {"mean_chroma": round(mean, 1)}, "no_colour_added")
+            gate("improves_defect", mean >= limits.colourize_min_mean_chroma, {"mean_chroma": round(mean, 1)}, "no_colour_added", metric="mean_chroma", limit=limits.colourize_min_mean_chroma)
             return float(np.clip(mean / 10.0, 0, 1))
         if operation == "super_resolution":
             detail = edge_energy(candidate) / max(edge_energy(cv2.resize(parent, (candidate.shape[1], candidate.shape[0]),
                                                                            interpolation=cv2.INTER_CUBIC)), 1e-6)
             gate("improves_defect", 1.0 <= detail <= limits.upscale_detail_gain_max, {"detail_ratio_vs_bicubic": round(detail, 3)},
-                 "no_added_detail_or_invented_detail")
+                 "no_added_detail_or_invented_detail", metric="detail_ratio_vs_bicubic", limit=f"1.0 to {limits.upscale_detail_gain_max}")
             return float(np.clip((detail - 1.0) / 1.0, 0, 1))
         return 0.0
 

@@ -2895,11 +2895,14 @@ def _process_claimed_result(result, token):
         engine_options = {} if result.requested_lighting == EnhancementLighting.AUTO else {"lighting": result.requested_lighting}      # "auto" is not passed: the call stays what it was
         if enlarged:
             engine_options["source_enlarged"] = True                                                                                    # (only when it is true, for the same reason)
-        enhanced, applied_level, parameters = enhance_bgr(
-            source, result.requested_level, style=result.requested_style,
-            allow_biometric_processing=biometric_processing_allowed(result.owner),
-            checkpoint=checkpoint, **engine_options,
-        )
+        from .adaptive.trace import photo
+
+        with photo(f"{result.image_id} (result {result.pk})"):           # the engine's log lines say which photograph a skipped model belongs to
+            enhanced, applied_level, parameters = enhance_bgr(
+                source, result.requested_level, style=result.requested_style,
+                allow_biometric_processing=biometric_processing_allowed(result.owner),
+                checkpoint=checkpoint, **engine_options,
+            )
         parameters["source_resolution_strategy"] = source_strategy
         if decoding:
             parameters["source_decoding"] = decoding

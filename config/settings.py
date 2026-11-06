@@ -369,6 +369,32 @@ ADAPTIVE_BACKLIT_SUBJECT_LIFT = env.bool("ADAPTIVE_BACKLIT_SUBJECT_LIFT", defaul
 ADAPTIVE_BACKLIT_SUBJECT_BRIGHTNESS_MAX = env.float("ADAPTIVE_BACKLIT_SUBJECT_BRIGHTNESS_MAX", default=60.0)
 ADAPTIVE_BACKLIT_SUBJECT_MAX_RATIO = env.float("ADAPTIVE_BACKLIT_SUBJECT_MAX_RATIO", default=0.40)
 ADAPTIVE_BACKLIT_MIN_SCENE_MEDIAN = env.float("ADAPTIVE_BACKLIT_MIN_SCENE_MEDIAN", default=70.0)
+# ADAPTIVE_BACKLIT_LIFT_ALL_PRESETS (OFF by default): the shadow lift above is for AI Enhance (the `pro` preset) only; switched on, Natural, Dynamic and Auto propose it too (still only with
+#   ADAPTIVE_BACKLIT_SUBJECT_LIFT on, and every gate of the validator judges it; "Light photo" still turns it off). In the owner's database 29 results (9 distinct photographs) whose main face had a median
+#   luminance under 60 in a BRIGHT frame (the analyzer's ``backlit_subject``) came back with no lift under Natural / Dynamic, because those presets leave a dark face in a bright frame alone (a global lift would
+#   burn the window); AI Enhance lifted 3 such results and refused 2. Measured on the 11 back-lit library photographs with every gate: 7 lifted (1 clean, 4 with a dark outline along the subject, 2 damaged), 4
+#   refused (docs/evaluation/2026-11-05-backlit-subject-lift.md), so it ships OFF; the person's own "Dark photo" (``lighting``) asks for the same lift per request. The rule keeps its guards (a crushed tonal
+#   range, and a face under ADAPTIVE_BACKLIT_SUBJECT_BRIGHTNESS_MAX that is also dark next to the frame): a face merely under 60 is also what a dark skin tone looks like in a correct exposure (9 more
+#   results of the same 42 sit in a normally exposed frame), which must not be brightened.
+ADAPTIVE_BACKLIT_LIFT_ALL_PRESETS = env.bool("ADAPTIVE_BACKLIT_LIFT_ALL_PRESETS", default=False)
+# ADAPTIVE_UPSCALE_HIGHLIGHT_GUARD: an enlargement the validator refuses ONLY for ``highlight_clipping_increased`` (more than 3 points of newly clipped pixels against the image it was made from) is judged
+#   once more with the brightening the model added to ALREADY bright pixels taken back (operations.keep_highlights). The retry is a new candidate that must pass every gate; an enlargement the
+#   validator accepts, or refuses for any other reason, is never touched, so no result that exists without this changes. After a whole-frame lift a bright window or sky sits at the top of the range:
+#   the library's 25.jpg (a man in shadow in front of a window; lift accepted) got +0.9 levels on its bright part from Real-ESRGAN, which the gate counted as 8.0 points of newly clipped pixels
+#   (1.27 percent to 9.30, the limit is 3.0), so the lifted photograph kept its size; with the guard it was enlarged to 828x554 (docs/evaluation/2026-11-06-enlargement-after-lift.md).
+#   False gives the earlier behaviour.
+ADAPTIVE_UPSCALE_HIGHLIGHT_GUARD = env.bool("ADAPTIVE_UPSCALE_HIGHLIGHT_GUARD", default=True)
+# ADAPTIVE_BASELINE_AFTER_LIGHTING: once a lift (low-light or back-lit) is accepted, a later step whose face geometry the checks against the ORIGINAL refuse (the share limit on the original's landmarks and the
+#   plain enlargement of the original) gets a second opinion against the image it was GIVEN, which is lit, because the detector can hardly see the face of a dark original: its landmarks are guesses. The step
+#   must stay within its own limit of that image's landmarks (or, for an enlargement, within ADAPTIVE_LANDMARK_ENLARGEMENT_SHIFT_MAX of a plain enlargement of it). Never stricter than before; never for a face
+#   restoration or polish; a face no longer found is still a loss; identity (the embedding) is judged as before. Library 29.jpg (lift and face restoration accepted): the enlargement read 0.073 / 0.046 against
+#   the dark original (limits 0.06 / 0.035) and 0.042 against what it was given (docs/evaluation/2026-11-06-enlargement-after-lift.md). False gives the earlier behaviour.
+ADAPTIVE_BASELINE_AFTER_LIGHTING = env.bool("ADAPTIVE_BASELINE_AFTER_LIGHTING", default=True)
+# ADAPTIVE_UPSCALE_SCALE: the size factor of the enlargement the engine proposes for a small photograph: 2 (the default: both sides doubled) or 4 (quadrupled). Real-ESRGAN is a x4 network; 2 is its output resized.
+#   4 falls back to 2 when it would pass ADAPTIVE_MAX_OUTPUT_EDGE, and any other value means 2. Measured with real models (docs/evaluation/2026-11-06-enlargement-after-lift.md, section 6): six small
+#   photographs were all enlarged 4x (a 1.4 to 3 megapixel result in 15 to 38 s), but on 25.jpg the face restoration the 2x run accepts is refused at 4x (face_geometry_changed, 0.042 against the strict 0.04), the
+#   identity margin of the dark photographs is thinner (0.8085 against 0.80), and the pixels are the plain enlargement's plus REALESRGAN_OUTPUT_BLEND of the model's, so 4x is more pixels, not more detail per pixel.
+ADAPTIVE_UPSCALE_SCALE = env.int("ADAPTIVE_UPSCALE_SCALE", default=2)
 NAFNET_MODEL_PATH = env(
     "NAFNET_MODEL_PATH",
     default=str(BASE_DIR / ".runtime" / "models" / "NAFNet-GoPro-width64.pth"),

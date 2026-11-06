@@ -44,7 +44,8 @@ from .candidates import CandidatePool, PoolFull
 from .debug import DebugRecorder
 from .profile import profile_for
 from .router import AdaptiveEnhancementRouter
-from .validator import FinalImageQualityValidator, Limits
+from .trace import PHOTO
+from .validator import FinalImageQualityValidator, Limits, refusal_lines
 
 logger = logging.getLogger(__name__)
 
@@ -86,12 +87,14 @@ class EngineConfig:
     max_output_edge: int = 4096
     face_upscale_below: int = 0
     max_engines_per_step: int = 2
+    upscale_scale: int = 2          # the size factor of the enlargement proposed for a small photograph: 2 or 4 (ADAPTIVE_UPSCALE_SCALE)
 
     @classmethod
     def from_settings(cls):
         return cls(
             max_candidates=int(settings.ADAPTIVE_MAX_CANDIDATES), time_budget_seconds=float(settings.ADAPTIVE_TIME_BUDGET_SECONDS),
             max_output_edge=int(settings.ADAPTIVE_MAX_OUTPUT_EDGE), face_upscale_below=int(settings.ADAPTIVE_FACE_UPSCALE_BELOW),
+            upscale_scale=int(settings.ADAPTIVE_UPSCALE_SCALE),
         )
 
 
@@ -283,6 +286,7 @@ class AdaptiveImageEnhancementService:
                     image, models = self._run(step.operation, engine, current.image, variant)
                 except errors as error:
                     record["skipped_engines"].append({"engine": engine, "reason": str(error)})
+                    logger.warning("SKIPPED %s for Photo ID %s. Reason: model unavailable (%s)", engine, PHOTO.get(), error)
                     if "time budget" in str(error):
                         record["timed_out"] = True
                         return produced
@@ -307,8 +311,17 @@ class AdaptiveImageEnhancementService:
                 )
                 candidate.validation_seconds = time.perf_counter() - validation_started
                 engine_produced.append(candidate)
+                kept = self._retry_with_highlights_kept(step, candidate, current, report, pool, validator, scale)
                 if not candidate.verdict["accepted"]:
+                    self._log_skipped(candidate, engine)
                     candidate.release()          # refused: its pixels are never used again, and it must not use up the pool the later operations (the polish) need
+                if kept is not None:
+                    engine_produced.append(kept)
+                    if kept.verdict["accepted"]:
+                        record["notes"].append("The enlargement was refused for its highlights alone; with the brightening the model added to bright pixels taken back it passed every check.")
+                    else:
+                        self._log_skipped(kept, engine)
+                        kept.release()
             blocked = step.operation == ops.LOW_LIGHT and self._refuse_weaker_shadow_lifts(engine_produced)
             tried += 1
             produced.extend(engine_produced)
@@ -317,6 +330,33 @@ class AdaptiveImageEnhancementService:
             if any(candidate.verdict["accepted"] for candidate in engine_produced):
                 break  # an engine whose candidate passed is enough; a second engine is a fallback, not a second opinion
         return produced
+
+    @staticmethod
+    def _log_skipped(candidate, engine):
+        """One WARNING line per failed gate of a refused candidate: the model ran and its output was not used, and which gate said so, what it read and the limit it was held to."""
+        model = next((item["model"] for item in candidate.models if item.get("model")), engine)
+        for line in refusal_lines(candidate.verdict):
+            logger.warning("SKIPPED %s for Photo ID %s. Reason: %s", model, PHOTO.get(), line)
+
+    @staticmethod
+    def _retry_with_highlights_kept(step, candidate, current, report, pool, validator, scale):
+        """An enlargement the validator refused ONLY for its highlights is judged once more, with the brightening the model added to bright pixels taken back (``operations.keep_highlights``).
+
+        After a whole-frame lift a bright window or sky sits at the top of the range, and the few levels a model adds to it are counted as many points of newly clipped pixels (docs/evaluation/
+        2026-11-06-enlargement-after-lift.md: +0.9 levels were 8.0 points, the limit is 3.0). The retry is a new candidate that must pass EVERY gate, the highlights gate included; an enlargement the
+        validator accepted, or refused for any other reason, is never touched, so no result that exists without this changes. ``None`` when the case does not apply (or the pool is full)."""
+        if (step.operation != ops.UPSCALE or not settings.ADAPTIVE_UPSCALE_HIGHLIGHT_GUARD
+                or candidate.verdict["reasons"] != ["highlight_clipping_increased"]):          # the highlights alone (an accepted candidate has no reasons)
+            return None
+        reference = cv2.resize(current.image, (candidate.image.shape[1], candidate.image.shape[0]), interpolation=cv2.INTER_CUBIC)
+        try:
+            kept = pool.add(ops.keep_highlights(candidate.image, reference), current, step.operation, f"{candidate.variant}, highlights kept", candidate.models, seconds=0.0)
+        except PoolFull:
+            return None
+        started = time.perf_counter()
+        kept.verdict = validator.evaluate(current.image, kept.image, step.operation, report, expected_scale=scale)
+        kept.validation_seconds = time.perf_counter() - started
+        return kept
 
     @staticmethod
     def _refuse_weaker_shadow_lifts(candidates):
@@ -429,6 +469,7 @@ class AdaptiveImageEnhancementService:
             for item in decision.skipped:
                 if item not in skipped:
                     skipped.append(item)
+                    logger.info("SKIPPED %s for Photo ID %s. Reason: %s", item["operation"], PHOTO.get(), item["reason"])
             step = decision.step
             if step is None and settings.ADAPTIVE_ALWAYS_ENHANCE:
                 # The router has nothing more to do. Every photograph still gets the final layer (the light-photo model, stacked on whatever was accepted, unless that model already ran as a
@@ -453,6 +494,7 @@ class AdaptiveImageEnhancementService:
                 done.add(step.operation)
                 skipped.append({"operation": step.operation, "reason": "Identity could not be verified, so no generative face "
                                                                        "restoration is applied. " + identity.reason})
+                logger.warning("SKIPPED %s for Photo ID %s. Reason: %s", step.operation, PHOTO.get(), skipped[-1]["reason"])
                 continue
             done.add(step.operation)
             checkpoint(step.operation)
@@ -461,8 +503,11 @@ class AdaptiveImageEnhancementService:
             if not step.engines:
                 record["status"] = "no_engine"
                 record["notes"].append("No engine for this operation is switched on.")
+                logger.warning("SKIPPED %s for Photo ID %s. Reason: no engine for this operation is switched on", step.operation, PHOTO.get())
                 stages.append(record)
                 continue
+            logger.info("adaptive_stage %s", json.dumps({"operation": step.operation, "engines": step.engines, "variants": [variant["name"] for variant in step.variants],
+                                                         "megapixels": round(current.image.shape[0] * current.image.shape[1] / 1e6, 2)}, separators=(",", ":")))      # the start of a stage: a slow model is not silent
             produced = self._propose(step, current, report, pool, validator, identity if identity.available else None, record)
             for item in record["skipped_engines"]:
                 if item.get("size_limit") and not any(entry["reason"] == item["reason"] for entry in skipped):
@@ -485,6 +530,8 @@ class AdaptiveImageEnhancementService:
             current, report = chosen, analyzer.analyze(chosen.image)
             if not str(step.reason).startswith("Final layer"):
                 defect_report = report          # the final layer is not a correction: what is left unresolved is judged before it (its smoothing can read as a blur)
+            if step.operation == ops.LOW_LIGHT:
+                validator.lifted_input = True        # what the later steps are given is a lit photograph: their face geometry has a second opinion against it (ADAPTIVE_BASELINE_AFTER_LIGHTING)
             if step.operation == ops.FACE and settings.ADAPTIVE_BASELINE_AFTER_FACE_RESTORATION and validator.identity is not None:
                 restored = IdentityChecker(chosen.image, allow_biometric_processing)        # the restored faces, embedded once; the steps that follow are judged against them (RestoredBaseline)
                 validator.identity = RestoredBaseline(validator.identity, restored if restored.available else None)
@@ -549,23 +596,41 @@ class AdaptiveImageEnhancementService:
                 "seconds": round(time.perf_counter() - started, 2), "analysis_seconds": round(analysis_seconds, 2),
             },
         }
-        self._log_run(parameters, report0, identity_block)
+        self._log_run(parameters, report0, identity_block, pool)
         return (final.copy() if final is original else final), applied_level, parameters
 
     # -- small helpers ------------------------------------------------------------------------------------------
     @staticmethod
-    def _log_run(parameters, report0, identity_block):
-        """One structured line per run for log aggregation: decisions, timings and reasons, never pixels, paths or user data."""
+    def _log_run(parameters, report0, identity_block, pool):
+        """One structured line per run for log aggregation: decisions, timings and reasons, never pixels, paths or user data.
+
+        ``refused``: each candidate the validator refused with the gates that failed and their READINGS (landmark shifts, clipping growth, similarity, ...), the numbers behind ``rejected_for``;
+        ``size``: the photograph's size and the result's."""
         adaptive = parameters["adaptive"]
+        contract = parameters.get("resolution_contract") or {}
         logger.info("adaptive_enhancement %s", json.dumps({
             "outcome": adaptive["outcome"], "operations": adaptive["operations_applied"], "seconds": adaptive["seconds"],
             "megapixels": round(report0.width * report0.height / 1e6, 2), "faces": report0.face_count,
+            "size": {"input": contract.get("source_dimensions"), "output": contract.get("actual_output_dimensions")},
             "conditions": report0.conditions, "identity_state": identity_block["state"],
             "stages": [{"operation": s["operation"], "status": s["status"], "seconds": s.get("seconds"), "models": s.get("models_run"),
                         "rejected_for": s.get("rejection_reasons")} for s in adaptive["stages"]],
+            "refused": AdaptiveImageEnhancementService._refusals(pool),
             "skipped": [item["operation"] for item in adaptive["operations_skipped"]], "unresolved": adaptive["unresolved_defects"],
             "colour_method": settings.ADAPTIVE_LOWLIGHT_COLOUR,
-        }, separators=(",", ":")))
+        }, separators=(",", ":"), default=str))
+
+    @staticmethod
+    def _refusals(pool):
+        """The candidates the validator refused, each with the gates that failed and what they read: ``[{"operation", "variant", "reasons", "failed": {gate: {reading: value}}}]``."""
+        refused = []
+        for candidate in pool.items:
+            verdict = candidate.verdict
+            if verdict is None or verdict["accepted"]:
+                continue
+            failed = {name: {key: value for key, value in gate.items() if key != "passed"} for name, gate in verdict["gates"].items() if not gate.get("passed")}
+            refused.append({"operation": candidate.operation, "variant": candidate.variant, "reasons": verdict["reasons"], "failed": failed})
+        return refused
 
     @staticmethod
     def _debug_name(operation):

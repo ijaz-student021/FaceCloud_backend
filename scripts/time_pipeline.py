@@ -5,9 +5,12 @@
 The photographs are reduced to ``--long-edge`` pixels (default 1000, the size the speed target is stated for; 0 = as they are), run through the same engine the upload runs
 (settings from the ``.env`` as usual), and a table is printed per photograph: the analysis of the original, each operation (status, seconds, models), and for every candidate the
 model's seconds and the validator's seconds, then what is left over (encoding, the identity reference, bookkeeping). ``--device cpu`` runs every model on the CPU, to compare with the
-GPU default. Nothing is written: no database, no files.
+GPU default. For every REFUSED candidate it also prints the gate that failed and what it read (a landmark shift of 0.0734 against a limit of 0.06, a clipping growth of 8.03 points ...), the
+limits in force, and the size of the photograph and of the result: the answer to "why did it not apply the model?". Nothing is written: no database, no files.
 """
 import argparse
+import json
+import logging
 import os
 import sys
 import time
@@ -15,6 +18,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEVICE_SETTINGS = ("HD_RESTORATION_DEVICE", "RETINEXFORMER_DEVICE", "CODEFORMER_DEVICE", "DDCOLOR_DEVICE", "GFPGAN_DEVICE")
+
+
+class RunLine(logging.Handler):
+    """Keeps the engine's own run line (``adaptive_enhancement {...}``), which carries the readings of every refused candidate and the sizes."""
+
+    def __init__(self):
+        super().__init__(logging.INFO)
+        self.runs = []
+
+    def emit(self, record):
+        message = record.getMessage()
+        if message.startswith("adaptive_enhancement "):
+            self.runs.append(json.loads(message.split(" ", 1)[1]))
 
 
 def parse(argv):
@@ -44,6 +60,15 @@ def main(argv):
 
     from enhancement.adaptive.service import AdaptiveImageEnhancementService
 
+    from enhancement.adaptive.validator import Limits
+
+    limits = Limits()
+    print("limits in force: landmark shift " + f"{limits.face_landmark_shift_max} (enlargement {limits.face_landmark_shift_max_upscale}, beyond a plain enlargement {limits.landmark_enlargement_shift_max}); "
+          f"highlight clipping growth {limits.highlight_clip_growth_max} points; the lift's structure SSIM {limits.structure_ssim_min_lowlight}")
+    run_line = RunLine()
+    engine_log = logging.getLogger("enhancement.adaptive.service")
+    engine_log.addHandler(run_line)
+    engine_log.setLevel(logging.INFO)
     service = AdaptiveImageEnhancementService()
     for path in args.photos:
         image = cv2.imread(path)
@@ -72,6 +97,13 @@ def main(argv):
                 verdict = "kept" if candidate.get("selected") else ("accepted" if candidate.get("accepted") else "refused")
                 print(f"      {candidate.get('variant', ''):24s} {verdict:10s} model {candidate.get('seconds', 0):6.2f} s | validator {candidate.get('validation_seconds', 0):5.2f} s")
         print(f"  {'left over (encoding, identity reference, bookkeeping)':28s} {'':10s} {max(wall - accounted, 0):8.2f}")
+        run = run_line.runs.pop() if run_line.runs else {}
+        size = run.get("size") or {}
+        print(f"  size: {size.get('input')} -> {size.get('output')}")
+        for refusal in run.get("refused", []):
+            print(f"  REFUSED {refusal['operation']} ({refusal['variant']}): {', '.join(refusal['reasons'])}")
+            for gate, readings in refusal["failed"].items():
+                print(f"      {gate}: {readings}")
     return 0
 
 
