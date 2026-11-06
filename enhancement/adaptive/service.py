@@ -44,7 +44,8 @@ from .candidates import CandidatePool, PoolFull
 from .debug import DebugRecorder
 from .profile import profile_for
 from .router import AdaptiveEnhancementRouter
-from .validator import FinalImageQualityValidator, Limits
+from .trace import PHOTO
+from .validator import FinalImageQualityValidator, Limits, refusal_lines
 
 logger = logging.getLogger(__name__)
 
@@ -285,6 +286,7 @@ class AdaptiveImageEnhancementService:
                     image, models = self._run(step.operation, engine, current.image, variant)
                 except errors as error:
                     record["skipped_engines"].append({"engine": engine, "reason": str(error)})
+                    logger.warning("SKIPPED %s for Photo ID %s. Reason: model unavailable (%s)", engine, PHOTO.get(), error)
                     if "time budget" in str(error):
                         record["timed_out"] = True
                         return produced
@@ -311,12 +313,14 @@ class AdaptiveImageEnhancementService:
                 engine_produced.append(candidate)
                 kept = self._retry_with_highlights_kept(step, candidate, current, report, pool, validator, scale)
                 if not candidate.verdict["accepted"]:
+                    self._log_skipped(candidate, engine)
                     candidate.release()          # refused: its pixels are never used again, and it must not use up the pool the later operations (the polish) need
                 if kept is not None:
                     engine_produced.append(kept)
                     if kept.verdict["accepted"]:
                         record["notes"].append("The enlargement was refused for its highlights alone; with the brightening the model added to bright pixels taken back it passed every check.")
                     else:
+                        self._log_skipped(kept, engine)
                         kept.release()
             blocked = step.operation == ops.LOW_LIGHT and self._refuse_weaker_shadow_lifts(engine_produced)
             tried += 1
@@ -326,6 +330,13 @@ class AdaptiveImageEnhancementService:
             if any(candidate.verdict["accepted"] for candidate in engine_produced):
                 break  # an engine whose candidate passed is enough; a second engine is a fallback, not a second opinion
         return produced
+
+    @staticmethod
+    def _log_skipped(candidate, engine):
+        """One WARNING line per failed gate of a refused candidate: the model ran and its output was not used, and which gate said so, what it read and the limit it was held to."""
+        model = next((item["model"] for item in candidate.models if item.get("model")), engine)
+        for line in refusal_lines(candidate.verdict):
+            logger.warning("SKIPPED %s for Photo ID %s. Reason: %s", model, PHOTO.get(), line)
 
     @staticmethod
     def _retry_with_highlights_kept(step, candidate, current, report, pool, validator, scale):
@@ -458,6 +469,7 @@ class AdaptiveImageEnhancementService:
             for item in decision.skipped:
                 if item not in skipped:
                     skipped.append(item)
+                    logger.info("SKIPPED %s for Photo ID %s. Reason: %s", item["operation"], PHOTO.get(), item["reason"])
             step = decision.step
             if step is None and settings.ADAPTIVE_ALWAYS_ENHANCE:
                 # The router has nothing more to do. Every photograph still gets the final layer (the light-photo model, stacked on whatever was accepted, unless that model already ran as a
@@ -482,6 +494,7 @@ class AdaptiveImageEnhancementService:
                 done.add(step.operation)
                 skipped.append({"operation": step.operation, "reason": "Identity could not be verified, so no generative face "
                                                                        "restoration is applied. " + identity.reason})
+                logger.warning("SKIPPED %s for Photo ID %s. Reason: %s", step.operation, PHOTO.get(), skipped[-1]["reason"])
                 continue
             done.add(step.operation)
             checkpoint(step.operation)
@@ -490,6 +503,7 @@ class AdaptiveImageEnhancementService:
             if not step.engines:
                 record["status"] = "no_engine"
                 record["notes"].append("No engine for this operation is switched on.")
+                logger.warning("SKIPPED %s for Photo ID %s. Reason: no engine for this operation is switched on", step.operation, PHOTO.get())
                 stages.append(record)
                 continue
             logger.info("adaptive_stage %s", json.dumps({"operation": step.operation, "engines": step.engines, "variants": [variant["name"] for variant in step.variants],

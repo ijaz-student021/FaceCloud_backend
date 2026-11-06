@@ -190,6 +190,9 @@ identity embedding and the face-landmark checks, which read the upload. Neither 
   (`docs/evaluation/2026-11-06-enlargement-after-lift.md`, section 6): six small photographs all passed at 4x, but on 25.jpg the face restoration is refused at 4x (the detector places a bigger enlargement's
   landmarks further away: 0.042 against the strict 0.04), so its 4x face is the lifted one and the 2x face is the restored one. The front end's "HD restoration is not available on this server" is its own text for
   any result with `hd_unavailable_reason` (a restoration the photograph needed was not completed), not a statement about the models.
+* **Reading the log** (`worker.log`; `adaptive_stage` when a stage starts, `adaptive_enhancement` at the end with `size` and `refused`, and one `SKIPPED` line per failed gate): `SKIPPED <model> for Photo ID <image>
+  (result <id>). Reason: <gate> failed (<reason>). Metric: <reading>=<value>, Threshold: <limit>`. A model that cannot run, an operation the router left out and a face restoration refused for want of a verifiable
+  identity are logged the same way. `python scripts/time_pipeline.py PHOTO` prints the same for any file, with the limits in force.
 
 ## 5. Outcomes and the API contract
 

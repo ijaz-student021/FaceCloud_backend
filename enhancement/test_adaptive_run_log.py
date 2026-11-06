@@ -38,7 +38,8 @@ class RunLogTests(SimpleTestCase):
         service = AdaptiveImageEnhancementService(analyzer=ImageQualityAnalyzer(detector=BiasedDetector(FACE, 0.0, 320)), config=EngineConfig(), runners={ops.UPSCALE: runner})
         with override_settings(**settings_), patch("enhancement.adaptive.service.IdentityChecker", _no_identity), self.assertLogs(LOGGER, level="INFO") as logged:
             output, _level, _parameters = service.enhance(source)
-        return output, [(record.getMessage().split(" ", 1)[0], json.loads(record.getMessage().split(" ", 1)[1])) for record in logged.records if " " in record.getMessage()]
+        structured = [record.getMessage() for record in logged.records if record.getMessage().startswith(("adaptive_stage ", "adaptive_enhancement "))]      # the SKIPPED lines are plain text
+        return output, [(message.split(" ", 1)[0], json.loads(message.split(" ", 1)[1])) for message in structured]
 
     def entry(self, lines, name):
         return [payload for prefix, payload in lines if prefix == name]

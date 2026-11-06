@@ -103,7 +103,22 @@ models, all with every gate passing: 25.jpg 414x277 to 1656x1108 (35 s), 29.jpg 
 enlargement further away), so the 4x face is the lifted face, blocky, where the 2x face is restored; the identity margin of the dark photographs is thin (0.8085 against 0.80), and the pixels are the plain enlargement's plus
 35 percent of the model's, so 4x is more pixels, not more detail per pixel. The default stays 2.
 
-## 7. Not verified
+## 7. A third brief: update the baseline per stage, force the deblur for Pro with a second opinion, log every skip
+
+* **The baseline per stage.** Already how the engine works, apart from the two checks that read the upload: `service._propose` hands every step `current.image` and its analysis (the last ACCEPTED candidate), so
+  data consistency, SSIM, colour, halo, noise and highlights compare a step with its own input; `validator.lifted_input` (section 3) gives the geometry a second opinion against that input after a lift;
+  `RestoredBaseline` does the same for the identity after a face restoration. The identity embedding stays against the upload (the identity guard is unchanged).
+* **Forcing NAFNet (Pro) and a second opinion against the upscaled original.** The analyzer's blur reading is not a Laplacian variance (gradient energy that survives an extra blur, a direction ratio for the type,
+  and the main face's own detail), and the router already sends NAFNet for a blurred face and for motion blur. Measured with the real model on 59 distinct library photographs (reduced to 1000 px, the validator's
+  real gates, no identity model): the 11 the router sends, **1 accepted, 10 refused**; forced on the 48 it skips, **5 accepted, 43 refused**, and the 5 are edge gains of 1.10-1.21 on photographs read "no blur" or a
+  mild defocus (a light sharpening of photographs that were not blurred). What refuses it is the face (`face_detail_gain` 1.0 against 1.25: the model did not clear the face); the geometry, where "compare with the
+  upscaled original" already exists (`_shift_beyond_plain_enlargement`, section 3), never refused a deblur (0 of 28 refusals). A second opinion could only accept deblurs that did not help, so it was not built.
+* **Logging.** Every gate of the validator keeps the reading it compared and the limit it was held to (`metric` / `limit`; `reason` for a failed one). `validator.refusal_lines(verdict)` words them and the engine logs
+  one WARNING line per failed gate of a refused candidate, per model that could not run and per operation left out, with the photograph's label (the task sets it: `adaptive/trace.py`):
+  `SKIPPED realesrgan for Photo ID 225 (result 183). Reason: face_geometry failed (face_geometry_changed). Metric: landmark_shift=0.0734, Threshold: 0.06; beyond a plain enlargement of the original 0.0356 against 0.035`.
+  A refusal that took a hair's breadth (0.0356 against 0.035) is now readable from the log instead of from a re-run.
+
+## 8. Not verified
 
 * Through the API and the UI on the live server (the engine was called directly; the live server runs `main` until this is merged).
 * PostgreSQL (CI runs it; these tests are database-free).
