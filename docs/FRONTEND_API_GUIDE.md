@@ -714,6 +714,44 @@ duplicates. Confirm or dismiss with
 `PATCH /api/duplicates/matches/{id}/review/`. An exact checksum match cannot be
 dismissed (the API returns a 400).
 
+## 5a-matches. A list of every match, and decisions that survive "find duplicates again" (new)
+
+Two additions to the duplicates calls. No existing response key changed.
+
+```text
+GET  /api/duplicates/matches/?page=1&page_size=50&review_status=&match_type=&image=
+       -> {count, next, previous, results: [..the same rows as GET /api/duplicates/matches/{id}/..]}
+POST /api/duplicates/images/{id}/   {"force": true}      (the "Find duplicates again" button; unchanged request, 202 as before)
+```
+
+**The list.** Every duplicate match of the signed-in person in one paged call, newest first (`created_at`, then `id`, both descending). The rows are exactly the ones of the detail call
+(`source_image`, `matched_image`, the two filenames and download URLs, `match_type`, `similarity_score`, `review_status`, `reviewed_at` ...). Use it instead of reading the checks
+(`/results/`) and then every photograph's `/images/{id}/matches/`.
+
+- **Dismissed pairs are in it.** A pair marked `not_duplicate` stops counting in its photographs' `match_count` and `decision`, so no filter of `/results/` leads to it any more. This list does:
+  `?review_status=not_duplicate` is the "dismissed" tab.
+- **Filters** (all optional, combinable): `review_status` = `suspected` | `confirmed` | `not_duplicate`; `match_type` = `exact` | `perceptual` | `face_region`; `image` = a photograph id, giving the pairs that
+  have it on **either** side (`source_image` or `matched_image`). Anything else is a **400** with one plain sentence, for example `{"review_status": "Choose a valid review status: suspected, confirmed or not_duplicate."}`
+  or `{"image": "Image must be a positive integer."}`. An empty value is no filter. An `image` that is not yours (or does not exist) gives an empty list, never a 404.
+- **Paging** is the same as the other lists: `page` (a page past the end is a 404, page 1 of an empty list is a 200 with `count: 0`) and `page_size` (20 by default, **at most 100**). Always send `page`; without
+  `page` and `page_size` the whole list comes back as a plain array, as it does for the other lists.
+- **The trash.** A pair with a photograph in the trash is left out, exactly as the detail and review calls treat it (they answer 404 for it); it is listed again when the photograph is restored.
+- Only the signed-in person's own matches are ever listed. Same rate limit as the other duplicate calls.
+
+**A person's decision survives a re-check.** `force: true` used to delete the photograph's matches and create them again as `suspected` with new ids, so one click on "Find duplicates again" threw away every
+confirm and dismiss made on that photograph. Now the check reconciles instead of rebuilding:
+
+- A pair the check **finds again** keeps its match **`id`**, `review_status`, `reviewed_by`, `reviewed_at` and `created_at`. Only the measured values (`similarity_score`, `hash_distance`, `face_similarity`, `evidence`)
+  are brought up to date. Nothing is deleted when the request is made; the check runs afterwards, as before, and the photograph's matches stay readable and decidable meanwhile.
+- A pair counts as the same pair **whichever photograph is stored as its `source_image`**, and each kind (`exact`, `perceptual`, `face_region`) of a pair keeps its own decision.
+- A pair the check **no longer finds** is deleted (its id then answers 404), and the summaries (`match_count`, `decision`) of **both** photographs are recounted. A pair found for the first time is `suspected`.
+  A pair that was deleted and is found again later is a new match with a new id, `suspected`.
+- A pair is **not** deleted when the check could not look for it: the other photograph's own check is not finished (it is being checked again at the same time, or its check failed), it is further back than the
+  server's candidate limit, or one of the two photographs is in the trash (restoring it brings the pair back as it was).
+- After a re-check the summaries are recounted from the kept decisions: a photograph with a confirmed pair is `duplicate`, one whose pairs are all dismissed is `no_duplicate` with `match_count: 0`.
+- An exact checksum match is still created `confirmed` and still cannot be dismissed (400).
+- A check that fails leaves the stored pairs and decisions exactly as they were.
+
 ## 5b. Events (moments timeline)
 
 Photos are grouped into events by upload time. No face data is used.
