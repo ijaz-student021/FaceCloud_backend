@@ -369,6 +369,19 @@ ADAPTIVE_BACKLIT_SUBJECT_LIFT = env.bool("ADAPTIVE_BACKLIT_SUBJECT_LIFT", defaul
 ADAPTIVE_BACKLIT_SUBJECT_BRIGHTNESS_MAX = env.float("ADAPTIVE_BACKLIT_SUBJECT_BRIGHTNESS_MAX", default=60.0)
 ADAPTIVE_BACKLIT_SUBJECT_MAX_RATIO = env.float("ADAPTIVE_BACKLIT_SUBJECT_MAX_RATIO", default=0.40)
 ADAPTIVE_BACKLIT_MIN_SCENE_MEDIAN = env.float("ADAPTIVE_BACKLIT_MIN_SCENE_MEDIAN", default=70.0)
+# ADAPTIVE_UPSCALE_HIGHLIGHT_GUARD: an enlargement the validator refuses ONLY for ``highlight_clipping_increased`` (more than 3 points of newly clipped pixels against the image it was made from) is judged
+#   once more with the brightening the model added to ALREADY bright pixels taken back (operations.keep_highlights). The retry is a new candidate that must pass every gate; an enlargement the
+#   validator accepts, or refuses for any other reason, is never touched, so no result that exists without this changes. After a whole-frame lift a bright window or sky sits at the top of the range:
+#   the library's 25.jpg (a man in shadow in front of a window; lift accepted) got +0.9 levels on its bright part from Real-ESRGAN, which the gate counted as 8.0 points of newly clipped pixels
+#   (1.27 percent to 9.30, the limit is 3.0), so the lifted photograph kept its size; with the guard it was enlarged to 828x554 (docs/evaluation/2026-11-06-enlargement-after-lift.md).
+#   False gives the earlier behaviour.
+ADAPTIVE_UPSCALE_HIGHLIGHT_GUARD = env.bool("ADAPTIVE_UPSCALE_HIGHLIGHT_GUARD", default=True)
+# ADAPTIVE_BASELINE_AFTER_LIGHTING: once a lift (low-light or back-lit) is accepted, a later step whose face geometry the checks against the ORIGINAL refuse (the share limit on the original's landmarks and the
+#   plain enlargement of the original) gets a second opinion against the image it was GIVEN, which is lit, because the detector can hardly see the face of a dark original: its landmarks are guesses. The step
+#   must stay within its own limit of that image's landmarks (or, for an enlargement, within ADAPTIVE_LANDMARK_ENLARGEMENT_SHIFT_MAX of a plain enlargement of it). Never stricter than before; never for a face
+#   restoration or polish; a face no longer found is still a loss; identity (the embedding) is judged as before. Library 29.jpg (lift and face restoration accepted): the enlargement read 0.073 / 0.046 against
+#   the dark original (limits 0.06 / 0.035) and 0.042 against what it was given (docs/evaluation/2026-11-06-enlargement-after-lift.md). False gives the earlier behaviour.
+ADAPTIVE_BASELINE_AFTER_LIGHTING = env.bool("ADAPTIVE_BASELINE_AFTER_LIGHTING", default=True)
 NAFNET_MODEL_PATH = env(
     "NAFNET_MODEL_PATH",
     default=str(BASE_DIR / ".runtime" / "models" / "NAFNet-GoPro-width64.pth"),

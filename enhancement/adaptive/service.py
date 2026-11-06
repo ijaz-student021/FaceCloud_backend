@@ -307,8 +307,15 @@ class AdaptiveImageEnhancementService:
                 )
                 candidate.validation_seconds = time.perf_counter() - validation_started
                 engine_produced.append(candidate)
+                kept = self._retry_with_highlights_kept(step, candidate, current, report, pool, validator, scale)
                 if not candidate.verdict["accepted"]:
                     candidate.release()          # refused: its pixels are never used again, and it must not use up the pool the later operations (the polish) need
+                if kept is not None:
+                    engine_produced.append(kept)
+                    if kept.verdict["accepted"]:
+                        record["notes"].append("The enlargement was refused for its highlights alone; with the brightening the model added to bright pixels taken back it passed every check.")
+                    else:
+                        kept.release()
             blocked = step.operation == ops.LOW_LIGHT and self._refuse_weaker_shadow_lifts(engine_produced)
             tried += 1
             produced.extend(engine_produced)
@@ -317,6 +324,26 @@ class AdaptiveImageEnhancementService:
             if any(candidate.verdict["accepted"] for candidate in engine_produced):
                 break  # an engine whose candidate passed is enough; a second engine is a fallback, not a second opinion
         return produced
+
+    @staticmethod
+    def _retry_with_highlights_kept(step, candidate, current, report, pool, validator, scale):
+        """An enlargement the validator refused ONLY for its highlights is judged once more, with the brightening the model added to bright pixels taken back (``operations.keep_highlights``).
+
+        After a whole-frame lift a bright window or sky sits at the top of the range, and the few levels a model adds to it are counted as many points of newly clipped pixels (docs/evaluation/
+        2026-11-06-enlargement-after-lift.md: +0.9 levels were 8.0 points, the limit is 3.0). The retry is a new candidate that must pass EVERY gate, the highlights gate included; an enlargement the
+        validator accepted, or refused for any other reason, is never touched, so no result that exists without this changes. ``None`` when the case does not apply (or the pool is full)."""
+        if (step.operation != ops.UPSCALE or not settings.ADAPTIVE_UPSCALE_HIGHLIGHT_GUARD
+                or candidate.verdict["reasons"] != ["highlight_clipping_increased"]):          # the highlights alone (an accepted candidate has no reasons)
+            return None
+        reference = cv2.resize(current.image, (candidate.image.shape[1], candidate.image.shape[0]), interpolation=cv2.INTER_CUBIC)
+        try:
+            kept = pool.add(ops.keep_highlights(candidate.image, reference), current, step.operation, f"{candidate.variant}, highlights kept", candidate.models, seconds=0.0)
+        except PoolFull:
+            return None
+        started = time.perf_counter()
+        kept.verdict = validator.evaluate(current.image, kept.image, step.operation, report, expected_scale=scale)
+        kept.validation_seconds = time.perf_counter() - started
+        return kept
 
     @staticmethod
     def _refuse_weaker_shadow_lifts(candidates):
@@ -485,6 +512,8 @@ class AdaptiveImageEnhancementService:
             current, report = chosen, analyzer.analyze(chosen.image)
             if not str(step.reason).startswith("Final layer"):
                 defect_report = report          # the final layer is not a correction: what is left unresolved is judged before it (its smoothing can read as a blur)
+            if step.operation == ops.LOW_LIGHT:
+                validator.lifted_input = True        # what the later steps are given is a lit photograph: their face geometry has a second opinion against it (ADAPTIVE_BASELINE_AFTER_LIGHTING)
             if step.operation == ops.FACE and settings.ADAPTIVE_BASELINE_AFTER_FACE_RESTORATION and validator.identity is not None:
                 restored = IdentityChecker(chosen.image, allow_biometric_processing)        # the restored faces, embedded once; the steps that follow are judged against them (RestoredBaseline)
                 validator.identity = RestoredBaseline(validator.identity, restored if restored.available else None)

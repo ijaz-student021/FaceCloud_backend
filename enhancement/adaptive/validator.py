@@ -85,6 +85,10 @@ class Limits:
     # of the plain enlargement. Never stricter than before (a candidate that passed still passes); 0 switches it off; never for a generative face restoration (always strict) nor for polish (its own
     # gate); a face that is no longer found is still a loss. docs/evaluation/2026-11-05-small-face-geometry.md.
     landmark_enlargement_shift_max: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_LANDMARK_ENLARGEMENT_SHIFT_MAX", 0.035)))
+    # Both checks above read the ORIGINAL photograph, and the original of a dark or back-lit photograph has a face the detector can hardly see: its landmarks, and those of a plain enlargement of it, are
+    # guesses. Once a lift is accepted, a step those checks refuse is judged once more against the image it was GIVEN, which is lit (validator._lifted_input_opinion). Never stricter than before (a step that
+    # passed still passes); never for a generative face restoration (always strict) nor for polish; a face that is no longer found is still a loss. False gives the earlier behaviour.
+    baseline_after_lighting: bool = field(default_factory=lambda: bool(settings.ADAPTIVE_BASELINE_AFTER_LIGHTING))
     upscale_detail_gain_max: float = 3.0
     # polish (a gentle improvement of a photograph with nothing to fix): it must be clearly the same photograph and measurably better
     polish_min_gain: float = 1.05                  # the main face's detail, or the frame's contrast (std of luminance), must rise at least 5 percent
@@ -264,6 +268,8 @@ class FinalImageQualityValidator:
         self.source_enlarged = bool(source_enlarged)        # the pipeline enlarged this photograph before the engine saw it (preprocessing's small-image enlargement): see the shadow-lift gate
         self.original = original            # the original's pixels (optional): the plain enlargement the geometry gate may compare an enlarged candidate with
         self._plain_enlargements = {}       # (width, height) -> the faces found on a plain bicubic enlargement of the original to that size
+        self.lifted_input = False           # the service sets it once a lift is accepted: what the later steps are given is a lit photograph (ADAPTIVE_BASELINE_AFTER_LIGHTING)
+        self._lifted_enlargement = None     # (the step's input, the size, the faces found on a plain enlargement of it): the last second opinion's, kept for the step's other variants
 
     def evaluate(self, parent, candidate, operation, parent_report, expected_scale=1, candidate_report=None, refine=False, local=None):
         """``{accepted, reasons, gates, metrics, improvement, change_cost}`` for one candidate. ``refine``: a detail-restoration candidate for a photograph with no defect (always-enhance). ``local``: ``"shadows"`` for a lift of the shadows only (a back-lit subject)."""
@@ -363,7 +369,7 @@ class FinalImageQualityValidator:
             gate("noise", noise_after <= max(noise_before * allowed, noise_before + 0.25, 1.0 if lowlight else 0.0),
                  {"before": noise_before, "after": noise_after}, "noise_increased")
 
-        self._identity_gate(verdict, candidate, candidate_report, operation, parent)
+        self._identity_gate(verdict, candidate, candidate_report, operation, parent, parent_report)
         improvement = self._improvement(verdict, operation, parent, candidate, parent_report, candidate_report, expected_scale, refine=refine)
         verdict["improvement"] = round(float(improvement), 4)
         mean_change = float(np.mean(np.abs(_gray(_to_size(candidate, parent.shape)).astype(np.float32) - _gray(parent).astype(np.float32)))) / 255.0
@@ -386,18 +392,26 @@ class FinalImageQualityValidator:
             worst = min(worst, structure_ssim(parent[y0:y1, x0:x1], candidate[y0:y1, x0:x1]))
         return worst >= self.limits.polish_face_structure_ssim_min, worst
 
-    def _shift_beyond_plain_enlargement(self, faces, candidate, candidate_report, scale):
+    def _shift_beyond_plain_enlargement(self, faces, candidate, candidate_report, scale, source=None):
         """The mean landmark shift (a share of the face width) of an enlarged candidate against the landmarks the detector finds on a plain bicubic enlargement of the ORIGINAL to the candidate's size:
         what the model moved, with the detector's own scale-dependent placement taken out. ``None`` when there is nothing to compare with: the setting is 0, the candidate is not a different size
         from the original (the plain enlargement would be the original itself), the original's pixels were not given, or a face is not found on the plain enlargement or on the candidate.
-        The plain enlargement is analysed once per size, and only when the share limit has already refused the candidate."""
-        if (self.limits.landmark_enlargement_shift_max <= 0 or self.original is None or self.analyzer is None or candidate is None or not faces
+        The plain enlargement is analysed once per size, and only when the share limit has already refused the candidate.
+        ``source``: the pixels to enlarge instead of the original: the lit image a step was given, once a lift is accepted (``faces`` are then that image's; ``_lifted_input_opinion``)."""
+        original = self.original if source is None else source
+        if (self.limits.landmark_enlargement_shift_max <= 0 or original is None or self.analyzer is None or candidate is None or not faces
                 or abs(scale - 1.0) < 0.02):
             return None
         size = (int(candidate.shape[1]), int(candidate.shape[0]))
-        if size not in self._plain_enlargements:
-            self._plain_enlargements[size] = self.analyzer.analyze(cv2.resize(self.original, size, interpolation=cv2.INTER_CUBIC)).faces
-        found = [other for other in self._plain_enlargements[size] if other.landmarks and len(other.landmarks) == 5]
+        if source is None:
+            if size not in self._plain_enlargements:
+                self._plain_enlargements[size] = self.analyzer.analyze(cv2.resize(original, size, interpolation=cv2.INTER_CUBIC)).faces
+            plain = self._plain_enlargements[size]
+        else:
+            if self._lifted_enlargement is None or self._lifted_enlargement[0] is not source or self._lifted_enlargement[1] != size:
+                self._lifted_enlargement = (source, size, self.analyzer.analyze(cv2.resize(source, size, interpolation=cv2.INTER_CUBIC)).faces)
+            plain = self._lifted_enlargement[2]
+        found = [other for other in plain if other.landmarks and len(other.landmarks) == 5]
         reference = []
         for face in faces:             # each original face, found again on the plain enlargement (the same matching as landmark_shift)
             centre = scale * np.array([face.box[0] + face.box[2] / 2, face.box[1] + face.box[3] / 2])
@@ -408,7 +422,34 @@ class FinalImageQualityValidator:
             reference.append(min(near, key=lambda pair: pair[0])[1])
         return landmark_shift(reference, candidate_report.faces, 1.0)
 
-    def _identity_gate(self, verdict, candidate, candidate_report, operation, parent=None):
+    def _lifted_input_opinion(self, candidate, candidate_report, parent, parent_report, shift_max):
+        """The geometry of a step judged against the image it was GIVEN, once a lift was accepted (``ADAPTIVE_BASELINE_AFTER_LIGHTING``), after the checks against the ORIGINAL refused it.
+
+        The original of a dark or back-lit photograph has a face the detector can hardly see, so its landmarks (and those of a plain enlargement of it) are guesses; the lifted photograph the step was
+        given is lit, and what the step moved is read there: the candidate's landmarks against that image's at the step's own limit (``shift_max``) and, for an enlargement, against a plain enlargement of
+        that image, with the detector's own placement taken out (``landmark_enlargement_shift_max``). The library's 29.jpg (a 293 px photograph; the lift and the face restoration were accepted): the enlargement
+        read 0.073 against the original's landmarks (limit 0.06) and 0.046 beyond a plain enlargement of the DARK original (limit 0.035); against what it was given, 0.042 (docs/evaluation/2026-11-06-enlargement-after-lift.md).
+        ``None`` when there is nothing to compare with, or a face that was there is no longer found (a loss is not rescued); otherwise the readings and ``passed``."""
+        if parent is None or parent_report is None or not getattr(parent_report, "width", 0):
+            return None
+        faces = parent_report.faces
+        if self.limits.geometry_ignores_tiny_faces:
+            faces = [face for face in faces if face.quality != "too_small"]
+        if not faces:
+            return None
+        scale = candidate_report.width / parent_report.width
+        shift = landmark_shift(faces, candidate_report.faces, scale)
+        if shift is None:
+            return None
+        opinion = {"landmark_shift_from_lifted_input": round(shift, 4), "passed": shift <= shift_max}
+        if not opinion["passed"]:
+            beyond = self._shift_beyond_plain_enlargement(faces, candidate, candidate_report, scale, source=parent)
+            if beyond is not None:
+                opinion["landmark_shift_beyond_plain_enlargement_of_lifted_input"] = round(beyond, 4)
+                opinion["passed"] = beyond <= self.limits.landmark_enlargement_shift_max
+        return opinion
+
+    def _identity_gate(self, verdict, candidate, candidate_report, operation, parent=None, parent_report=None):
         if not self.original_report.faces:
             verdict["gates"]["identity"] = {"passed": True, "status": "no_face"}
             return
@@ -437,6 +478,11 @@ class FinalImageQualityValidator:
             if beyond is not None:
                 status["landmark_shift_beyond_plain_enlargement"] = round(beyond, 4)
                 landmarks_ok = beyond <= self.limits.landmark_enlargement_shift_max
+            if not landmarks_ok and self.lifted_input and self.limits.baseline_after_lighting:
+                opinion = self._lifted_input_opinion(candidate, candidate_report, parent, parent_report, shift_max)
+                if opinion is not None:
+                    landmarks_ok = opinion.pop("passed")
+                    status.update(opinion)
         if operation == "polish" and not landmarks_ok:
             holds, worst = self._face_structure_holds(parent, candidate)
             if holds is not None:

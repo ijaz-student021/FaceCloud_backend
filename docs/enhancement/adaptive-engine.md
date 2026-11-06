@@ -172,6 +172,20 @@ synthetic portrait is refused for `colour_drift` and `subject_not_clearer_or_too
 the light-photo method was used: the brightness was kept."), `adaptive.profile.lighting` and `requested_lighting` record the request, and the API's `lighting` block reports `used` (the method followed) and `forced`
 (`enhancement/outcome.py`). Only `adaptive_v1` follows the word; `enhance_bgr` hands it to the engine only when it is not `auto`, so the call for every other request is the call it always was.
 
+## 5c. The enlargement after a lift (2026-11-06; `ADAPTIVE_UPSCALE_HIGHLIGHT_GUARD`, `ADAPTIVE_BASELINE_AFTER_LIGHTING`, both on by default)
+
+A lifted photograph used to keep its size in two measured cases (`docs/evaluation/2026-11-06-enlargement-after-lift.md`). Every step is judged against the image it was GIVEN (the lifted photograph) except the
+identity embedding and the face-landmark checks, which read the upload. Neither change touches a result that exists without it: each can only turn a refusal into an acceptance, and every other gate still decides.
+
+* **Highlights.** After a whole-frame lift a bright window or sky sits at the top of the range; the few levels Real-ESRGAN adds to it were counted as many points of newly clipped pixels (`highlight_clipping_increased`,
+  limit 3.0 points). An enlargement refused for that reason **alone** is judged once more with the model's brightening of already bright pixels taken back (`operations.keep_highlights`: where the plain enlargement is
+  brighter than luminance 215, fading in to 240, no channel may exceed it; everything else is the model's own). The retry is a second candidate (`"x2, highlights kept"`, the stage's `notes` say so) and must pass **every**
+  gate; the model is not run again. `ADAPTIVE_UPSCALE_HIGHLIGHT_GUARD=False` gives the earlier behaviour.
+* **Face geometry.** The landmarks of the dark original (and of a plain enlargement of it) are guesses. Once a lift is accepted (`validator.lifted_input`), a step the share limit and the plain-enlargement rule
+  refused gets a second opinion against the lit image it was given (`validator._lifted_input_opinion`): its landmarks within its own limit of that image's, or, for an enlargement, within
+  `ADAPTIVE_LANDMARK_ENLARGEMENT_SHIFT_MAX` of a plain enlargement of it. Never for a face restoration or polish; a face no longer found is still a loss; the identity embedding is judged as before (the brief's
+  proposal to move that baseline too was not applied: no measured photograph was lost to it). `ADAPTIVE_BASELINE_AFTER_LIGHTING=False` gives the earlier behaviour.
+
 ## 5. Outcomes and the API contract
 
 `GET /api/enhancements/results/{id}/` now also returns:
