@@ -12,6 +12,7 @@ from .models import (
     EditPreview,
     EnhancementBatchJob,
     EnhancementLevel,
+    EnhancementLighting,
     EnhancementStatus,
     EnhancementStyle,
     ImageEditVersion,
@@ -57,6 +58,16 @@ class EnhancementRequestSerializer(serializers.Serializer):
             "false. Only the earlier staged pipeline (the other policies, when they run it) lets `ai_max` "
             "restore faces without a verified identity check; it reports that in `identity_check_bypassed` "
             "and `identity_notice`."
+        ),
+    )
+    lighting = serializers.ChoiceField(
+        choices=EnhancementLighting.choices, default=EnhancementLighting.AUTO,
+        help_text=(
+            "What the person says about the photograph's lighting. `auto` (the default; what a request without the field means) lets the engine decide. "
+            "`dark` runs the dark-photo method whatever the engine saw: the shadows are lifted first (a dark scene, a back-lit subject's shadows, or the whole frame) and noise is then reduced. "
+            "`light` runs the light-photo method: the brightness is kept and only detail, blur, size and polish are worked on. A forced method goes through every safety gate "
+            "and limit an automatic one does: a lift that is not safe is refused, the photograph keeps what else passed, and the result's `enhancement_summary` says so. "
+            "The result's `lighting` block reports `used` and `forced`. Only the adaptive engine (`ENHANCEMENT_RENDER_POLICY=adaptive_v1`) follows it."
         ),
     )
 
@@ -231,6 +242,10 @@ class LightingSerializer(serializers.Serializer):
     exposure = serializers.CharField(help_text="The analyzer's own status: low_light, low_light_subject, dark_scene, backlit_subject, normal or overexposed.")
     scene_median = serializers.FloatField(allow_null=True, help_text="Median grey level of the frame, 0 (black) to 255.")
     brightened = serializers.BooleanField(help_text="Whether a brightening step really changed the photograph. A dark photograph can be detected dark and still not be brightened when the brightening was not safe to apply.")
+    used = serializers.ChoiceField(choices=["dark", "light"], help_text=(
+        "The method the engine followed: the person's own choice when `forced`, else what it detected. Whether the dark-photo method actually changed the photograph is `brightened`: "
+        "a forced `dark` whose lift was refused reads used `dark`, brightened false, and `enhancement_summary` says nothing was changed."))
+    forced = serializers.BooleanField(help_text="True when the person chose Dark photo or Light photo (the request's `lighting`) and the engine followed it; false for `auto` and for results made before the choice existed.")
 
 
 class ProcessingStageSerializer(serializers.Serializer):
@@ -265,8 +280,9 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
         "pixels); failed when the job failed. null for results made by the staged pipeline, which does not classify."))
     enhancement_summary = serializers.SerializerMethodField(help_text="One plain sentence on the outcome, safe to show a user.")
     lighting = serializers.SerializerMethodField(help_text=(
-        "How the engine saw the lighting: {detected: dark|light, exposure, scene_median, brightened}. Show \"Dark-photo method\" for dark and \"Light-photo method\" "
-        "for light. null for results made before this field existed or by the staged pipeline."))
+        "How the engine saw the lighting and which method it followed: {detected: dark|light, exposure, scene_median, brightened, used: dark|light, forced}. Show "
+        "\"Dark-photo method\" for `used` dark and \"Light-photo method\" for light, and \"chosen by you\" when `forced` (the request's `lighting`). Results made before the choice existed "
+        "read forced false and used = detected. null for results made before this field existed or by the staged pipeline."))
     applied_stages = serializers.SerializerMethodField(help_text=(
         "The restoration and enhancement stages that changed the photograph, in order: stage (low_light, denoise, deblur, face_restore, "
         "upscale), engine, variant, and for upscale the scale, input_size and output_size ([width, height]). Empty when nothing changed."))
@@ -285,7 +301,7 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
         model = ImageEnhancementResult
         fields = [
             "id", "image", "batch_job", "requested_level", "applied_level",
-            "requested_style", "trigger", "status", "enhancement_outcome", "enhancement_summary", "lighting",
+            "requested_style", "requested_lighting", "trigger", "status", "enhancement_outcome", "enhancement_summary", "lighting",
             "applied_stages", "skipped_stages", "hd_unavailable_reason", "processing_summary",
             "identity_status", "identity_check_bypassed", "identity_notice",
             "output_name", "output_format", "output_width", "output_height",

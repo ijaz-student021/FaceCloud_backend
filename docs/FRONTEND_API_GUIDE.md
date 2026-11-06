@@ -179,6 +179,15 @@ on the upload page ("Enhance my photos automatically"), pre-set from the prefere
 works as before, and a photograph that already has a result is never enhanced a second time. Every photograph in the answer carries `enhancement` (below), so **in
 `inline` mode the finished results are already in the upload answer**; with a worker they are `queued` and move as you poll.
 
+**What the automatic enhancement is asked to do (new): `preset`, `level`, `style`, `lighting` on the upload.** The three upload calls take four more optional form fields, with exactly
+the meaning, the names, the preset rule and the validation of an enhancement request (section 4): `preset` (`auto`, `standard`, `pro`; it fills in whichever of `level` and `style` is not sent, and one
+that is sent wins), `level` (`auto`, `low`, `medium`, `high`), `style` (`natural`, `dynamic`, `ai_max`) and `lighting` (`auto`, `dark`, `light`). They are checked **before** anything is stored (a value that is not
+allowed is a 400 `{"<field>": ["..."]}` and no batch is made), kept on the batch and used by that batch's **automatic** enhancement, so the person chooses **once, on the upload page**: no second
+call, no upload with `auto_enhance=false` followed by an enhancement request. A request that sends none of the four is enhanced exactly as before (automatic strength, natural, lighting by the engine). The batch
+answer carries what was kept as `auto_enhance_options: {level, style, lighting}` (`{}` when the upload sent none); the result of each photograph carries `requested_level`, `requested_style` and
+`requested_lighting` as ever. The four fields only matter while `auto_enhance` is on: with `auto_enhance=false` they are stored and unused (the later enhancement request carries its own).
+A person who picks **Pro** sends `preset=pro` (level `high`, style `ai_max`); **Standard** `preset=standard` (level `high`, natural); **Auto** nothing. Pro takes a minute or two per photograph on a laptop.
+
 **`processing_mode`** (new, upload answers only): `"background"` when a Celery worker does the work, `"inline"` when the background jobs run inside this very request
 (`CELERY_TASK_ALWAYS_EAGER` is on, normally a development server without a worker). In `inline` mode the answer already holds the finished batch and **there is no
 progress to show**: do not draw a progress bar or poll, show the result, and (in development) a one-line hint "background jobs run inside the request: start the
@@ -322,12 +331,21 @@ personal workspace whose checks doubted it:
 ## 4. Enhancement
 
 ```text
-POST /api/enhancements/images/{image_id}/   {level, style}  or  {preset}     -> 202
-POST /api/enhancements/batches/{batch_id}/  {level, style}  or  {preset}     -> 201
+POST /api/enhancements/images/{image_id}/   {level, style}  or  {preset}     [+ lighting] -> 202
+POST /api/enhancements/batches/{batch_id}/  {level, style}  or  {preset}     [+ lighting] -> 201
 ```
 
 - `level`: `auto` (default), `low`, `medium`, `high`.
 - `style`: `natural` (default), `dynamic`, `ai_max`.
+- **`lighting` (new): the person's own word on the lighting.** `auto` (default; what a request without the field means, byte for byte as before), `dark` or `light`. `dark` runs the **dark-photo
+  method** whatever the engine saw: the shadows are lifted first (a dark scene, the shadows of a back-lit subject while the bright background stays as photographed, or the whole frame) and noise is
+  then reduced. `light` runs the **light-photo method**: no lift is tried, only detail, blur, size and polish are worked on. It works with every style and level, and with `preset`
+  (`{"preset": "pro", "lighting": "dark"}`). It is also sent with an upload (section 3), and applies to **every photograph** of a batch request. Any other value is a **400**
+  `{"lighting": ["\"x\" is not a valid choice."]}` and nothing is queued. A forced method goes through every safety gate and limit an automatic lift does (identity, colour, halo, size, face geometry,
+  compression blocks, the time budget): when the lift is **not safe**, it is refused, the photograph keeps whatever else passed, and the result says so (below). `requested_lighting` on the
+  result shows what was asked. Only the adaptive engine (`ENHANCEMENT_RENDER_POLICY=adaptive_v1`) follows it; the older policies ignore it and their results carry no `lighting` block.
+  **Expect refusals on very small photographs:** one the server itself enlarges first (a short edge under a few hundred pixels) is never given a shadow lift, because the blocks of such a tiny JPEG
+  cannot be seen in the enlarged copy and a lift of its shadows came back as a blocky face; for those, "Dark photo" reads `used: "dark"`, `forced: true`, `brightened: false`, with the sentence above.
 - **`preset` (new, 2026-11-05): one field instead of two.** `preset` is a name for a `level` + `style` pair that already exists, so a client can send `{"preset": "pro"}` and need not know the pair:
 
   | `preset` | `level` | `style` |
@@ -393,13 +411,18 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}  or  {preset}     -> 
   from the requested level (the backend adapts to the image), so show what was
   actually applied.
 - **Dark-photo and light-photo method (new, 2026-11-03).** Every enhancement result (`GET /api/enhancements/results/{id}/`) carries
-  `lighting: {detected, exposure, scene_median, brightened}`, or `null` for a result made before this field existed, by the staged pipeline, or that failed.
+  `lighting: {detected, exposure, scene_median, brightened, used, forced}`, or `null` for a result made before this field existed, by the staged pipeline, or that failed.
   `detected` is `dark` (an under-exposed photo or a dark scene: the dark-photo method may brighten it) or `light` (normal, over-exposed or back-lit: no
   whole-frame brightening, only detail, deblur, upscale and polish; with the back-lit switch on (above) AI Enhance also lifts the shadows of a back-lit subject, and then `brightened` is `true` while `detected` stays `light`). `exposure` is the engine's own status (`low_light`, `low_light_subject`, `dark_scene`,
   `backlit_subject`, `normal`, `overexposed`), `scene_median` the median grey level of the frame (0-255) and `brightened` whether a brightening step really
   changed the photograph. Draw a badge from it: "Dark-photo method" / "Light-photo method"; for `detected: "dark"` with `brightened: false` say the photo was
-  recognised as dark but brightening was not safe to apply (the identity and quality checks refused it), never that it was brightened. The server decides on
-  its own; there is no way to force a method yet.
+  recognised as dark but brightening was not safe to apply (the identity and quality checks refused it), never that it was brightened.
+  **`used` and `forced` (new, with the request's `lighting`).** The block also carries `used` (`dark` or `light`: the method the engine **followed**) and `forced` (`true` when the person chose
+  Dark photo or Light photo and the engine followed it, `false` for `auto`). Draw the badge from `used`, and add "chosen by you" when `forced` ("Dark-photo method · chosen by you"). `used` is the
+  method that was followed, not a promise that it changed anything: **a forced `dark` whose lift was refused reads `used: "dark"`, `forced: true`, `brightened: false`**, and `enhancement_summary`
+  begins with one plain sentence about it: "As you asked, the dark-photo method brightened the photograph." / "Brightening was not safe to apply, so the dark-photo method changed nothing." /
+  "As you asked, the light-photo method was used: the brightness was kept." Show that sentence, not a success badge, when `forced` and `brightened` is `false` for a dark choice. A result made before
+  the choice existed has `forced: false` and `used` equal to `detected`. Without the person's word the server decides on its own, exactly as before.
 - **What was done (restoration).** A blurred face or a low-resolution photograph goes through the restoration chain when the server can
   run it (deblur, face restoration, upscale to HD; `docs/deployment/restoration-chain.md`). Every result carries three fields that
   say so, so a barely changed photograph is never presented as restored:

@@ -5,7 +5,7 @@ same result, so choosing the strongest setting on a photograph could change noth
 is tried and how strongly**; every safety gate of the validator (data consistency, colour, artifacts, identity, "did it improve") judges every candidate exactly as before, with ONE
 exception: AI Enhance accepts a deblur that raises a blurred face's detail by ``ADAPTIVE_AI_MAX_FACE_DEBLUR_MIN_DETAIL_GAIN`` (1.10) where the others need 1.25 (docs/evaluation/2026-11-05-dark-face-identity.md).
 
-* ``natural`` (the default, and what automatic enhancement after upload uses): keeps the photograph as it is. Operations the photograph's own defects call for, and a gentle
+* ``natural`` (the default, and what automatic enhancement after upload uses unless the upload asked for another: ``preset`` / ``style`` form fields): keeps the photograph as it is. Operations the photograph's own defects call for, and a gentle
   polish when nothing is wrong (if ``ADAPTIVE_POLISH_ENABLED``). A black-and-white photograph stays black and white.
 * ``dynamic``: the same, with the polish at its stronger "punch" setting, also for a deliberately dark photograph (polish never lifts shadows), and a black-and-white
   photograph is colourized (DDColor, if ``DDCOLOR_ENABLED``).
@@ -15,6 +15,11 @@ exception: AI Enhance accepts a deblur that raises a blurred face's detail by ``
 The strength scales the polish and decides how far the engine goes: ``low`` (Light) uses gentler blends and 0.6x polish; ``auto`` and ``medium`` leave the style as it is;
 ``high`` (Strong) polishes 1.4x, treats low noise as noise, lifts a dark scene whose subject is visible (a "dark scene" is otherwise left as photographed) and enlarges
 a photograph under 960 px. A colourization is never scaled (it is one prediction, already damped).
+
+The person's own word on the lighting (``lighting``, from the enhancement request or the upload) is a third axis. ``auto`` (the default) lets the analyzer decide, exactly as before.
+``dark`` runs the dark-photo method whatever the analyzer saw: the shadows are lifted first (the dark scene, the back-lit subject's shadows, or the whole frame, whichever the photograph is)
+and noise is treated from the "low" level. ``light`` runs the light-photo method: no lift is tried at all. Like every other choice here it changes only when an operation is tried: the validator's
+gates and limits judge a forced lift exactly as an automatic one, so a lift that is not safe is refused and the result says so.
 """
 from dataclasses import dataclass, replace
 
@@ -35,9 +40,10 @@ class Profile:
     upscale_below_edge: int = 0         # a photograph whose long edge is under this is enlarged (0: only when the analyzer calls it low resolution)
     variant_blends: tuple = (1.0, 0.65)     # the blends tried for a lift or a denoise, strongest first
     face_deblur_min_detail_gain: float | None = None    # a deblur chosen for a blurred face must raise the face's own detail this many times; None: the validator's own limit (ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN)
+    lighting: str = "auto"              # the person's own word: "dark" runs the dark-photo method whatever the analyzer saw, "light" the light-photo method; "auto" lets the analyzer decide
 
     def describe(self):
-        return {"style": self.style, "level": self.level, "colourize": self.colourize, "polish_style": self.polish_style, "polish_scale": self.polish_scale,
+        return {"lighting": self.lighting, "style": self.style, "level": self.level, "colourize": self.colourize, "polish_style": self.polish_style, "polish_scale": self.polish_scale,
                 "polish_dark_scenes": self.polish_dark_scenes, "lift_dark_scenes": self.lift_dark_scenes, "lift_backlit_subjects": self.lift_backlit_subjects,
                 "treat_low_noise": self.treat_low_noise,
                 "upscale_below_edge": self.upscale_below_edge, "variant_blends": list(self.variant_blends),
@@ -54,10 +60,12 @@ _STYLES = {
 }
 
 
-def profile_for(style, level="auto"):
-    """The profile for a style (``natural``, ``dynamic``, ``ai_max``, or the enum that carries one) and a strength (``auto``, ``low``, ``medium``, ``high``)."""
+def profile_for(style, level="auto", lighting="auto"):
+    """The profile for a style (``natural``, ``dynamic``, ``ai_max``, or the enum that carries one), a strength (``auto``, ``low``, ``medium``, ``high``) and the person's word on
+    the lighting (``auto``, ``dark``, ``light``; anything else is ``auto``: only those two words change the profile)."""
     style = str(getattr(style, "value", style) or "natural")
     level = str(getattr(level, "value", level) or "auto")
+    lighting = str(getattr(lighting, "value", lighting) or "auto")
     profile = replace(_STYLES.get(style, DEFAULT), style=style if style in _STYLES else "natural", level=level)
     if style == "ai_max":      # read here, not in _STYLES, so the setting is read when the engine runs
         profile = replace(profile, face_deblur_min_detail_gain=float(settings.ADAPTIVE_AI_MAX_FACE_DEBLUR_MIN_DETAIL_GAIN))
@@ -68,4 +76,10 @@ def profile_for(style, level="auto"):
                           upscale_below_edge=max(profile.upscale_below_edge, 960))
     if settings.ADAPTIVE_ALWAYS_ENHANCE:       # every photograph is enhanced: the finishing polish is stronger than the gentle one and may touch a dark scene
         profile = replace(profile, polish_scale=round(profile.polish_scale * float(settings.ADAPTIVE_FINISH_STRENGTH), 4), polish_dark_scenes=True)
+    if lighting == "dark":
+        # "Brightens shadows first, then reduces noise": a lift makes the noise of a dark photograph visible, so noise is denoised from the "low" level too. The lift itself is chosen in the
+        # router (a forced lift of a dark scene, of a back-lit subject's shadows, or of the whole frame), and the validator's gates and limits judge it exactly as an automatic one.
+        profile = replace(profile, lighting="dark", treat_low_noise=True)
+    elif lighting == "light":
+        profile = replace(profile, lighting="light", lift_dark_scenes=False, lift_backlit_subjects=False)       # the brightness is kept (the router tries no lift at all)
     return profile

@@ -79,6 +79,9 @@ class UploadBatch(models.Model):
     # Whether the photographs that pass the checks are enhanced without anyone asking (enhancement/auto.py). Decided once, when the batch is uploaded: the
     # form field auto_enhance, else the account setting. False for a batch made any other way, and for every batch that existed before this setting did.
     auto_enhance = models.BooleanField(default=False)
+    # What the automatic enhancement of this batch is asked to do: {"level", "style", "lighting"} as the upload's `preset` / `level` / `style` / `lighting` form fields resolved them
+    # (the same validation and the same preset rule as an enhancement request). Empty means what every batch did before the upload could say: automatic strength, natural, lighting by the engine.
+    auto_enhance_options = models.JSONField(default=dict, blank=True)
     # Set once, when the batch's automatic enhancements are all finished and the owner has been told ("N photos enhanced"): the owner is told once.
     auto_enhance_notified_at = models.DateTimeField(null=True, blank=True)
     retry_count = models.PositiveSmallIntegerField(default=0)

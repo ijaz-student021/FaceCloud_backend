@@ -758,13 +758,15 @@ class AdaptiveJobTests(__import__("enhancement.test_pipeline_regressions", froml
         client.force_authenticate(self.user)
         dark = self.process(portrait(brightness=0.12), runners={"run_low_light": lambda image, engine, blend: (exposure_lift(image, 1 + 4 * blend), [{"model": engine}])})
         lighting = client.get(f"/api/enhancements/results/{dark.pk}/").json()["lighting"]
-        self.assertEqual(set(lighting), {"detected", "exposure", "scene_median", "brightened"})
+        self.assertEqual(set(lighting), {"detected", "exposure", "scene_median", "brightened", "used", "forced"})
         self.assertEqual((lighting["detected"], lighting["brightened"]), ("dark", True))
+        self.assertEqual((lighting["used"], lighting["forced"]), ("dark", False))          # nobody chose: the method that was followed is the one that was detected
         self.assertIn(lighting["exposure"], ("low_light", "low_light_subject", "dark_scene"))
         self.assertLess(lighting["scene_median"], 90)
         light = self.process(portrait())
         lighting = client.get(f"/api/enhancements/results/{light.pk}/").json()["lighting"]
         self.assertEqual((lighting["detected"], lighting["exposure"], lighting["brightened"]), ("light", "normal", False))
+        self.assertEqual((lighting["used"], lighting["forced"]), ("light", False))
 
     def test_a_dark_photograph_whose_brightening_was_not_safe_is_dark_but_not_brightened(self):
         from rest_framework.test import APIClient

@@ -152,6 +152,26 @@ Otherwise the output is the original pixels, `original_preserved`, and `skipped_
 contrast and sharpened lightly." Polish never changes a photograph that has a defect, and with the flag off the engine is
 byte-for-byte what it was (`enhancement/test_adaptive_polish.py`, and the golden before/after run in the evaluation note).
 
+## 5b. The person's own word on the lighting (`lighting`: auto | dark | light; 2026-11-06)
+
+A request (`POST /api/enhancements/images/{id}/`, the batch request) and an upload (`preset` / `level` / `style` / `lighting` form fields, stored on `UploadBatch.auto_enhance_options` and used by that batch's
+automatic enhancement) may say how the photograph's lighting should be treated. It is a third axis next to the style and the strength (`adaptive/profile.py`, `Profile.lighting`), and like them it changes only
+**when an operation is tried**, never what the validator accepts.
+
+* `auto` (the default, and every request before this): the analyzer decides, byte for byte as before.
+* `dark`: the dark-photo method whatever the analyzer saw. The router (`_consider`, LOW_LIGHT) proposes the lift that fits the photograph: a dark scene or a low-light photograph the usual whole-frame lift; a
+  back-lit subject the **shadow** lift (the bright background stays as photographed) **whatever** `ADAPTIVE_BACKLIT_SUBJECT_LIFT` says, because the person asked for it; a photograph the analyzer calls well exposed the
+  whole-frame lift with the blends the automatic path uses. The step is `optional` (a refused lift does not hold the polish back), and noise is treated from the "low" level (`treat_low_noise`): the shadows are lifted
+  first, then noise is reduced.
+* `light`: the light-photo method. No lift is tried at all (`lift_dark_scenes` and `lift_backlit_subjects` off, and the router returns no LOW_LIGHT step), only detail, blur, size and polish.
+
+A forced lift goes through **every** gate and limit an automatic one does (data consistency, colour, halo, size, identity, face geometry, `compression_blocks` for a shadow lift, the time budget): there is no looser limit
+for a person's word. A forced lift the gates refuse is a refused candidate like any other: the photograph keeps whatever else passed, or is returned as it was (`original_preserved`). A forced `dark` on a well-exposed
+synthetic portrait is refused for `colour_drift` and `subject_not_clearer_or_too_bright` (`enhancement/test_lighting_choice.py`). The result never claims a method ran that did not: `adaptive.summary` begins with one sentence
+("As you asked, the dark-photo method brightened the photograph." / "Brightening was not safe to apply, so the dark-photo method changed nothing." / "The brightening model was not available, ..." / "As you asked,
+the light-photo method was used: the brightness was kept."), `adaptive.profile.lighting` and `requested_lighting` record the request, and the API's `lighting` block reports `used` (the method followed) and `forced`
+(`enhancement/outcome.py`). Only `adaptive_v1` follows the word; `enhance_bgr` hands it to the engine only when it is not `auto`, so the call for every other request is the call it always was.
+
 ## 5. Outcomes and the API contract
 
 `GET /api/enhancements/results/{id}/` now also returns:

@@ -102,20 +102,28 @@ class AdaptiveEnhancementRouter:
                 return None, "No colourization model is switched on."
             return Step(operation, engines, [{"name": "natural colour"}], "The photograph is black and white."), ""
         if operation == ops.LOW_LIGHT:
+            if profile.lighting == "light":
+                return None, ""                       # the person said this is a light photograph: its brightness is kept (the result's summary says so)
+            asked = profile.lighting == "dark"      # the person said this is a dark photograph: the dark-photo method runs whatever the analyzer saw; the validator's gates and limits still decide
+            said = " You said this is a dark photograph." if asked else ""
             dark_scene = report.exposure["status"] == "dark_scene"
-            if dark_scene and not profile.lift_dark_scenes:
+            if dark_scene and not profile.lift_dark_scenes and not asked:
                 return None, "The scene is dark but the subject is visible: left as photographed."
             if not dark_scene and report.exposure["status"] not in ("low_light", "low_light_subject"):
                 subject = getattr(report, "subject_exposure", None) or {}
-                if subject.get("backlit") and profile.lift_backlit_subjects and settings.ADAPTIVE_BACKLIT_SUBJECT_LIFT:
+                if subject.get("backlit") and (asked or (profile.lift_backlit_subjects and settings.ADAPTIVE_BACKLIT_SUBJECT_LIFT)):
                     # A crushed subject in a bright frame: a lift of the whole frame would change the sky or the window, so only the shadows are lifted (operations.shadow_weight).
+                    # A person who says the photograph is dark asks for it, whatever the server's switch for the automatic lift says.
                     shadows = [{"name": f"shadows {variant['blend']}", "blend": variant["blend"], "local": "shadows"} for variant in blends]
                     return Step(operation, engines, shadows, f"The subject is back-lit (its median is {subject['subject_median']} against {subject['frame_mean']} for the frame): only its shadows are lifted, "
-                                                              "the bright background is left as photographed.", optional=True), ""
+                                                              f"the bright background is left as photographed.{said}", optional=True), ""
+                if asked:
+                    # A photograph the analyzer calls well exposed, said to be dark: the whole frame is lifted the way a dark one is. Nothing here is looser than the automatic path.
+                    return Step(operation, engines, blends, f"Exposure: {report.exposure['status']} (judged on the {report.exposure['judged_on']}).{said}", optional=True), ""
                 return None, ""
             return Step(operation, engines, blends,
                         f"Exposure: {report.exposure['status']} (judged on the {report.exposure['judged_on']})."
-                        + (" The style or strength asked for lifts a dark scene." if dark_scene else ""), optional=dark_scene), ""
+                        + (" The style or strength asked for lifts a dark scene." if dark_scene else "") + said, optional=dark_scene or asked), ""
         if operation == ops.DENOISE:
             if report.noise["status"] not in (("low", "moderate", "high") if profile.treat_low_noise else ("moderate", "high")):
                 return None, ""
