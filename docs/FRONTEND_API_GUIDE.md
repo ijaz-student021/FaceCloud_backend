@@ -345,7 +345,9 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}  or  {preset}     -> 
   tried and how strongly; the safety checks are the same for every choice, so a stronger choice can still end in "nothing needed fixing" or "kept the original":
   - `natural` (and what an automatic enhancement uses): defect-driven; a black-and-white photograph **stays** black and white.
   - `dynamic`: a stronger polish, also for a deliberately dark photograph, and **a black-and-white photograph is colourized** (`operations_applied` contains `colourization`).
-  - `ai_max`: all of `dynamic`, a stronger polish, a dark scene with a visible subject may be lifted, light noise is treated, a photograph under 1280 px is enlarged, and a face deblur that raises
+  - `ai_max`: all of `dynamic`, a stronger polish, a dark scene with a visible subject may be lifted, **when the server switch `ADAPTIVE_BACKLIT_SUBJECT_LIFT` is on (off by default: on a small, heavily compressed photograph the lift can make the compression blocks visible), the crushed subject of a back-lit
+    photograph (a person against a window, a bright sky or a sunset) has its shadows lifted while the bright background is left as photographed** (`operations_applied` contains `low_light_enhancement`;
+    otherwise, and for the other styles, such a photograph is left as photographed), light noise is treated, a photograph under 1280 px is enlarged, and a face deblur that raises
     the face's detail 1.10 times is accepted (the other styles need 1.25; every other safety check is the same). A dim face (mean grey level 15 or more) now has its identity checked, so a face
     restoration is judged instead of skipped with "the source face is too dark"; it can still be refused (`face_geometry_changed`, identity, invented detail), and the result says which.
   - `level`: `low` = gentler (blends 0.65 and 0.4, polish x0.6); `auto`/`medium` = the style as it is; `high` = polish x1.4, a dark scene may be lifted, light noise is treated,
@@ -393,7 +395,7 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}  or  {preset}     -> 
 - **Dark-photo and light-photo method (new, 2026-11-03).** Every enhancement result (`GET /api/enhancements/results/{id}/`) carries
   `lighting: {detected, exposure, scene_median, brightened}`, or `null` for a result made before this field existed, by the staged pipeline, or that failed.
   `detected` is `dark` (an under-exposed photo or a dark scene: the dark-photo method may brighten it) or `light` (normal, over-exposed or back-lit: no
-  brightening, only detail, deblur, upscale and polish). `exposure` is the engine's own status (`low_light`, `low_light_subject`, `dark_scene`,
+  whole-frame brightening, only detail, deblur, upscale and polish; with the back-lit switch on (above) AI Enhance also lifts the shadows of a back-lit subject, and then `brightened` is `true` while `detected` stays `light`). `exposure` is the engine's own status (`low_light`, `low_light_subject`, `dark_scene`,
   `backlit_subject`, `normal`, `overexposed`), `scene_median` the median grey level of the frame (0-255) and `brightened` whether a brightening step really
   changed the photograph. Draw a badge from it: "Dark-photo method" / "Light-photo method"; for `detected: "dark"` with `brightened: false` say the photo was
   recognised as dark but brightening was not safe to apply (the identity and quality checks refused it), never that it was brightened. The server decides on

@@ -9,8 +9,8 @@ exception: AI Enhance accepts a deblur that raises a blurred face's detail by ``
   polish when nothing is wrong (if ``ADAPTIVE_POLISH_ENABLED``). A black-and-white photograph stays black and white.
 * ``dynamic``: the same, with the polish at its stronger "punch" setting, also for a deliberately dark photograph (polish never lifts shadows), and a black-and-white
   photograph is colourized (DDColor, if ``DDCOLOR_ENABLED``).
-* ``ai_max``: everything ``dynamic`` does, a stronger polish (x1.25), a dark scene whose subject is visible is lifted, noise is treated from the "low" level, and a photograph
-  whose long edge is under 1280 px is enlarged.
+* ``ai_max``: everything ``dynamic`` does, a stronger polish (x1.25), a dark scene whose subject is visible is lifted, the crushed subject of a back-lit photograph has its
+  shadows lifted (the bright background is left as photographed; only with ``ADAPTIVE_BACKLIT_SUBJECT_LIFT``, which is off by default), noise is treated from the "low" level, and a photograph whose long edge is under 1280 px is enlarged.
 
 The strength scales the polish and decides how far the engine goes: ``low`` (Light) uses gentler blends and 0.6x polish; ``auto`` and ``medium`` leave the style as it is;
 ``high`` (Strong) polishes 1.4x, treats low noise as noise, lifts a dark scene whose subject is visible (a "dark scene" is otherwise left as photographed) and enlarges
@@ -30,6 +30,7 @@ class Profile:
     polish_scale: float = 1.0           # multiplies the polish shares (the router caps the result)
     polish_dark_scenes: bool = False    # a deliberately dark photograph may be polished (contrast and sharpness only; polish never lifts shadows)
     lift_dark_scenes: bool = True       # a dark scene with a visible subject is treated as low light (the owner: "the darkness should be removed"; the validator's gates still decide)
+    lift_backlit_subjects: bool = False     # the crushed subject of a back-lit photograph (analyzer: subject_exposure.backlit) gets a SHADOW lift (ADAPTIVE_BACKLIT_SUBJECT_LIFT); AI Enhance only
     treat_low_noise: bool = False       # noise at the "low" level is denoised too
     upscale_below_edge: int = 0         # a photograph whose long edge is under this is enlarged (0: only when the analyzer calls it low resolution)
     variant_blends: tuple = (1.0, 0.65)     # the blends tried for a lift or a denoise, strongest first
@@ -37,7 +38,8 @@ class Profile:
 
     def describe(self):
         return {"style": self.style, "level": self.level, "colourize": self.colourize, "polish_style": self.polish_style, "polish_scale": self.polish_scale,
-                "polish_dark_scenes": self.polish_dark_scenes, "lift_dark_scenes": self.lift_dark_scenes, "treat_low_noise": self.treat_low_noise,
+                "polish_dark_scenes": self.polish_dark_scenes, "lift_dark_scenes": self.lift_dark_scenes, "lift_backlit_subjects": self.lift_backlit_subjects,
+                "treat_low_noise": self.treat_low_noise,
                 "upscale_below_edge": self.upscale_below_edge, "variant_blends": list(self.variant_blends),
                 "face_deblur_min_detail_gain": self.face_deblur_min_detail_gain}
 
@@ -47,8 +49,8 @@ DEFAULT = Profile()
 _STYLES = {
     "natural": DEFAULT,
     "dynamic": Profile(style="dynamic", colourize=True, polish_style="dynamic", polish_dark_scenes=True),
-    "ai_max": Profile(style="ai_max", colourize=True, polish_style="dynamic", polish_scale=1.25, polish_dark_scenes=True, lift_dark_scenes=True, treat_low_noise=True,
-                      upscale_below_edge=1280),
+    "ai_max": Profile(style="ai_max", colourize=True, polish_style="dynamic", polish_scale=1.25, polish_dark_scenes=True, lift_dark_scenes=True, lift_backlit_subjects=True,
+                      treat_low_noise=True, upscale_below_edge=1280),
 }
 
 

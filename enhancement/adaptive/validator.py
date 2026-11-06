@@ -264,8 +264,8 @@ class FinalImageQualityValidator:
         self.original = original            # the original's pixels (optional): the plain enlargement the geometry gate may compare an enlarged candidate with
         self._plain_enlargements = {}       # (width, height) -> the faces found on a plain bicubic enlargement of the original to that size
 
-    def evaluate(self, parent, candidate, operation, parent_report, expected_scale=1, candidate_report=None, refine=False):
-        """``{accepted, reasons, gates, metrics, improvement, change_cost}`` for one candidate. ``refine``: a detail-restoration candidate for a photograph with no defect (always-enhance)."""
+    def evaluate(self, parent, candidate, operation, parent_report, expected_scale=1, candidate_report=None, refine=False, local=None):
+        """``{accepted, reasons, gates, metrics, improvement, change_cost}`` for one candidate. ``refine``: a detail-restoration candidate for a photograph with no defect (always-enhance). ``local``: ``"shadows"`` for a lift of the shadows only (a back-lit subject)."""
         limits = self.limits
         lowlight = operation == "low_light_enhancement"
         polish = operation == "polish"
@@ -334,6 +334,11 @@ class FinalImageQualityValidator:
 
         candidate_report = candidate_report or self.analyzer.analyze(candidate)
         verdict["metrics"]["candidate_conditions"] = candidate_report.conditions
+        if lowlight and local == "shadows":
+            # A shadow lift raises what the shadows hold several times, so on a small, heavily compressed JPEG it makes the blocks of the compression visible (a blocky face: the library's ids 130, 182,
+            # 200; docs/evaluation/2026-11-05-backlit-subject-lift.md). The analyzer's own reading of the lifted photograph decides, as it does when it refuses to sharpen a compressed photograph.
+            blocks = candidate_report.compression
+            gate("compression_blocks", blocks["status"] != "heavy", {"status": blocks["status"], "blockiness": blocks["blockiness"]}, "lift_shows_compression_blocks")
         clip_growth = candidate_report.base["highlight_clipping_percent"] - parent_report.base["highlight_clipping_percent"]
         gate("highlights", clip_growth <= (limits.polish_clip_growth_max if polish else limits.highlight_clip_growth_max),
              {"clipping_growth": round(clip_growth, 2)}, "highlight_clipping_increased")

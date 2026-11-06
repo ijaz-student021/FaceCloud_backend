@@ -106,6 +106,12 @@ class AdaptiveEnhancementRouter:
             if dark_scene and not profile.lift_dark_scenes:
                 return None, "The scene is dark but the subject is visible: left as photographed."
             if not dark_scene and report.exposure["status"] not in ("low_light", "low_light_subject"):
+                subject = getattr(report, "subject_exposure", None) or {}
+                if subject.get("backlit") and profile.lift_backlit_subjects and settings.ADAPTIVE_BACKLIT_SUBJECT_LIFT:
+                    # A crushed subject in a bright frame: a lift of the whole frame would change the sky or the window, so only the shadows are lifted (operations.shadow_weight).
+                    shadows = [{"name": f"shadows {variant['blend']}", "blend": variant["blend"], "local": "shadows"} for variant in blends]
+                    return Step(operation, engines, shadows, f"The subject is back-lit (its median is {subject['subject_median']} against {subject['frame_mean']} for the frame): only its shadows are lifted, "
+                                                              "the bright background is left as photographed.", optional=True), ""
                 return None, ""
             return Step(operation, engines, blends,
                         f"Exposure: {report.exposure['status']} (judged on the {report.exposure['judged_on']})."
