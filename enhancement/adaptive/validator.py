@@ -78,6 +78,10 @@ class Limits:
     # generative face restoration (always strict) nor to polish (its own 0.02 gate), and a face that is no longer found is still a loss.
     landmark_pixel_floor: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_LANDMARK_PIXEL_FLOOR", 2.0)))
     geometry_ignores_tiny_faces: bool = field(default_factory=lambda: bool(getattr(settings, "ADAPTIVE_GEOMETRY_IGNORES_TINY_FACES", True)))   # a face under 48 px cannot be judged: it does not veto
+    # The original's faces are ITS largest ``max_faces`` and the candidate's report keeps ITS largest ``max_faces``: among faces of nearly the same size (a row of a group photograph) the two sets differ
+    # without any face being lost, and "a face that was there is no longer found" refused a harmless candidate (a 0.5 px blur, a JPEG pass, a 5 % brightness change). When the strict match finds a face
+    # missing, the faces the detector found BEYOND the candidate's report are searched too; every limit is unchanged and a face that is truly gone is still gone.
+    match_faces_beyond_report: bool = field(default_factory=lambda: bool(getattr(settings, "ADAPTIVE_MATCH_FACES_BEYOND_REPORT", True)))
     # An upscaled candidate's landmarks are found again on an interpolated image, so a little jitter is not a changed face: plain bicubic
     # enlargement of three 240 px portraits already shifted them by 0.019, 0.026 and 0.037 (measured on real photographs).
     face_landmark_shift_max_upscale: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX", 0.06)))
@@ -518,6 +522,9 @@ class FinalImageQualityValidator:
             kept = [face for face in faces if face.quality != "too_small"]
             tiny, faces = len(faces) - len(kept), kept
         shift = landmark_shift(faces, candidate_report.faces, scale) if faces else 0.0
+        beyond_report = list(getattr(candidate_report, "other_faces", None) or [])
+        if shift is None and beyond_report and self.limits.match_faces_beyond_report:
+            shift = landmark_shift(faces, list(candidate_report.faces) + beyond_report, scale)
         shift_max = self.limits.face_landmark_shift_max_upscale if operation == "super_resolution" else self.limits.face_landmark_shift_max
         if operation == "polish":
             shift_max = self.limits.polish_face_landmark_shift_max
