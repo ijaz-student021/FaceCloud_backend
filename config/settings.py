@@ -774,6 +774,11 @@ ADAPTIVE_LOWKEY_SKIP_LIFT = env.bool("ADAPTIVE_LOWKEY_SKIP_LIFT", default=True)
 # checked, and on a silhouette or a distant head its landmarks are guesses (12 % of the face width of shift on a sunset photograph, which refused the enlargement of the whole photograph).
 # docs/evaluation/2026-11-04-tiny-face-geometry.md. False restores the earlier behaviour.
 ADAPTIVE_GEOMETRY_IGNORES_TINY_FACES = env.bool("ADAPTIVE_GEOMETRY_IGNORES_TINY_FACES", default=True)
+# The same gate matches the original's five largest faces against the candidate's five largest. Among faces of nearly the same size (a row of a group photograph) the candidate's five largest are a different
+# set without any face being lost, and the gate refused harmless candidates as "face_lost": 11 of 24 (a 0.5 px blur, a JPEG pass, a 5 % brightness change, a mild sharpen) on group canvases of 8 to 24 faces,
+# none when the faces beyond the five are searched too. Only when the strict match reports a face lost are the faces the detector found beyond the candidate's report searched as well; every limit is
+# unchanged and a face that is truly gone is still gone. docs/evaluation/2026-11-07-group-photographs.md. False restores the earlier behaviour.
+ADAPTIVE_MATCH_FACES_BEYOND_REPORT = env.bool("ADAPTIVE_MATCH_FACES_BEYOND_REPORT", default=True)
 ADAPTIVE_DETAIL_MAX_PIXELS = env.int("ADAPTIVE_DETAIL_MAX_PIXELS", default=4_000_000)
 # The slow detail networks (Real-ESRGAN x4plus and 4x-UltraSharp), when they are only the FALLBACK after the compact one was refused (a style or strength that puts one first still gets it), are not run on a photograph above this many pixels: measured on an Apple M1 (GPU) about 3 s plus
 # 42 s per megapixel (19 s at 0.37 MP, 35 s at 0.75 MP, 44 s inside a whole run), minutes on a CPU, against 3.6 s per megapixel for the compact network. 500,000 keeps a default run of a 1000 px

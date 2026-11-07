@@ -116,6 +116,9 @@ class QualityReport:
     recommended_operations: list = field(default_factory=list)
     limitations: list = field(default_factory=list)
     base: dict = field(default_factory=dict)  # the classic analyze_image_quality result, for the guards that use it
+    # The faces the detector found beyond the ``max_faces`` largest that ``faces`` keeps, largest first. They are measured (the detector's boxes were observed anyway) but not reported, restored or counted
+    # (``face_count``, ``as_dict`` and the stored report are unchanged); the validator's geometry gate matches the original's faces against them too (see ``landmark_shift``).
+    other_faces: list = field(default_factory=list)
 
     @property
     def face_count(self):
@@ -268,13 +271,13 @@ class ImageQualityAnalyzer:
         try:
             detection = self._detector().detect(image)
         except Exception:  # a detector failure is "no faces measured", reported as a limitation, never a crash
-            return [], "face detection failed"
+            return [], [], "face detection failed"
         observations = []
         for box, score, landmarks in zip(detection.boxes, detection.scores, detection.landmarks):
             score = 1.0 if score is None else float(score)
             observations.append(self._observe_face(image, gray, box, min(score, 1.0) if score <= 1.0 else 1.0, landmarks))
         observations.sort(key=lambda face: face.box[2] * face.box[3], reverse=True)
-        return observations[: self.max_faces], ""
+        return observations[: self.max_faces], observations[self.max_faces:], ""
 
     @staticmethod
     def _subject_exposure(gray, scene_median, main):
@@ -304,9 +307,9 @@ class ImageQualityAnalyzer:
         height, width = image.shape[:2]
         gray = _luminance(image)
         base = analyze_image_quality(image)
-        faces, face_error = self._faces(image, gray)
+        faces, other_faces, face_error = self._faces(image, gray)
         report = QualityReport(width=width, height=height, exposure={}, noise={}, blur={}, resolution={}, compression={},
-                               colour={}, faces=faces, base=base)
+                               colour={}, faces=faces, base=base, other_faces=other_faces)
 
         # exposure: the face when there is one, the frame otherwise
         percentiles = base["luminance_percentiles"]
