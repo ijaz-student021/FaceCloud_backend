@@ -74,7 +74,7 @@ class DevEmailOutputTests(TestCase):
         self.assertRegex(lines[0], rf"^\[dev email\] password reset link: {FRONTEND}/reset-password/[^/\s]+/[^/\s]+$")
 
     def test_account_and_organization_invitation_links(self):
-        account = SimpleNamespace(role="moderator", email="inv@example.com")
+        account = SimpleNamespace(role="moderator", email="inv@example.com", organization_id=None)  # the invitation text reads organization_id
         organization = SimpleNamespace(
             organization=SimpleNamespace(name="Acme"), role="member", email="inv2@example.com",
             get_role_display=lambda: "Member",
