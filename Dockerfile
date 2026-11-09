@@ -10,8 +10,8 @@ RUN apt-get update \
 RUN useradd --create-home --uid 10001 facecloud
 WORKDIR /app
 
-COPY requirements.txt ./
-RUN pip install -r requirements.txt
+COPY requirements/ requirements/
+RUN pip install -r requirements/base.txt
 
 COPY --chown=facecloud:facecloud . .
 RUN mkdir -p /app/media /app/.runtime/models && chown -R facecloud:facecloud /app/media /app/.runtime
@@ -22,6 +22,5 @@ CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers
 
 FROM base AS gfpgan
 USER root
-COPY requirements-gfpgan.txt requirements-gfpgan-constraints.txt ./
-RUN pip install -r requirements-gfpgan.txt -c requirements-gfpgan-constraints.txt
+RUN pip install -r requirements/gfpgan.txt -c requirements/gfpgan-constraints.txt
 USER facecloud

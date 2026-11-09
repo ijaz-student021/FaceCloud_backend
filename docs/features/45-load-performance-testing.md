@@ -17,15 +17,15 @@ rest of Feature 45 were already in place; see `docs/FEATURES.md`.
   organization. Refuses to run unless `settings.DEBUG` is on, since every
   account's password is public in this file -- it must never be pointed at a
   real deployment. Idempotent (`get_or_create`), so it is safe to re-run.
-- **`requirements-loadtest.txt`** and **`loadtest/locustfile.py`** -- Locust
+- **`requirements/loadtest.txt`** and **`loadtest/locustfile.py`** -- Locust
   pulls in gevent and its own Flask-based web UI, unrelated to the Django
   app's runtime, so it gets its own isolated environment, the same way
-  `requirements-gfpgan.txt` and `requirements-training.txt` do for the GPU
+  `requirements/gfpgan.txt` and `requirements/training.txt` do for the GPU
   worker:
 
   ```bash
   python -m venv .runtime/venvs/loadtest
-  .runtime/venvs/loadtest/Scripts/pip install -r requirements-loadtest.txt
+  .runtime/venvs/loadtest/Scripts/pip install -r requirements/loadtest.txt
   venv/Scripts/python manage.py seed_loadtest_users --count 20   # main venv, DEBUG only
   .runtime/venvs/loadtest/Scripts/locust -f loadtest/locustfile.py --host http://127.0.0.1:8000
   ```

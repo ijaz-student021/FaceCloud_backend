@@ -605,7 +605,7 @@ LOCATION_MAX_DISTANCE_KM = env.float("LOCATION_MAX_DISTANCE_KM", default=50.0)
 if not 1.0 <= LOCATION_MAX_DISTANCE_KM <= 500.0:
     raise ImproperlyConfigured("LOCATION_MAX_DISTANCE_KM must be between 1 and 500.")
 # Search by what is in the photograph (search/semantic/): "beach", "red car", "birthday cake". OFF by default, and it needs the optional libraries
-# (requirements-semantic.txt) and the approved model files in SEMANTIC_SEARCH_MODEL_DIR; the weights are checked against SEMANTIC_SEARCH_MODEL_SHA256 before they
+# (requirements/semantic.txt) and the approved model files in SEMANTIC_SEARCH_MODEL_DIR; the weights are checked against SEMANTIC_SEARCH_MODEL_SHA256 before they
 # are loaded, and nothing is downloaded at run time. The model, its licence and the measured quality are recorded in docs/model-licenses/semantic-search-model.md
 # and docs/evaluation/2026-10-22-semantic-search.md. English queries only. SEMANTIC_SEARCH_MIN_SCORE is the lowest cosine similarity a result may have.
 SEMANTIC_SEARCH_ENABLED = env.bool("SEMANTIC_SEARCH_ENABLED", default=False)
@@ -1588,6 +1588,9 @@ EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
 EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True").lower() == "true"
+# Seconds to wait for the SMTP server (the connection and each command). Without it Django waits as long as the operating system does, and a sign-up request
+# would hang until then; with it the request answers 503 and the log says why. The console and file backends ignore it. docs/deployment/smtp-email.md
+EMAIL_TIMEOUT = env.int("EMAIL_TIMEOUT", default=10)
 
 SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "False").lower() == "true"
 SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "False").lower() == "true"

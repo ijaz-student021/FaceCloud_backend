@@ -21,7 +21,7 @@ this shows that each model **runs and its stage is accepted by the guards**, not
 EDSR failed in the new environment (`cv2.dnn_superres` had no `DnnSuperResImpl_create`). Cause: `opencv-python` and
 `opencv-contrib-python-headless` were both installed (gfpgan and basicsr require the plain one) and overwrite each other's
 `cv2` files. Removing the plain package and reinstalling the contrib one restored EDSR; the gfpgan stack still loads. The
-steps are now in `requirements-gfpgan.txt`.
+steps are now in `requirements/gfpgan.txt`.
 
 ## What this does not show
 

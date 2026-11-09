@@ -85,7 +85,7 @@ To switch the models on for a demonstration, set in `.env`: `RETINEXFORMER_ENABL
 PyTorch 2.14 is installed in the main environment (`venv`, Python 3.14) and in the isolated worker environment
 (`.runtime/venvs/gfpgan`, Python 3.12). Every adapter above runs in either, except GFPGAN and the RetinaFace
 detector, which need `facexlib`/`gfpgan` and so the worker. After building the worker environment from
-`requirements-gfpgan.txt`, follow its OpenCV step: plain `opencv-python` overwrites the contrib build and breaks the
+`requirements/gfpgan.txt`, follow its OpenCV step: plain `opencv-python` overwrites the contrib build and breaks the
 OpenCV super-resolution module. Devices: Apple MPS or CUDA when present, otherwise CPU; an explicitly configured
 device that is missing is an error, never a silent move.
 

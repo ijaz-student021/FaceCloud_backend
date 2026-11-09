@@ -274,7 +274,7 @@ context, decision, and consequences. Superseded decisions remain for history.
 ## ADR-023 — The worker environment is the backend's requirements plus the model stack
 
 - **Status:** Accepted
-- **Decision:** `requirements-gfpgan.txt` includes `requirements.txt` instead of
+- **Decision:** `requirements/gfpgan.txt` includes `requirements/base.txt` (then the root `requirements.txt`) instead of
   repeating it. BasicSR 1.4.2 imports a module torchvision removed in 0.17;
   `enhancement/gfpgan.py` supplies the one missing name at import time, because
   Django 6 needs Python 3.12 and no older torchvision exists for it.

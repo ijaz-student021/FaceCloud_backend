@@ -83,7 +83,7 @@ one), as described in `docs/features/10-12-image-enhancement.md`:
 ```bash
 python3.11 -m venv .runtime/venvs/gfpgan
 .runtime/venvs/gfpgan/bin/pip install <CUDA build of torch 2.1.2 and torchvision 0.16.2>
-.runtime/venvs/gfpgan/bin/pip install -r requirements-gfpgan.txt
+.runtime/venvs/gfpgan/bin/pip install -r requirements/gfpgan.txt
 .runtime/venvs/gfpgan/bin/python manage.py check_gfpgan --load-model
 ```
 
@@ -248,7 +248,7 @@ python3 -m venv venv && venv/bin/pip install -r requirements.txt torch
 
 # 2. The worker's environment: everything above plus the GFPGAN stack.
 python3.12 -m venv .runtime/venvs/gfpgan
-.runtime/venvs/gfpgan/bin/pip install -r requirements-gfpgan.txt
+.runtime/venvs/gfpgan/bin/pip install -r requirements/gfpgan.txt
 
 # 3. Checkpoints go in .runtime/models/ (GFPGAN's two helpers in gfpgan/weights/).
 #    Every file must match docs/gpu/model_manifest.json:

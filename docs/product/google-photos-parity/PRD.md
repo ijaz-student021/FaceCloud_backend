@@ -166,7 +166,7 @@ Suites on the code commits (2026-10-22, local): **2937 tests, OK on SQLite (45 s
 
 ### Decisions that are still the owner's
 
-1. ~~Approve the search-by-meaning model~~: **approved by the owner on 2026-10-22**. The feature is still off by default; it is switched on per server with `SEMANTIC_SEARCH_ENABLED=True`, the model files, their SHA-256 and `pip install -r requirements-semantic.txt`.
+1. ~~Approve the search-by-meaning model~~: **approved by the owner on 2026-10-22**. The feature is still off by default; it is switched on per server with `SEMANTIC_SEARCH_ENABLED=True`, the model files, their SHA-256 and `pip install -r requirements/semantic.txt`.
 2. **The order of the open pull requests** (#109 collages removal, #110 automatic enhancement, #111 face-check fix, and this one, whose base is `feat/auto-enhance-after-upload`).
 3. **Retention** (`TRASH_RETENTION_DAYS=30`), the **20-face cap**, and the **album limits** are settings; change them if the numbers are wrong for the product.
 4. Unchanged from before this pack: whether automatic enhancement should apply `level=high`/`dynamic`, and whether to start a Celery worker in `.env`.

@@ -4,7 +4,7 @@ Run with the isolated loadtest environment (never the main venv -- Locust
 pulls in gevent and its own web UI, unrelated to the Django app runtime):
 
     python -m venv .runtime/venvs/loadtest
-    .runtime/venvs/loadtest/Scripts/pip install -r requirements-loadtest.txt
+    .runtime/venvs/loadtest/Scripts/pip install -r requirements/loadtest.txt
     venv/Scripts/python manage.py seed_loadtest_users --count 20   # main venv, DEBUG only
     .runtime/venvs/loadtest/Scripts/locust -f loadtest/locustfile.py --host http://127.0.0.1:8000
 

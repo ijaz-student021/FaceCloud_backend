@@ -110,4 +110,4 @@ fields are in `quality_before.blur` (additive).
 
 Study scripts were kept outside the repository; their raw rows contain only
 file names and numbers. The commands and outputs are in
-`fix-validation/2026-10-14/`.
+`docs/evidence/fix-validation/2026-10-14/`.

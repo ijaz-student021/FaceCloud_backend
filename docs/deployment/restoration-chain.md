@@ -36,7 +36,7 @@ restoration is applied.
 | upscale | `.runtime/models/RealESRGAN_x4plus.pth` | 67 MB | `4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1` | `HD_RESTORATION_ENABLED`, `REALESRGAN_MODEL_PATH`, `REALESRGAN_MODEL_SHA256`, `HD_RESTORATION_DEVICE`, `HD_RESTORATION_OUTPUT_SCALE` |
 | face_restore | `.runtime/models/codeformer/codeformer.pth` (or GFPGAN) | | `1009e537...684b7` | `CODEFORMER_ENABLED`, `CODEFORMER_MODEL_PATH`, `GFPGAN_ENABLED`; the production guard refuses these unless `NONCOMMERCIAL_MODELS_ACKNOWLEDGED=True` |
 
-Also PyTorch in the worker environment (`requirements-gfpgan.txt` / the worker image), and YuNet (face detection) for the analysis.
+Also PyTorch in the worker environment (`requirements/gfpgan.txt` / the worker image), and YuNet (face detection) for the analysis.
 
 ```sh
 python scripts/fetch_models.py --only nafnet,realesrgan     # downloads and checks each file against its pinned SHA-256
