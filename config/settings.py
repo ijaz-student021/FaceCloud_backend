@@ -1624,6 +1624,9 @@ EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
 EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True").lower() == "true"
+# Seconds to wait for the SMTP server (the connection and each command). Without it Django waits as long as the operating system does, and a sign-up request
+# would hang until then; with it the request answers 503 and the log says why. The console and file backends ignore it. docs/deployment/smtp-email.md
+EMAIL_TIMEOUT = env.int("EMAIL_TIMEOUT", default=10)
 
 SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "False").lower() == "true"
 SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "False").lower() == "true"
