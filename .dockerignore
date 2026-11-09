@@ -12,6 +12,5 @@ db.sqlite3
 __pycache__/
 *.pyc
 .ruff_cache/
-audit-output/
-fix-validation/
+docs/evidence/
 gfpgan/weights/

@@ -48,7 +48,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-      - run: pip install -r requirements.txt -r requirements-test.txt
+      - run: pip install -r requirements/base.txt -r requirements/test.txt
       - run: pip check
       - name: Lint (unused imports and variables, undefined names)
         run: pip install ruff && ruff check .
@@ -75,7 +75,7 @@ jobs:
           cache: pip
       - run: pip install pip-audit bandit
       - name: Known vulnerabilities in dependencies
-        run: pip-audit -r requirements.txt --progress-spinner off
+        run: pip-audit -r requirements/base.txt --progress-spinner off
       # enhancement/archs is vendored third-party network code (licences in its file headers); it is not scanned.
       # Every application package, not a hand-kept subset: the previous list had
       # fallen behind and left moderation, organizations, events and
@@ -132,7 +132,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-      - run: pip install -r requirements.txt
+      - run: pip install -r requirements/base.txt
       - name: Generate throwaway secrets
         run: |
           for name in DJANGO_SECRET_KEY IDENTITY_EMBEDDING_KEY IMAGE_ENCRYPTION_KEY DB_PASSWORD EMAIL_HOST_PASSWORD; do

@@ -3,7 +3,7 @@
 `scripts/benchmark_lowlight.py`: 12 real photographs (11 from an earlier held-out set, plus a portrait),
 each darkened to 40%, 28% and 18% brightness with sensor-like noise (36 dark copies), enhanced under six
 configurations and scored against the clean original. CPU only (Apple M1). Raw rows and the table:
-`fix-validation/2026-10-15/lowlight_benchmark/`. The photos are not committed.
+`docs/evidence/fix-validation/2026-10-15/lowlight_benchmark/`. The photos are not committed.
 
 | Configuration | Exposure error (lower) | Structure SSIM (higher) | Colour error (lower) | Noise | Seconds |
 |---|---|---|---|---|---|

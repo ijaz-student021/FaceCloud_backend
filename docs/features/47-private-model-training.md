@@ -20,7 +20,7 @@ A deterministic 90/10 split is saved in `split.json` for reproducibility.
 
 ```powershell
 .\venv\Scripts\Activate.ps1
-pip install -r requirements-training.txt
+pip install -r requirements/training.txt
 
 python scripts\train_facecloud_curve_model.py `
   --dataset "C:\Users\csbah\Downloads\FaceCloud_dataset" `

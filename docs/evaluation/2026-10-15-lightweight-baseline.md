@@ -5,7 +5,7 @@ Taken under the default `lightweight_v1` policy (the learned models are installe
 of them a portrait; they are not committed), each degraded in eight known ways, run
 through the real `enhance_bgr` (level `auto`, style `natural`, longest edge reduced to
 1024 px), CPU only, Apple M1. SSIM is to the clean photograph, so a rise means the
-output moved toward it. Raw rows: `fix-validation/2026-10-15/cleanup/lightweight_baseline/`.
+output moved toward it. Raw rows: `docs/evidence/fix-validation/2026-10-15/cleanup/lightweight_baseline/`.
 Images are not kept.
 
 | Case | SSIM before | SSIM after | Mean time | Photos left untouched | Reading |

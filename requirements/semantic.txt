@@ -2,7 +2,7 @@
 #
 # Install into the worker's environment, after PyTorch and torchvision (which the enhancement models already need):
 #
-#   pip install -r requirements-semantic.txt
+#   pip install -r requirements/semantic.txt
 #
 # Then put the approved model files in SEMANTIC_SEARCH_MODEL_DIR (docs/model-licenses/semantic-search-model.md says which, from where, and their SHA-256).
 # Versions are the ones the evaluation in docs/evaluation/2026-10-22-semantic-search.md was run with. The model is loaded from that folder only: nothing

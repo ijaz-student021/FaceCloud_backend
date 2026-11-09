@@ -33,10 +33,10 @@ Checked on 2026-10-22. Every statement below was read from the source named next
 
 To install: download exactly that revision into `SEMANTIC_SEARCH_MODEL_DIR` (for example
 `huggingface_hub.snapshot_download("timm/ViT-B-16-SigLIP", revision="41f575766f40e752fdd1383e9565b7f02388c1c4", local_dir=...)`), set
-`SEMANTIC_SEARCH_MODEL_SHA256` to the weights checksum above, install `requirements-semantic.txt`, set `HF_HUB_OFFLINE=1`. The application loads from the folder only and
+`SEMANTIC_SEARCH_MODEL_SHA256` to the weights checksum above, install `requirements/semantic.txt`, set `HF_HUB_OFFLINE=1`. The application loads from the folder only and
 refuses weights whose SHA-256 differs.
 
-## The libraries it needs (`requirements-semantic.txt`, optional, not imported while the feature is off)
+## The libraries it needs (`requirements/semantic.txt`, optional, not imported while the feature is off)
 
 | Package | Version tested | Licence (from the installed package metadata) |
 |---|---|---|
@@ -51,7 +51,7 @@ refuses weights whose SHA-256 differs.
 | safetensors | 0.8.0 | Apache-2.0 |
 | huggingface_hub | 2.2.0 | Apache-2.0 |
 
-PyTorch and torchvision are already required by the enhancement models. `pip-audit -r requirements-semantic.txt --no-deps` reported no known vulnerabilities on 2026-10-22.
+PyTorch and torchvision are already required by the enhancement models. `pip-audit -r requirements/semantic.txt --no-deps` reported no known vulnerabilities on 2026-10-22.
 
 ## Models that were looked at and not recommended
 

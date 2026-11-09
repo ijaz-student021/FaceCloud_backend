@@ -430,7 +430,7 @@ budget before enhancement and the result says so (`input_pixel_budget`,
 - `enhancement/services.py`
 - `enhancement/zero_dce.py`
 - `scripts/export_zero_dce_onnx.py`
-- `requirements-model-export.txt`
+- `requirements/model-export.txt`
 - `enhancement/tasks.py`
 - `enhancement/serializers.py`
 - `enhancement/views.py`
@@ -682,10 +682,10 @@ Implemented controls:
 ### Isolated worker setup
 
 Use the separate Python 3.11 environment. Install the authorized CPU or CUDA
-PyTorch build matching `requirements-gfpgan-constraints.txt`, then run:
+PyTorch build matching `requirements/gfpgan-constraints.txt`, then run:
 
 ```powershell
-python -m pip install -r requirements-gfpgan.txt
+python -m pip install -r requirements/gfpgan.txt
 ```
 
 Verify the checkpoint:

@@ -91,25 +91,39 @@ person (`GET /api/identities/groups/suggested-merges/`); nothing is merged for t
 
 ## Layout
 
+Project files and folders:
+
 ```
-config/            settings, URL routing, Celery app, storage encryption
-accounts/          users, JWT authentication, link-verified signup, roles, audit events
+config/            settings, URL routing, Celery app, storage encryption, the production guard
+requirements/      every pip requirements file: base (runtime), test, and the optional model stacks (requirements/README.md)
+scripts/           development stack (dev_up.sh), defence demo, model fetch and validation, evaluation and GPU kits
+docs/              feature docs, runbooks, decisions, evaluation reports; raw evidence of past fixes in docs/evidence/ (docs/README.md)
+loadtest/          Locust load test
+notebooks/         model training notebook
+.github/           continuous integration
+Dockerfile  docker-compose.staging.yml  gunicorn.conf.py   container image and server settings
+.env.example  .env.demo.example  .env.staging.example      example environment files (copy to .env; never commit real values)
+```
+
+Django apps (one folder each):
+
+```
+accounts/          users, JWT authentication, link-verified signup, roles, invitations, audit events
+organizations/     multi-tenant workspaces, membership, invitations, audit trail
 uploads/           ingestion, storage, preprocessing
 validation/        face detection and validation
 quality_control/   quality scoring and decisions
 enhancement/       enhancement pipeline, model adapters, identity guard
 duplicates/        perceptual-hash duplicate detection
 identities/        face embeddings, identity groups, encrypted storage, search by photo
-organizations/     multi-tenant workspaces, membership, invitations, audit trail
 moderation/        organization-scoped review queue, decisions, reports, batch actions
 privacy/           consent, erasure, retention, personal and organization export, cleanup
 sharing/           expiring, revocable share links
-events/            automatic event/timeline grouping of a user's photos
 thumbnails/        cached, encrypted-at-rest JPEG previews of uploaded photos
-reports/  downloads/  notifications/  activity/  operations/
-scripts/           worker launcher, dataset audit, model training and export
-notebooks/         model training notebooks
-docs/              feature docs, architecture, decisions, testing guide
+albums/  places/  events/  memories/  camera/   albums, photograph locations, automatic event grouping, memories, live camera sessions
+search/            top-bar search across photos, people and batches (and optional search by meaning)
+reports/  downloads/  notifications/  activity/  contact/   processing reports, download packages, notifications, activity timeline, contact form
+security/  operations/   security events and alert rules; administrator monitoring (health, queue, audit feed)
 ```
 
 ## Getting started
@@ -119,7 +133,7 @@ Requirements: Python 3.12+, PostgreSQL, Redis (Docker is the easiest way).
 ```powershell
 python -m venv venv
 .\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements/base.txt
 Copy-Item .env.example .env      # then edit database credentials and secrets
 python manage.py migrate
 python manage.py createsuperuser   # the first administrator
@@ -282,7 +296,7 @@ request, and weekly (to catch vulnerabilities published later):
 | Job | Checks |
 |---|---|
 | Tests and schema | `ruff check .` (unused imports and variables, undefined names), `check`, no missing migrations, OpenAPI schema with zero warnings, the test suite (without the `slow` tests) against PostgreSQL |
-| Dependency audit and static analysis | `pip-audit` on `requirements.txt`; `bandit` failing on medium or high findings |
+| Dependency audit and static analysis | `pip-audit` on `requirements/base.txt`; `bandit` failing on medium or high findings |
 | Production configuration | The app refuses an unsafe production environment, and starts and passes `check --deploy` with a correct one |
 
 [`.github/dependabot.yml`](.github/dependabot.yml) opens weekly update pull
@@ -309,7 +323,7 @@ python manage.py check && python manage.py makemigrations --check --dry-run
 python manage.py spectacular --file /tmp/schema.yml --validate --fail-on-warn
 python manage.py test
 bandit -r <the package list in .github/workflows/ci.yml> -x "*/tests.py,*/test_*.py,*/migrations,enhancement/archs" -ll
-pip-audit -r requirements.txt
+pip-audit -r requirements/base.txt
 ```
 
 `ruff check . --fix` removes unused imports for you.
@@ -410,12 +424,14 @@ Then run `python manage.py check --deploy` for Django's own checks.
 
 ## Documentation
 
+- [`docs/README.md`](docs/README.md): index of the documentation folders
 - [`docs/FEATURES.md`](docs/FEATURES.md): feature catalogue and status
 - [`docs/SECURITY_AND_PERFORMANCE_REVIEW.md`](docs/SECURITY_AND_PERFORMANCE_REVIEW.md): dependency audit, static analysis and performance findings, and how to repeat them
 - [`docs/FRONTEND_API_GUIDE.md`](docs/FRONTEND_API_GUIDE.md): how a frontend uses the API (auth, upload and polling, thumbnails, enhancement, people, events, sharing, organizations, moderator area, notifications)
 - [`docs/DATASET_TERMS.md`](docs/DATASET_TERMS.md): the third-party face dataset we were granted, its conditions and how the project keeps to them
 - [`docs/GPU_SESSION_RUNBOOK.md`](docs/GPU_SESSION_RUNBOOK.md): preparing, running and deciding a GPU evaluation session (preflight, model manifest, stage comparison)
 - [`docs/API_ERRORS.md`](docs/API_ERRORS.md): error shapes the frontend can rely on
+- [`docs/deployment/smtp-email.md`](docs/deployment/smtp-email.md): what real email delivery needs (SMTP account, sender, settings, a test)
 - [`docs/features`](docs/features): per-feature design, verification and limits
 - [`docs/structured`](docs/structured): architecture, decisions, tasks
 - [`docs/12_DAY_COMPLETION_PLAN.md`](docs/12_DAY_COMPLETION_PLAN.md): delivery plan

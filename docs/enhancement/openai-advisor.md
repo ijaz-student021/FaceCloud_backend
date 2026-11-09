@@ -144,13 +144,13 @@ text of a provider error is never stored.
 |---|---|
 | Unit and API tests (`enhancement/test_advisor.py`, 70 tests); replies **mocked** | pass on SQLite and on disposable PostgreSQL |
 | **Real `openai` SDK 3.31 against a scripted local server** (4 tests, `enhancement/fake_openai.py`) | the SDK serialises exactly our request (`store:false`, strict `json_schema`, `input_image` data URL, `max_output_tokens`, bearer key, no other fields); real exceptions map correctly (429 with `Retry-After`, quota, 401, 404, 400, 500/503, timeout, connection refused); the SDK does not retry by itself; refusal, `incomplete` and non-JSON replies are recognised |
-| Real Redis + 3 Celery worker processes + PostgreSQL (`scripts/check_advisor_queue.py`, evidence in `fix-validation/2026-10-15/phaseC/queue/`) | 5/5 scenarios pass: 6 jobs on 3 processes with a limit of 2 peaked at exactly 2 provider requests; a 429 was retried and served while a 401 fell back and the other four were unaffected (7 provider requests, ledger matches); one job delivered twice sent once; cancelling a run left every job cancelled and published nothing; no identity or file name in any request |
+| Real Redis + 3 Celery worker processes + PostgreSQL (`scripts/check_advisor_queue.py`, evidence in `docs/evidence/fix-validation/2026-10-15/phaseC/queue/`) | 5/5 scenarios pass: 6 jobs on 3 processes with a limit of 2 peaked at exactly 2 provider requests; a 429 was retried and served while a 401 fell back and the other four were unaffected (7 provider requests, ledger matches); one job delivered twice sent once; cancelling a run left every job cancelled and published nothing; no identity or file name in any request |
 | Real threads on PostgreSQL (6 jobs, limit 2; two workers on one job) | peak 2, never more; one request, `attempts == 1` |
 | Network | in the mocked tests `socket.connect` is blocked; the SDK and queue checks talk only to 127.0.0.1 |
 | **Request to OpenAI itself** | **never made, pending**: no key, no authorised test images, no cost cap. Not verified: that OpenAI accepts this exact strict schema (`minimum`/`maximum` on numbers are documented as supported for non-fine-tuned models), that the chosen model accepts `detail`, and how the model behaves |
 
 Local-only recipe on the 16 held-out photographs
-(`fix-validation/2026-10-15/phaseC/local_only/`): 2 changed (a light highlight
+(`docs/evidence/fix-validation/2026-10-15/phaseC/local_only/`): 2 changed (a light highlight
 recovery, -13.95), 14 unchanged, 5 carry `dark_photo_not_lifted`; about 16 ms per
 render at 768 px (maximum 107 ms), peak process memory 220 MB. **Advisor-assisted
 comparison: pending.** The set has no portraits (see the Phase A correction).
