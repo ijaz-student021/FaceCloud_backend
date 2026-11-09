@@ -402,11 +402,11 @@ class ResultAddressTests(SimpleTestCase):
 
 
 class JudgeTests(SimpleTestCase):
-    def judge(self, result, analyzer=None, identity=None, source=SOURCE):
+    def judge(self, result, analyzer=None, identity=None, source=SOURCE, verify_identity=True):
         analyzer = analyzer or analyzer_with()
         identity = identity or StubIdentity()
         checkable = cloud._checkable_faces(analyzer.analyze(source))
-        return cloud.judge(source, result, identity, analyzer, checkable), identity
+        return cloud.judge(source, result, identity, analyzer, checkable, verify_identity=verify_identity), identity
 
     def declined(self, result, **kwargs):
         with self.assertRaises(cloud.CloudDeclined) as caught:
@@ -477,6 +477,16 @@ class JudgeTests(SimpleTestCase):
     def test_a_face_that_cannot_be_verified_is_declined_not_taken_on_faith(self):
         self.assertEqual(self.declined(enlarged(), identity=StubIdentity("inconclusive", None)), "identity_unverifiable")
 
+    def test_an_owner_who_never_agreed_is_judged_by_geometry_alone_and_no_embedding_is_made(self):
+        (readings, _small, _after, checked), identity = self.judge(enlarged(), identity=StubIdentity("failed", 0.1, available=False), verify_identity=False)
+        self.assertIsNone(checked)
+        self.assertEqual(readings["identity"], {"status": "not_checked", "reason": "no_consent"})
+        self.assertEqual(readings["landmark_shift"], 0.0)
+        self.assertEqual(identity.restoring, [])                                           # the identity model was never asked
+        self.assertEqual(self.declined(enlarged(), analyzer=ShiftingAnalyzer(20), verify_identity=False), "face_geometry_changed")
+        self.assertEqual(self.declined(enlarged(), analyzer=ShiftingAnalyzer(None), verify_identity=False), "face_lost")
+        self.assertEqual(self.declined(cv2.resize(SOURCE, (960, 1100)), verify_identity=False), "aspect_changed")
+
     def test_a_photograph_without_a_judgeable_face_needs_no_face_checks(self):
         (readings, _small, report_after, checked), identity = self.judge(enlarged(), analyzer=analyzer_with(None), identity=StubIdentity("failed", 0.1))
         self.assertIsNone(checked)
@@ -493,10 +503,10 @@ class JudgeTests(SimpleTestCase):
 
 
 class EnhanceTests(ServerCase):
-    def run_enhance(self, behaviours=None, analyzer=None, identity=None, checkpoint=None, **overrides):
+    def run_enhance(self, behaviours=None, analyzer=None, identity=None, checkpoint=None, consent=True, **overrides):
         server = self.serve(behaviours, **overrides)
         with patch("enhancement.adaptive.service.IdentityChecker", return_value=identity or StubIdentity()):
-            outcome = cloud.enhance(SOURCE, "auto", "natural", allow_biometric_processing=True, analyzer=analyzer or analyzer_with(), checkpoint=checkpoint)
+            outcome = cloud.enhance(SOURCE, "auto", "natural", allow_biometric_processing=consent, analyzer=analyzer or analyzer_with(), checkpoint=checkpoint)
         return outcome, server
 
     def declined(self, *args, **kwargs):
@@ -547,6 +557,29 @@ class EnhanceTests(ServerCase):
         self.assertEqual(parameters["quality_comparison"]["reference_dimensions"], [480, 640])
         for key in ("quality_report", "final_quality_report", "profile", "candidates", "seconds", "unresolved_defects", "operations_skipped"):
             self.assertIn(key, parameters["adaptive"])
+
+    def test_an_owner_who_never_agreed_gets_the_result_unverified_and_the_record_says_so(self):
+        identity = StubIdentity(available=False)
+        (image, _level, parameters), server = self.run_enhance(consent=False, identity=identity, CLOUD_ENHANCEMENT_REQUIRES_CONSENT=False)
+        self.assertEqual(len(server.uploads()), 1)
+        self.assertEqual(image.shape[:2], (1280, 960))
+        self.assertEqual(identity.restoring, [])
+        block = parameters["identity_verification"]
+        self.assertEqual((block["state"], block["verified"], block["status"]), ("not_verifiable", False, "unavailable"))
+        self.assertIn("not allowed", block["notice"])
+        self.assertNotIn("faces were checked", parameters["adaptive"]["summary"])
+        recorded = parameters["cloud_enhancement"]
+        self.assertEqual((recorded["face_consent"], recorded["identity_checked"]), (False, False))
+        self.assertEqual(recorded["gates"]["identity"], {"status": "not_checked", "reason": "no_consent"})
+
+    def test_an_owner_who_agreed_is_still_verified_with_the_requirement_off(self):
+        (_image, _level, parameters), _server = self.run_enhance(CLOUD_ENHANCEMENT_REQUIRES_CONSENT=False)
+        self.assertEqual((parameters["cloud_enhancement"]["face_consent"], parameters["cloud_enhancement"]["identity_checked"]), (True, True))
+        self.assertEqual(parameters["identity_verification"]["state"], "verified")
+
+    def test_an_owner_who_never_agreed_is_still_held_to_the_geometry(self):
+        error = self.declined(consent=False, identity=StubIdentity(available=False), analyzer=ShiftingAnalyzer(20), CLOUD_ENHANCEMENT_REQUIRES_CONSENT=False)
+        self.assertEqual((error.reason, error.attempted), ("face_geometry_changed", True))
 
     def test_without_faces_nothing_needs_verifying_and_the_photograph_is_sent(self):
         (_image, _level, parameters), server = self.run_enhance(analyzer=analyzer_with(None), identity=StubIdentity(available=False))
@@ -635,6 +668,7 @@ class EnhanceTests(ServerCase):
 class SettingsAndRegistryTests(SimpleTestCase):
     def test_it_is_off_and_has_no_key_by_default(self):
         self.assertFalse(settings.CLOUD_ENHANCEMENT_ENABLED)
+        self.assertTrue(settings.CLOUD_ENHANCEMENT_REQUIRES_CONSENT)                      # the safe default: an owner who never agreed is not sent
         self.assertEqual(settings.DEEP_IMAGE_BASE_URL, cloud.DEFAULT_BASE_URL)
         self.assertEqual(settings.DEEP_IMAGE_PRESET, "auto_enhance_pro")
         self.assertEqual(cloud.PRESETS, settings.DEEP_IMAGE_PRESETS)
@@ -660,6 +694,13 @@ class SettingsAndRegistryTests(SimpleTestCase):
         self.assertEqual(cloud.skip_reason(allow_biometric_processing=True, lighting="light"), "lighting_requested")
         self.assertEqual(cloud.skip_reason(allow_biometric_processing=True, has_alpha=True), "transparency")
         self.assertEqual(cloud.skip_reason(allow_biometric_processing=False, lighting="dark", has_alpha=True), "no_consent")
+
+    def test_with_the_consent_requirement_off_an_owner_who_never_agreed_is_sent_too_but_nothing_else_changes(self):
+        with override_settings(CLOUD_ENHANCEMENT_REQUIRES_CONSENT=False):
+            self.assertIsNone(cloud.skip_reason(allow_biometric_processing=False))
+            self.assertEqual(cloud.skip_reason(allow_biometric_processing=False, lighting="dark"), "lighting_requested")
+            self.assertEqual(cloud.skip_reason(allow_biometric_processing=False, has_alpha=True), "transparency")
+        self.assertEqual(cloud.skip_reason(allow_biometric_processing=False), "no_consent")      # and without the override the default is the safe one
 
     def test_the_summary_calls_the_cloud_engines_ai_and_nothing_else_a_cloud_engine(self):
         for preset in cloud.PRESETS:
@@ -705,6 +746,12 @@ class GuardTests(SimpleTestCase):
     def test_it_is_not_asked_for_anything_while_it_is_off(self):
         self.assertNotIn("DEEP_IMAGE", self.problems(CLOUD_ENHANCEMENT_ENABLED=False, DEEP_IMAGE_API_KEY="", DEEP_IMAGE_BASE_URL="http://elsewhere"))
 
+    def test_in_production_it_must_ask_for_consent(self):
+        good = dict(CLOUD_ENHANCEMENT_ENABLED=True, DEEP_IMAGE_API_KEY=random_secret(40), DEEP_IMAGE_BASE_URL=GUARD_BASE_URL, CLOUD_ENHANCEMENT_REQUIRES_CONSENT=True)
+        self.assertNotIn("CLOUD_ENHANCEMENT_REQUIRES_CONSENT", self.problems(**good))
+        self.assertIn("CLOUD_ENHANCEMENT_REQUIRES_CONSENT", self.problems(**{**good, "CLOUD_ENHANCEMENT_REQUIRES_CONSENT": False}))
+        self.assertNotIn("CLOUD_ENHANCEMENT_REQUIRES_CONSENT", self.problems(**{**good, "CLOUD_ENHANCEMENT_ENABLED": False, "CLOUD_ENHANCEMENT_REQUIRES_CONSENT": False}))
+
     def test_switching_it_on_needs_a_real_key_and_the_providers_own_address(self):
         good = dict(CLOUD_ENHANCEMENT_ENABLED=True, DEEP_IMAGE_API_KEY=random_secret(40), DEEP_IMAGE_BASE_URL=GUARD_BASE_URL)
         self.assertNotIn("DEEP_IMAGE", self.problems(**good))
@@ -734,7 +781,7 @@ class JobTests(ResultFixture):
         preprocessing.processed_file.save(name, ContentFile(encoded))
         return ImageEnhancementResult.objects.create(owner=self.user, image=upload, preprocessing_result=preprocessing, status="queued", requested_level=EnhancementLevel.AUTO)
 
-    def run_job(self, image=SOURCE, behaviours=None, cloud_on=True, consent=True, lighting=None, **overrides):
+    def run_job(self, image=SOURCE, behaviours=None, cloud_on=True, consent=True, lighting=None, identity=None, **overrides):
         result = self.make_from(image)
         if lighting:
             result.requested_lighting = lighting
@@ -745,7 +792,7 @@ class JobTests(ResultFixture):
         with ExitStack() as stack:
             stack.enter_context(override_settings(**options))
             stack.enter_context(stub_analyzer_service()[0])
-            stack.enter_context(patch("enhancement.adaptive.service.IdentityChecker", return_value=StubIdentity()))
+            stack.enter_context(patch("enhancement.adaptive.service.IdentityChecker", return_value=identity or StubIdentity()))
             stack.enter_context(patch("privacy.services.biometric_processing_allowed", return_value=consent))
             return process_enhancement_result(result), server
 
@@ -811,6 +858,17 @@ class JobTests(ResultFixture):
         self.assertEqual(server.requests, [])
         self.assertEqual(result.applied_parameters["cloud_enhancement"], {"attempted": False, "used": False, "provider": "deep_image", "preset": "auto_enhance_pro", "reason": "no_consent"})
         self.assertEqual(result.applied_parameters["warnings"], [])
+
+    def test_with_the_consent_requirement_off_an_owner_who_never_agreed_gets_the_cloud_result(self):
+        result, server = self.run_job(consent=False, identity=StubIdentity(available=False), CLOUD_ENHANCEMENT_REQUIRES_CONSENT=False)
+        self.assertEqual(len(server.uploads()), 1)
+        body = self.api(result)
+        self.assertEqual(body["processing_summary"]["ai_applied"], True)
+        self.assertEqual(body["processing_summary"]["stages"][0]["stage"], "cloud_enhance")
+        self.assertEqual(body["identity_status"], "unavailable")
+        self.assertIn("not allowed", body["identity_notice"])
+        self.assertEqual(result.applied_parameters["cloud_enhancement"]["identity_checked"], False)
+        self.assertEqual((result.output_width, result.output_height), (960, 1280))
 
     def test_a_person_who_names_the_lighting_gets_the_local_engines_method(self):
         result, server = self.run_job(lighting="dark")

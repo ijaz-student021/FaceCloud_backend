@@ -12,6 +12,7 @@ everything the cloud engine does not do. With the switch off nothing changes: th
 | Setting | Default | Meaning |
 |---|---|---|
 | `CLOUD_ENHANCEMENT_ENABLED` | `false` | master switch |
+| `CLOUD_ENHANCEMENT_REQUIRES_CONSENT` | `true` | `false` sends EVERY owner's photographs, the owners who never agreed to face processing included. Such a result cannot be identity-checked (that needs a face embedding, which needs the consent), so it is judged by structure and face geometry only. The production guard refuses `false`: it is for a demonstration the operator controls |
 | `DEEP_IMAGE_API_KEY` | empty | secret, environment/secret store only; never logged, stored, returned by an endpoint or committed |
 | `DEEP_IMAGE_PRESET` | `auto_enhance_pro` | one of `auto_enhance_pro` (best, about 30 s a photograph by the provider's figures), `auto_enhance_qwen` (about 30 s), `auto_enhance_klein9b` (about 15 s), `auto_enhance_generative` (about 15 s), `auto_enhance_tone_correction`, `auto_enhance` (about 3 s) |
 | `DEEP_IMAGE_BASE_URL` | `https://deep-image.ai/rest_api` | development only: a local test server. The production guard refuses any other value |
@@ -33,7 +34,7 @@ Decided in `enhancement/services.py` (`_enhance_photo`), before anything leaves 
 
 | Reason (`cloud_enhancement.reason`) | When | Shown to the person |
 |---|---|---|
-| `no_consent` | the owner's face-processing consent is off (the switch face restoration already needs) | nothing |
+| `no_consent` | the owner's face-processing consent is off (the switch face restoration already needs) and `CLOUD_ENHANCEMENT_REQUIRES_CONSENT` is true, the default | nothing |
 | `lighting_requested` | the request named a lighting method (Dark photo / Light photo): that is the local engine's method | nothing |
 | `transparency` | a PNG with transparency (the provider's result carries none) | nothing |
 | `not_configured` | switched on, no key | a sentence in `warnings` |
@@ -59,7 +60,7 @@ What the first real run added (section 9): the provider's reply for a finished j
 also seen by OpenAI for moderation (at least for the `auto_enhance` preset); and the finished image is served from a public S3 address (`https://<bucket>.s3.eu-central-1.amazonaws.com/<date>/<uuid>.jpg`,
 no signature): whoever has the address can fetch the enhanced photograph until the provider deletes it. The address is a random UUID and this code never logs or stores it.
 
-**Consent.** The only switch consulted is the existing face-processing consent, and its text (`privacy.services.PURPOSE_COVERS`) does not say that a photograph may leave the server.
+**Consent.** By default the only switch consulted is the existing face-processing consent (an operator may turn that requirement off for a demonstration: `CLOUD_ENHANCEMENT_REQUIRES_CONSENT=false`, which sends every owner's photographs and judges the ones who never agreed without an identity check), and its text (`privacy.services.PURPOSE_COVERS`) does not say that a photograph may leave the server.
 There is deliberately no new screen: the interface did not change. So the switch is an operator's decision for a deployment whose users have been told (the privacy notice must say it),
 or for a demonstration with the operator's own photographs. It must not be on for strangers' photographs. The advisor's separate, versioned consent (`docs/enhancement/openai-advisor.md`)
 is the pattern if this is ever offered to the public.
@@ -77,7 +78,7 @@ The result is kept only if it is still the same picture. The checks are `enhance
 | a face of the upload is found again where it was (landmark geometry on the upload's own pixel grid) | `face_lost`, `face_geometry_changed` | `Limits.face_landmark_shift_max_upscale` (0.06 of the face width), the limit the local engine holds an enlargement to |
 | every face is the same person (SFace guard) | `identity_changed`, `identity_unverifiable` | the guard limit (0.80), not the face-restoration one; a face that cannot be verified is **not accepted** |
 
-Faces under 48 px (`too_small`) are not judged, as in the local engine; a result with only such faces says so (`identity_verification.state` is `not_verifiable`, never `verified`). The
+For an owner who never agreed to face processing (only possible with the requirement off) no face embedding is made, so the identity check is not made: the faces are judged by geometry alone, the record says so (`identity_verification.state` `not_verifiable`, `cloud_enhancement.identity_checked` false) and the summary does not claim the faces were checked. Faces under 48 px (`too_small`) are not judged, as in the local engine; a result with only such faces says so (`identity_verification.state` is `not_verifiable`, never `verified`). The
 face and identity limits are the local engine's own and are not loosened. A generative preset may change a face: where it does, the photograph keeps the local engine's result, which may
 be the unchanged original.
 
@@ -92,7 +93,7 @@ The cloud result is stored in the shape of an adaptive result with one accepted 
   reasons above that need one. The summary never names the cloud engine for a photograph it did not make.
 * `output_width` / `output_height` are the result's: the provider's size rule makes a photograph 1000-4096 px wide 4096 px wide and a smaller one four times wider, so the output is
   usually much larger than the upload (the API already says to read these fields). The file is re-encoded in the result's output format (the provider's JPEG is decoded and encoded again).
-* `applied_parameters["cloud_enhancement"]`: `attempted`, `used`, `provider`, `preset`, and for a used result the provider's job id, seconds, byte counts and the readings of every check.
+* `applied_parameters["cloud_enhancement"]`: `attempted`, `used`, `provider`, `preset`, and for a used result the provider's job id, seconds, byte counts, `face_consent`, `identity_checked` and the readings of every check.
 * One log line per photograph (`cloud_enhancement {...}`): the decision, the timings and the readings, never pixels, a key, an address or user data.
 
 ## 6. Failures
@@ -124,7 +125,7 @@ non-commercial use. Count the credits on the provider's dashboard after the firs
 
 ## 8. Tests
 
-`enhancement/test_cloud_enhancement.py` (88 tests): the real client against `fake_deep_image.py` (the multipart upload, the key and where it does not go, redirects, every refusal, timeouts, a
+`enhancement/test_cloud_enhancement.py` (95 tests): the real client against `fake_deep_image.py` (the multipart upload, the key and where it does not go, redirects, every refusal, timeouts, a
 closed port, the key never in a log even when the provider repeats it), the checks one by one, the stored record read by `describe_stages` / `processing_summary` / the API,
 the job code (claim, publish, API fields, comparison endpoint), the switch off (the network is blocked while it runs), consent, lighting, transparency, the daily limit, cancellation,
 the production guard. A first mutation run (17 of 69 mutations, stopped to change the status handling) found two guards no test needed; both are now tested. The full run is repeated on the final code (see the pull request).

@@ -111,10 +111,11 @@ def availability():
 def skip_reason(*, allow_biometric_processing, lighting="auto", has_alpha=False):
     """Why this photograph is not sent although the engine is available (a code), or ``None`` when it may be. Decided before anything leaves the server.
 
-    Faces are processed by the provider's model, so the owner's face-processing consent is required (the switch face restoration already needs); a person who named a lighting method
-    asked for the local engine's method; and a transparent PNG would lose its transparency in a round trip through a format the provider's result does not carry.
+    Faces are processed by the provider's model, so the owner's face-processing consent is required (the switch face restoration already needs) unless the operator turned that requirement
+    off (``CLOUD_ENHANCEMENT_REQUIRES_CONSENT``, for a demonstration); a person who named a lighting method asked for the local engine's method; and a transparent PNG would lose its
+    transparency in a round trip through a format the provider's result does not carry.
     """
-    if not allow_biometric_processing:
+    if not allow_biometric_processing and settings.CLOUD_ENHANCEMENT_REQUIRES_CONSENT:
         return "no_consent"
     if str(getattr(lighting, "value", lighting) or "auto") != "auto":
         return "lighting_requested"
@@ -381,13 +382,15 @@ def _checkable_faces(report):
     return [face for face in report.faces if face.quality != "too_small"]
 
 
-def judge(source, result, identity, analyzer, checkable):
+def judge(source, result, identity, analyzer, checkable, verify_identity=True):
     """The checks a cloud result must pass before it is kept. Raises ``CloudDeclined`` with the first that fails.
 
     Returns ``(readings, small, report_after, checked)``: the numbers behind the verdict, the result on the upload's own pixel grid, its analysis, and the identity check (``None``
     when no face could be judged). The result is the same picture (aspect, size, not a flat fill, structure); a face that was there is still there where it was (landmark geometry, the
     limit the local engine holds an enlargement to, ``Limits.face_landmark_shift_max_upscale``: faces under 48 px never reach it, so its pixel floor could not change it); and every
-    face is verified as the same person (the SFace guard). A face that cannot be verified is not accepted: a generative model's result is never taken on faith.
+    face is verified as the same person (the SFace guard). A face that cannot be verified is not accepted: a generative model's result is never taken on faith. The one exception is an
+    owner who has not agreed to face processing (``verify_identity`` False, only reachable when ``CLOUD_ENHANCEMENT_REQUIRES_CONSENT`` is off): no face embedding of that owner is made, so
+    the faces are judged by geometry alone.
     """
     from .adaptive.validator import Limits, landmark_shift, structure_ssim
 
@@ -422,6 +425,9 @@ def judge(source, result, identity, analyzer, checkable):
     readings["landmark_limit"] = round(limit, 4)
     if shift > limit:
         raise CloudDeclined("face_geometry_changed")
+    if not verify_identity:
+        readings["identity"] = {"status": "not_checked", "reason": "no_consent"}
+        return readings, small, report_after, None
     checked = identity.check(small, restoring=False)
     readings["identity"] = {"status": checked["status"], "similarity": checked.get("similarity"), "threshold": checked.get("threshold")}
     if checked["status"] == "failed":
@@ -436,10 +442,13 @@ def _identity_block(report0, identity, checked, allow_biometric_processing):
 
     if checked is not None or not report0.faces:
         return identity_report(report0, identity, [OPERATION], checked, allow_biometric_processing)
-    return {                          # faces were found but every one is too small to compare: said so, not reported as verified or as a restoration that did not happen
+    if allow_biometric_processing:
+        reason = notice = "The faces in this photograph are too small to compare with the original, so identity was not checked."
+    else:
+        reason = notice = "Face processing is not allowed for this account, so the faces in this photograph were not compared with the original."
+    return {                          # faces were found but not compared (too small, or no consent): said so, not reported as verified or as a restoration that did not happen
         "threshold": identity.threshold, "similarity": None, "face_restoration_unverified": False, "status": "unavailable", "state": "not_verifiable", "verified": False,
-        "scope": "Compared with the uploaded photograph only; similarity of face embeddings is evidence, not a guarantee.", "reason": "The faces are too small to compare.",
-        "notice": "The faces in this photograph are too small to compare with the original, so identity was not checked.",
+        "scope": "Compared with the uploaded photograph only; similarity of face embeddings is evidence, not a guarantee.", "reason": reason, "notice": notice,
     }
 
 
@@ -480,7 +489,8 @@ def _parameters(image, result, small, report0, report_after, checked, identity, 
         },
         "cloud_enhancement": {
             "attempted": True, "used": True, "provider": PROVIDER, "preset": preset, "job": run["job"], "seconds": round(run["cloud_seconds"], 2),
-            "upload_bytes": run["upload_bytes"], "result_bytes": run["result_bytes"], "gates": readings,
+            "upload_bytes": run["upload_bytes"], "result_bytes": run["result_bytes"], "face_consent": bool(run["allow_biometric_processing"]), "identity_checked": checked is not None,
+            "gates": readings,
         },
     }
 
@@ -506,8 +516,8 @@ def enhance(image, requested_level, style, *, allow_biometric_processing, checkp
         report0 = analyzer.analyze(image)
         identity = IdentityChecker(image, allow_biometric_processing and report0.faces != [])
         checkable = _checkable_faces(report0)
-        if checkable and not identity.available:
-            raise CloudDeclined("identity_unverifiable")            # a result could not be verified, so nothing is sent
+        if checkable and allow_biometric_processing and not identity.available:
+            raise CloudDeclined("identity_unverifiable")            # a result could not be verified, so nothing is sent (an owner without consent is not verified at all: see judge)
         analysis_seconds = time.perf_counter() - started
         _reserve_request()
         payload = encode_upload(image)
@@ -522,7 +532,7 @@ def enhance(image, requested_level, style, *, allow_biometric_processing, checkp
         result = decode_result(data)
         checkpoint("cloud_validate")
         judged_at = time.perf_counter()
-        readings, small, report_after, checked = judge(image, result, identity, analyzer, checkable)
+        readings, small, report_after, checked = judge(image, result, identity, analyzer, checkable, verify_identity=allow_biometric_processing)
     except CloudDeclined as error:
         error.attempted = sent
         _log("declined", preset=preset, reason=error.reason, attempted=sent, job=job, seconds=round(time.perf_counter() - started, 2))

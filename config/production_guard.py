@@ -202,6 +202,9 @@ def policy_rule(cfg):
             problems.append("CLOUD_ENHANCEMENT_ENABLED needs a real DEEP_IMAGE_API_KEY from the secret store.")
         if str(cfg.get("DEEP_IMAGE_BASE_URL") or "").rstrip("/") != DEEP_IMAGE_BASE_URL:
             problems.append(f"DEEP_IMAGE_BASE_URL must be {DEEP_IMAGE_BASE_URL} in production: photographs may only go to the provider itself.")
+        if not cfg.get("CLOUD_ENHANCEMENT_REQUIRES_CONSENT"):
+            problems.append("CLOUD_ENHANCEMENT_REQUIRES_CONSENT must be True in production: photographs may only go to the provider for owners who agreed to face processing, "
+                            "and a result for an owner who did not cannot be identity-checked.")
     threshold = int(cfg.get("LOGIN_LOCK_THRESHOLD") or 0)
     if not 3 <= threshold <= 20:
         problems.append("LOGIN_LOCK_THRESHOLD must be between 3 and 20.")

@@ -278,8 +278,11 @@ if OPENAI_ADVISOR_TIMEOUT_SECONDS * OPENAI_ADVISOR_MAX_ATTEMPTS > OPENAI_ADVISOR
 # it is never logged, put in an error, returned by an endpoint or committed. Only the six auto_enhance presets can be named, so no other Deep Image operation is ever
 # called. Each photograph is judged on its own (size, structure, face geometry and identity against the upload); any failure hands it to the local engine, and the
 # result's processing_summary names the engine that really made the pixels. DEEP_IMAGE_BASE_URL is for a local test server in development: the production guard
-# refuses any address but the provider's. A photograph is sent only for an owner whose face-processing consent is on (the same switch as face restoration).
+# refuses any address but the provider's. By default a photograph is sent only for an owner whose face-processing consent is on (the same switch as face restoration).
 CLOUD_ENHANCEMENT_ENABLED = env.bool("CLOUD_ENHANCEMENT_ENABLED", default=False)
+# CLOUD_ENHANCEMENT_REQUIRES_CONSENT=False sends EVERY owner's photographs, the owners who never agreed to face processing included. A result for such an owner cannot be identity-checked
+# (that needs a face embedding, which needs the consent), so it is judged by structure and face geometry only. The production guard refuses False: it is for a demonstration the operator controls.
+CLOUD_ENHANCEMENT_REQUIRES_CONSENT = env.bool("CLOUD_ENHANCEMENT_REQUIRES_CONSENT", default=True)
 DEEP_IMAGE_API_KEY = env("DEEP_IMAGE_API_KEY", default="")
 DEEP_IMAGE_PRESETS = ("auto_enhance_pro", "auto_enhance_qwen", "auto_enhance_klein9b", "auto_enhance_generative", "auto_enhance_tone_correction", "auto_enhance")
 DEEP_IMAGE_PRESET = env("DEEP_IMAGE_PRESET", default="auto_enhance_pro")
