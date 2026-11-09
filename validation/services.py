@@ -20,6 +20,14 @@ MIN_FACE_AREA_RATIO = 0.06
 MIN_GROUP_FACE_AREA_RATIO = 0.012
 
 
+def face_touches_edge(face, width, height, margin=None):
+    """Whether the face's box is cut off by, or within ``EDGE_MARGIN_RATIO`` of, an edge of the picture (``width`` x ``height``, the same frame as the box)."""
+    margin = EDGE_MARGIN_RATIO if margin is None else margin
+    left, top = face["x"], face["y"]
+    right, bottom = left + face["width"], top + face["height"]
+    return left < margin * width or top < margin * height or right > (1 - margin) * width or bottom > (1 - margin) * height
+
+
 def _face_is_usable(face, min_ratio):
     """Whether a face is big enough to enhance.
 
@@ -38,8 +46,11 @@ def _face_is_usable(face, min_ratio):
         return True
     shortest_edge = min(face["width"], face["height"])
     return shortest_edge >= settings.FACE_MIN_EDGE_PIXELS
-MAX_SUPPORTED_FACES = 5
-CENTER_TOLERANCE = 0.28
+MAX_SUPPORTED_FACES = 5      # no longer a limit for accepting a photograph; kept because older code and data refer to it
+# A face is "near the image boundary" (reason ``face_off_center``, kept for compatibility) when its box comes within this share of the frame of any edge: it is
+# cut off or touching the edge. Where it sits is not a problem: a head-and-shoulders portrait has the face in the upper part of the picture (its centre about 20%
+# from the top), which an earlier rule on the distance of the face's centre from the frame's centre sent to review, though the face is well inside the frame.
+EDGE_MARGIN_RATIO = 0.01
 HAAR_DETECTOR_NAME = "opencv_haar_frontalface"
 HAAR_DETECTOR_VERSION = "1"
 HEURISTIC_CONFIDENCE_TYPE = "internal_heuristic_not_probability"
@@ -81,6 +92,24 @@ class OpenCVHaarFaceDetector:
         )
 
 
+def _merge_rows(rows, iou_threshold, top_k):
+    """Non-maximum suppression over detector rows (x, y, w, h, ..., score last): the highest score of overlapping boxes is kept."""
+    kept = []
+    for row in sorted(rows, key=lambda item: -float(item[14])):
+        x0, y0, w0, h0 = row[:4]
+        duplicate = False
+        for other in kept:
+            x1, y1, w1, h1 = other[:4]
+            overlap = max(0.0, min(x0 + w0, x1 + w1) - max(x0, x1)) * max(0.0, min(y0 + h0, y1 + h1) - max(y0, y1))
+            union = w0 * h0 + w1 * h1 - overlap
+            if union > 0 and overlap / union > iou_threshold:
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(row)
+    return kept[:max(1, top_k)]
+
+
 class OpenCVYuNetFaceDetector:
     name = "opencv_yunet"
     version = "s_dynamic_v1"
@@ -108,12 +137,7 @@ class OpenCVYuNetFaceDetector:
         if image.ndim == 2:
             image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
         height, width = image.shape[:2]
-        self.detector.setInputSize((width, height))
-        try:
-            _result, rows = self.detector.detect(image)
-        except cv2.error as error:
-            raise ValidationError("YuNet face detection failed safely.") from error
-        rows = [] if rows is None else rows
+        rows = self._detect_rows(image, width, height)
         boxes, scores, landmarks = [], [], []
         for row in rows:
             boxes.append(tuple(int(round(value)) for value in row[:4]))
@@ -131,6 +155,34 @@ class OpenCVYuNetFaceDetector:
             detector_version=self.version,
             confidence_type=self.confidence_type,
         )
+
+
+    def _detect_rows(self, image, width, height):
+        """YuNet's rows (box, five landmarks, score) in the photograph's own pixels, from two runs merged.
+
+        A large face in a large photograph is missed when YuNet is run at the photograph's full size (a 1200 px face in a 4096 px portrait: score 0.93 at 1024 px, 0.75 at 2048 px,
+        nothing at 4096 px), and a small face is missed when the photograph is shrunk. So it runs at ``YUNET_MAX_EDGE`` (the photograph's own size when smaller) and, for a larger photograph, again
+        shrunk to ``YUNET_LARGE_FACE_EDGE``; the rows are scaled back and merged by non-maximum suppression, the higher score winning.
+        """
+        longest = max(width, height)
+        edges = [min(longest, max(64, int(settings.YUNET_MAX_EDGE)))]
+        small = int(settings.YUNET_LARGE_FACE_EDGE)
+        if 0 < small < edges[0]:
+            edges.append(small)
+        rows = []
+        for edge in edges:
+            scale = edge / longest
+            scaled = image if scale >= 1.0 else cv2.resize(image, (max(1, round(width * scale)), max(1, round(height * scale))), interpolation=cv2.INTER_AREA)
+            self.detector.setInputSize((scaled.shape[1], scaled.shape[0]))
+            try:
+                _result, found = self.detector.detect(scaled)
+            except cv2.error as error:
+                raise ValidationError("YuNet face detection failed safely.") from error
+            for row in ([] if found is None else found):
+                row = np.asarray(row, dtype=np.float64).copy()
+                row[:14] /= scale
+                rows.append(row)
+        return _merge_rows(rows, float(settings.YUNET_NMS_THRESHOLD), int(settings.YUNET_TOP_K))
 
 
 class RetinaFaceDetector:
@@ -526,37 +578,30 @@ def validate_image_faces(image_upload):
         decision = FaceValidationResult.Decision.NEEDS_REVIEW
         reason = "no_face_detected"
         message = "No confident frontal face was detected. Manual review is required."
-    elif len(faces) > MAX_SUPPORTED_FACES:
-        decision = FaceValidationResult.Decision.NEEDS_REVIEW
-        reason = "large_group_detected"
-        message = "More than five faces were detected. Manual review is required."
     elif len(faces) >= 2:
-        if any(not _face_is_usable(face, MIN_GROUP_FACE_AREA_RATIO) for face in faces):
+        # A group photograph (any number of people) is accepted when at least one face is big enough to use; the faces too small to group are skipped, not a reason to hold
+        # the photograph back (a person far away in a family photo is still a good photograph). Only a photograph where no face is usable is sent to review.
+        usable = [face for face in faces if _face_is_usable(face, MIN_GROUP_FACE_AREA_RATIO)]
+        small = len(faces) - len(usable)
+        if not usable:
             decision = FaceValidationResult.Decision.NEEDS_REVIEW
             reason = "group_face_too_small"
-            message = "A group image was detected, but one or more faces are too small for reliable processing."
+            message = f"A group image with {len(faces)} faces was detected, but none is big enough to use."
         else:
             decision = FaceValidationResult.Decision.ACCEPTED
-            message = f"A valid group image containing {len(faces)} people was detected."
+            message = f"A group image containing {len(faces)} people was detected." + (f" {small} too small to group {'is' if small == 1 else 'are'} skipped." if small else "")
     elif not _face_is_usable(faces[0], MIN_FACE_AREA_RATIO):
-        decision = FaceValidationResult.Decision.REJECTED
+        # Not rejected: a person far away in a landscape is still a photograph worth keeping. Rejection is for photographs that are unusable as images (quality check).
+        decision = FaceValidationResult.Decision.NEEDS_REVIEW
         reason = "face_too_small"
-        message = "The detected face is too small for reliable enhancement."
+        message = "The detected face is small, so it is not placed in a person folder."
+    elif face_touches_edge(faces[0], width, height):
+        decision = FaceValidationResult.Decision.NEEDS_REVIEW
+        reason = "face_off_center"
+        message = "A face was detected near the image boundary. Manual review is required."
     else:
-        face = faces[0]
-        face_center_x = face["x"] + face["width"] / 2
-        face_center_y = face["y"] + face["height"] / 2
-        off_center = (
-            abs(face_center_x / width - 0.5) > CENTER_TOLERANCE
-            or abs(face_center_y / height - 0.5) > CENTER_TOLERANCE
-        )
-        if off_center:
-            decision = FaceValidationResult.Decision.NEEDS_REVIEW
-            reason = "face_off_center"
-            message = "A face was detected near the image boundary. Manual review is required."
-        else:
-            decision = FaceValidationResult.Decision.ACCEPTED
-            message = "Exactly one suitable frontal face was detected."
+        decision = FaceValidationResult.Decision.ACCEPTED
+        message = "Exactly one suitable frontal face was detected."
 
     result, _created = FaceValidationResult.objects.update_or_create(
         image=image_upload,

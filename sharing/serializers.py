@@ -34,7 +34,7 @@ class ShareLinkCreateSerializer(WatermarkOptionsSerializer):
         attrs = super().validate(attrs)
         owner = self.context["request"].user
         result = ImageEnhancementResult.objects.filter(
-            owner=owner, status=EnhancementStatus.COMPLETED, pk=attrs["result"],
+            owner=owner, status=EnhancementStatus.COMPLETED, pk=attrs["result"], image__trashed_at__isnull=True,
         ).exclude(enhanced_file="").first()
         if result is None:
             raise serializers.ValidationError({"result": ["No completed result with that id."]})

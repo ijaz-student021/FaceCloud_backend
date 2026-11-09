@@ -5,6 +5,7 @@ from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
+from django.db.models import Q
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.pagination import PageNumberPagination
@@ -16,6 +17,11 @@ from uploads.models import ImageUpload, UploadBatch
 from .models import ProcessingReport
 from .serializers import ProcessingReportRequestSerializer, ProcessingReportSerializer
 from .services import ReportNotReadyError, enqueue_processing_report
+
+
+def _visible_reports(user):
+    """The caller's reports, without those about a photograph in the trash (a batch report has no photograph of its own and stays)."""
+    return ProcessingReport.objects.filter(owner=user).filter(Q(image__isnull=True) | Q(image__trashed_at__isnull=True))
 
 
 class ReportNotReady(APIException):
@@ -101,7 +107,7 @@ class ProcessingReportListView(generics.ListAPIView):
     pagination_class = ReportPagination
 
     def get_queryset(self):
-        queryset = ProcessingReport.objects.filter(owner=self.request.user).select_related(
+        queryset = _visible_reports(self.request.user).select_related(
             "image", "batch",
         )
         filters = (
@@ -124,7 +130,7 @@ class ProcessingReportDetailView(generics.RetrieveAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return ProcessingReport.objects.filter(owner=self.request.user).select_related(
+        return _visible_reports(self.request.user).select_related(
             "image", "batch",
         )
 
@@ -150,7 +156,7 @@ class ProcessingReportDownloadView(APIView):
     )
     def get(self, request, pk):
         report = get_object_or_404(
-            ProcessingReport.objects.filter(owner=request.user).select_related(
+            _visible_reports(request.user).select_related(
                 "image", "batch",
             ),
             pk=pk,
@@ -194,7 +200,7 @@ class ProcessingReportRegenerateView(APIView):
     )
     def post(self, request, pk):
         report = get_object_or_404(
-            ProcessingReport.objects.filter(owner=request.user).select_related(
+            _visible_reports(request.user).select_related(
                 "image__batch", "batch",
             ),
             pk=pk,

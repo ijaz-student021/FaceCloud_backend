@@ -23,10 +23,8 @@ All jobs are on the Celery beat schedule (see
 Three backlog features (48-50, `FEATURES.md`) were designed directly against
 this table rather than inventing new rules: event/timeline grouping (Feature
 48) uses only upload timestamps and needs no consent check at all; the
-face-aware crop in AI collages (Feature 49) uses only bounding boxes/
-landmarks, also no consent check, while a *person-specific* collage reads
-existing `IdentityGroup`/`IdentityMembership` rows that are already
-consent-gated by the identity-analysis pipeline that created them; visual
+face-aware crop in AI collages (Feature 49, since removed) was designed
+the same way; visual
 search (Feature 50) is the one new source of biometric processing and must
 reuse `biometric_processing_allowed`, never persisting the query embedding.
 

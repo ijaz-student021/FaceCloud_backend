@@ -23,7 +23,7 @@ Images containing 3–5 people are allowed and are not rejected merely because t
 
 The service records normalized 0–100 brightness, sharpness, contrast, noise, exposure, resolution, and weighted overall scores. Raw measurements, detected defects, all decision reasons, policy version, task ID, and processing duration are retained for auditability.
 
-Severe blur, extremely low resolution, extreme exposure, very low contrast, or a rejected face-validation result can reject an image. Borderline measurements and uncertain face validation route to review. Thresholds are environment-configurable through the `QUALITY_*` settings documented in `.env.example`.
+Severe blur, extremely low resolution, extreme overexposure, a photograph with no usable signal (practically black, mean brightness under `QUALITY_REJECT_MIN_LUMINANCE`, about 6 of 255, or almost no contrast), or a rejected face-validation result can reject an image. **A dark photograph is not refused:** between that line and `QUALITY_REVIEW_MIN_LUMINANCE` (55) it carries the warning `underexposed` and goes on to the low-light enhancement. Contrast is measured in grey levels, so below the review brightness the contrast floor (`QUALITY_REJECT_CONTRAST`) is scaled down in proportion to the brightness; at ordinary brightness it is unchanged. A very dark photograph in which no face is found can still be refused for `severe_blur`, because darkness lowers the sharpness measure; that rule is unchanged. Borderline measurements and uncertain face validation route to review. Thresholds are environment-configurable through the `QUALITY_*` settings documented in `.env.example`.
 
 ## APIs
 

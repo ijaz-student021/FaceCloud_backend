@@ -43,7 +43,17 @@ rows.
 
 `accounts/0012_remove_two_factor` (renumbered from 0010) then drops the two-factor tables.
 
-A database that already ran these under their old names (`0007_user_profile_fields_and_avatar`, `0008_user_sessions`, `0009_account_invitations`, `0010_remove_two_factor`) must not simply run `migrate`: the columns exist, so Django would try to add them again. Back it up, then either rename those rows in `django_migrations` to the new names or recreate the database.
+A database that already ran these under their old names (`0007_user_profile_fields_and_avatar`, `0008_user_sessions`, `0009_account_invitations`, `0010_remove_two_factor`) must not simply run `migrate`: the columns exist, so Django would try to add them again (`table accounts_usersession already exists`). Back it up first (section 4), then, on a checkout of `main`:
+
+```sh
+sqlite3 db.sqlite3 "delete from django_migrations where app='accounts' and name in ('0007_user_profile_fields_and_avatar','0008_user_sessions','0009_account_invitations','0010_remove_two_factor');"
+python manage.py migrate accounts 0008            # main's own 0007/0008 (signup link, admin-created accounts) are applied for real
+python manage.py migrate accounts 0012 --fake     # 0009-0012 describe a schema the file already has
+python manage.py migrate                          # everything else
+python manage.py makemigrations --check --dry-run # expect: No changes detected
+```
+
+This was rehearsed on a copy of a development database (2 users, 3 images): both users and all images survived and `makemigrations --check` was clean. It is only valid when the file really has the old schema (profile columns, `accounts_usersession`, `accounts_accountinvitation` present and the two-factor tables gone); if not, stop and rebuild from the `dumpdata` backup instead.
 | moderation 0006_report_period | `date_from`, `date_to`, `period_key` (`"all"`); constraint replaced | Existing reports get `period_key="all"`. **Precondition:** at most one queued or generating report per (organization, type, format); this already held under the old constraint |
 | moderation 0007_general_activity_report | report-type choice | none |
 | organizations 0009_moderator_preview_and_reprocess_actions | audit-action choices | none |

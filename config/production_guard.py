@@ -35,6 +35,19 @@ def _secret_problems(name, value, minimum):
     return []
 
 
+MAX_LOGIN_PER_HOUR = 100
+MAX_LOGIN_IP_PER_HOUR = 1000
+_PERIOD_SECONDS = {"second": 1, "minute": 60, "hour": 3600, "day": 86400}
+
+
+def _per_hour(rate):
+    """``"300/hour"`` -> 300.0; ``"5/minute"`` -> 300.0; ``None`` when the text is not a rate."""
+    count, _, period = str(rate).partition("/")
+    if not count.isdigit() or period not in _PERIOD_SECONDS:
+        return None
+    return int(count) * 3600 / _PERIOD_SECONDS[period]
+
+
 def secrets_rule(cfg):
     problems = _secret_problems("DJANGO_SECRET_KEY", cfg.get("SECRET_KEY"), MIN_SECRET_LENGTH)
     embedding = cfg.get("IDENTITY_EMBEDDING_KEY")
@@ -120,6 +133,11 @@ def infrastructure_rule(cfg):
         problems.append("EMAIL_BACKEND is a development backend; use SMTP so verification and reset emails are sent.")
     elif not cfg.get("EMAIL_HOST") or _is_placeholder(cfg.get("EMAIL_HOST")):
         problems.append("EMAIL_HOST must be a real SMTP server.")
+    elif str(cfg.get("EMAIL_HOST")).lower() not in LOCAL_HOSTS:
+        for name in ("EMAIL_HOST_USER", "EMAIL_HOST_PASSWORD"):
+            value = cfg.get(name)
+            if not value or _is_placeholder(value):
+                problems.append(f"{name} must be set: the SMTP server needs credentials to send verification and reset emails.")
     if cfg.get("CELERY_TASK_ALWAYS_EAGER"):
         problems.append("CELERY_TASK_ALWAYS_EAGER must be False: jobs belong on the workers, not in web requests.")
     cache = str(((cfg.get("CACHES") or {}).get("default") or {}).get("BACKEND", ""))
@@ -128,6 +146,37 @@ def infrastructure_rule(cfg):
             "CACHE_URL must point at a shared cache (Redis): with a per-process cache every rate limit "
             "multiplies by the number of processes and resets on restart."
         )
+    return problems
+
+
+REDIS_SCHEMES = ("redis://", "rediss://", "unix://")
+
+
+def explicit_rule(cfg):
+    """Settings that must be a deliberate choice, not a development default that happens to work on the machine running the check.
+
+    ``ENV_EXPLICIT`` (built in settings.py) records which of them the operator really set. Each message names the variable, so a missing one is found in one pass.
+    """
+    problems = []
+    explicit = cfg.get("ENV_EXPLICIT") or {}
+    for name in ("DB_NAME", "DB_USER", "DB_HOST"):
+        if name in explicit and not explicit[name]:
+            problems.append(f"{name} must be set (the PostgreSQL database, user and host).")
+    for name in ("CELERY_BROKER_URL", "CELERY_RESULT_BACKEND"):
+        value = str(cfg.get(name) or "")
+        if name in explicit and not explicit[name]:
+            problems.append(f"{name} must be set to the Redis address the workers use (it defaults to a development address).")
+        elif not value.startswith(REDIS_SCHEMES) or _is_placeholder(value):
+            problems.append(f"{name} must be a redis:// or rediss:// address (got '{value}').")
+    cache_url = str(cfg.get("CACHE_URL") or "")
+    if cache_url and not cache_url.startswith(REDIS_SCHEMES):
+        problems.append("CACHE_URL must be a redis:// or rediss:// address.")
+    if str(cfg.get("STORAGE_BACKEND", "filesystem")) == "filesystem":
+        if "MEDIA_ROOT" in explicit and not explicit["MEDIA_ROOT"]:
+            problems.append("MEDIA_ROOT must be set to the directory (or mounted volume) that holds the uploads, for example /srv/facecloud/media: the default sits inside the code folder and is lost on a redeploy.")
+    for origin in cfg.get("CSRF_TRUSTED_ORIGINS") or []:
+        if not str(origin).startswith("https://") or "*" in str(origin) or _is_placeholder(origin):
+            problems.append(f"CSRF_TRUSTED_ORIGINS entry '{origin}' must be a real https:// origin without a wildcard.")
     return problems
 
 
@@ -149,6 +198,15 @@ def policy_rule(cfg):
     threshold = int(cfg.get("LOGIN_LOCK_THRESHOLD") or 0)
     if not 3 <= threshold <= 20:
         problems.append("LOGIN_LOCK_THRESHOLD must be between 3 and 20.")
+    rates = (cfg.get("REST_FRAMEWORK") or {}).get("DEFAULT_THROTTLE_RATES") or {}
+    for scope, ceiling in (("login", MAX_LOGIN_PER_HOUR), ("login_ip", MAX_LOGIN_IP_PER_HOUR)):
+        rate = rates.get(scope)
+        per_hour = _per_hour(rate) if rate else None
+        if rate and (per_hour is None or per_hour > ceiling):
+            problems.append(
+                f"The {scope} rate limit ({rate}) must not exceed {ceiling}/hour in production (it counts failed sign-ins only); "
+                f"THROTTLE_RATE_{scope.upper()} is for demos."
+            )
     return problems
 
 
@@ -163,12 +221,21 @@ def model_rule(cfg):
         restricted.append("CodeFormer (S-Lab licence, non-commercial)")
     if cfg.get("GFPGAN_ENABLED"):
         restricted.append("GFPGAN (weights used under a permission that is not on file)")
+    if cfg.get("ULTRASHARP_ENABLED"):
+        restricted.append("4x-UltraSharp (CC BY-NC-SA 4.0, non-commercial)")
     if cfg.get("IDENTITY_PROVIDER") == "arcface_w600k_r50_v1":
         restricted.append("ArcFace / InsightFace weights (non-commercial)")
     if cfg.get("FACE_DETECTOR_PROVIDER") == "retinaface_v1":
         restricted.append("RetinaFace weights (terms not verified)")
-    if cfg.get("ENHANCEMENT_RENDER_POLICY", "lightweight_v1") != "lightweight_v1" and cfg.get("ZERO_DCE_ENABLED"):
+    # The policy of a person's own request, and the one automatic enhancement runs under (it is on by default): either one lets Zero-DCE run.
+    policies = {cfg.get("ENHANCEMENT_RENDER_POLICY", "lightweight_v1")}
+    if cfg.get("AUTO_ENHANCEMENT_ENABLED", False):
+        policies.add(cfg.get("AUTO_ENHANCEMENT_RENDER_POLICY", "lightweight_v1"))
+    if policies != {"lightweight_v1"} and cfg.get("ZERO_DCE_ENABLED"):
         restricted.append("Zero-DCE (licence not on file)")
+    if cfg.get("SEMANTIC_SEARCH_ENABLED") and (not cfg.get("SEMANTIC_SEARCH_MODEL_DIR") or len(str(cfg.get("SEMANTIC_SEARCH_MODEL_SHA256") or "")) != 64):
+        problems.append("SEMANTIC_SEARCH_ENABLED needs SEMANTIC_SEARCH_MODEL_DIR and the 64-character SEMANTIC_SEARCH_MODEL_SHA256 of the approved weights "
+                        "(docs/model-licenses/semantic-search-model.md): the model is checked against it before it is loaded.")
     if restricted and not cfg.get("NONCOMMERCIAL_MODELS_ACKNOWLEDGED"):
         problems.append(
             "These models are enabled without a verified commercial licence: " + "; ".join(restricted) + ". Disable them, or set "
@@ -177,7 +244,7 @@ def model_rule(cfg):
     return problems
 
 
-RULES = (secrets_rule, hosts_and_origins_rule, transport_rule, infrastructure_rule, policy_rule, model_rule)
+RULES = (secrets_rule, hosts_and_origins_rule, transport_rule, infrastructure_rule, explicit_rule, policy_rule, model_rule)
 
 
 def production_problems(cfg):

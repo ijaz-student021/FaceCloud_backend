@@ -60,11 +60,16 @@ All endpoints require JWT authentication and return only resources owned by the
 authenticated user. Access to another user's resource returns HTTP 404.
 
 - `POST /api/duplicates/images/{image_id}/` queues analysis. Send optional
-  `{ "force": true }` to rebuild the result.
+  `{ "force": true }` to check the image again; a pair that is found again keeps
+  its match id and its review decision (see "Data model and consistency").
 - `GET /api/duplicates/images/{image_id}/` returns one analysis summary.
 - `GET /api/duplicates/images/{image_id}/matches/` lists matches involving an image.
 - `GET /api/duplicates/results/` lists analyses; optional `status` and `decision`
   filters are validated.
+- `GET /api/duplicates/matches/` lists every match of the owner, newest first and
+  paged, dismissed ones included; optional `review_status`, `match_type` and `image`
+  (either side of the pair) filters are validated. Matches with an image in the
+  trash are left out, as in the detail and review calls.
 - `GET /api/duplicates/matches/{match_id}/` returns one owner-visible match.
 - `PATCH /api/duplicates/matches/{match_id}/review/` accepts `confirmed` or
   `not_duplicate` for reviewable matches.
@@ -84,6 +89,17 @@ review state, reviewer, and safe structured evidence. Database constraints preve
 self-matches and duplicate records for the same directed pair and type. Processing
 locks the owner and analysis rows so concurrent same-owner jobs cannot make
 inconsistent match decisions.
+
+A new check reconciles the stored pairs of an image with what it finds; it does not
+delete and rebuild them. A pair is the same pair whichever image is stored as its
+source, and each match type keeps its own row. A pair found again keeps its row (id,
+`review_status`, `reviewed_by`, `reviewed_at`, `created_at`) and only its measured
+values are refreshed. A pair is deleted only when the check looked for it and no
+longer finds it: the other image must have been one of the candidates compared in
+this run, so a pair is kept while the other image's own check is not finished or
+when the other image is beyond `DUPLICATE_MAX_CANDIDATES`, and a pair with an image
+in the trash is never deleted. The summaries of every image whose pair was deleted
+are recounted. An exact match stays confirmed.
 
 ## Configuration
 

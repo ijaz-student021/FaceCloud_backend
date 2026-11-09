@@ -1,6 +1,7 @@
 import re
 
 from django.contrib.auth import get_user_model, password_validation
+from django.contrib.auth.models import update_last_login
 from django.contrib.auth.tokens import default_token_generator
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q
@@ -10,10 +11,11 @@ from django.utils.http import urlsafe_base64_decode
 from rest_framework import serializers
 from rest_framework.exceptions import Throttled
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from . import lockout
-from .services import (dashboard_for_user, derive_username,
+from .services import (ModeratorWithoutOrganization, dashboard_for_user, derive_username, has_moderator_organization,
                        issue_login_tokens, record_auth_event,
                        resolve_moderator_organization, split_full_name)
 from .sessions import record_rotation, token_session_is_active
@@ -43,16 +45,31 @@ def clean_full_name(value):
     return cleaned
 
 
+# Public endpoints take text from anyone, so every identifier, email and password has a ceiling: 254 characters is the longest an email address can be, and no real password needs more
+# than 1024. Without it a 300,000-character identifier reached a LIKE query (HTTP 500 on SQLite) and a huge password reached the password hasher.
+MAX_IDENTIFIER_LENGTH = 254
+MAX_PASSWORD_LENGTH = 1024
+TOO_LONG_IDENTIFIER = {"max_length": f"This is too long: use at most {MAX_IDENTIFIER_LENGTH} characters."}
+TOO_LONG_PASSWORD = {"max_length": f"The password is too long: use at most {MAX_PASSWORD_LENGTH} characters."}
+
+
 class RegisterSerializer(serializers.Serializer):
     full_name = serializers.CharField(max_length=150)
     # Optional: when absent (or blank) the view derives it from the email's local part.
     username = serializers.CharField(max_length=150, required=False, allow_blank=True)
-    email = serializers.EmailField(required=True, allow_blank=False)
-    password = serializers.CharField(write_only=True, trim_whitespace=False)
+    email = serializers.EmailField(required=True, allow_blank=False, max_length=MAX_IDENTIFIER_LENGTH, error_messages=TOO_LONG_IDENTIFIER)
+    password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=MAX_PASSWORD_LENGTH, error_messages=TOO_LONG_PASSWORD)
     password_confirm = serializers.CharField(
         required=False,
         write_only=True,
         trim_whitespace=False,
+        max_length=MAX_PASSWORD_LENGTH,
+        error_messages=TOO_LONG_PASSWORD,
+    )
+    invitation_token = serializers.CharField(
+        required=False, allow_blank=True, write_only=True, max_length=256,
+        help_text="The token of an organization invitation sent to this email address (from the link in the invitation email). "
+                  "With it the address counts as verified: the account is created, the invitation accepted and the login tokens returned (201).",
     )
 
     def validate_full_name(self, value):
@@ -97,10 +114,10 @@ class ResendVerificationSerializer(serializers.Serializer):
 
 
 class FaceCloudTokenObtainPairSerializer(serializers.Serializer):
-    identifier = serializers.CharField(required=False, write_only=True)
-    username = serializers.CharField(required=False, write_only=True)
-    email = serializers.EmailField(required=False, write_only=True)
-    password = serializers.CharField(write_only=True, trim_whitespace=False)
+    identifier = serializers.CharField(required=False, write_only=True, max_length=MAX_IDENTIFIER_LENGTH, error_messages=TOO_LONG_IDENTIFIER)
+    username = serializers.CharField(required=False, write_only=True, max_length=MAX_IDENTIFIER_LENGTH, error_messages=TOO_LONG_IDENTIFIER)
+    email = serializers.EmailField(required=False, write_only=True, max_length=MAX_IDENTIFIER_LENGTH, error_messages=TOO_LONG_IDENTIFIER)
+    password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=MAX_PASSWORD_LENGTH, error_messages=TOO_LONG_PASSWORD)
 
     @staticmethod
     def get_dashboard(user):
@@ -147,7 +164,13 @@ class FaceCloudTokenObtainPairSerializer(serializers.Serializer):
         if user and user.is_suspended:
             record_auth_event("login_failed", request, user, identifier, {"reason": "account_suspended"})
             raise serializers.ValidationError({"detail": "This account is suspended."})
+        if user.role == "moderator" and not has_moderator_organization(user):
+            record_auth_event("login_failed", request, user, identifier, {"reason": "no_organization"})
+            raise ModeratorWithoutOrganization(user)
         record_auth_event("login", request, user, identifier)
+        if api_settings.UPDATE_LAST_LOGIN:
+            # SimpleJWT does this in its own serializer, which this one replaces; without it `last_login` stayed null for everyone.
+            update_last_login(None, user)
         return issue_login_tokens(user, request)
 
 
@@ -161,6 +184,8 @@ class FaceCloudTokenRefreshSerializer(TokenRefreshSerializer):
             raise serializers.ValidationError({"detail": "Email verification is required."})
         if user.is_suspended:
             raise serializers.ValidationError({"detail": "This account is suspended."})
+        if user.role == "moderator" and not has_moderator_organization(user):
+            raise ModeratorWithoutOrganization(user)
         if token.get("token_version", 0) != user.token_version:
             raise serializers.ValidationError({"detail": "This token has been revoked."})
         if not token_session_is_active(token, user):
@@ -279,15 +304,22 @@ class ChangePasswordSerializer(serializers.Serializer):
         password_validation.validate_password(value, self.context["request"].user)
         return value
 
+    def validate(self, attrs):
+        # Compared with what was typed as the current password, which is only reached once that has been checked as correct: asking "is this the
+        # current password?" of the new-password field would let a stolen session test guesses without knowing it.
+        if attrs["new_password"] == attrs["current_password"]:
+            raise serializers.ValidationError({"new_password": ["Choose a password you have not just used."]})
+        return attrs
+
 
 class PasswordResetRequestSerializer(serializers.Serializer):
-    email = serializers.EmailField()
+    email = serializers.EmailField(max_length=MAX_IDENTIFIER_LENGTH, error_messages=TOO_LONG_IDENTIFIER)
 
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
-    uidb64 = serializers.CharField()
-    token = serializers.CharField()
-    new_password = serializers.CharField(write_only=True, trim_whitespace=False)
+    uidb64 = serializers.CharField(max_length=64)
+    token = serializers.CharField(max_length=256)
+    new_password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=MAX_PASSWORD_LENGTH, error_messages=TOO_LONG_PASSWORD)
 
     def validate(self, attrs):
         try:
@@ -317,19 +349,37 @@ class DeleteAccountSerializer(serializers.Serializer):
 
 class AdminUserSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(read_only=True)
+    uploads_count = serializers.SerializerMethodField(help_text="Photos this account has uploaded (the list computes it for every row at once).")
 
     class Meta:
         model = User
         fields = [
             "id", "username", "email", "full_name", "role", "is_email_verified", "is_suspended",
-            "suspension_reason", "is_active", "date_joined",
+            "suspension_reason", "is_active", "date_joined", "last_login", "uploads_count",
         ]
-        read_only_fields = ["id", "username", "email", "full_name", "is_email_verified", "date_joined"]
+        read_only_fields = ["id", "username", "email", "full_name", "is_email_verified", "date_joined", "last_login", "uploads_count"]
+
+    def get_uploads_count(self, user) -> int:
+        annotated = getattr(user, "uploads_count", None)
+        return annotated if annotated is not None else user.image_uploads.count()
 
     def validate(self, attrs):
         if attrs.get("is_suspended") is False:
             attrs["suspension_reason"] = ""
         return attrs
+
+
+class AdminUserUpdateSerializer(AdminUserSerializer):
+    """PATCH /api/user/admin/users/{id}/: the account's fields plus, when making someone a moderator, the organization they will work for."""
+
+    organization_id = serializers.IntegerField(
+        write_only=True, required=False, allow_null=True,
+        help_text="With role=moderator: the organization the moderator will work for (needed when there is more than one, and when the account "
+                  "has no moderator membership yet). Ignored otherwise.",
+    )
+
+    class Meta(AdminUserSerializer.Meta):
+        fields = AdminUserSerializer.Meta.fields + ["organization_id"]
 
 
 class AdminUserDetailSerializer(AdminUserSerializer):
@@ -428,7 +478,9 @@ class DashboardSummarySerializer(serializers.Serializer):
     identity_grouped_images = serializers.IntegerField()
     identity_review_items = serializers.IntegerField()
     identity_groups_available = serializers.BooleanField(help_text="False when identity grouping is switched off.")
-    storage_bytes = serializers.IntegerField(help_text="Originals, standardized copies and enhanced outputs.")
+    storage_bytes = serializers.IntegerField(help_text="Originals, standardized copies and enhanced outputs, including those of photographs in the trash (they are still stored).")
+    trash_images = serializers.IntegerField(help_text="Photographs in the trash. They are not counted in any other figure here.")
+    trash_bytes = serializers.IntegerField(help_text="Size of the originals in the trash.")
 
 
 class DashboardDaySerializer(serializers.Serializer):

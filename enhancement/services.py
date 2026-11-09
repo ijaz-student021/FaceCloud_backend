@@ -4,6 +4,7 @@ Lighting correction is applied to the LAB luminance channel. Colour channels are
 left unchanged so the baseline does not intentionally normalize skin tones.
 """
 
+import json
 import logging
 import math
 import time
@@ -21,7 +22,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
 from django.core.files.base import ContentFile
 from django.db import transaction
-from django.db.utils import InterfaceError, OperationalError
+from django.db.utils import DatabaseError, InterfaceError, OperationalError
 from django.utils import timezone
 from rest_framework import status as http_status
 from rest_framework.exceptions import APIException, ValidationError
@@ -32,6 +33,7 @@ from uploads.models import ImagePreprocessingResult, UploadBatch
 from quality_control.models import ImageQualityDecision
 
 from . import policy as rendering_policy
+from .auto_edit import recommend_adaptive_adjustments
 from .controls import (
     CONTROL_NAMES, INTENTS, RENDERER_POLICY_NAME, RENDERER_VERSION, is_neutral,
     recommend_local_adjustments, validate_controls,
@@ -45,11 +47,14 @@ from .models import (
     EditMode,
     EnhancementBatchJob,
     EnhancementLevel,
+    EnhancementLighting,
     EnhancementStatus,
     EnhancementStyle,
+    EnhancementTrigger,
     ImageEditVersion,
     ImageEnhancementResult,
 )
+from .database_copy import copy_after_completion
 from .denoise_guard import DenoiseReference, judge_candidate
 from .codeformer import restore_faces_codeformer
 from .face_fidelity import check_face_regions
@@ -68,6 +73,9 @@ from .hd_restoration import (
     upscale_with_realesrgan,
 )
 from .lowlight import LowLightUnavailable, enhance_with_retinexformer
+from .edit_instrument import (
+    ENHANCING, FINISHING, FINISHING_AT, MODELS_FROM, MODELS_TO, NO_INSTRUMENT, READING, READING_AT, SAVED_AT, EditInstrument,
+)
 from .model_controls import MODEL_CONTROL_NAMES, apply_model_controls
 from .zero_dce import ZeroDCEUnavailable, enhance_with_zero_dce
 
@@ -351,7 +359,13 @@ def analyze_image_quality(image):
     levels = np.arange(256, dtype=np.int64)
     luminance = float(int(np.dot(levels, histogram)) / total)
     contrast = float(np.sqrt(np.dot(histogram, (levels - luminance) ** 2) / total))
-    laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+    # Edge strength scales with the light, so a dark photograph reads "blurry" (a real portrait at mean brightness 29: 16.7, and 84.5 once brightened, i.e. sharp). It is measured on the photograph
+    # brought to a mean brightness of 110 when it is darker than 90, so darkness is not mistaken for blur; a photograph that is not dark is measured as it always was.
+    measured = gray
+    if 0.5 <= luminance < 90.0:
+        gamma = max(0.2, float(np.log(110.0 / 255.0) / np.log(luminance / 255.0)))
+        measured = cv2.LUT(gray, (255.0 * np.power(np.arange(256, dtype=np.float64) / 255.0, gamma)).astype(np.uint8))
+    laplacian = cv2.Laplacian(measured, cv2.CV_64F)
     sharpness = float(cv2.meanStdDev(laplacian)[1][0][0] ** 2)
     blur = measure_blur(gray)
     smooth = cv2.GaussianBlur(gray, (3, 3), 0)
@@ -2135,9 +2149,13 @@ def _face_restoration_needs_withdrawing(context):
 
 def enhance_bgr(
     image, requested_level=EnhancementLevel.AUTO, style=EnhancementStyle.NATURAL,
-    allow_biometric_processing=True, use_zero_dce=True, checkpoint=None,
+    allow_biometric_processing=True, use_zero_dce=True, checkpoint=None, lighting="auto", source_enlarged=False,
 ):
     """Return an enhanced BGR image, applied level, and auditable parameters.
+
+    ``lighting`` is the person's own word on the lighting (``"dark"`` or ``"light"``; ``"auto"`` lets the engine decide). Only the adaptive engine follows it: the older
+    policies' own pipelines decide the lighting themselves, and a result they make carries no ``lighting`` block. ``source_enlarged`` says the pipeline enlarged ``image`` before this
+    call (preprocessing's small-image enlargement): the adaptive engine then refuses a shadow lift, whose blocks it could not see.
 
     ``style`` is a separate axis from ``requested_level`` (which controls
     exposure-correction strength): "natural" is the default pipeline
@@ -2154,13 +2172,46 @@ def enhance_bgr(
     The source array is never modified. Every stage that changes pixels proposes
     a candidate; ``stage_reports`` records whether it was accepted and why not.
     """
+    adaptive_options = {} if str(getattr(lighting, "value", lighting) or "auto") == "auto" else {"lighting": str(getattr(lighting, "value", lighting))}     # "auto" is not passed: the call stays what it was
+    if source_enlarged:
+        adaptive_options["source_enlarged"] = True                                                                                                          # (only when it is true, for the same reason)
     if rendering_policy.active_policy() == rendering_policy.ADAPTIVE:
         # The adaptive engine (enhancement/adaptive/) analyses, routes, validates candidates and returns one image.
         from .adaptive.service import AdaptiveImageEnhancementService
 
         return AdaptiveImageEnhancementService().enhance(
-            image, requested_level, style, allow_biometric_processing=allow_biometric_processing, checkpoint=checkpoint,
+            image, requested_level, style, allow_biometric_processing=allow_biometric_processing, checkpoint=checkpoint, **adaptive_options,
         )
+    restoration_check = None
+    if settings.ENHANCEMENT_RESTORATION_ESCALATION and rendering_policy.active_policy() in (
+        rendering_policy.LIGHTWEIGHT, rendering_policy.BALANCED,
+    ):
+        # A photograph whose face is blurred or whose resolution is low goes through the restoration chain (the adaptive engine) when this
+        # server can run it; otherwise the policy's own pipeline runs and the result records why restoration was not done.
+        from . import restoration
+
+        restoration_check = restoration.restoration_check(image)
+        if restoration_check["needed"] and restoration_check["available"]:
+            from .adaptive.service import AdaptiveImageEnhancementService
+
+            enhanced, applied_level, parameters = AdaptiveImageEnhancementService().enhance(
+                image, requested_level, style, allow_biometric_processing=allow_biometric_processing, checkpoint=checkpoint, **adaptive_options,
+            )
+            parameters["restoration_escalation"] = {
+                "reason": "The photograph needs restoration: " + ", ".join(restoration_check["needed"]) + ".",
+                "from_policy": rendering_policy.active_policy(), "check": restoration_check,
+            }
+            return enhanced, applied_level, parameters
+    enhanced, applied_level, parameters = _enhance_bgr_staged(
+        image, requested_level, style, allow_biometric_processing, use_zero_dce, checkpoint,
+    )
+    if restoration_check is not None and restoration_check["needed"]:
+        parameters["restoration_check"] = restoration_check
+    return enhanced, applied_level, parameters
+
+
+def _enhance_bgr_staged(image, requested_level, style, allow_biometric_processing, use_zero_dce, checkpoint):
+    """The policy's own pipeline (``enhance_bgr`` without the adaptive engine or the restoration escalation)."""
     if style == EnhancementStyle.AI_MAX:
         requested_level = EnhancementLevel.HIGH
     context = EnhancementPipelineContext(
@@ -2434,7 +2485,19 @@ def _read_standardized_with_alpha(preprocessing):
     return bgr, alpha
 
 
+def _enlarged_in_preprocessing(result):
+    """Whether preprocessing made the standardized copy larger than the upload (uploads/enlarge.py).
+
+    That copy is then the photograph to enhance: starting again from the tiny upload would enlarge it a second time, to a smaller size, and
+    throw the first enlargement away (a 236 x 354 upload enlarged 4 times to 944 x 1416 came out as 472 x 708).
+    """
+    preprocessing = getattr(result, "preprocessing_result", None)
+    return bool((getattr(preprocessing, "enlargement", None) or {}).get("applied"))
+
+
 def _read_enhancement_source(result, decoding=None):
+    if _enlarged_in_preprocessing(result):
+        return _read_standardized_image(result.preprocessing_result), "standardized_enlarged"
     if settings.ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION:
         try:
             return _read_full_resolution_original(result, decoding=decoding), "full_resolution_original"
@@ -2446,6 +2509,9 @@ def _read_enhancement_source(result, decoding=None):
 
 def _read_enhancement_source_with_alpha(result, decoding=None):
     """``(bgr, alpha, strategy)`` for a result whose output format keeps transparency."""
+    if _enlarged_in_preprocessing(result):
+        bgr, alpha = _read_standardized_with_alpha(result.preprocessing_result)
+        return bgr, alpha, "standardized_enlarged"
     if settings.ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION:
         try:
             bgr, alpha = _read_full_resolution_original(result, keep_alpha=True, decoding=decoding)
@@ -2585,7 +2651,7 @@ def ensure_enhancement_capacity(owner, *, batch):
 
 def create_enhancement_result(
     image, requested_level=EnhancementLevel.AUTO, batch_job=None,
-    requested_style=EnhancementStyle.NATURAL,
+    requested_style=EnhancementStyle.NATURAL, trigger=EnhancementTrigger.MANUAL, requested_lighting=EnhancementLighting.AUTO,
 ):
     if image.owner_id != (batch_job.owner_id if batch_job else image.owner_id):
         raise ValidationError("The enhancement owner does not match the image owner.")
@@ -2602,6 +2668,8 @@ def create_enhancement_result(
         batch_job=batch_job,
         requested_level=requested_level,
         requested_style=requested_style,
+        requested_lighting=requested_lighting,
+        trigger=trigger,
         status=EnhancementStatus.PENDING,
     )
 
@@ -2820,15 +2888,22 @@ def _process_claimed_result(result, token):
         else:
             source, source_strategy = _read_enhancement_source(result, decoding)
             alpha = None
+        enlarged = source_strategy == "standardized_enlarged"         # preprocessing enlarged a very small photograph: the engine sees the enlarged copy
         source, pixel_budget = _fit_pixel_budget(source)
         if pixel_budget["reduced"]:
             source_strategy = "original_reduced_to_pixel_budget"
         from privacy.services import biometric_processing_allowed
-        enhanced, applied_level, parameters = enhance_bgr(
-            source, result.requested_level, style=result.requested_style,
-            allow_biometric_processing=biometric_processing_allowed(result.owner),
-            checkpoint=checkpoint,
-        )
+        engine_options = {} if result.requested_lighting == EnhancementLighting.AUTO else {"lighting": result.requested_lighting}      # "auto" is not passed: the call stays what it was
+        if enlarged:
+            engine_options["source_enlarged"] = True                                                                                    # (only when it is true, for the same reason)
+        from .adaptive.trace import photo
+
+        with photo(f"{result.image_id} (result {result.pk})"):           # the engine's log lines say which photograph a skipped model belongs to
+            enhanced, applied_level, parameters = enhance_bgr(
+                source, result.requested_level, style=result.requested_style,
+                allow_biometric_processing=biometric_processing_allowed(result.owner),
+                checkpoint=checkpoint, **engine_options,
+            )
         parameters["source_resolution_strategy"] = source_strategy
         if decoding:
             parameters["source_decoding"] = decoding
@@ -2890,6 +2965,7 @@ def _process_claimed_result(result, token):
             if current.claim_token != token or current.status != EnhancementStatus.PROCESSING:
                 raise EnhancementSuperseded()
             result.save()
+        copy_after_completion(result)
         return result
     except EnhancementSuperseded:
         logger.warning("Result %s was taken over or closed by another worker; this output was discarded.", result.pk)
@@ -2930,20 +3006,42 @@ def _auto_editor_adjustments(quality, intent="auto", blockiness_detected=False):
     return recommend_local_adjustments(quality, intent, blockiness_detected=blockiness_detected)["controls"]
 
 
-def _render_editor_controls(source, controls, strength=1.0):
+def _render_editor_controls(source, controls, strength=1.0, model_stage=None, instrument=None):
     """Model-backed sliders first (enhancement/model_controls.py), then bounded tone controls in float LAB (tone.py).
+
+    ``model_stage`` is ``(image, report, reasons)`` from ``apply_model_controls(source, controls, 1.0)``: the models have already run, and a safety
+    ``strength`` below 1 is then applied by blending that result back toward the source instead of running the models again. Without it the models
+    run here, at ``strength``.
 
     Returns ``(image, effective, model_report, model_reasons)``.
     """
-    modelled, model_report, model_reasons = apply_model_controls(source, controls, strength)
+    instrument = instrument or NO_INSTRUMENT
+    if model_stage is None:
+        modelled, model_report, model_reasons = apply_model_controls(source, controls, strength, instrument=instrument)
+    else:
+        modelled, model_report, model_reasons = model_stage
+        if strength < 1.0 and modelled is not source:
+            modelled = cv2.addWeighted(modelled, strength, source, 1.0 - strength, 0)
     tone_controls = {name: value for name, value in controls.items() if name not in MODEL_CONTROL_NAMES}
-    rendered, effective = render_tone(modelled, tone_controls, strength)
+    with instrument.stage("tone_render"):
+        rendered, effective = render_tone(modelled, tone_controls, strength)
     for name in MODEL_CONTROL_NAMES:
         effective[name] = float(controls.get(name, 0.0)) * strength
     return rendered, effective, model_report, model_reasons
 
 
-def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline=None):
+def _model_report_at(report, controls, strength):
+    """The model-slider report as it reads at ``strength``: ``requested`` and ``blend`` are the values after the safety reduction, as before."""
+    if strength >= 1.0:
+        return report
+    scaled = []
+    for entry in report:
+        requested = float(controls.get(entry["control"], 0.0)) * strength
+        scaled.append({**entry, "requested": round(requested, 2), "blend": round(min(requested, 100.0) / 100.0, 3)})
+    return scaled
+
+
+def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline=None, instrument=None):
     """Render one non-destructive Auto or Manual gallery edit.
 
     ``baseline`` is the pre-AI-enhancement image (the preprocessed original).
@@ -2956,22 +3054,32 @@ def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline
     "auto", "preserve" or "brighten"); Manual uses the validated control values.
     The returned metadata records what was requested, validated and applied,
     each guard reduction, any fallback and the renderer version.
+
+    The model-backed sliders run **once**. When a safety guard asks for a weaker render, the models are not run again: their result is blended back
+    toward the source by the reduced strength and only the tone controls are rendered again (for one model slider this is the same image as running the
+    model at the reduced strength, to within a grey level; with several, each later model saw the first's reduced output before and now sees the full
+    one). ``baseline`` is read by the caller only when the intensity slider needs it (``intensity`` below 100). ``instrument`` (``edit_instrument``)
+    records timings and progress; without one nothing is recorded.
     """
+    instrument = instrument or NO_INSTRUMENT
     if source is None or source.size == 0:
         raise ValidationError("The enhanced image cannot be edited safely.")
     if mode not in EditMode.values:
         raise ValidationError({"mode": "Choose auto or manual."})
 
     requested_raw = dict(requested_adjustments or {})
-    before = analyze_image_quality(source)
+    with instrument.stage("analyze_before"):
+        before = analyze_image_quality(source)
     recommendation = None
     if mode == EditMode.AUTO:
         intent = requested_raw.get("intent", "auto")
         if intent not in INTENTS:
             raise ValidationError({"intent": f"Choose one of: {', '.join(INTENTS)}."})
-        recommendation = recommend_local_adjustments(
-            before, intent, blockiness_detected=measure_compression_artifacts(source)["detected"],
-        )
+        blockiness_detected = measure_compression_artifacts(source)["detected"]
+        if intent == "auto":      # read the photograph's nature first (auto_edit.py); "preserve" and "brighten" keep the earlier recipe
+            recommendation = recommend_adaptive_adjustments(source, before, blockiness_detected=blockiness_detected, baseline=baseline)
+        else:
+            recommendation = recommend_local_adjustments(before, intent, blockiness_detected=blockiness_detected)
         controls = recommendation["controls"]
         intensity = 100.0
     else:
@@ -2991,9 +3099,23 @@ def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline
     model_report, model_reasons = [], []
     after = before
     if not is_neutral(controls):
+        model_stage = None
+        if any(float(controls.get(name, 0.0)) > 0 for name in MODEL_CONTROL_NAMES):
+            # The slow part, run once at full strength whatever the guards decide below.
+            model_stage = apply_model_controls(source, controls, 1.0, instrument=instrument)
+        else:
+            model_stage = (source, [], [])
+        instrument.progress(ENHANCING, MODELS_TO)
+        render_strength = strength
         for _attempt in range(10):
-            rendered, effective, model_report, model_reasons = _render_editor_controls(source, controls, strength)
-            after = analyze_image_quality(rendered)
+            render_strength = strength
+            attempt_started = time.perf_counter()
+            rendered, effective, model_report, model_reasons = _render_editor_controls(
+                source, controls, strength, model_stage=model_stage, instrument=instrument,
+            )
+            with instrument.stage("analyze_after"):
+                after = analyze_image_quality(rendered)
+            instrument.attempt_done((time.perf_counter() - attempt_started) * 1000.0)
             contrast_floor = before["contrast_stddev"] * 0.70
             if (
                 after["highlight_clipping_percent"] <= clipping_limit
@@ -3010,9 +3132,13 @@ def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline
                     reasons.append(reason)
             guard_reductions.append({"strength": round(strength, 4), "reasons": attempt_reasons})
             strength *= 0.78
+        model_report = _model_report_at(model_report, controls, render_strength)
 
     intensity_applied = False
     if intensity < 100.0:
+        if callable(baseline):                # a loader: the unenhanced photo is read only when this slider needs it
+            with instrument.stage("read_baseline"):
+                baseline = baseline()
         if baseline is None:
             fallback_reasons.append("intensity_not_applied_no_unenhanced_baseline")
         else:
@@ -3054,7 +3180,7 @@ def apply_gallery_adjustments(source, mode, requested_adjustments=None, baseline
         },
     }
     if recommendation is not None:
-        metadata["auto"] = {key: recommendation[key] for key in ("action", "intent", "rationale", "caution_flags")}
+        metadata["auto"] = {key: recommendation[key] for key in ("action", "intent", "rationale", "caution_flags", "nature", "scene") if key in recommendation}
     return rendered, metadata
 
 
@@ -3068,6 +3194,16 @@ def _read_preprocessed_baseline(preprocessing):
     finally:
         preprocessing.processed_file.close()
     return cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_COLOR)
+
+
+def _set_edit_progress(edit_pk, token, stage, percent):
+    """Record how far a rendering edit is, for the client that polls it. Only the execution holding the claim writes; a failure here never fails the edit."""
+    try:
+        ImageEditVersion.objects.filter(pk=edit_pk, claim_token=token, status=EnhancementStatus.PROCESSING).update(
+            progress_stage=stage, progress_percent=percent,
+        )
+    except (DatabaseError, InterfaceError):
+        logger.debug("Could not record the progress of edit %s.", edit_pk, exc_info=True)
 
 
 class EditSuperseded(Exception):
@@ -3126,25 +3262,37 @@ def process_image_edit(edit, token=None, resume_token=""):
         edit.claimed_at = now
         edit.started_at = edit.started_at or now
         edit.failure_reason = ""
+        edit.progress_stage, edit.progress_percent = READING, READING_AT
         edit.save(update_fields=[
-            "status", "claim_token", "claimed_at", "started_at", "failure_reason", "source_version", "updated_at",
+            "status", "claim_token", "claimed_at", "started_at", "failure_reason", "source_version", "progress_stage", "progress_percent",
+            "updated_at",
         ])
 
     started = time.perf_counter()
     stored_name = None
+    instrument = EditInstrument(on_progress=lambda stage, percent: _set_edit_progress(edit.pk, token, stage, percent))
     try:
         result = edit.enhancement_result
         preprocessing = result.preprocessing_result
-        source, alpha = read_enhanced_with_alpha(result)
-        baseline = _read_preprocessed_baseline(preprocessing)
+        with instrument.stage("read_source"):
+            source, alpha = read_enhanced_with_alpha(result)
+        instrument.progress(ENHANCING, MODELS_FROM)
         requested = dict(edit.requested_adjustments or {})
+        with instrument.stage("prepare"):
+            measured = visible_for_measurement(source, alpha)
         rendered, metadata = apply_gallery_adjustments(
-            visible_for_measurement(source, alpha), edit.mode, requested, baseline=baseline,
+            measured, edit.mode, requested,
+            baseline=lambda: _read_preprocessed_baseline(preprocessing),       # decoded only when the intensity slider is below 100
+            instrument=instrument,
         )
-        rendered = restore_hidden(rendered, source, alpha)
-        output_image = attach(rendered, alpha)
-        payload, extension, output_format = _encode_output(output_image, preprocessing)
-        metadata["encoded_output"] = _verify_encoded_output(payload, output_image, output_format)
+        instrument.progress(FINISHING, FINISHING_AT)
+        with instrument.stage("restore_alpha"):
+            rendered = restore_hidden(rendered, source, alpha)
+            output_image = attach(rendered, alpha)
+        with instrument.stage("encode"):
+            payload, extension, output_format = _encode_output(output_image, preprocessing)
+        with instrument.stage("verify"):
+            metadata["encoded_output"] = _verify_encoded_output(payload, output_image, output_format)
         metadata["transparency"] = {
             "source_had_alpha": alpha is not None, "preserved": alpha is not None,
             "policy": transparency_policy(output_format),
@@ -3152,9 +3300,15 @@ def process_image_edit(edit, token=None, resume_token=""):
         metadata["source_version"] = edit.source_version
         source_stem = Path(result.output_name).stem
         output_name = f"{source_stem}_edit_{edit.pk}{extension}"
-        edit.edited_file.save(output_name, ContentFile(payload), save=False)
+        with instrument.stage("save_file"):
+            edit.edited_file.save(output_name, ContentFile(payload), save=False)
         stored_name = edit.edited_file.name
+        instrument.progress(FINISHING, SAVED_AT)
         duration = max(1, round((time.perf_counter() - started) * 1000))
+        # Where the time went (everything up to the stored file; the final database update is not in it).
+        metadata["timings_ms"] = instrument.timings_ms()
+        metadata["image_pixels"] = int(rendered.shape[0]) * int(rendered.shape[1])
+        metadata["guard_attempts"] = {"count": len(instrument.attempt_ms), "ms": instrument.attempt_ms}
         with transaction.atomic():
             # Publish only as the owner, under the row lock, from the row as it is now.
             current = ImageEditVersion.objects.select_for_update().filter(pk=edit.pk).first()
@@ -3176,11 +3330,17 @@ def process_image_edit(edit, token=None, resume_token=""):
             current.quality_metadata = metadata
             current.failure_reason = ""
             current.finished_at = timezone.now()
+            current.progress_stage, current.progress_percent = "", 100
             ImageEditVersion.objects.filter(
                 enhancement_result=current.enhancement_result_id, is_current=True,
             ).exclude(pk=current.pk).update(is_current=False)
             current.is_current = True
             current.save()
+        logger.info(
+            "gallery_edit_timings %s",
+            json.dumps({"edit_id": current.pk, "mode": current.mode, "pixels": metadata["image_pixels"], "guard_attempts": len(instrument.attempt_ms),
+                        "timings_ms": metadata["timings_ms"]}, sort_keys=True),
+        )
         return current
     except EditSuperseded:
         logger.warning("Edit %s was deleted or taken over while it rendered; its output was discarded.", edit.pk)

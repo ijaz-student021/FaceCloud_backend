@@ -16,6 +16,9 @@ class NotificationPreference(models.Model):
     email_notifications = models.BooleanField(default=False)
     live_session_alerts = models.BooleanField(default=False)
     moderator_review_updates = models.BooleanField(default=True)
+    # Not a notification: the one per-account setting there is. Whether new uploads are enhanced automatically once they pass the checks (a form field on an
+    # upload overrides it for that upload). Kept here because this is the account's existing preferences endpoint.
+    auto_enhance = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -42,6 +45,10 @@ class UserNotification(models.Model):
         MODERATOR_REVIEW_ESCALATED = "moderator_review_escalated", "Moderator review escalated"
         MODERATOR_BATCH_FAILED = "moderator_batch_failed", "Organization batch failed"
         MODERATOR_REVIEW_OVERDUE = "moderator_review_overdue", "Moderator review overdue"
+        PHOTO_REVIEW_APPROVED = "photo_review_approved", "Photo approved by a moderator"
+        PHOTO_REVIEW_REJECTED = "photo_review_rejected", "Photo not accepted by a moderator"
+        IDENTITY_MERGE_SUGGESTED = "identity_merge_suggested", "Person folders may be the same person"
+        BATCH_ENHANCED = "batch_enhanced", "Photos enhanced"
 
     class Severity(models.TextChoices):
         INFO = "info", "Information"

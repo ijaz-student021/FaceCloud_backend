@@ -151,6 +151,13 @@ context, decision, and consequences. Superseded decisions remain for history.
 - **Consequence:** A deployment that enables GFPGAN without the identity model
   gets no face restoration outside AI Max. Embedding similarity shows a face
   stayed recognisably the same; it does not show restored detail is true detail.
+- **Update (2026-11-05):** the text above describes the staged pipeline. The
+  adaptive engine (`ENHANCEMENT_RENDER_POLICY=adaptive_v1`) has no AI Max
+  exemption: for every style a face restoration runs only when the upload's face
+  can be compared, is kept only if it still matches, and is skipped (not
+  bypassed) when identity cannot be verified; its results never report
+  `identity_check_bypassed`. Pinned by `enhancement/test_adaptive_engine.py`
+  (`test_no_style_skips_the_identity_requirement_for_a_face_restoration`).
 
 ## ADR-017 — Faces are checked separately from the frame
 

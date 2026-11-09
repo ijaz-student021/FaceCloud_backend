@@ -50,6 +50,6 @@ and consent behaviour is unchanged.
 | 4 | 14 | `id`, `type`, `message`, `timestamp`, `status` on `GET /api/user/activity/` entries, plus a response schema |
 | 5 | 13 | Documentation only: severity already is success/warning/error/info |
 | 7 | 4, 5 | Verified, no code change; the response is pinned by `uploads/test_batch_results_contract.py` |
-| 8 | 19 | `code: "consent_required"` on the three consent refusals (identity analysis, face search, person collage) |
+| 8 | 19 | `code: "consent_required"` on the two consent refusals (identity analysis, face search) |
 
 Rows 15 (Profile) and 17 (Active Sessions) stay **waiting for #68**; see the pull request for what the follow-up should check.

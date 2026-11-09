@@ -96,7 +96,7 @@ class AdvisorConsentView(APIView):
 
 def _result_for(request, result_id):
     return get_object_or_404(
-        ImageEnhancementResult.objects.filter(owner=request.user, status=EnhancementStatus.COMPLETED), pk=result_id)
+        ImageEnhancementResult.objects.filter(owner=request.user, status=EnhancementStatus.COMPLETED, image__trashed_at__isnull=True), pk=result_id)
 
 
 def _serialize(recommendation, request):
@@ -144,7 +144,7 @@ class AdvisorRunCreateView(APIView):
         payload.is_valid(raise_exception=True)
         ids = list(dict.fromkeys(payload.validated_data["result_ids"]))
         found = {result.pk: result for result in ImageEnhancementResult.objects.filter(
-            owner=request.user, status=EnhancementStatus.COMPLETED, pk__in=ids)}
+            owner=request.user, status=EnhancementStatus.COMPLETED, pk__in=ids, image__trashed_at__isnull=True)}
         run, items = service.create_run(request.user, [found[i] for i in ids if i in found], payload.validated_data["intent"])
         report = [{"result_id": i, "state": "skipped", "reason": "not_found"} for i in ids if i not in found]
         for item in items:

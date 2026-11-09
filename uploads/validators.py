@@ -4,8 +4,11 @@ import zipfile
 from pathlib import PurePosixPath
 
 from django.conf import settings
+from django.utils import timezone
 from PIL import Image, UnidentifiedImageError
 from rest_framework.exceptions import ValidationError
+
+from .capture import capture_time, gps_position
 
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".gif"}
 FORMAT_DETAILS = {
@@ -75,6 +78,18 @@ def validate_image_file(uploaded_file, original_name=None):
     finally:
         uploaded_file.seek(0)
 
+    # The capture time, from a fresh open: reading EXIF before verify() breaks it for PNG, and after verify() the first handle is unusable.
+    taken_at = position = None
+    try:
+        with Image.open(uploaded_file) as reopened:
+            taken_at = capture_time(reopened)
+            if settings.LOCATION_ENABLED:
+                position = gps_position(reopened)
+    except Exception:
+        taken_at = position = None
+    finally:
+        uploaded_file.seek(0)
+
     digest = hashlib.sha256()
     for chunk in iter(lambda: uploaded_file.read(1024 * 1024), b""):
         digest.update(chunk)
@@ -87,6 +102,11 @@ def validate_image_file(uploaded_file, original_name=None):
         "width": width,
         "height": height,
         "checksum_sha256": digest.hexdigest(),
+        "taken_at": taken_at,
+        # Where it was taken (uploads/capture.py), when the switch is on and the file says so; ``location_checked_at`` records that the file was looked at.
+        "gps_lat": position[0] if position else None,
+        "gps_lon": position[1] if position else None,
+        "location_checked_at": timezone.now() if settings.LOCATION_ENABLED else None,
     }
 
 

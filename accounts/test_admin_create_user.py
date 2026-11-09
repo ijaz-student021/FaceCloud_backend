@@ -52,6 +52,9 @@ class AdminCreateUserTests(AdminCreateBase):
         self.assertEqual(self.client.post(reverse(URL_NAME), payload, format="json").status_code, status.HTTP_401_UNAUTHORIZED)
         for role in ("user", "moderator"):
             person = User.objects.create_user(f"p_{role}", f"p_{role}@example.com", PASSWORD, is_email_verified=True, role=role)
+            if role == "moderator":
+                OrganizationMembership.objects.create(organization=self.organization(f"Home of {role}"), user=person,
+                                                      role=OrganizationMembership.Role.MODERATOR, status=OrganizationMembership.Status.ACTIVE)
             self.as_user(person)
             self.assertEqual(self.client.post(reverse(URL_NAME), payload, format="json").status_code, status.HTTP_403_FORBIDDEN)
         self.assertFalse(User.objects.filter(username="x").exists())
@@ -63,7 +66,7 @@ class AdminCreateUserTests(AdminCreateBase):
         self.assertEqual(response.data["role"], "user")
         self.assertEqual(response.data["username"], "sara")
         self.assertEqual(set(response.data), {"id", "username", "email", "full_name", "role", "is_email_verified", "is_suspended",
-                                              "suspension_reason", "is_active", "date_joined"})
+                                              "suspension_reason", "is_active", "date_joined", "last_login", "uploads_count"})
         user = User.objects.get(username="sara")
         self.assertTrue(user.is_email_verified and user.is_active and not user.is_suspended)
         self.assertEqual(user.role, "user")
@@ -212,7 +215,7 @@ class AdminCreateUserTests(AdminCreateBase):
         self.assertIsInstance(listed.data, list)
         self.assertEqual({row["username"] for row in listed.data}, {"boss", "founder", "sara"})
         self.assertEqual(set(listed.data[0]), {"id", "username", "email", "full_name", "role", "is_email_verified", "is_suspended",
-                                               "suspension_reason", "is_active", "date_joined"})
+                                               "suspension_reason", "is_active", "date_joined", "last_login", "uploads_count"})
 
     def test_get_and_patch_on_other_urls_are_unchanged(self):
         self.create()

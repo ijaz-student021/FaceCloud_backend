@@ -11,7 +11,7 @@ from uploads.models import UploadBatch
 # Every list endpoint without URL parameters, for the signed-in user.
 PLAIN_LIST_PATHS = (
     "/api/images/batches/", "/api/images/", "/api/enhancements/jobs/", "/api/enhancements/results/",
-    "/api/enhancements/comparisons/", "/api/quality/results/", "/api/duplicates/results/",
+    "/api/enhancements/comparisons/", "/api/quality/results/", "/api/duplicates/results/", "/api/duplicates/matches/",
     "/api/identities/groups/", "/api/identities/review/", "/api/identities/history/",
     "/api/reports/", "/api/downloads/", "/api/downloads/packages/", "/api/notifications/",
     "/api/shares/", "/api/organizations/",

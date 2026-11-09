@@ -1,0 +1,35 @@
+# Moderator console alignment audit
+
+The frontend (`ali4347/facecloud-ai-platform`, read-only) is the reference; the backend adapts. One row per moderator screen: the endpoint that serves it today,
+what the screen reads, and what is missing. Audited against backend `main` at `f26b3d9` by running every endpoint on a throwaway database with an organization,
+a moderator, a member and uploads. Connected already (not in this table): Dashboard, Review Queue, Member Management.
+
+Everything this change adds is additive: no field or endpoint is renamed or removed. Moderator endpoints are organization-scoped (`/api/organizations/{id}/...`),
+owner or moderator only, and a moderator never sees another organization's data.
+
+## The finding that decides whether any of these screens can show data
+
+**A member's uploads never reach the team organization.** `get_default_organization` tags every new batch with the uploader's *personal* organization first
+(every user has one), so a moderator of "Acme Team" saw **0 batches and 0 reviews** after a member of Acme Team uploaded 6 photos (reproduced). The moderator
+screens are therefore empty in real use unless the uploader chooses the team. This change adds an **optional `organization_id`** to the three upload endpoints
+(`single`, `multiple`, `zip`): the uploader must be an active member of that organization, and without it nothing changes (personal organization, owner-only
+as before). The upload page should offer "Submit to: Personal / <team>" for users who belong to a team. That keeps sharing a photo with moderators an explicit
+choice, which matters for faces.
+
+## Screen by screen
+
+| # | Screen | Endpoint(s) that serve it | What the screen reads | Missing, and what is added |
+|---|---|---|---|---|
+| 1 | **Batches** | `GET .../moderator/batches/`, `.../{id}/`, `POST .../{id}/cancel/`, `.../retry/`, `.../reprocess/` | list: `id`, `owner_username`, `upload_type`, `display_name`, `processing_status`, `current_stage`, `total_files`, `accepted_files`, `processed_files`, `processing_failed_files`, `created_at`. detail: those plus `images[]` (`id`, `original_name`, `upload_status`, `progress_status`, `quality_decision`, `enhancement_status`) and `counts_from_images` | The screen shows a name, a progress bar, counts per outcome and a size per photo. **Added** to list and detail: `name` (the ZIP's file name, else the label, else `Upload <id>`), `progress_percentage`, `counts` (`accepted`, `rejected`, `needs_review`, `failed`); to each detail image: `file_size`, `preview_url` (the existing moderator image preview) and `outcome`. |
+| 2 | **Identity Review** | review items: `GET .../moderator/reviews/?source=identity`, `POST .../reviews/{id}/merge-identity-groups/` | queue items only | The screen lists the organization's person folders, suggested merges and "merge" / "move image". **None** served a folder list or merge suggestions, and merging needed a review id. **Added:** `GET .../moderator/identity-groups/` (folders that hold photographs submitted to this organization: `id`, `display_name`, `owner`, `member_count`, `photos_in_organization`, `matching_confidence`, `cover_images[]` with `preview_url`), `GET .../moderator/identity-groups/suggested-merges/` (pairs of one member's folders whose average faces are alike: `similarity` as a percentage, `source` to merge away, `target` to keep) and `POST .../moderator/identity-groups/merge/ {source_group_id, target_group_id, reason}` (same member only; audited as `identity_groups_merged_by_moderator`). "Dismiss" stays in the browser (nothing is stored). **"Move image"** has no free-form endpoint for a moderator on purpose: decide an identity review item with `select_group`. |
+| 3 | **Moderation Logs** and 4 **Audit** | `GET /api/organizations/{id}/audit/` | `id`, `actor{id,username,email}`, `action`, `target_type`, `target_id`, `previous_value`, `new_value`, `reason`, `created_at` (every moderator action is recorded: decide, escalate, assign, claim, release, bulk decision, batch retry / cancel / reprocess, group merge, image preview) | The screens show who, a sentence, the photo's file name, old and new status, reason and time, filtered by moderator and kind. **Added:** `actor_name`, `message` (a sentence), `target_label` (the photo or upload name), `from_status` / `to_status`, and `?action=`, `?actor=`, `?q=`, `?date_from=`, `?date_to=`, `?target_type=`, `?target_id=` plus paging. **Not available: "user notified"**: the backend does not notify an uploader about a moderator's decision, so that column must go. |
+| 5 | **Image Review** | `GET .../moderator/reviews/{id}/`, `.../{id}/image/`, `POST .../claim/`, `.../release/`, `.../decision/`, `.../escalate/`, `.../assign/` | the review (status, source, `ai_recommendation`, `ai_confidence`, claim, SLA, decision) | The screen shows the photo's measurements and the history of this review. **Added** to the review detail: `image` (`id`, `name`, `width`, `height`, `file_size`, `uploader{id,username}`, `face_count`, `quality{decision, overall_score, rejection_reasons, warnings}`, `preview_url`). The history is the audit endpoint with `?target_type=ModeratorReview&target_id={id}`. |
+| 6 | **Notification Center** | `GET /api/notifications/`, `GET .../unread-count/`, `POST .../mark-all-read/`, `.../{id}/read/` | a moderator already receives `moderator_review_assigned`, `moderator_review_escalated`, `moderator_review_overdue` and `moderator_batch_failed` (event types) | Nothing to add. Map the four to the screen's Assignment / Escalation / Deadline / Failure; `severity` and `message` come with each notification. |
+| 7 | **Rejected Images** | none | filename, reason, uploader, time, thumbnail, "Manual Review" | **Added:** `GET .../moderator/images/?decision=rejected|needs_review|accepted&q=&page=` (the organization's photos with `id`, `original_name`, `uploader`, `created_at`, `decision`, `rejection_reasons[]`, `overall_score`, `preview_url`, `review_id` when a review exists). |
+| 8 | **Reports & Exports** | `GET/POST .../moderator/reports/`, `.../{id}/`, `.../{id}/download/`, `GET/POST .../export/` | report `id`, `report_type`, `format`, `status`, `requested_by` (an id), `date_from`, `date_to`, `generated_at`, `file_size`, `expires_at` | The history shows who generated it and a download link. **Added:** `requested_by_name` and `download_url` on each report. Report types are `review_summary`, `moderator_activity`, `rejection_reasons`, `quality_scores`, `batches`, `duplicate_decisions`, `general_activity`; formats `json`, `csv`, `pdf`. |
+| 9 | **Settings** | `GET/PATCH /api/notifications/preferences/`, `GET /api/user/sessions/` | queue auto-refresh and "notify on risk" switches; the sign-in session list | Nothing to add: auto-refresh is a browser preference; the notification switch maps to `/api/notifications/preferences/`; sessions are the user's own. |
+
+## Not in the backend, and not faked
+* "User notified" on a moderator action (nobody is notified of a decision).
+* Dismissed merge suggestions persisting across devices.
+* A moderator moving a single photo between a member's folders outside a review item.

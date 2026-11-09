@@ -14,7 +14,7 @@ Everything runs on this laptop's CPU. Nothing is uploaded anywhere.
 ## The story (what to say and show)
 1. **Gallery, section 1:** "A good photo is left alone: the output is pixel-identical." (Honest design:
    no beautifying, only measured faults are corrected.)
-2. **Gallery, section 2:** the dark copy. "By default automatic mode does not brighten it, because
+2. **Gallery, section 2:** the dark copy (`scripts/seed_demo.py --dark` makes the same kind of copy for the live demo: **x0.40** of the light, brightness about 28 for a normal portrait; the quality check lifts such a photograph instead of refusing it, and refuses only a practically black one). "By default automatic mode does not brighten it, because
    pixels cannot tell a dark photo from a deliberately dark one. When the user chooses a level it lifts;
    with `balanced_v1` the Zero-DCE model lifts it on the CPU (27 to 56)."
 3. **Gallery, section 3:** the pre-filter crops. "A lift amplifies noise, so a gentle filter runs first,

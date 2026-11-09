@@ -16,6 +16,10 @@ class ImageThumbnailView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     throttle_scope = "thumbnail"
 
+    def images(self, request):
+        """The photographs this endpoint may serve."""
+        return ImageUpload.objects.filter(owner=request.user, status="uploaded")
+
     @extend_schema(
         parameters=[OpenApiParameter(
             "size", int, required=False,
@@ -30,7 +34,7 @@ class ImageThumbnailView(APIView):
             if not raw_size.isdigit() or int(raw_size) not in allowed_sizes():
                 raise ValidationError({"size": f"Choose one of: {', '.join(str(s) for s in allowed_sizes())}."})
             size = int(raw_size)
-        image = get_object_or_404(ImageUpload.objects.filter(owner=request.user, status="uploaded"), pk=pk)
+        image = get_object_or_404(self.images(request), pk=pk)
         try:
             thumbnail = get_or_create_thumbnail(image, size)
         except ThumbnailUnavailable as error:
@@ -39,3 +43,10 @@ class ImageThumbnailView(APIView):
         # A photo never changes after upload, so a thumbnail can be reused by this browser.
         response["Cache-Control"] = "private, max-age=3600"
         return response
+
+
+class TrashThumbnailView(ImageThumbnailView):
+    """The thumbnail of one of your photographs **in the trash** (the ordinary thumbnail answers 404 for it), so the trash can show what it holds."""
+
+    def images(self, request):
+        return ImageUpload.all_objects.in_trash().filter(owner=request.user, status="uploaded")

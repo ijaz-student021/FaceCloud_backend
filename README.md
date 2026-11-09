@@ -26,7 +26,7 @@ feature catalogue and status table; this README does not duplicate it.
 |---|---|
 | Accounts | Pending registration with email-link verification, JWT login with refresh rotation, per-account login backoff, password reset, logout from all devices, admin / moderator / user roles, suspension, audit trail |
 | Uploads | Single, multiple and ZIP upload; content-based validation of JPG, PNG, WebP, BMP, TIFF and static GIF; ZIP-slip and ZIP-bomb protection; UUID storage paths; owner-only access |
-| Gallery | Automatic event/timeline grouping of a user's photos, face-aware collages from an event or a person (asynchronous, consent-gated for person collages), and cached, encrypted JPEG thumbnails so a gallery never loads full originals |
+| Gallery | Automatic event/timeline grouping of a user's photos, and cached, encrypted JPEG thumbnails so a gallery never loads full originals |
 | Quality control | Sharpness, exposure, contrast, noise and resolution scoring with explainable accept / review / reject decisions |
 | Enhancement | **Default policy `lightweight_v1`: OpenCV and Pillow only; the learned models are installed but off** (see [docs/enhancement/optional-models.md](docs/enhancement/optional-models.md)). Model set: Retinexformer / Zero-DCE (low light), NAFNet-SIDD (denoise), NAFNet-GoPro (deblur), CodeFormer / GFPGAN (faces, identity-gated), Real-ESRGAN (super-resolution), YuNet + SFace by default (RetinaFace and ArcFace selectable). Guarded adaptive pipeline, an **adaptive engine** (`adaptive_v1`: analyse, route, validate candidates against identity and quality gates, return one image or keep the original; [docs/enhancement/adaptive-engine.md](docs/enhancement/adaptive-engine.md)), style presets, and editor sliders (tone controls plus model-backed low light, noise reduction, deblur and face restoration) with bounded previews and saved versions |
 | Identity | YuNet face detection, SFace embeddings, identity grouping, a guard that rejects enhancements that change who a face looks like, ZIP export per identity, consent-gated search by photo |
@@ -82,6 +82,13 @@ Original uploads are never overwritten. Standardized, enhanced, edited,
 comparison, report, and package artifacts are stored separately with
 owner-scoped access.
 
+**Person folders come after the quality verdict and the enhancement.** After preprocessing a photograph goes through the face check, the duplicate check and the quality check, in
+that order, then its automatic enhancement, and only then is it filed into a person folder (when no enhancement is coming, at once; never later than
+`GROUPING_MAX_WAIT_FOR_ENHANCEMENT_SECONDS`; the grouping reads the standardised original, never the enhanced file): an accepted photograph at once, a rejected one never, and one that needs review only after a
+moderator approves it (at once in a personal workspace, where no moderator can decide). So a photograph that is going to be rejected never opens a folder,
+moves a folder's average face or changes its cover and count. When a batch has been fully grouped the owner is told which of their folders may be the same
+person (`GET /api/identities/groups/suggested-merges/`); nothing is merged for them.
+
 ## Layout
 
 ```
@@ -98,7 +105,6 @@ moderation/        organization-scoped review queue, decisions, reports, batch a
 privacy/           consent, erasure, retention, personal and organization export, cleanup
 sharing/           expiring, revocable share links
 events/            automatic event/timeline grouping of a user's photos
-collages/          face-aware photo collages from an event or a person
 thumbnails/        cached, encrypted-at-rest JPEG previews of uploaded photos
 reports/  downloads/  notifications/  activity/  operations/
 scripts/           worker launcher, dataset audit, model training and export
@@ -119,6 +125,9 @@ python manage.py migrate
 python manage.py createsuperuser   # the first administrator
 python manage.py runserver
 ```
+
+After every `git pull`, run `python manage.py migrate` (check first with `python manage.py migrate --check`) and restart the
+server; see [Local development after pulling](docs/deployment/local-staging.md#local-development-after-pulling).
 
 API documentation is served by drf-spectacular once the server is running.
 
@@ -192,6 +201,31 @@ in its own terminal:
 .\scripts\run_beat.ps1
 ```
 
+**One command on macOS or Linux:** `bash scripts/dev_up.sh` checks Redis (starts one if it can), the migrations and `manage.py check_restoration --require upscale`, then starts a Celery
+worker (the `solo` pool on macOS), Celery beat and Django on `http://127.0.0.1:8000` with `CELERY_TASK_ALWAYS_EAGER=False`, and stops them when you press Ctrl-C. An upload then
+answers in about a second (`"processing_mode": "background"`) and `GET /api/images/batches/<id>/progress/` moves through the real stages
+(measured 2026-11-04: `quality_analysis` -> `enhancement` 75 % -> `completed` 100 % in 29 s for a 12 MP dark portrait).
+
+**Demonstration profile.** `.env.demo.example` switches the restoration stages on (blur removal, face restoration, upscaling, Zero-DCE) with the limits that keep a photograph fast;
+append it to your `.env` (`cat .env.demo.example >> .env`) and run `python manage.py check_restoration --require deblur face_restore upscale`. Face restoration needs the person's
+face-processing consent (`GET /api/privacy/consents/`); without it the result says so in plain words.
+
+On macOS or Linux run the same processes by hand (the scripts above are for Windows):
+
+```bash
+celery -A config worker -l info --pool=solo      # on macOS the default prefork pool fails every task with "not enough values to unpack"
+celery -A config beat -l info                    # exactly one; it runs the stuck-job recovery every 5 minutes
+```
+
+Run both from the clone whose `.env` you use, so they read the same database ([docs/deployment/one-database.md](docs/deployment/one-database.md)).
+
+**If uploads finish inside the request.** With `DJANGO_DEBUG=True` and `CELERY_TASK_ALWAYS_EAGER` not set, Celery runs every task in the process that queued it:
+an upload is processed inside the HTTP request, which returns a batch that is already finished, and the screens never see any progress. The server says so when it
+starts (a `WARNING` in the log: "Background jobs run inside the request ... start a Celery worker and set `CELERY_TASK_ALWAYS_EAGER=False` to see progress", and
+the system check `operations.W001`), `GET /api/system/health/` reports `background_jobs_inline: true` and the celery service's detail `eager`, and every upload
+answer carries `"processing_mode": "inline"` (`"background"` when a worker does the work). To see progress: start the worker (above) and put
+`CELERY_TASK_ALWAYS_EAGER=False` in `.env`. Production refuses to start with it on.
+
 What runs, and how stuck jobs are recovered, is described in
 [docs/features/20-background-job-operations.md](docs/features/20-background-job-operations.md).
 The end-to-end manual flow is in
@@ -231,7 +265,7 @@ python manage.py test                        # everything, before a commit
 
 `config/test_end_to_end.py` is one realistic pass through the whole product over
 the real HTTP API (sign up by emailed code, log in, upload, progress, thumbnails,
-encrypted downloads, events, enhancement, collage, notifications, isolation from
+encrypted downloads, events, enhancement, notifications, isolation from
 another user). It runs the background jobs in-process, needs no Redis, and uses a
 throwaway database. It needs the sample photos in `Dataset/` and `People/`, so it
 is skipped when they are missing and by the quick loop above:
@@ -247,7 +281,7 @@ request, and weekly (to catch vulnerabilities published later):
 
 | Job | Checks |
 |---|---|
-| Tests and schema | `check`, no missing migrations, OpenAPI schema with zero warnings, the test suite (without the `slow` tests) against PostgreSQL |
+| Tests and schema | `ruff check .` (unused imports and variables, undefined names), `check`, no missing migrations, OpenAPI schema with zero warnings, the test suite (without the `slow` tests) against PostgreSQL |
 | Dependency audit and static analysis | `pip-audit` on `requirements.txt`; `bandit` failing on medium or high findings |
 | Production configuration | The app refuses an unsafe production environment, and starts and passes `check --deploy` with a correct one |
 
@@ -266,6 +300,19 @@ git checkout -b your-branch-name
 git push -u origin your-branch-name
 gh pr create --base main
 ```
+
+**Before you push** (the same commands CI runs; the lint step is the one that is easiest to forget):
+
+```sh
+ruff check .                                              # CI pins a recent ruff: pip install ruff, or: uvx ruff check .
+python manage.py check && python manage.py makemigrations --check --dry-run
+python manage.py spectacular --file /tmp/schema.yml --validate --fail-on-warn
+python manage.py test
+bandit -r <the package list in .github/workflows/ci.yml> -x "*/tests.py,*/test_*.py,*/migrations,enhancement/archs" -ll
+pip-audit -r requirements.txt
+```
+
+`ruff check . --fix` removes unused imports for you.
 
 Open the PR, wait for CI to go green, then merge. Merged branches are deleted
 automatically.
@@ -308,7 +355,11 @@ configuration examples and code should be published.
 
 With `DJANGO_DEBUG=False` the application **refuses to start** unless the
 configuration is production-safe, and lists every problem at once
-([`config/production_guard.py`](config/production_guard.py)). It requires:
+([`config/production_guard.py`](config/production_guard.py)). The step-by-step server setup (PostgreSQL, Redis, gunicorn behind Nginx
+with HTTPS, Celery worker and beat, backups, log rotation, cutover checklist and rollback) is
+[`docs/deployment/VPS_RUNBOOK.md`](docs/deployment/VPS_RUNBOOK.md), with the environment file's names in
+[`docs/deployment/vps.env.example`](docs/deployment/vps.env.example). The guard also requires the SMTP account name and password, the Redis
+addresses and the media directory to be written down rather than left at their development defaults. It requires:
 
 1. **Secrets.** A random `DJANGO_SECRET_KEY` (50+ characters), and separate
    random `IDENTITY_EMBEDDING_KEY` and `IMAGE_ENCRYPTION_KEY` (32+ characters
@@ -344,6 +395,16 @@ configuration is production-safe, and lists every problem at once
    `gunicorn config.wsgi -c gunicorn.conf.py` so credential-bearing URLs
    (share-link tokens, email-change verification links) are redacted from its
    access log.
+8. **Automatic enhancement and the licence of Zero-DCE.** Photographs that pass the
+   checks are enhanced after upload by default (`AUTO_ENHANCEMENT_ENABLED`), under
+   `AUTO_ENHANCEMENT_RENDER_POLICY=adaptive_v1`, which can use Zero-DCE (licence not
+   on file) while `ZERO_DCE_ENABLED` is on. The guard counts that policy, so a server
+   with the defaults refuses to start until the owner decides: set
+   `ZERO_DCE_ENABLED=False`, or `NONCOMMERCIAL_MODELS_ACKNOWLEDGED=True` once the
+   licence position is settled
+   ([`docs/model-licenses/model-set-2026-10.md`](docs/model-licenses/model-set-2026-10.md)).
+   `AUTO_ENHANCEMENT_ENABLED=False` switches the feature off. Run the worker with
+   the beat process: it releases photographs that waited for a free enhancement slot.
 
 Then run `python manage.py check --deploy` for Django's own checks.
 
@@ -351,7 +412,7 @@ Then run `python manage.py check --deploy` for Django's own checks.
 
 - [`docs/FEATURES.md`](docs/FEATURES.md): feature catalogue and status
 - [`docs/SECURITY_AND_PERFORMANCE_REVIEW.md`](docs/SECURITY_AND_PERFORMANCE_REVIEW.md): dependency audit, static analysis and performance findings, and how to repeat them
-- [`docs/FRONTEND_API_GUIDE.md`](docs/FRONTEND_API_GUIDE.md): how a frontend uses the API (auth, upload and polling, thumbnails, enhancement, people, events, collages, sharing, organizations, moderator area, notifications)
+- [`docs/FRONTEND_API_GUIDE.md`](docs/FRONTEND_API_GUIDE.md): how a frontend uses the API (auth, upload and polling, thumbnails, enhancement, people, events, sharing, organizations, moderator area, notifications)
 - [`docs/DATASET_TERMS.md`](docs/DATASET_TERMS.md): the third-party face dataset we were granted, its conditions and how the project keeps to them
 - [`docs/GPU_SESSION_RUNBOOK.md`](docs/GPU_SESSION_RUNBOOK.md): preparing, running and deciding a GPU evaluation session (preflight, model manifest, stage comparison)
 - [`docs/API_ERRORS.md`](docs/API_ERRORS.md): error shapes the frontend can rely on

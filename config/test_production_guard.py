@@ -34,6 +34,16 @@ def good_config():
         "DATABASES": {"default": {"ENGINE": "django.db.backends.postgresql", "PASSWORD": random_secret(24)}},
         "EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
         "EMAIL_HOST": "smtp.mailer-service.net",
+        "EMAIL_HOST_USER": "mailer-account",
+        "EMAIL_HOST_PASSWORD": random_secret(24),
+        "CELERY_BROKER_URL": "redis://127.0.0.1:6379/0",
+        "CELERY_RESULT_BACKEND": "redis://127.0.0.1:6379/1",
+        "STORAGE_BACKEND": "filesystem",
+        "BASE_DIR": "/srv/facecloud/app",
+        "MEDIA_ROOT": "/srv/facecloud/media",
+        "CSRF_TRUSTED_ORIGINS": ["https://api.facecloud-app.net"],
+        "ENV_EXPLICIT": {name: True for name in (
+            "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND", "MEDIA_ROOT", "CACHE_URL", "DB_NAME", "DB_USER", "DB_HOST", "EMAIL_HOST")},
         "CELERY_TASK_ALWAYS_EAGER": False,
         "CACHES": {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache",
                                "LOCATION": "redis://cache.internal:6379/2"}},
@@ -51,6 +61,53 @@ class GuardRuleTests(SimpleTestCase):
     def assertFlags(self, expected, **changes):
         joined = " | ".join(self.problems(**changes))
         self.assertIn(expected, joined, f"{changes} was not flagged: {joined or 'no problems'}")
+
+    def test_the_login_rate_may_be_raised_a_little_but_not_turned_into_a_demo_setting(self):
+        def rest(rate):
+            return {"DEFAULT_THROTTLE_RATES": {"login": rate}}
+        self.assertEqual(self.problems(REST_FRAMEWORK=rest("20/hour")), [])
+        self.assertEqual(self.problems(REST_FRAMEWORK=rest("100/hour")), [])
+        self.assertEqual(self.problems(REST_FRAMEWORK=rest("1/minute")), [])
+        self.assertFlags("login rate limit", REST_FRAMEWORK=rest("300/hour"))
+        self.assertFlags("login rate limit", REST_FRAMEWORK=rest("5/minute"))     # 300 an hour
+        self.assertFlags("login rate limit", REST_FRAMEWORK=rest("often"))
+
+    def test_the_per_address_failed_sign_in_ceiling_has_its_own_cap(self):
+        def rest(rate):
+            return {"DEFAULT_THROTTLE_RATES": {"login": "20/hour", "login_ip": rate}}
+        self.assertEqual(self.problems(REST_FRAMEWORK=rest("300/hour")), [])
+        self.assertEqual(self.problems(REST_FRAMEWORK=rest("1000/hour")), [])
+        self.assertFlags("login_ip rate limit", REST_FRAMEWORK=rest("5000/hour"))
+
+    def test_smtp_needs_credentials_unless_it_is_a_local_relay(self):
+        self.assertFlags("EMAIL_HOST_USER must be set", EMAIL_HOST_USER="")
+        self.assertFlags("EMAIL_HOST_PASSWORD must be set", EMAIL_HOST_PASSWORD="")
+        self.assertFlags("EMAIL_HOST_PASSWORD must be set", EMAIL_HOST_PASSWORD="replace-with-the-smtp-password")
+        self.assertEqual(self.problems(EMAIL_HOST="localhost", EMAIL_HOST_USER="", EMAIL_HOST_PASSWORD=""), [])
+
+    def test_the_redis_addresses_must_be_chosen_and_be_redis(self):
+        explicit = good_config()["ENV_EXPLICIT"]
+        for name in ("CELERY_BROKER_URL", "CELERY_RESULT_BACKEND"):
+            self.assertFlags(f"{name} must be set", ENV_EXPLICIT={**explicit, name: False})
+            self.assertFlags(f"{name} must be a redis://", **{name: "amqp://guest@localhost//"})
+            self.assertFlags(f"{name} must be a redis://", **{name: ""})
+        self.assertEqual(self.problems(CELERY_BROKER_URL="rediss://cache.internal:6380/0"), [])
+        self.assertFlags("CACHE_URL must be a redis://", CACHE_URL="memcached://x")
+
+    def test_the_database_names_must_be_chosen(self):
+        explicit = good_config()["ENV_EXPLICIT"]
+        for name in ("DB_NAME", "DB_USER", "DB_HOST"):
+            self.assertFlags(f"{name} must be set", ENV_EXPLICIT={**explicit, name: False})
+
+    def test_media_must_be_a_chosen_directory(self):
+        explicit = good_config()["ENV_EXPLICIT"]
+        self.assertFlags("MEDIA_ROOT must be set", ENV_EXPLICIT={**explicit, "MEDIA_ROOT": False})
+        self.assertEqual(self.problems(STORAGE_BACKEND="s3", MEDIA_ROOT="/srv/facecloud/app/media", ENV_EXPLICIT={**explicit, "MEDIA_ROOT": False}), [])
+
+    def test_csrf_trusted_origins_are_real_https_origins(self):
+        self.assertFlags("CSRF_TRUSTED_ORIGINS entry", CSRF_TRUSTED_ORIGINS=["http://api.facecloud-app.net"])
+        self.assertFlags("CSRF_TRUSTED_ORIGINS entry", CSRF_TRUSTED_ORIGINS=["https://*.facecloud-app.net"])
+        self.assertEqual(self.problems(CSRF_TRUSTED_ORIGINS=[]), [])
 
     def test_a_correct_production_configuration_has_no_problems(self):
         self.assertEqual(production_problems(good_config()), [])
@@ -206,9 +263,11 @@ class StartupRefusalTests(SimpleTestCase):
         self.assertIn("DJANGO_SECRET_KEY", result.stderr)
         self.assertGreaterEqual(result.stderr.count("\n  - "), 3)
 
-    def test_a_correct_production_environment_starts(self):
+    @staticmethod
+    def production_env():
+        """A complete, correct production environment (throwaway secrets)."""
         secret = random_secret()
-        env = {
+        return {
             "DJANGO_DEBUG": "False",
             "DJANGO_SECRET_KEY": secret,
             "DJANGO_ALLOWED_HOSTS": "api.facecloud-app.net",
@@ -227,18 +286,63 @@ class StartupRefusalTests(SimpleTestCase):
             "DB_HOST": "127.0.0.1", "DB_PORT": "5432",
             "EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
             "EMAIL_HOST": "smtp.mailer-service.net",
+            "EMAIL_HOST_USER": "mailer-account", "EMAIL_HOST_PASSWORD": random_secret(24),
             "CELERY_TASK_ALWAYS_EAGER": "False",
+            "CELERY_BROKER_URL": "redis://127.0.0.1:6379/0", "CELERY_RESULT_BACKEND": "redis://127.0.0.1:6379/1",
+            "MEDIA_ROOT": "/tmp/facecloud-guard-test-media",
             "CACHE_URL": "redis://127.0.0.1:6379/2",
             "IDENTITY_EMBEDDING_KEY": random_secret(48),
             "IMAGE_ENCRYPTION_ENABLED": "True",
             "IMAGE_ENCRYPTION_KEY": random_secret(48),
                 "BIOMETRIC_CONSENT_REQUIRED": "True",
             "FACIAL_DATA_RETENTION_DAYS": "365",
+            # Automatic enhancement after upload is on by default and runs the adaptive engine, which would use Zero-DCE (licence not on file): a correct production
+            # environment has decided that, here by switching Zero-DCE off.
+            "ZERO_DCE_ENABLED": "False",
         }
 
-        result = self.run_check(env)
+    def test_zero_dce_left_on_under_automatic_enhancement_refuses_to_start_unless_the_licence_is_acknowledged(self):
+        refused = self.run_check({**self.production_env(), "ZERO_DCE_ENABLED": "True"})
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("Zero-DCE", refused.stderr)
+        self.assertIn("NONCOMMERCIAL_MODELS_ACKNOWLEDGED", refused.stderr)
+
+        acknowledged = self.run_check({**self.production_env(), "ZERO_DCE_ENABLED": "True", "NONCOMMERCIAL_MODELS_ACKNOWLEDGED": "True"})
+        self.assertEqual(acknowledged.returncode, 0, acknowledged.stderr[-1500:])
+
+        switched_off_automatic = self.run_check({**self.production_env(), "ZERO_DCE_ENABLED": "True", "AUTO_ENHANCEMENT_ENABLED": "False"})
+        self.assertEqual(switched_off_automatic.returncode, 0, switched_off_automatic.stderr[-1500:])
+
+    def test_a_correct_production_environment_starts(self):
+        result = self.run_check(self.production_env())
 
         self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+
+    def test_every_required_variable_is_refused_when_it_is_missing(self):
+        """Blank each required name in a correct environment, one at a time: production must refuse to start and name the problem."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        required = {
+            "DJANGO_SECRET_KEY": "DJANGO_SECRET_KEY", "IDENTITY_EMBEDDING_KEY": "IDENTITY_EMBEDDING_KEY", "IMAGE_ENCRYPTION_KEY": "IMAGE_ENCRYPTION_KEY",
+            "DB_PASSWORD": "DB_PASSWORD", "DB_NAME": "DB_NAME", "DB_USER": "DB_USER", "DB_HOST": "DB_HOST",
+            "EMAIL_HOST": "EMAIL_HOST", "EMAIL_HOST_USER": "EMAIL_HOST_USER", "EMAIL_HOST_PASSWORD": "EMAIL_HOST_PASSWORD",
+            "CELERY_BROKER_URL": "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND": "CELERY_RESULT_BACKEND", "CACHE_URL": "CACHE_URL",
+            "DJANGO_ALLOWED_HOSTS": "DJANGO_ALLOWED_HOSTS", "PUBLIC_BACKEND_URL": "PUBLIC_BACKEND_URL", "FRONTEND_URL": "FRONTEND_URL",
+            "CORS_ALLOWED_ORIGINS": "CORS_ALLOWED_ORIGINS", "MEDIA_ROOT": "MEDIA_ROOT",
+        }
+
+        def start_without(name):
+            env = self.production_env()
+            env[name] = ""                       # present but empty: the same as missing, and it overrides a value the test process itself inherited
+            result = self.run_check(env)
+            return name, result.returncode, result.stderr
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            outcomes = list(pool.map(start_without, required))
+        for name, code, stderr in outcomes:
+            with self.subTest(missing=name):
+                self.assertNotEqual(code, 0, f"production started without {name}")
+                self.assertIn(required[name], stderr)
 
     def test_the_repository_env_example_is_refused_until_its_placeholders_are_replaced(self):
         example = Path(settings.BASE_DIR) / ".env.example"
@@ -329,3 +433,56 @@ class CeleryRoutesTests(SimpleTestCase):
         self.assertEqual(routed["enhancement.process_image"], {"queue": "gfpgan"})
         self.assertEqual(routed["enhancement.process_batch"], {"queue": "gfpgan"})
         self.assertEqual(routed["enhancement.process_gallery_edit"], {"queue": "inference"})
+
+
+class GalleryEditQueueTests(SimpleTestCase):
+    """``ENHANCEMENT_EDIT_QUEUE_NAME``: "Save as new version" gets its own queue so it never waits behind a batch enhancement."""
+
+    EDIT = "enhancement.process_gallery_edit"
+
+    def route(self, **kwargs):
+        from celery import current_app
+        from celery.app.routes import MapRoute, Router
+
+        from config.celery_routes import task_routes
+
+        router = Router(routes=[MapRoute(task_routes(**kwargs))], queues=current_app.amqp.queues, create_missing=True, app=current_app)
+        return lambda name: router.route({}, name)["queue"].name
+
+    def test_without_the_setting_edits_go_where_they_always_went(self):
+        from config.celery_routes import task_routes
+
+        self.assertEqual(task_routes(), {})
+        self.assertEqual(task_routes("inference")[self.EDIT], {"queue": "inference"})
+        queue_of = self.route(enhancement_queue="inference")
+        self.assertEqual(queue_of(self.EDIT), "inference")
+        self.assertEqual(self.route()(self.EDIT), "celery")
+
+    def test_the_edit_queue_takes_only_the_edit_task_and_wins_over_the_inference_queue(self):
+        from config.celery_routes import task_routes
+
+        self.assertEqual(task_routes(edit_queue="edits"), {self.EDIT: {"queue": "edits"}})
+        queue_of = self.route(enhancement_queue="inference", edit_queue="edits")
+        self.assertEqual(queue_of(self.EDIT), "edits")
+        for heavy in ("enhancement.process_image", "enhancement.process_batch", "enhancement.run_model_comparison"):
+            self.assertEqual(queue_of(heavy), "inference", heavy)
+        self.assertEqual(queue_of("reports.generate"), "celery")
+
+    def test_the_gfpgan_queue_still_keeps_the_two_enhancement_tasks(self):
+        queue_of = self.route(enhancement_queue="inference", gfpgan_enabled=True, gfpgan_queue="gfpgan", edit_queue="edits")
+        self.assertEqual(queue_of("enhancement.process_image"), "gfpgan")
+        self.assertEqual(queue_of("enhancement.process_batch"), "gfpgan")
+        self.assertEqual(queue_of(self.EDIT), "edits")
+
+    def test_the_environment_setting_reaches_the_project_routes(self):
+        import importlib
+        import os
+        from unittest import mock
+
+        import config.settings as base_settings
+
+        self.addCleanup(importlib.reload, base_settings)
+        self.assertEqual(base_settings.ENHANCEMENT_EDIT_QUEUE_NAME, "")                                   # the default: nothing changes
+        with mock.patch.dict(os.environ, {"ENHANCEMENT_EDIT_QUEUE_NAME": "edits", "ENHANCEMENT_QUEUE_NAME": ""}):
+            reloaded = importlib.reload(base_settings)
+            self.assertEqual(reloaded.CELERY_TASK_ROUTES, {self.EDIT: {"queue": "edits"}})

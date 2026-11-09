@@ -105,6 +105,7 @@ class OrganizationExportListCreateView(OrganizationScopedMixin, generics.ListAPI
     """
 
     require_owner_or_moderator = True
+    owner_only_when_scoped = True
     serializer_class = OrganizationExportSerializer
     throttle_scope = "org_export"
 
@@ -132,6 +133,7 @@ class OrganizationExportListCreateView(OrganizationScopedMixin, generics.ListAPI
 
 class OrganizationExportDetailView(OrganizationScopedMixin, APIView):
     require_owner_or_moderator = True
+    owner_only_when_scoped = True
 
     @extend_schema(responses={200: OrganizationExportSerializer, 404: OpenApiTypes.OBJECT})
     def get(self, request, organization_id, export_id):
@@ -142,6 +144,7 @@ class OrganizationExportDetailView(OrganizationScopedMixin, APIView):
 
 class OrganizationExportFileView(OrganizationScopedMixin, APIView):
     require_owner_or_moderator = True
+    owner_only_when_scoped = True
 
     @extend_schema(
         responses={200: OpenApiTypes.BINARY, 409: OpenApiTypes.OBJECT, 410: OpenApiTypes.OBJECT},

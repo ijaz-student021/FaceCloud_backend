@@ -5,6 +5,7 @@ from .views import (
     DuplicateImageAnalysisView,
     DuplicateImageMatchListView,
     DuplicateMatchDetailView,
+    DuplicateMatchListView,
     DuplicateMatchReviewView,
 )
 
@@ -18,6 +19,7 @@ urlpatterns = [
         name="image-match-list",
     ),
     path("results/", DuplicateAnalysisListView.as_view(), name="analysis-list"),
+    path("matches/", DuplicateMatchListView.as_view(), name="match-list"),
     path("matches/<int:pk>/", DuplicateMatchDetailView.as_view(), name="match-detail"),
     path(
         "matches/<int:pk>/review/",

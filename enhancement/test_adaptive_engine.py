@@ -30,6 +30,7 @@ ALL_ON = dict(
     ENHANCEMENT_RENDER_POLICY="adaptive_v1", RETINEXFORMER_ENABLED=True, ZERO_DCE_ENABLED=False, NAFNET_DENOISE_ENABLED=True,
     NAFNET_DEBLUR_ENABLED=True, HD_RESTORATION_ENABLED=True, CODEFORMER_ENABLED=True, GFPGAN_ENABLED=False,
     ADAPTIVE_DEBUG_ARTIFACTS=False,
+    ADAPTIVE_DETAIL_ENABLED=False,      # detail restoration (soft / heavily compressed photographs) has its own tests: enhancement/test_adaptive_detail.py
 )
 
 
@@ -200,6 +201,7 @@ class RouterTests(SimpleTestCase):
         second = self.router().next_step(report, {first}).step.operation
         self.assertEqual((first, second), (ops.LOW_LIGHT, ops.DENOISE))
 
+    @override_settings(ADAPTIVE_DETAIL_ENABLED=False)       # these are about the other operations (detail restoration: test_adaptive_detail.py)
     def test_defocus_blur_is_skipped_with_a_reason(self):
         report = analyzer_with(None).analyze(cv2.GaussianBlur(resized(dead_leaves(), 900), (0, 0), 3.5))
         decision = self.router().next_step(report, set())
@@ -227,6 +229,7 @@ class RouterTests(SimpleTestCase):
         self.assertTrue(any("size limit" in item["reason"] for item in decision.skipped))
 
     @override_settings(NAFNET_DEBLUR_ENABLED=False)
+    @override_settings(ADAPTIVE_DETAIL_ENABLED=False)       # these are about the other operations (detail restoration: test_adaptive_detail.py)
     def test_an_operation_with_its_model_off_is_reported_not_silently_dropped(self):
         report = analyzer_with(None).analyze(motion_blur(resized(dead_leaves(), 900), 25, 0))
         decision = self.router().next_step(report, set())
@@ -318,7 +321,7 @@ class ValidatorTests(SimpleTestCase):
 
     def test_a_failed_identity_check_rejects_even_a_good_looking_candidate(self):
         class Fails:
-            def check(self, candidate):
+            def check(self, candidate, restoring=False):
                 return {"status": "failed", "similarity": 0.31, "threshold": 0.7}
 
         validator = FinalImageQualityValidator(self.analyzer, self.report, identity=Fails())
@@ -378,7 +381,7 @@ def runner_denoise(image, engine, variant):
     return cv2.fastNlMeansDenoisingColored(image, None, 10, 10, 7, 21), [{"model": engine, "device": "stand-in"}]
 
 
-@override_settings(**ALL_ON)
+@override_settings(**ALL_ON, ADAPTIVE_ALWAYS_ENHANCE=False)
 class ServiceTests(SimpleTestCase):
     def service(self, face=True, runners=None, **config):
         analyzer = analyzer_with() if face else analyzer_with(None)
@@ -475,6 +478,7 @@ class ServiceTests(SimpleTestCase):
         self.assertTrue(any("time budget" in warning for warning in parameters["warnings"]))
 
     @override_settings(NAFNET_DEBLUR_ENABLED=False)
+    @override_settings(ADAPTIVE_DETAIL_ENABLED=False)       # these are about the other operations (detail restoration: test_adaptive_detail.py)
     def test_a_defect_the_server_has_no_model_for_is_not_called_a_clean_photograph(self):
         source = motion_blur(resized(dead_leaves(), 900), 25, 0)
         _out, _level, parameters = self.run_service(source)
@@ -519,11 +523,24 @@ class ServiceTests(SimpleTestCase):
         self.assertTrue(any("defocus" in item["reason"].lower() or "blur" in item["reason"].lower() for item in adaptive["operations_skipped"]))
 
     def test_the_candidate_limit_bounds_the_work(self):
+        from unittest.mock import patch
+
+        from .adaptive.candidates import CandidatePool
+
+        pools = []
+
+        def spy(*args, **kwargs):
+            pools.append(CandidatePool(*args, **kwargs))
+            return pools[-1]
+
         source = portrait(brightness=0.12, noise=22)
-        _out, _level, parameters = self.run_service(
-            source, service=self.service(max_candidates=3, runners={ops.LOW_LIGHT: runner_lift, ops.DENOISE: runner_denoise}),
-        )
-        self.assertLessEqual(len(parameters["adaptive"]["candidates"]), 3)
+        with patch("enhancement.adaptive.service.CandidatePool", spy):
+            _out, _level, parameters = self.run_service(
+                source, service=self.service(max_candidates=3, runners={ops.LOW_LIGHT: runner_lift, ops.DENOISE: runner_denoise}),
+            )
+        # At most 3 images are held at once (a refused candidate is released and no longer counts), and the total ever proposed is capped at 6 times the limit.
+        self.assertLessEqual(sum(1 for item in pools[0].items if item.image is not None), 3)
+        self.assertLessEqual(len(parameters["adaptive"]["candidates"]), 3 * CandidatePool.TOTAL_FACTOR)
 
     def test_the_time_budget_stops_new_operations(self):
         source = portrait(brightness=0.12)
@@ -547,9 +564,40 @@ class ServiceTests(SimpleTestCase):
         self.assertEqual(calls, [])
         self.assertTrue(any(item["operation"] == ops.FACE for item in parameters["adaptive"]["operations_skipped"]))
 
+    def test_no_style_skips_the_identity_requirement_for_a_face_restoration(self):
+        """The earlier staged pipeline let ai_max restore faces without a verified identity and said so (identity_check_bypassed). The adaptive
+        engine has no such exemption for any style; the API help texts and docs/FRONTEND_API_GUIDE.md say so."""
+        from .serializers import identity_fields
+
+        x, y, w, h = (150, 100, 180, 220)
+        dark_blurry_face = portrait(brightness=0.12, face_box=(x, y, w, h))      # dark, so the lift is accepted and the identity report has something to say
+        dark_blurry_face[y:y + h, x:x + w] = cv2.GaussianBlur(dark_blurry_face[y:y + h, x:x + w], (0, 0), 6.0)
+        for style in ("natural", "dynamic", "ai_max"):
+            with self.subTest(style=style):
+                calls = []
+
+                def restore(image, engine, variant):
+                    calls.append(1)
+                    return image, [{"model": engine}]
+
+                _out, _level, parameters = self.run_service(
+                    dark_blurry_face, runners={ops.FACE: restore, ops.LOW_LIGHT: runner_lift}, requested_level="high", style=style,
+                )
+                adaptive = parameters["adaptive"]
+                self.assertEqual(calls, [])
+                self.assertIn(ops.LOW_LIGHT, adaptive["operations_applied"])
+                self.assertNotIn(ops.FACE, adaptive["operations_applied"])
+                skipped = [item for item in adaptive["operations_skipped"] if item["operation"] == ops.FACE]
+                self.assertEqual(len(skipped), 1)
+                self.assertIn("Identity could not be verified", skipped[0]["reason"])
+                status, bypassed, notice = identity_fields(parameters["identity_verification"])
+                self.assertEqual(status, "unavailable")
+                self.assertIs(bypassed, False)
+                self.assertIn("No face restoration was applied", notice)
+
     def test_no_biometric_permission_means_no_face_restoration_and_no_embedding(self):
         _out, _level, parameters = self.run_service(portrait(), allow_biometric_processing=False)
-        self.assertTrue(any("not permitted" in item["reason"] for item in parameters["adaptive"]["operations_skipped"]))
+        self.assertTrue(any("face-processing consent" in item["reason"] for item in parameters["adaptive"]["operations_skipped"]))
         self.assertEqual(parameters["identity_status"], "unavailable")
 
     def test_the_parameters_keep_the_shape_the_job_and_api_code_read(self):
@@ -703,6 +751,57 @@ class AdaptiveJobTests(__import__("enhancement.test_pipeline_regressions", froml
         # one final image only: the intermediate candidates are not stored as files in production mode
         self.assertEqual(result.applied_parameters["adaptive"]["debug_artifacts"], None)
 
+    def test_the_result_says_how_the_lighting_was_seen_and_whether_it_was_brightened(self):
+        from rest_framework.test import APIClient
+
+        client = APIClient()
+        client.force_authenticate(self.user)
+        dark = self.process(portrait(brightness=0.12), runners={"run_low_light": lambda image, engine, blend: (exposure_lift(image, 1 + 4 * blend), [{"model": engine}])})
+        lighting = client.get(f"/api/enhancements/results/{dark.pk}/").json()["lighting"]
+        self.assertEqual(set(lighting), {"detected", "exposure", "scene_median", "brightened", "used", "forced"})
+        self.assertEqual((lighting["detected"], lighting["brightened"]), ("dark", True))
+        self.assertEqual((lighting["used"], lighting["forced"]), ("dark", False))          # nobody chose: the method that was followed is the one that was detected
+        self.assertIn(lighting["exposure"], ("low_light", "low_light_subject", "dark_scene"))
+        self.assertLess(lighting["scene_median"], 90)
+        light = self.process(portrait())
+        lighting = client.get(f"/api/enhancements/results/{light.pk}/").json()["lighting"]
+        self.assertEqual((lighting["detected"], lighting["exposure"], lighting["brightened"]), ("light", "normal", False))
+        self.assertEqual((lighting["used"], lighting["forced"]), ("light", False))
+
+    def test_a_dark_photograph_whose_brightening_was_not_safe_is_dark_but_not_brightened(self):
+        from rest_framework.test import APIClient
+
+        client = APIClient()
+        client.force_authenticate(self.user)
+        result = self.process(portrait(brightness=0.12))          # no runner: the brightening is refused by the gates or unavailable
+        result.applied_parameters["adaptive"]["operations_applied"] = []
+        result.save(update_fields=["applied_parameters"])
+        lighting = client.get(f"/api/enhancements/results/{result.pk}/").json()["lighting"]
+        self.assertEqual((lighting["detected"], lighting["brightened"]), ("dark", False))
+
+    def test_a_result_without_an_adaptive_report_has_no_lighting(self):
+        from types import SimpleNamespace
+
+        from .outcome import result_lighting
+
+        self.assertIsNone(result_lighting(SimpleNamespace(applied_parameters={})))
+        self.assertIsNone(result_lighting(SimpleNamespace(applied_parameters=None)))
+        self.assertIsNone(result_lighting(SimpleNamespace(applied_parameters={"adaptive": {"quality_report": {}}})))
+
+    def test_a_failed_job_has_no_lighting(self):
+        from rest_framework.exceptions import ValidationError
+        from rest_framework.test import APIClient
+
+        from .services import process_enhancement_result
+
+        result = self.make_from(portrait())
+        with patch("enhancement.adaptive.service.AdaptiveImageEnhancementService.enhance", side_effect=RuntimeError("boom")):
+            with self.assertRaises(ValidationError):
+                process_enhancement_result(result)
+        client = APIClient()
+        client.force_authenticate(self.user)
+        self.assertIsNone(client.get(f"/api/enhancements/results/{result.pk}/").json()["lighting"])
+
     def test_a_job_that_fails_reports_failed_and_keeps_no_output(self):
         from rest_framework.exceptions import ValidationError
         from rest_framework.test import APIClient
@@ -799,6 +898,7 @@ class SmallFaceUpscaleTests(SimpleTestCase):
         return AdaptiveEnhancementRouter(EngineConfig(**config))
 
     @override_settings(**ALL_ON)
+    @override_settings(ADAPTIVE_DETAIL_ENABLED=False)       # these are about the other operations (detail restoration: test_adaptive_detail.py)
     def test_a_small_poor_face_in_an_adequate_photograph_does_not_enlarge_the_photograph(self):
         image = cv2.resize(portrait(), (1280, 960))
         box = (500, 300, 60, 70)

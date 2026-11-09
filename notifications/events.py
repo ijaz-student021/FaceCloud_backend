@@ -76,6 +76,20 @@ def notify_quality_result(decision):
         return notification
     if decision.status != decision.Status.COMPLETED:
         return None
+    from quality_control.effective import effective_decision, tips_for
+
+    # Where no moderator can decide a "needs review" verdict (a personal workspace) the photograph is accepted, with a tip, not "needs review".
+    if decision.decision == decision.Decision.NEEDS_REVIEW and effective_decision(image, decision.decision) == "accepted":
+        tips = tips_for(decision.rejection_reasons)
+        notification, _ = create_user_notification(
+            **common,
+            event_type=UserNotification.EventType.PHOTO_ACCEPTED,
+            idempotency_key=f"image:{image.pk}:quality:accepted",
+            title="Photo accepted",
+            message=f"{image.original_name} was accepted." + (f" Tip: {tips[0]}" if tips else ""),
+            severity=UserNotification.Severity.SUCCESS,
+        )
+        return notification
     if decision.decision == decision.Decision.ACCEPTED:
         event_type = UserNotification.EventType.PHOTO_ACCEPTED
         title = "Photo accepted"
@@ -159,13 +173,12 @@ def notify_moderators_batch_failed(batch):
     """
     if batch.organization_id is None:
         return []
-    from organizations.models import OrganizationMembership
+    from organizations.scope import moderators_who_see
 
-    staff = OrganizationMembership.objects.filter(
-        organization_id=batch.organization_id,
-        role__in=[OrganizationMembership.Role.OWNER, OrganizationMembership.Role.MODERATOR],
-        status=OrganizationMembership.Status.ACTIVE,
-    ).exclude(user_id=batch.owner_id).select_related("user")
+    # Owners, and the moderators who may see this member's data (one who sees only their own members is not told about a batch of someone else's).
+    staff = [
+        membership for membership in moderators_who_see(batch.organization, batch.owner_id) if membership.user_id != batch.owner_id
+    ]
     notifications = []
     for membership in staff:
         notification, _ = create_user_notification(
@@ -185,6 +198,89 @@ def notify_moderators_batch_failed(batch):
     return notifications
 
 
+def notify_member_of_review_decision(review, actor):
+    """Tell the member whose photograph a moderator decided on what was decided (approved or not accepted), in plain words.
+
+    Sent for approve, reject and correct (a correction is an approval the moderator adjusted); never for keep_in_review, never to the
+    moderator who decided, and never for the moderator's own photographs. The only free text the member sees is ``message_to_member``: the
+    internal reason and notes are not part of it. The preferences ``photo_accepted`` / ``photo_rejected`` and ``email_notifications`` are respected by
+    ``create_user_notification``. When a notification was created the organization's audit trail records it (target: the review).
+    """
+    from moderation.member_messages import message_for_member
+    from moderation.models import ModeratorReview
+    from organizations.models import OrganizationAuditEvent
+    from organizations.services import record_audit_event
+
+    if review.status not in (ModeratorReview.Status.APPROVED, ModeratorReview.Status.REJECTED, ModeratorReview.Status.CORRECTED):
+        return None
+    image = review.image
+    if image.owner.pk == actor.pk:
+        return None
+    outcome = "rejected" if review.status == ModeratorReview.Status.REJECTED else "approved"
+    notification, created = _tell_member_of_decision(
+        image, outcome, message_for_member(review, outcome), f"review:{review.pk}:member:{outcome}",
+        review_id=review.pk, organization_id=review.organization_id,
+    )
+    if created and notification is not None:
+        record_audit_event(
+            review.organization, actor, OrganizationAuditEvent.Action.MEMBER_NOTIFIED_OF_REVIEW,
+            target_type="ModeratorReview", target_id=review.pk, new_value={"outcome": outcome},
+        )
+    return notification
+
+
+def notify_member_of_image_decision(image, actor, outcome, message, idempotency_key):
+    """Tell the member whose photograph an administrator decided on what was decided, when no review carried the decision (a photograph the checks accepted or rejected on their own, or one in a personal workspace).
+
+    The same in-app message as ``notify_member_of_review_decision`` (``_tell_member_of_decision``), so the member cannot tell the two apart: ``outcome`` is ``approved`` or ``rejected``, ``message`` is what they read
+    (the administrator's reason) and ``idempotency_key`` names this one decision, so a decision recorded once is told once. Never to the administrator's own photographs. Returns the notification, or ``None``.
+    """
+    if image.owner_id == actor.pk:
+        return None
+    notification, _created = _tell_member_of_decision(image, outcome, message, idempotency_key)
+    return notification
+
+
+def _tell_member_of_decision(image, outcome, message, idempotency_key, **metadata):
+    """The in-app message to the owner of ``image`` that a person decided about it (``approved`` or ``rejected``): the one place for its type, title, severity and link. Returns ``(notification, created)``."""
+    rejected = outcome == "rejected"
+    return create_user_notification(
+        recipient=image.owner,
+        event_type=UserNotification.EventType.PHOTO_REVIEW_REJECTED if rejected else UserNotification.EventType.PHOTO_REVIEW_APPROVED,
+        idempotency_key=idempotency_key,
+        title="Your photo was not accepted" if rejected else "Your photo was approved",
+        message=message,
+        severity=UserNotification.Severity.WARNING if rejected else UserNotification.Severity.SUCCESS,
+        resource_type="image",
+        resource_id=image.pk,
+        action_path=f"/dashboard/images/{image.pk}",
+        metadata={"image_id": image.pk, **metadata, "filename": image.original_name},
+    )
+
+
+def notify_folders_may_match(batch, pairs):
+    """Tell the owner of ``batch`` that some of their person folders may be the same person (once per batch; ``pairs`` as ``identities.suggestions`` returns them).
+
+    In-app only, switched by the ``person_group_created`` preference. Nothing is merged: the message sends them to their person folders.
+    """
+    folders = {folder for pair in pairs for folder in (pair["source_group"], pair["target_group"])}
+    if not folders:
+        return None
+    notification, _ = create_user_notification(
+        recipient=batch.owner,
+        event_type=UserNotification.EventType.IDENTITY_MERGE_SUGGESTED,
+        idempotency_key=f"batch:{batch.pk}:folders-may-match",
+        title="Some of your person folders may be the same person",
+        message=f"{len(folders)} of your person folders may be the same person. Check them and merge the ones that are.",
+        severity=UserNotification.Severity.INFO,
+        resource_type="batch",
+        resource_id=batch.pk,
+        action_path="/dashboard/groups",
+        metadata={"batch_id": batch.pk, "folder_count": len(folders), "suggested_merge_count": len(pairs)},
+    )
+    return notification
+
+
 def notify_moderator_review_overdue(review):
     """Tell whoever can act on a review that it has passed its deadline.
 
@@ -193,19 +289,13 @@ def notify_moderator_review_overdue(review):
     to the organization's owners and moderators instead, because nobody has
     picked it up and that is exactly what makes it late.
     """
-    from organizations.models import OrganizationMembership
 
     if review.assigned_moderator_id is not None:
         recipients = [review.assigned_moderator]
     else:
-        recipients = [
-            membership.user
-            for membership in OrganizationMembership.objects.filter(
-                organization_id=review.organization_id,
-                role__in=[OrganizationMembership.Role.OWNER, OrganizationMembership.Role.MODERATOR],
-                status=OrganizationMembership.Status.ACTIVE,
-            ).select_related("user")
-        ]
+        from organizations.scope import moderators_who_see
+
+        recipients = [membership.user for membership in moderators_who_see(review.organization, review.image.owner_id)]
     notifications = []
     for recipient in recipients:
         notification, _ = create_user_notification(
@@ -273,6 +363,39 @@ def notify_enhancement_result(result):
         )
         return notification
     return None
+
+
+def notify_batch_enhanced(batch_id, counts):
+    """Once per batch, when its automatic enhancements are all finished: "3 photos enhanced". Never one per photograph (enhancement/auto.py)."""
+    from uploads.models import UploadBatch
+
+    batch = UploadBatch.objects.select_related("owner").filter(pk=batch_id).first()
+    if batch is None:
+        return None
+    enhanced, kept, failed, skipped = (int(counts.get(key, 0)) for key in ("enhanced", "kept", "failed", "skipped"))
+    message = f"{enhanced} photo{'s' if enhanced != 1 else ''} enhanced"
+    details = []
+    if kept:
+        details.append(f"{kept} kept as uploaded because enhancing them would not have helped")
+    if failed:
+        details.append(f"{failed} could not be enhanced")
+    if skipped:
+        details.append(f"{skipped} not enhanced")
+    if details:
+        message += " (" + "; ".join(details) + ")"
+    notification, _ = create_user_notification(
+        recipient=batch.owner,
+        event_type=UserNotification.EventType.BATCH_ENHANCED,
+        idempotency_key=f"batch:{batch.pk}:enhanced",
+        title="Photos enhanced",
+        message=message + ".",
+        severity=UserNotification.Severity.WARNING if failed else UserNotification.Severity.SUCCESS,
+        resource_type="batch",
+        resource_id=batch.pk,
+        action_path=JOBS_PATH,
+        metadata={"batch_id": batch.pk, "enhanced": enhanced, "kept": kept, "failed": failed, "skipped": skipped, "total": int(counts.get("total", 0))},
+    )
+    return notification
 
 
 def notify_batch_completed(batch_id, counts=None):

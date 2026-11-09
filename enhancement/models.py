@@ -40,6 +40,23 @@ class EnhancementStyle(models.TextChoices):
     AI_MAX = "ai_max", "AI Enhance"
 
 
+class EnhancementLighting(models.TextChoices):
+    """What a person says about the photograph's lighting. ``auto`` lets the analyzer decide (every request before this choice existed); ``dark`` runs the dark-photo
+    method whatever the analyzer saw (brighten the shadows first, then reduce noise); ``light`` runs the light-photo method (the brightness is kept)."""
+    AUTO = "auto", "Let the engine decide"
+    DARK = "dark", "Dark photo"
+    LIGHT = "light", "Light photo"
+
+
+# The two methods a result can report (its ``lighting`` block's ``detected`` and ``used``): named once for the OpenAPI schema (config/settings.py ENUM_NAME_OVERRIDES).
+LIGHTING_METHODS = ["dark", "light"]       # a flat list: drf-spectacular hashes a list of (value, label) pairs differently from the ChoiceField's own values, so a pair list would never match
+
+
+class EnhancementTrigger(models.TextChoices):
+    MANUAL = "manual", "Asked for by a person"
+    AUTO = "auto", "Automatic, after upload"
+
+
 class EnhancementStatus(models.TextChoices):
     PENDING = "pending", "Pending"
     QUEUED = "queued", "Queued"
@@ -139,6 +156,18 @@ class ImageEnhancementResult(models.Model):
         choices=EnhancementStyle.choices,
         default=EnhancementStyle.NATURAL,
     )
+    # The person's own word on the lighting (the request's `lighting`); "auto", the default, is what every result made before the choice existed means.
+    requested_lighting = models.CharField(
+        max_length=8,
+        choices=EnhancementLighting.choices,
+        default=EnhancementLighting.AUTO,
+    )
+    # Who started it. An automatic one (enhancement/auto.py) runs under AUTO_ENHANCEMENT_RENDER_POLICY and tells the owner once per batch, not per photograph.
+    trigger = models.CharField(
+        max_length=8,
+        choices=EnhancementTrigger.choices,
+        default=EnhancementTrigger.MANUAL,
+    )
     status = models.CharField(
         max_length=12,
         choices=EnhancementStatus.choices,
@@ -189,6 +218,62 @@ def delete_enhanced_image(sender, instance, **kwargs):
         instance.enhanced_file.storage.delete(instance.enhanced_file.name)
 
 
+class EnhancedImageBlob(models.Model):
+    """The enhanced image itself as a database row, for opening it from a database viewer (``ENHANCED_IMAGE_DATABASE_COPY_ENABLED``).
+
+    The stored file stays what the product serves; this is a copy of the same bytes with their size and SHA-256, made by ``enhancement.database_copy``
+    and checked by ``manage.py copy_enhanced_images_to_database --verify``. It is plain bytes, so it is never made while stored images are encrypted.
+    Deleting the result deletes the copy.
+    """
+
+    result = models.OneToOneField(ImageEnhancementResult, on_delete=models.CASCADE, related_name="database_copy")
+    content_type = models.CharField(max_length=40)
+    byte_size = models.PositiveBigIntegerField()
+    sha256 = models.CharField(max_length=64)
+    source_name = models.CharField(max_length=255)
+    data = models.BinaryField(editable=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"enhanced image of result {self.result_id} ({self.byte_size} bytes)"
+
+
+class AutoEnhancement(models.Model):
+    """The automatic enhancement of one photograph: the single record that makes it happen once, and says where it is.
+
+    Created when the photograph's quality verdict allows it (``enhancement.auto.enhance_after_verdict``); a photograph has at most one, so a retry or a
+    re-analysis never makes a second enhancement. ``waiting`` photographs have no result yet because their owner is at the limit of enhancements in progress
+    (``ensure_enhancement_capacity``); they start as slots free up. ``started`` ones have a ``result``. ``skipped`` ones will not be enhanced, and say why
+    in ``skip_reason`` (``capacity``: no slot for too long; ``cancelled``: the batch was cancelled; ``already_requested``: a person asked first;
+    ``not_possible``: the photograph could not be enhanced; ``error``: something unexpected, logged). A skip never fails the upload.
+    """
+
+    class State(models.TextChoices):
+        WAITING = "waiting", "Waiting for a free slot"
+        STARTED = "started", "Started"
+        SKIPPED = "skipped", "Skipped"
+
+    image = models.OneToOneField(ImageUpload, on_delete=models.CASCADE, related_name="auto_enhancement")
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="auto_enhancements")
+    batch = models.ForeignKey(UploadBatch, on_delete=models.CASCADE, related_name="auto_enhancements")
+    state = models.CharField(max_length=8, choices=State.choices, default=State.WAITING)
+    skip_reason = models.CharField(max_length=24, blank=True)
+    waiting_since = models.DateTimeField(null=True, blank=True)
+    result = models.OneToOneField(ImageEnhancementResult, null=True, blank=True, on_delete=models.SET_NULL, related_name="auto_request")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["created_at", "pk"]
+        indexes = [
+            models.Index(fields=["state", "waiting_since"]),
+            models.Index(fields=["batch", "state"]),
+        ]
+
+    def __str__(self):
+        return f"auto-enhancement:{self.image_id}:{self.state}"
+
+
 class EditMode(models.TextChoices):
     AUTO = "auto", "Automatic"
     MANUAL = "manual", "Manual"
@@ -237,6 +322,9 @@ class ImageEditVersion(models.Model):
     )
     claim_token = models.CharField(max_length=32, blank=True, default="")
     claimed_at = models.DateTimeField(null=True, blank=True)
+    # How far a rendering edit is, for the client that polls it (enhancement/edit_instrument.py): reading, enhancing or finishing, and a percentage.
+    progress_stage = models.CharField(max_length=12, blank=True, default="")
+    progress_percent = models.PositiveSmallIntegerField(default=0)
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

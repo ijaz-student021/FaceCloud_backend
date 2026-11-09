@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 import os
+import re
 from datetime import timedelta
 from pathlib import Path
 
@@ -76,12 +77,14 @@ INSTALLED_APPS = [
     "reports",
     "downloads",
     "notifications",
+    "albums",
+    "memories",
+    "places",
     "operations",
     "activity",
     "privacy",
     "sharing",
     "events",
-    "collages",
     "thumbnails",
     "organizations",
     "moderation",
@@ -100,6 +103,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    "config.errors.ApiJsonNotFoundMiddleware",
 ]
 
 # Open CORS is a development convenience only; it defaults to on solely in DEBUG.
@@ -195,6 +199,8 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+# Where `collectstatic` gathers the admin site's files, for the web server to serve at /static/ (docs/deployment/VPS_RUNBOOK.md).
+STATIC_ROOT = Path(os.environ.get("STATIC_ROOT", BASE_DIR / "staticfiles"))
 MEDIA_URL = "/media/"
 MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT", BASE_DIR / "media"))
 AUTH_USER_MODEL = "accounts.User"
@@ -279,8 +285,116 @@ if ENHANCEMENT_RENDER_POLICY not in ("lightweight_v1", "balanced_v1", "learned_v
         f"not {ENHANCEMENT_RENDER_POLICY!r}."
     )
 
-HD_RESTORATION_ENABLED = env.bool("HD_RESTORATION_ENABLED", default=False)
-NAFNET_DEBLUR_ENABLED = env.bool("NAFNET_DEBLUR_ENABLED", default=False)
+# The restoration chain (enhancement/restoration.py): Real-ESRGAN (BSD-3-Clause, upscale to HD) and NAFNet-GoPro (MIT, deblur) are on by
+# default; each only runs where its checkpoint is installed and the photograph needs it, and a result says when it could not. CodeFormer
+# (S-Lab, non-commercial) and GFPGAN stay off by default (see CODEFORMER_ENABLED below); the production guard refuses them unless acknowledged.
+HD_RESTORATION_ENABLED = env.bool("HD_RESTORATION_ENABLED", default=True)
+NAFNET_DEBLUR_ENABLED = env.bool("NAFNET_DEBLUR_ENABLED", default=True)
+# Under the lightweight and balanced policies, a photograph whose face is blurred or whose resolution is low is sent through the
+# restoration chain (the adaptive engine) when this server can run it, and left to the lightweight pipeline otherwise, with the reason
+# recorded in the result (hd_unavailable_reason). False keeps every photograph on the policy's own pipeline.
+ENHANCEMENT_RESTORATION_ESCALATION = env.bool("ENHANCEMENT_RESTORATION_ESCALATION", default=True)
+
+# Automatic enhancement after upload (enhancement/auto.py): a photograph that passes the checks is enhanced without anyone asking.
+# AUTO_ENHANCEMENT_ENABLED: the operator's switch; False stops every automatic enhancement (a person's own request still works).
+# AUTO_ENHANCEMENT_RENDER_POLICY: the rendering policy those runs use, so they can be the adaptive engine ("original preserved" when nothing safe helps)
+#   while a person's own request keeps ENHANCEMENT_RENDER_POLICY. No model setting changes: the policy only decides which already-enabled stages may run.
+# AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES: a photograph waits this long for a free slot (ensure_enhancement_capacity) before it is skipped, never failed.
+AUTO_ENHANCEMENT_ENABLED = env.bool("AUTO_ENHANCEMENT_ENABLED", default=True)
+AUTO_ENHANCEMENT_RENDER_POLICY = env("AUTO_ENHANCEMENT_RENDER_POLICY", default="adaptive_v1")
+if AUTO_ENHANCEMENT_RENDER_POLICY not in ("lightweight_v1", "balanced_v1", "learned_v1", "adaptive_v1"):
+    raise ImproperlyConfigured(
+        "AUTO_ENHANCEMENT_RENDER_POLICY must be lightweight_v1, balanced_v1, learned_v1 or adaptive_v1, "
+        f"not {AUTO_ENHANCEMENT_RENDER_POLICY!r}."
+    )
+AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES = env.int("AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES", default=180)
+# GROUPING_MAX_WAIT_FOR_ENHANCEMENT_SECONDS: person folders are made AFTER a photograph's automatic enhancement (enhancement/auto.py, identities/verdict.py). A photograph never waits longer than this for
+# its enhancement (counted from the moment its automatic enhancement was created): a worker that died, or an owner stuck at the limit of enhancements in progress, must not leave a photograph ungrouped.
+GROUPING_MAX_WAIT_FOR_ENHANCEMENT_SECONDS = env.int("GROUPING_MAX_WAIT_FOR_ENHANCEMENT_SECONDS", default=900)
+if GROUPING_MAX_WAIT_FOR_ENHANCEMENT_SECONDS < 30:
+    raise ImproperlyConfigured("GROUPING_MAX_WAIT_FOR_ENHANCEMENT_SECONDS must be at least 30.")
+if AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES < 1:
+    raise ImproperlyConfigured("AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES must be at least 1.")
+# Thresholds of the restoration chain (read when the adaptive engine starts a run; docs/deployment/restoration-chain.md):
+# ADAPTIVE_FACE_BLUR_HIGH: a face whose detail (Laplacian variance of the face resized to 128 px; sharp faces about 119, p10 81) is below
+#   this counts as strongly blurred and is deblurred even when the frame reads sharp or as defocus.
+# ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN: a deblur chosen for a blurred face is accepted only if the face's own detail rises at least this
+#   many times.
+# ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX: the largest mean landmark displacement (as a share of the face width) an upscaled candidate may show;
+#   plain bicubic enlargement of 240 px portraits measured 0.019 to 0.037, other operations keep 0.04.
+# ADAPTIVE_LANDMARK_PIXEL_FLOOR: a landmark displacement under this many pixels of the ORIGINAL photograph is detector jitter on a tiny
+#   face, not a changed face (a 21 px face moved 1.6 px = 0.078 of its width for a candidate that passed every other gate). It raises the
+#   share limit only for faces under limit-share/floor wide, never for face restoration or polish; 0 switches it off.
+# ADAPTIVE_LANDMARK_ENLARGEMENT_SHIFT_MAX: the detector places the landmarks of any enlargement of a small or soft face somewhere else with no model involved
+#   (public LFW faces, 68-134 px: a plain bicubic x2 moved them 0.040 median, 0.066 at the 90th percentile; 15 of 93 enlargements were refused for a face nothing had touched).
+#   A candidate refused by the share limit is accepted when its landmarks stay within this share of the face width of the landmarks found on a plain enlargement of the
+#   original to the same size (what the MODEL moved: 0.005 median, 0.035 at the 99th percentile). Never stricter than before; 0 switches it off; never for face restoration
+#   or polish (docs/evaluation/2026-11-05-small-face-geometry.md).
+ADAPTIVE_FACE_BLUR_HIGH = env.float("ADAPTIVE_FACE_BLUR_HIGH", default=25.0)
+ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN = env.float("ADAPTIVE_FACE_DEBLUR_MIN_DETAIL_GAIN", default=1.25)
+# ADAPTIVE_AI_MAX_FACE_DEBLUR_MIN_DETAIL_GAIN: the same limit for AI Enhance (the `pro` preset) only. NAFNet-GoPro on 210 LFW faces with a known clean photograph: a deblur whose face-detail gain is
+#   1.10 to 1.25 is closer to the truth for 100 % of defocus-blurred faces (+1.06 dB median) and 90 % of low-resolution ones (+0.91 dB), so 1.25 turned away real, small improvements; for motion
+#   blur that band is not better (17 %, -0.26 dB). The face's detail ceiling (260), the edge-gain ceiling (2.5), consistency, identity and geometry still apply. 1.25 gives AI Enhance the common
+#   limit again (docs/evaluation/2026-11-05-dark-face-identity.md).
+ADAPTIVE_AI_MAX_FACE_DEBLUR_MIN_DETAIL_GAIN = env.float("ADAPTIVE_AI_MAX_FACE_DEBLUR_MIN_DETAIL_GAIN", default=1.10)
+ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX = env.float("ADAPTIVE_UPSCALE_LANDMARK_SHIFT_MAX", default=0.06)
+ADAPTIVE_LANDMARK_PIXEL_FLOOR = env.float("ADAPTIVE_LANDMARK_PIXEL_FLOOR", default=2.0)
+ADAPTIVE_LANDMARK_ENLARGEMENT_SHIFT_MAX = env.float("ADAPTIVE_LANDMARK_ENLARGEMENT_SHIFT_MAX", default=0.035)
+# ADAPTIVE_BASELINE_AFTER_FACE_RESTORATION: once a face restoration is accepted (held to SFACE_RESTORE_GUARD_MIN_SIMILARITY against the upload), the steps that follow are judged against the
+#   RESTORED face at the ordinary limit and against the upload at the restoration limit (the one the saved photograph's identity is judged at), instead of the ordinary 0.80 against the upload:
+#   a restored face at 0.807 left the enlargement at 0.7993 refused, and the photograph lost its enlargement and detail layer by 0.0007
+#   (docs/evaluation/2026-11-05-baseline-after-face-restoration.md). False gives the earlier behaviour.
+ADAPTIVE_BASELINE_AFTER_FACE_RESTORATION = env.bool("ADAPTIVE_BASELINE_AFTER_FACE_RESTORATION", default=True)
+# ADAPTIVE_BACKGROUND_DEFOCUS_NOT_A_DEFECT: a frame the analyzer reads as defocused while its MAIN face is sharp (face_blur "none") and prominent (the face covers at least
+#   ADAPTIVE_BACKGROUND_DEFOCUS_MIN_FACE_AREA of the frame) is a shallow-depth-of-field portrait, not a photograph whose blur could not be recovered: it is no longer listed under
+#   "Not fully corrected" and its outcome is not "partially_enhanced" because of it. Reporting only: no pixel changes, and the analysis still records the condition. Library (live
+#   configuration): of 19 photographs read as defocused, 15 have a sharp main face covering 0.045 to 0.162 of the frame; the two small or far-away faces cover 0.004 and 0.020, so 0.03
+#   sits between them (docs/evaluation/2026-11-05-background-defocus-note.md). False gives the earlier behaviour.
+ADAPTIVE_BACKGROUND_DEFOCUS_NOT_A_DEFECT = env.bool("ADAPTIVE_BACKGROUND_DEFOCUS_NOT_A_DEFECT", default=True)
+ADAPTIVE_BACKGROUND_DEFOCUS_MIN_FACE_AREA = env.float("ADAPTIVE_BACKGROUND_DEFOCUS_MIN_FACE_AREA", default=0.03)
+# ADAPTIVE_BACKLIT_SUBJECT_LIFT (OFF by default): the subject of a back-lit photograph (a person against a window, a bright sky or a sunset) is crushed in the shadows while the frame is bright,
+#   so no exposure rule of the frame calls the photograph dark and the person stays a silhouette. The analyzer reports ``subject_exposure.backlit`` (always) when the MAIN face has a crushed
+#   tonal range (``visibility`` poor), its median luminance is under ADAPTIVE_BACKLIT_SUBJECT_BRIGHTNESS_MAX (60) and under ADAPTIVE_BACKLIT_SUBJECT_MAX_RATIO (0.40) of the frame's mean, and
+#   the frame's median is at least ADAPTIVE_BACKLIT_MIN_SCENE_MEDIAN (70). Switched on, AI Enhance (the `pro` preset) proposes the low-light lift as a SHADOW lift: the network's output is
+#   blended in only where the original is clearly darker than the frame's own median (a sky, a window or a lit wall is left as photographed) and every gate of the validator judges it.
+#   Detection, library (62 photographs, 45 with a face): met by the 11 back-lit ones (face median 8 to 50, ratio 0.09 to 0.36) and by no other photograph; a histogram rule (a dark third and a
+#   bright third) also flags white-background studio portraits and was not used. Result, AI Enhance, real models, the 11: a lift raises what the shadows hold several times, which makes the blocks
+#   of a small, heavily compressed JPEG visible, so without a guard 6 were visibly damaged (blocky faces on 4, an outline and faint blocks on 1, a smoothed pink face on 1). The validator's
+#   ``compression_blocks`` gate (the analyzer reads the LIFTED photograph as heavily compressed; the weaker blends and the fallback engine are refused with it) turns 4 of those 6 back into "left as
+#   before"; the other 2 (a 4x enlargement of a blocky photograph, and the pink face) are not caught. Of the 7 that are lifted, 1 has no artifact, 4 a dark outline along the subject and 2 are damaged,
+#   so it ships OFF: switch it on for sharp, high-quality photographs. Natural, Dynamic and Auto are untouched (docs/evaluation/2026-11-05-backlit-subject-lift.md).
+#   A photograph the pipeline ITSELF enlarged first (preprocessing's small-image enlargement) is never lifted this way (``lift_on_enlarged_source``): its blocks are 32 px wide and the reading cannot see them;
+#   the live run of the library's id 182 through the app (2026-11-06) came back with a blocky face (the same note, addendum). The person's own "Dark photo" (``lighting``) is held to the same gate.
+ADAPTIVE_BACKLIT_SUBJECT_LIFT = env.bool("ADAPTIVE_BACKLIT_SUBJECT_LIFT", default=False)
+ADAPTIVE_BACKLIT_SUBJECT_BRIGHTNESS_MAX = env.float("ADAPTIVE_BACKLIT_SUBJECT_BRIGHTNESS_MAX", default=60.0)
+ADAPTIVE_BACKLIT_SUBJECT_MAX_RATIO = env.float("ADAPTIVE_BACKLIT_SUBJECT_MAX_RATIO", default=0.40)
+ADAPTIVE_BACKLIT_MIN_SCENE_MEDIAN = env.float("ADAPTIVE_BACKLIT_MIN_SCENE_MEDIAN", default=70.0)
+# ADAPTIVE_BACKLIT_LIFT_ALL_PRESETS (OFF by default): the shadow lift above is for AI Enhance (the `pro` preset) only; switched on, Natural, Dynamic and Auto propose it too (still only with
+#   ADAPTIVE_BACKLIT_SUBJECT_LIFT on, and every gate of the validator judges it; "Light photo" still turns it off). In the owner's database 29 results (9 distinct photographs) whose main face had a median
+#   luminance under 60 in a BRIGHT frame (the analyzer's ``backlit_subject``) came back with no lift under Natural / Dynamic, because those presets leave a dark face in a bright frame alone (a global lift would
+#   burn the window); AI Enhance lifted 3 such results and refused 2. Measured on the 11 back-lit library photographs with every gate: 7 lifted (1 clean, 4 with a dark outline along the subject, 2 damaged), 4
+#   refused (docs/evaluation/2026-11-05-backlit-subject-lift.md), so it ships OFF; the person's own "Dark photo" (``lighting``) asks for the same lift per request. The rule keeps its guards (a crushed tonal
+#   range, and a face under ADAPTIVE_BACKLIT_SUBJECT_BRIGHTNESS_MAX that is also dark next to the frame): a face merely under 60 is also what a dark skin tone looks like in a correct exposure (9 more
+#   results of the same 42 sit in a normally exposed frame), which must not be brightened.
+ADAPTIVE_BACKLIT_LIFT_ALL_PRESETS = env.bool("ADAPTIVE_BACKLIT_LIFT_ALL_PRESETS", default=False)
+# ADAPTIVE_UPSCALE_HIGHLIGHT_GUARD: an enlargement the validator refuses ONLY for ``highlight_clipping_increased`` (more than 3 points of newly clipped pixels against the image it was made from) is judged
+#   once more with the brightening the model added to ALREADY bright pixels taken back (operations.keep_highlights). The retry is a new candidate that must pass every gate; an enlargement the
+#   validator accepts, or refuses for any other reason, is never touched, so no result that exists without this changes. After a whole-frame lift a bright window or sky sits at the top of the range:
+#   the library's 25.jpg (a man in shadow in front of a window; lift accepted) got +0.9 levels on its bright part from Real-ESRGAN, which the gate counted as 8.0 points of newly clipped pixels
+#   (1.27 percent to 9.30, the limit is 3.0), so the lifted photograph kept its size; with the guard it was enlarged to 828x554 (docs/evaluation/2026-11-06-enlargement-after-lift.md).
+#   False gives the earlier behaviour.
+ADAPTIVE_UPSCALE_HIGHLIGHT_GUARD = env.bool("ADAPTIVE_UPSCALE_HIGHLIGHT_GUARD", default=True)
+# ADAPTIVE_BASELINE_AFTER_LIGHTING: once a lift (low-light or back-lit) is accepted, a later step whose face geometry the checks against the ORIGINAL refuse (the share limit on the original's landmarks and the
+#   plain enlargement of the original) gets a second opinion against the image it was GIVEN, which is lit, because the detector can hardly see the face of a dark original: its landmarks are guesses. The step
+#   must stay within its own limit of that image's landmarks (or, for an enlargement, within ADAPTIVE_LANDMARK_ENLARGEMENT_SHIFT_MAX of a plain enlargement of it). Never stricter than before; never for a face
+#   restoration or polish; a face no longer found is still a loss; identity (the embedding) is judged as before. Library 29.jpg (lift and face restoration accepted): the enlargement read 0.073 / 0.046 against
+#   the dark original (limits 0.06 / 0.035) and 0.042 against what it was given (docs/evaluation/2026-11-06-enlargement-after-lift.md). False gives the earlier behaviour.
+ADAPTIVE_BASELINE_AFTER_LIGHTING = env.bool("ADAPTIVE_BASELINE_AFTER_LIGHTING", default=True)
+# ADAPTIVE_UPSCALE_SCALE: the size factor of the enlargement the engine proposes for a small photograph: 2 (the default: both sides doubled) or 4 (quadrupled). Real-ESRGAN is a x4 network; 2 is its output resized.
+#   4 falls back to 2 when it would pass ADAPTIVE_MAX_OUTPUT_EDGE, and any other value means 2. Measured with real models (docs/evaluation/2026-11-06-enlargement-after-lift.md, section 6): six small
+#   photographs were all enlarged 4x (a 1.4 to 3 megapixel result in 15 to 38 s), but on 25.jpg the face restoration the 2x run accepts is refused at 4x (face_geometry_changed, 0.042 against the strict 0.04), the
+#   identity margin of the dark photographs is thinner (0.8085 against 0.80), and the pixels are the plain enlargement's plus REALESRGAN_OUTPUT_BLEND of the model's, so 4x is more pixels, not more detail per pixel.
+ADAPTIVE_UPSCALE_SCALE = env.int("ADAPTIVE_UPSCALE_SCALE", default=2)
 NAFNET_MODEL_PATH = env(
     "NAFNET_MODEL_PATH",
     default=str(BASE_DIR / ".runtime" / "models" / "NAFNet-GoPro-width64.pth"),
@@ -336,6 +450,29 @@ ADAPTIVE_MAX_OUTPUT_EDGE = env.int("ADAPTIVE_MAX_OUTPUT_EDGE", default=4096)
 # not evidence that the photograph is low-resolution, and whole-photograph upscaling costs several times the compute.
 ADAPTIVE_FACE_UPSCALE_BELOW = env.int("ADAPTIVE_FACE_UPSCALE_BELOW", default=0)
 ADAPTIVE_DEBUG_ARTIFACTS = env.bool("ADAPTIVE_DEBUG_ARTIFACTS", default=False)
+# A gentle, bounded "polish" for a photograph on which the engine found nothing to fix (enhancement/adaptive/operations.py, run_polish; OpenCV
+# and NumPy only, no model). OFF unless set to True: with it off (or absent) the engine behaves exactly as before. With it on, the router offers
+# polish only when the analyzer recommends no operation, none was tried, the scene is not a dark one left as photographed and the style is
+# natural or dynamic; the result is kept only if the validator's polish gates pass, otherwise the original pixels are returned.
+ADAPTIVE_POLISH_ENABLED = env.bool("ADAPTIVE_POLISH_ENABLED", default=False)
+# Every photograph is enhanced. With this on, a photograph on which nothing was found to fix (or on which every corrective step was refused by the
+# safety gates) still gets the polish, as a FINISH: ADAPTIVE_FINISH_STRENGTH times the gentle share and a vibrance of ADAPTIVE_FINISH_VIBRANCE (the gentle polish
+# is 6 percent) on low-chroma pixels. It is kept if every safety gate passes, no measure (frame contrast, structure, local contrast, the main face's detail) falls
+# below ADAPTIVE_FINISH_TOLERANCE of what it was, and the photograph really changes (mean change of at least ADAPTIVE_FINISH_MIN_CHANGE grey levels of 255). The gentle
+# polish needed a 5 percent gain, which a photograph that is already balanced and sharp does not give, so it was returned unchanged. It does not need
+# ADAPTIVE_POLISH_ENABLED. Off: the engine behaves as before.
+ADAPTIVE_ALWAYS_ENHANCE = env.bool("ADAPTIVE_ALWAYS_ENHANCE", default=True)
+ADAPTIVE_FINISH_STRENGTH = env.float("ADAPTIVE_FINISH_STRENGTH", default=3.0)
+ADAPTIVE_FINISH_VIBRANCE = env.float("ADAPTIVE_FINISH_VIBRANCE", default=0.15)
+ADAPTIVE_FINISH_TOLERANCE = env.float("ADAPTIVE_FINISH_TOLERANCE", default=0.97)
+ADAPTIVE_FINISH_MIN_CHANGE = env.float("ADAPTIVE_FINISH_MIN_CHANGE", default=1.5)
+# With ADAPTIVE_ALWAYS_ENHANCE every photograph gets, as its LAST layer, the detail model used for light photographs (the compact "general" network), whether anything needed
+# correcting or not; it is applied unless it smooths the photograph by more than this allows (structure energy x0.75: on a brightened dark photograph the model cleans the
+# amplified noise and JPEG blocks, which reads as 0.6-0.9; a defocused portrait is smoothed to 0.94), changes nothing visible (a mean change under ADAPTIVE_REFINE_MIN_CHANGE
+# grey levels of 255), or another gate (identity, face geometry, halo, clipping, colour) refuses it. The finishing polish above is the fallback when nothing at all was
+# accepted. A photograph over ADAPTIVE_DETAIL_MAX_PIXELS skips the model (its time and memory grow with the pixels) and gets only the polish.
+ADAPTIVE_REFINE_MIN_GAIN = env.float("ADAPTIVE_REFINE_MIN_GAIN", default=0.75)
+ADAPTIVE_REFINE_MIN_CHANGE = env.float("ADAPTIVE_REFINE_MIN_CHANGE", default=0.5)
 # How a low-light lift gets its colour: "chromaticity" (the source's colour ratios in linear light with the network's luminance;
 # measured to keep colour closest to the clean photograph, docs/evaluation/2026-10-15-lowlight-colour.md) or "legacy" (the source's
 # CIELAB chroma scaled by the square root of the lightness gain; measured 20-40 % paler on dark inputs).
@@ -363,6 +500,9 @@ RETINEXFORMER_TILE_SIZE = env.int("RETINEXFORMER_TILE_SIZE", default=1024)
 # On a CPU the tile is capped at this (memory and time grow quickly with tile area there); GPUs keep RETINEXFORMER_TILE_SIZE.
 RETINEXFORMER_CPU_TILE_SIZE = env.int("RETINEXFORMER_CPU_TILE_SIZE", default=512)
 RETINEXFORMER_TILE_OVERLAP = env.int("RETINEXFORMER_TILE_OVERLAP", default=32)
+# A photograph whose long edge is over this is brightened in ONE pass on a copy reduced to it, and the gain is applied to the full-size photograph (tiles of
+# the full size show seams and do not fit an 8 GB machine). 0 = run the network tile by tile at the full size, as before.
+RETINEXFORMER_WORK_EDGE = max(0, env.int("RETINEXFORMER_WORK_EDGE", default=960))
 ZERO_DCE_ENABLED = env.bool("ZERO_DCE_ENABLED", default=True)
 ZERO_DCE_MODEL_PATH = env(
     "ZERO_DCE_MODEL_PATH",
@@ -421,9 +561,20 @@ IDENTITY_GUARD_MIN_SIMILARITY = env.float("IDENTITY_GUARD_MIN_SIMILARITY", defau
 # SFace embeddings of very dark faces are unreliable (faithful brightening of
 # frames with a face luminance of 6-22/255 measured 0.45-0.87 similarity, and
 # grain often stops the detector re-finding the face at all), so faces below
-# this mean grey level are not judged rather than penalising correct
-# enhancement.
-IDENTITY_GUARD_MIN_FACE_LUMINANCE = env.float("IDENTITY_GUARD_MIN_FACE_LUMINANCE", default=45.0)
+# this mean grey level (of the detected face box) are not judged rather than
+# penalising correct enhancement. The floor was 45, which also refused a face at
+# 41 (a 47 px face in a dim photograph: no identity, so no face restoration).
+# Measured on 160 public LFW faces darkened to a known mean, real SFace, with the
+# crop brightened for the embedding (IDENTITY_GUARD_DARK_FACE_BRIGHTNESS_THRESHOLD):
+# the same face still matches itself at 0.91 (mean 16) and 0.86 (mean 12), 99-100 %
+# above the 0.65 restoration limit, and falls apart below about 8 (0.76 at 8, 0.67 at 6,
+# 0.47 at 4); look-alike impostors stay at 0.45 or less. 15 keeps clear of that edge.
+# docs/evaluation/2026-11-05-dark-face-identity.md. Set 45 to restore the earlier floor.
+IDENTITY_GUARD_MIN_FACE_LUMINANCE = env.float("IDENTITY_GUARD_MIN_FACE_LUMINANCE", default=15.0)
+# A face crop darker than this mean grey level is brightened (by IDENTITY_GUARD_DARK_FACE_GAIN) before it is EMBEDDED, the reference and every candidate alike; the
+# photograph, the candidate and the crop a restoration model receives are never changed. 0 switches it off.
+IDENTITY_GUARD_DARK_FACE_BRIGHTNESS_THRESHOLD = env.float("IDENTITY_GUARD_DARK_FACE_BRIGHTNESS_THRESHOLD", default=40.0)
+IDENTITY_GUARD_DARK_FACE_GAIN = env.float("IDENTITY_GUARD_DARK_FACE_GAIN", default=2.5)
 IDENTITY_GUARD_STRENGTHS = tuple(
     float(value)
     for value in env.list(
@@ -431,6 +582,49 @@ IDENTITY_GUARD_STRENGTHS = tuple(
     )
 )
 IDENTITY_GUARD_MAX_FACES = env.int("IDENTITY_GUARD_MAX_FACES", default=5)
+# Person folders: at most this many faces of one photograph are grouped (the largest ones); a crowd of sixty does not stall the queue. The rest are recorded as
+# skipped (reason too_many_faces) in the analysis evidence, and the photograph is still accepted and enhanced.
+IDENTITY_MAX_FACES_PER_IMAGE = env.int("IDENTITY_MAX_FACES_PER_IMAGE", default=20)
+# Albums (albums/): how many a person may have, and how many photographs one album may hold.
+ALBUM_MAX_PER_USER = env.int("ALBUM_MAX_PER_USER", default=500)
+ALBUM_MAX_IMAGES = env.int("ALBUM_MAX_IMAGES", default=10000)
+if ALBUM_MAX_PER_USER < 1 or ALBUM_MAX_IMAGES < 1:
+    raise ImproperlyConfigured("ALBUM_MAX_PER_USER and ALBUM_MAX_IMAGES must be at least 1.")
+# Trash (uploads/trash.py): a photograph moved to the trash is deleted for good by the daily task uploads.purge_trash after this many days.
+TRASH_RETENTION_DAYS = env.int("TRASH_RETENTION_DAYS", default=30)
+if not 1 <= TRASH_RETENTION_DAYS <= 3650:
+    raise ImproperlyConfigured("TRASH_RETENTION_DAYS must be between 1 and 3650.")
+# Places (places/): where a photograph was taken. LOCATION_ENABLED switches reading GPS from uploads on or off (nothing is read when it is off). Place names come from an
+# OFFLINE gazetteer in LOCATION_GAZETTEER_DIR (GeoNames cities1000.txt, CC BY 4.0; scripts/fetch_gazetteer.py downloads it and prints its SHA-256); no coordinate is ever sent
+# to another service. Names stay off until LOCATION_GAZETTEER_SHA256 matches the file and the owner has approved docs/model-licenses/location-gazetteer.md.
+LOCATION_ENABLED = env.bool("LOCATION_ENABLED", default=True)
+LOCATION_GAZETTEER_DIR = env("LOCATION_GAZETTEER_DIR", default=str(BASE_DIR / ".runtime" / "data" / "geonames"))
+LOCATION_GAZETTEER_SHA256 = env("LOCATION_GAZETTEER_SHA256", default="")
+LOCATION_LICENSE_RECORD_PATH = env("LOCATION_LICENSE_RECORD_PATH", default=str(BASE_DIR / "docs" / "model-licenses" / "location-gazetteer.md"))
+LOCATION_MAX_DISTANCE_KM = env.float("LOCATION_MAX_DISTANCE_KM", default=50.0)
+if not 1.0 <= LOCATION_MAX_DISTANCE_KM <= 500.0:
+    raise ImproperlyConfigured("LOCATION_MAX_DISTANCE_KM must be between 1 and 500.")
+# Search by what is in the photograph (search/semantic/): "beach", "red car", "birthday cake". OFF by default, and it needs the optional libraries
+# (requirements-semantic.txt) and the approved model files in SEMANTIC_SEARCH_MODEL_DIR; the weights are checked against SEMANTIC_SEARCH_MODEL_SHA256 before they
+# are loaded, and nothing is downloaded at run time. The model, its licence and the measured quality are recorded in docs/model-licenses/semantic-search-model.md
+# and docs/evaluation/2026-10-22-semantic-search.md. English queries only. SEMANTIC_SEARCH_MIN_SCORE is the lowest cosine similarity a result may have.
+SEMANTIC_SEARCH_ENABLED = env.bool("SEMANTIC_SEARCH_ENABLED", default=False)
+SEMANTIC_SEARCH_MODEL_NAME = env("SEMANTIC_SEARCH_MODEL_NAME", default="ViT-B-16-SigLIP")
+SEMANTIC_SEARCH_MODEL_DIR = env("SEMANTIC_SEARCH_MODEL_DIR", default=str(BASE_DIR / ".runtime" / "models" / "siglip-vit-b-16"))
+SEMANTIC_SEARCH_MODEL_SHA256 = env("SEMANTIC_SEARCH_MODEL_SHA256", default="")
+SEMANTIC_SEARCH_LICENSE_RECORD_PATH = env("SEMANTIC_SEARCH_LICENSE_RECORD_PATH", default=str(BASE_DIR / "docs" / "model-licenses" / "semantic-search-model.md"))
+SEMANTIC_SEARCH_DEVICE = env("SEMANTIC_SEARCH_DEVICE", default="auto")          # auto (cuda, else mps, else cpu), or cpu / cuda / mps
+SEMANTIC_SEARCH_MIN_SCORE = env.float("SEMANTIC_SEARCH_MIN_SCORE", default=0.10)
+SEMANTIC_SEARCH_DEFAULT_RESULTS = env.int("SEMANTIC_SEARCH_DEFAULT_RESULTS", default=24)
+SEMANTIC_SEARCH_MAX_RESULTS = env.int("SEMANTIC_SEARCH_MAX_RESULTS", default=100)
+if SEMANTIC_SEARCH_DEVICE not in ("auto", "cpu", "cuda", "mps"):
+    raise ImproperlyConfigured("SEMANTIC_SEARCH_DEVICE must be auto, cpu, cuda or mps.")
+if not -1.0 <= SEMANTIC_SEARCH_MIN_SCORE <= 1.0:
+    raise ImproperlyConfigured("SEMANTIC_SEARCH_MIN_SCORE must be between -1 and 1.")
+if not 1 <= SEMANTIC_SEARCH_DEFAULT_RESULTS <= SEMANTIC_SEARCH_MAX_RESULTS:
+    raise ImproperlyConfigured("SEMANTIC_SEARCH_DEFAULT_RESULTS must be at least 1 and no more than SEMANTIC_SEARCH_MAX_RESULTS.")
+if IDENTITY_MAX_FACES_PER_IMAGE < 1:
+    raise ImproperlyConfigured("IDENTITY_MAX_FACES_PER_IMAGE must be at least 1.")
 IDENTITY_GUARD_MAX_EDGE = env.int("IDENTITY_GUARD_MAX_EDGE", default=1024)
 IDENTITY_GUARD_MIN_FACE_EDGE = env.int("IDENTITY_GUARD_MIN_FACE_EDGE", default=40)
 
@@ -535,8 +729,70 @@ CODEFORMER_MODEL_SHA256 = env(
 )
 CODEFORMER_DEVICE = env("CODEFORMER_DEVICE", default="auto")
 CODEFORMER_FIDELITY = env.float("CODEFORMER_FIDELITY", default=0.7)
+# The adaptive engine's face-restoration attempts as CodeFormer fidelity weights (0-1; higher keeps more of the input). EVERY value is run (the best that passes the gates is kept), so each extra one costs a CodeFormer
+# pass (about 2 s on an Apple M1 GPU, about 8 s on a CPU). Measured on the owner's photographs (docs/evaluation/2026-11-04-face-fidelity.md): a lower weight bought no more face detail and lost identity, and a
+# second attempt never rescued a refusal, so the default is the single weight 1.0 (the earlier default was 0.85 then 0.65).
+ADAPTIVE_FACE_FIDELITIES = tuple(float(value) for value in env.list("ADAPTIVE_FACE_FIDELITIES", default=["1.0"]))
 CODEFORMER_MAX_FACES = env.int("CODEFORMER_MAX_FACES", default=5)
 CODEFORMER_MAX_INPUT_PIXELS = env.int("CODEFORMER_MAX_INPUT_PIXELS", default=12_000_000)
+
+# DDColor (Kang et al., ICCV 2023; Apache-2.0): colourizes a photograph that is black and white (enhancement/colorize.py). It only ever runs on a photograph
+# whose own colour channels are empty, and only for the "dynamic" and "ai_max" styles (see enhancement/adaptive/profile.py). The checkpoint must match its pinned
+# checksum. VARIANT "large" (ConvNeXt-L, 912 MB) is the default: on the owner's B&W portrait the small one turned teeth orange (teeth chroma 39.5 against 15.0).
+# The three natural-colour settings are the measured result of a ground-truth test (docs/evaluation/2026-11-03-colourization.md): the raw prediction is more
+# saturated than real photographs, painted a dark wall blue and tinted teeth, so it is damped: CHROMA_SCALE everywhere, DARK_DAMPING keeps that share of the
+# chroma in the darkest pixels (L < 8, rising to full by L 35), HIGHLIGHT_DAMPING removes that share of it in the brightest (L 80 to 96: teeth, eye whites,
+# clouds, shirts). MAX_CHROMA caps any pixel. CHROMA_SCALE=1, DARK_DAMPING=1, HIGHLIGHT_DAMPING=0 gives the raw prediction.
+DDCOLOR_ENABLED = env.bool("DDCOLOR_ENABLED", default=False)
+DDCOLOR_MODEL_VARIANT = env("DDCOLOR_MODEL_VARIANT", default="large")
+if DDCOLOR_MODEL_VARIANT not in ("tiny", "large"):
+    raise ImproperlyConfigured(f"DDCOLOR_MODEL_VARIANT must be tiny or large, not {DDCOLOR_MODEL_VARIANT!r}.")
+_DDCOLOR_PINNED = {
+    "large": ("ddcolor_paper.bin", "5c77db8292398a2ec1397003f0a90266c28e97b013515d5e9a32e73a4c54a67d"),    # piddnad/ddcolor_paper, 911,914,869 bytes
+    "tiny": ("ddcolor_paper_tiny.bin", "8a1277bc90a1bfbb6d2d83933a9a6bc821931879ca93e26e4fcec12165d41fce"),  # piddnad/ddcolor_paper_tiny, 220,372,845 bytes
+}
+DDCOLOR_MODEL_PATH = env("DDCOLOR_MODEL_PATH", default=str(BASE_DIR / ".runtime" / "models" / "ddcolor" / _DDCOLOR_PINNED[DDCOLOR_MODEL_VARIANT][0]))
+DDCOLOR_MODEL_SHA256 = env("DDCOLOR_MODEL_SHA256", default=_DDCOLOR_PINNED[DDCOLOR_MODEL_VARIANT][1])
+DDCOLOR_DEVICE = env("DDCOLOR_DEVICE", default="auto")
+DDCOLOR_INPUT_SIZE = env.int("DDCOLOR_INPUT_SIZE", default=512)
+DDCOLOR_CHROMA_SCALE = env.float("DDCOLOR_CHROMA_SCALE", default=0.7)
+DDCOLOR_DARK_DAMPING = env.float("DDCOLOR_DARK_DAMPING", default=0.3)
+DDCOLOR_HIGHLIGHT_DAMPING = env.float("DDCOLOR_HIGHLIGHT_DAMPING", default=0.5)
+DDCOLOR_MAX_CHROMA = env.float("DDCOLOR_MAX_CHROMA", default=60.0)
+
+# Detail restoration (the adaptive engine's "detail_restoration" operation): a soft or heavily compressed photograph (a WhatsApp copy: blur the engine calls "defocus" and JPEG
+# blocking) is run through a 4x model at 2x and shrunk back to its own size, so it comes out clearer at the SAME size. Measured on the owner's 1600 x 1382 portrait (blur and
+# compression both found before, neither after; PSNR against the original 37.5-39.2 dB, i.e. the same photograph; docs/evaluation/2026-11-03-detail-restoration.md).
+# ADAPTIVE_DETAIL_ENABLED=False switches the operation off. ADAPTIVE_DETAIL_MAX_PIXELS: a larger photograph is left alone (the time grows with the pixels: about 3 s per megapixel with the
+# compact model, about 30 s with x4plus or UltraSharp, which only AI Enhance / Strong prefer or the fallback uses).
+ADAPTIVE_DETAIL_ENABLED = env.bool("ADAPTIVE_DETAIL_ENABLED", default=True)
+# The low-light step does not brighten a LOW-KEY photograph (a lit subject on a BLACK background) for the Natural and Dynamic styles at the Auto, Low and Medium strengths: it lifts the black floor into a
+# milky grey. Measured on the owner's portrait (docs/evaluation/2026-11-04-lowkey-floor.md): the floor went from L 8.7 to 23.4 and the owner pulled it back by hand. AI Enhance and the High strength still lift
+# dark scenes as asked, and a dark photograph with a dim subject (a night photograph of a person) is still lifted. False restores the earlier behaviour.
+ADAPTIVE_LOWKEY_SKIP_LIFT = env.bool("ADAPTIVE_LOWKEY_SKIP_LIFT", default=True)
+# The face-geometry gate (landmark shift) ignores faces the analyzer calls too small (short edge under 48 px) for every operation but face restoration: such a face is not restored and its identity cannot be
+# checked, and on a silhouette or a distant head its landmarks are guesses (12 % of the face width of shift on a sunset photograph, which refused the enlargement of the whole photograph).
+# docs/evaluation/2026-11-04-tiny-face-geometry.md. False restores the earlier behaviour.
+ADAPTIVE_GEOMETRY_IGNORES_TINY_FACES = env.bool("ADAPTIVE_GEOMETRY_IGNORES_TINY_FACES", default=True)
+# The same gate matches the original's five largest faces against the candidate's five largest. Among faces of nearly the same size (a row of a group photograph) the candidate's five largest are a different
+# set without any face being lost, and the gate refused harmless candidates as "face_lost": 11 of 24 (a 0.5 px blur, a JPEG pass, a 5 % brightness change, a mild sharpen) on group canvases of 8 to 24 faces,
+# none when the faces beyond the five are searched too. Only when the strict match reports a face lost are the faces the detector found beyond the candidate's report searched as well; every limit is
+# unchanged and a face that is truly gone is still gone. docs/evaluation/2026-11-07-group-photographs.md. False restores the earlier behaviour.
+ADAPTIVE_MATCH_FACES_BEYOND_REPORT = env.bool("ADAPTIVE_MATCH_FACES_BEYOND_REPORT", default=True)
+ADAPTIVE_DETAIL_MAX_PIXELS = env.int("ADAPTIVE_DETAIL_MAX_PIXELS", default=4_000_000)
+# The slow detail networks (Real-ESRGAN x4plus and 4x-UltraSharp), when they are only the FALLBACK after the compact one was refused (a style or strength that puts one first still gets it), are not run on a photograph above this many pixels: measured on an Apple M1 (GPU) about 3 s plus
+# 42 s per megapixel (19 s at 0.37 MP, 35 s at 0.75 MP, 44 s inside a whole run), minutes on a CPU, against 3.6 s per megapixel for the compact network. 500,000 keeps a default run of a 1000 px
+# photograph near the 30 s target; the result says so in operations_skipped. 0 = no limit (the old behaviour: only the time budget stops it).
+ADAPTIVE_SLOW_DETAIL_MAX_PIXELS = env.int("ADAPTIVE_SLOW_DETAIL_MAX_PIXELS", default=500_000)
+# The compact Real-ESRGAN network (realesr-general-x4v3, BSD-3-Clause, xinntao/Real-ESRGAN): the first choice for detail restoration (5-6 s against 69 s for x4plus on the same photograph).
+# Its switch is HD_RESTORATION_ENABLED. The hash is that of the file the owner downloaded on 2026-10-17 (not compared with a published hash: none was found; docs/model-licenses/ultrasharp.md).
+REALESRGAN_GENERAL_MODEL_PATH = env("REALESRGAN_GENERAL_MODEL_PATH", default=str(BASE_DIR / ".runtime" / "models" / "realesr-general-x4v3.pth"))
+REALESRGAN_GENERAL_MODEL_SHA256 = env("REALESRGAN_GENERAL_MODEL_SHA256", default="8dc7edb9ac80ccdc30c3a5dca6616509367f05fbc184ad95b731f05bece96292")
+# 4x-UltraSharp (Kim2091; CC BY-NC-SA 4.0: non-commercial, attribution, share-alike; docs/model-licenses/ultrasharp.md), the same RRDBNet as Real-ESRGAN x4plus in the original
+# ESRGAN key layout. OFF unless True; when on and present it is the first choice for detail restoration (sharper edges, no halos on the owner's portrait), Real-ESRGAN x4plus the fallback.
+ULTRASHARP_ENABLED = env.bool("ULTRASHARP_ENABLED", default=False)
+ULTRASHARP_MODEL_PATH = env("ULTRASHARP_MODEL_PATH", default=str(BASE_DIR / ".runtime" / "models" / "ultrasharp" / "4x-UltraSharp.pth"))
+ULTRASHARP_MODEL_SHA256 = env("ULTRASHARP_MODEL_SHA256", default="a5812231fc936b42af08a5edba784195495d303d5b3248c24489ef0c4021fe01")
 GFPGAN_OUTPUT_BLEND = env.float("GFPGAN_OUTPUT_BLEND", default=0.25)
 GFPGAN_MIN_OUTPUT_BLEND = env.float("GFPGAN_MIN_OUTPUT_BLEND", default=0.08)
 GFPGAN_ALLOW_MILD_BLUR = env.bool("GFPGAN_ALLOW_MILD_BLUR", default=True)
@@ -562,8 +818,9 @@ GFPGAN_MAX_HIGHLIGHT_CLIPPING_GROWTH = env.float(
 )
 # Generative face restoration only runs when the result can be compared with a
 # source face (consent, an identity model, and a face reliable enough to embed).
-# The explicit AI Max style is exempt. See enhancement/services.py
-# _face_restoration_gate.
+# In the staged pipeline the explicit AI Max style is exempt (enhancement/services.py
+# _face_restoration_gate); the adaptive engine has no exemption: every style needs a
+# verifiable identity for a face restoration (enhancement/adaptive/service.py).
 GFPGAN_REQUIRE_IDENTITY_CHECK = env.bool("GFPGAN_REQUIRE_IDENTITY_CHECK", default=True)
 # Face-region fidelity (enhancement/face_fidelity.py): each detected face is
 # compared with the image as it was before restoration and sharpening, and
@@ -599,6 +856,10 @@ FACE_MIN_EDGE_PIXELS = env.int("FACE_MIN_EDGE_PIXELS", default=160)
 YUNET_SCORE_THRESHOLD = env.float("YUNET_SCORE_THRESHOLD", default=0.75)
 YUNET_NMS_THRESHOLD = env.float("YUNET_NMS_THRESHOLD", default=0.3)
 YUNET_TOP_K = env.int("YUNET_TOP_K", default=5000)
+# YuNet is run at two sizes and the results merged: at the photograph's own size when that is at most YUNET_MAX_EDGE (else shrunk to it), and shrunk to YUNET_LARGE_FACE_EDGE (0 = off). A large face in
+# a large photograph is missed at full size (the owner's 4096 px portrait: score 0.93 at 1024 px, 0.75 at 2048 px, no face at 4096 px), which left a dark portrait with "0 faces" and no person folder.
+YUNET_MAX_EDGE = env.int("YUNET_MAX_EDGE", default=2048)
+YUNET_LARGE_FACE_EDGE = env.int("YUNET_LARGE_FACE_EDGE", default=1024)
 ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION = env.bool(
     "ENHANCEMENT_PRESERVE_ORIGINAL_RESOLUTION", default=True
 )
@@ -639,7 +900,16 @@ QUALITY_REJECT_SHARPNESS = env.float("QUALITY_REJECT_SHARPNESS", default=20.0)
 QUALITY_REVIEW_SHARPNESS = env.float("QUALITY_REVIEW_SHARPNESS", default=60.0)
 QUALITY_REJECT_MIN_EDGE = env.int("QUALITY_REJECT_MIN_EDGE", default=240)
 QUALITY_REVIEW_MIN_EDGE = env.int("QUALITY_REVIEW_MIN_EDGE", default=480)
-QUALITY_REJECT_MIN_LUMINANCE = env.float("QUALITY_REJECT_MIN_LUMINANCE", default=25.0)
+# A dark photograph is lifted by the low-light enhancement, not refused: it is refused only when it has no usable signal, which is a mean brightness below QUALITY_REJECT_MIN_LUMINANCE
+# (about 6 of 255: practically black) or almost no contrast (QUALITY_REJECT_CONTRAST, scaled down for a dark photograph, see quality_control/services.make_decision). Between that
+# and QUALITY_REVIEW_MIN_LUMINANCE it carries the warning "underexposed".
+# QUALITY_CHECKS_REJECT: whether a failed quality check REFUSES a photograph (default False). This product's job is enhancement: a dark, soft, small or faceless photograph is exactly what it
+# is for, so it is never refused for its quality; the reasons that used to refuse it ("severe_blur", "severe_underexposure", "contrast_too_low", ...) become review reasons and tips, the verdict
+# is ``needs_review`` (in a personal workspace the photograph is simply accepted with tips; in a team it goes to its moderator) and the photograph is enhanced. Only a file that cannot be read
+# is still refused (at upload). True restores the old behaviour. Found on a real portrait (mean brightness 29, 3456 x 5184) refused as "Too blurry": a dark photograph has weak gradients, the
+# face detector missed its large face, and the engine, once allowed to run, brightened it to a natural 82.5 (docs/evaluation/2026-11-03-enhance-every-photograph.md).
+QUALITY_CHECKS_REJECT = env.bool("QUALITY_CHECKS_REJECT", default=False)
+QUALITY_REJECT_MIN_LUMINANCE = env.float("QUALITY_REJECT_MIN_LUMINANCE", default=6.0)
 QUALITY_REVIEW_MIN_LUMINANCE = env.float("QUALITY_REVIEW_MIN_LUMINANCE", default=55.0)
 QUALITY_REJECT_MAX_LUMINANCE = env.float("QUALITY_REJECT_MAX_LUMINANCE", default=235.0)
 QUALITY_REVIEW_MAX_LUMINANCE = env.float("QUALITY_REVIEW_MAX_LUMINANCE", default=210.0)
@@ -647,6 +917,34 @@ QUALITY_REJECT_CONTRAST = env.float("QUALITY_REJECT_CONTRAST", default=12.0)
 QUALITY_REVIEW_CONTRAST = env.float("QUALITY_REVIEW_CONTRAST", default=20.0)
 QUALITY_REVIEW_NOISE = env.float("QUALITY_REVIEW_NOISE", default=10.0)
 QUALITY_ACCEPT_SCORE = env.float("QUALITY_ACCEPT_SCORE", default=60.0)
+# Sharpness of a photograph that has a face is measured on the face (enhancement/face_sharpness.py), not on the whole frame, so a portrait
+# with a blurred background is not penalised and blur alone never rejects or sends such a photo to review (quality_control/policy.py).
+# QUALITY_FACE_SHARPNESS_TARGET: the face detail (Laplacian variance of the face resized to 128 px) that scores 100; a sharp face measures
+# about 119 (10th percentile 81), a Gaussian blur of 1.5 px about 21. QUALITY_FACE_REGION_INSET shrinks the detector's box on every side.
+# QUALITY_FACE_BLUR_WARNING: below this face detail the quality decision records a blur warning (the restoration chain deblurs it).
+QUALITY_FACE_SHARPNESS_TARGET = env.float("QUALITY_FACE_SHARPNESS_TARGET", default=100.0)
+QUALITY_FACE_REGION_INSET = env.float("QUALITY_FACE_REGION_INSET", default=0.15)
+QUALITY_FACE_MIN_CONFIDENCE = env.float("QUALITY_FACE_MIN_CONFIDENCE", default=0.5)
+QUALITY_FACE_BLUR_WARNING = env.float("QUALITY_FACE_BLUR_WARNING", default=50.0)
+
+# Enlarging a very small photograph while it is standardized (uploads/enlarge.py). ON unless SMALL_IMAGE_ENLARGE_ENABLED=False, so that a photograph is
+# not refused for its size alone: it is made larger instead. A photograph whose shorter side is under SMALL_IMAGE_ENLARGE_BELOW_EDGE (default: the line under which the quality
+# check refuses a photograph for its size, QUALITY_REJECT_MIN_EDGE) is enlarged by 2 or 4 times, the smallest of the two that reaches
+# SMALL_IMAGE_ENLARGE_TARGET_EDGE (default: QUALITY_REVIEW_MIN_EDGE, the line under which the enhancement engine would enlarge it again); a picture under a
+# quarter of that line (60 px by default) is left alone, because even 4 times would not rescue it. The original
+# file is never changed. SMALL_IMAGE_ENLARGE_ENGINE: "auto" (Real-ESRGAN, blended like the enhancement engine does with REALESRGAN_OUTPUT_BLEND, when
+# HD_RESTORATION_ENABLED is on and the model runs; OpenCV Lanczos otherwise), "realesrgan" (the same, but never silently OpenCV: a failure leaves the
+# photograph as it is) or "opencv" (Lanczos only: no invented detail, no model). A model result whose reduction back to the input size is not within
+# SMALL_IMAGE_ENLARGE_MIN_CONSISTENCY_DB of the input is not used (measured: real model output 32 to 49 dB, noise 22 to 28 dB).
+SMALL_IMAGE_ENLARGE_ENABLED = env.bool("SMALL_IMAGE_ENLARGE_ENABLED", default=True)
+SMALL_IMAGE_ENLARGE_BELOW_EDGE = env.int("SMALL_IMAGE_ENLARGE_BELOW_EDGE", default=QUALITY_REJECT_MIN_EDGE)
+SMALL_IMAGE_ENLARGE_TARGET_EDGE = env.int("SMALL_IMAGE_ENLARGE_TARGET_EDGE", default=QUALITY_REVIEW_MIN_EDGE)
+SMALL_IMAGE_ENLARGE_ENGINE = env("SMALL_IMAGE_ENLARGE_ENGINE", default="auto")
+SMALL_IMAGE_ENLARGE_MIN_CONSISTENCY_DB = env.float("SMALL_IMAGE_ENLARGE_MIN_CONSISTENCY_DB", default=30.0)
+if SMALL_IMAGE_ENLARGE_ENGINE not in ("auto", "realesrgan", "opencv"):
+    raise ImproperlyConfigured("SMALL_IMAGE_ENLARGE_ENGINE must be auto, realesrgan or opencv.")
+if not 16 <= SMALL_IMAGE_ENLARGE_BELOW_EDGE <= SMALL_IMAGE_ENLARGE_TARGET_EDGE:
+    raise ImproperlyConfigured("SMALL_IMAGE_ENLARGE_BELOW_EDGE must be at least 16 and not above SMALL_IMAGE_ENLARGE_TARGET_EDGE.")
 
 # Duplicate detection. Perceptual and face-region matches are review evidence,
 # not identity recognition and never create cross-user matches.
@@ -677,8 +975,28 @@ ARCFACE_GUARD_MIN_SIMILARITY = env.float("ARCFACE_GUARD_MIN_SIMILARITY", default
 ARCFACE_MATCH_THRESHOLD = env.float("ARCFACE_MATCH_THRESHOLD", default=0.60)
 ARCFACE_NEW_GROUP_THRESHOLD = env.float("ARCFACE_NEW_GROUP_THRESHOLD", default=0.35)
 ARCFACE_AMBIGUITY_MARGIN = env.float("ARCFACE_AMBIGUITY_MARGIN", default=0.06)
+# SFace (the default provider) has its own limits, measured with ``manage.py evaluate_identity_thresholds`` (docs/evaluation/2026-10-19-sface-thresholds.md).
+# A face is compared with each folder's average face (cosine): below SFACE_NEW_GROUP_THRESHOLD it is clearly not that person and opens a new folder;
+# from SFACE_MATCH_THRESHOLD up, and at least SFACE_AMBIGUITY_MARGIN ahead of the runner-up, it joins the folder; in between it waits for review.
+# SFACE_GUARD_MIN_SIMILARITY is the enhancement identity guard (the same photograph before and after), not a grouping limit.
+SFACE_GUARD_MIN_SIMILARITY = env.float("SFACE_GUARD_MIN_SIMILARITY", default=0.80)
+# The same guard for a FACE RESTORATION. The restored face is compared with the face in the UPLOAD, and when that upload is blurred its own embedding is poor, so even a faithful restoration scores
+# well below 0.80 against it. Measured (docs/evaluation/2026-11-04-face-fidelity.md): on the owner's photographs the limit refused 9 of 24 restorations that were closer to the CLEAN face than the upload
+# was, and no limit between 0.5 and 0.8 caught a worse one; the same shape on 12 people of LFW. 0.65 accepts 22 of 24 with the same single worse one. Set it to 0.80 to restore the earlier behaviour.
+SFACE_RESTORE_GUARD_MIN_SIMILARITY = env.float("SFACE_RESTORE_GUARD_MIN_SIMILARITY", default=0.65)
+SFACE_MATCH_THRESHOLD = env.float("SFACE_MATCH_THRESHOLD", default=0.45)
+# 0.36 (was 0.30): two different men who scored 0.312 against each other were put in the same folder's review list and the second never got a folder of his own. 0.363 is the
+# cosine at which the model's own authors (OpenCV zoo, face_recognition_sface/sface.py) call two faces the same person; below it, a face opens its own folder
+# (docs/evaluation/2026-10-19-sface-thresholds.md, "Update 2026-11-04"). The merge suggestion minimum (0.40) catches the rare one person who is split.
+SFACE_NEW_GROUP_THRESHOLD = env.float("SFACE_NEW_GROUP_THRESHOLD", default=0.36)
+SFACE_AMBIGUITY_MARGIN = env.float("SFACE_AMBIGUITY_MARGIN", default=0.06)
+SFACE_MERGE_SUGGESTION_MIN_SIMILARITY = env.float("SFACE_MERGE_SUGGESTION_MIN_SIMILARITY", default=0.40)
+# The generic limits: what a provider that defines none of its own falls back to (a stand-in provider, for instance).
 IDENTITY_MATCH_THRESHOLD = env.float("IDENTITY_MATCH_THRESHOLD", default=0.82)
 IDENTITY_NEW_GROUP_THRESHOLD = env.float("IDENTITY_NEW_GROUP_THRESHOLD", default=0.68)
+# The Identity Review screen suggests merging two of one member's person folders when their average faces are at least this alike (cosine, 0-1).
+# Unset (the default): the identity provider's own figure (SFACE_MERGE_SUGGESTION_MIN_SIMILARITY, or ARCFACE's match threshold); a number overrides it.
+MODERATOR_MERGE_SUGGESTION_MIN_SIMILARITY = env.float("MODERATOR_MERGE_SUGGESTION_MIN_SIMILARITY", default=None)
 IDENTITY_AMBIGUITY_MARGIN = env.float("IDENTITY_AMBIGUITY_MARGIN", default=0.06)
 IDENTITY_MAX_CANDIDATE_GROUPS = env.int("IDENTITY_MAX_CANDIDATE_GROUPS", default=1000)
 IDENTITY_POLICY_VERSION = env("IDENTITY_POLICY_VERSION", default="identity_policy_v1")
@@ -731,6 +1049,11 @@ if DEBUG and IMAGE_ENCRYPTION_ENABLED and len(IMAGE_ENCRYPTION_KEY) < 32:
     )
 if not 1 <= IMAGE_ENCRYPTION_KEY_ID <= 255:
     raise ImproperlyConfigured("IMAGE_ENCRYPTION_KEY_ID must be between 1 and 255.")
+# For showing the work from a database viewer. A copy of each enhanced image kept as a row (enhancement_enhancedimageblob), and the original
+# and enhanced image on the Django admin result page. Both off by default. The copy is plain bytes, so it is never made while
+# IMAGE_ENCRYPTION_ENABLED is on (production requires that) nor from a file stored encrypted. docs/features/enhanced-image-database-copy.md
+ENHANCED_IMAGE_DATABASE_COPY_ENABLED = env.bool("ENHANCED_IMAGE_DATABASE_COPY_ENABLED", default=False)
+ADMIN_IMAGE_PREVIEW_ENABLED = env.bool("ADMIN_IMAGE_PREVIEW_ENABLED", default=False)
 STORAGES = {
     "default": {"BACKEND": "config.storage.EncryptedFileSystemStorage"},
     "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
@@ -869,10 +1192,18 @@ if CELERY_BROKER_TRANSPORT_OPTIONS["visibility_timeout"] <= CELERY_TASK_TIME_LIM
     )
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 SYSTEM_HEALTH_TIMEOUT_SECONDS = env.float("SYSTEM_HEALTH_TIMEOUT_SECONDS", default=1.0)
+# GET /api/system/health/ runs its checks at the same time and waits at most this long for all of them (a check still running is reported as a timeout), and keeps the finished answer for
+# SYSTEM_HEALTH_CACHE_SECONDS (0 turns that off). With a service down the answer used to take 6 to 18 seconds.
+SYSTEM_HEALTH_DEADLINE_SECONDS = env.float("SYSTEM_HEALTH_DEADLINE_SECONDS", default=2.0)
+SYSTEM_HEALTH_CACHE_SECONDS = env.float("SYSTEM_HEALTH_CACHE_SECONDS", default=5.0)
+if SYSTEM_HEALTH_DEADLINE_SECONDS <= 0 or SYSTEM_HEALTH_CACHE_SECONDS < 0:
+    raise ImproperlyConfigured("SYSTEM_HEALTH_DEADLINE_SECONDS must be above 0 and SYSTEM_HEALTH_CACHE_SECONDS cannot be negative.")
 FACECLOUD_VERSION = env("FACECLOUD_VERSION", default="dev")
 # Send the model-loading tasks to their own queue (empty = the default queue, as before); see config/celery_routes.py.
 ENHANCEMENT_QUEUE_NAME = env("ENHANCEMENT_QUEUE_NAME", default="")
-_task_routes = task_routes(ENHANCEMENT_QUEUE_NAME, GFPGAN_QUEUE_ENABLED, GFPGAN_QUEUE_NAME)
+# Gallery edits ("Save as new version") on a queue of their own, so a save does not wait behind a batch enhancement. Empty = where they were.
+ENHANCEMENT_EDIT_QUEUE_NAME = env("ENHANCEMENT_EDIT_QUEUE_NAME", default="")
+_task_routes = task_routes(ENHANCEMENT_QUEUE_NAME, GFPGAN_QUEUE_ENABLED, GFPGAN_QUEUE_NAME, ENHANCEMENT_EDIT_QUEUE_NAME)
 if _task_routes:
     CELERY_TASK_ROUTES = _task_routes
 # A "processing" job that has not changed for the task time limit plus this
@@ -913,11 +1244,32 @@ if not THUMBNAIL_SIZES or any(not 32 <= size <= 4096 for size in THUMBNAIL_SIZES
 if not 30 <= THUMBNAIL_JPEG_QUALITY <= 95:
     raise ImproperlyConfigured("THUMBNAIL_JPEG_QUALITY must be between 30 and 95.")
 
-# Feature 49: hours a generated collage stays downloadable.
-COLLAGE_TTL_HOURS = env.int("COLLAGE_TTL_HOURS", default=72)
 # Feature 48: hours between two photos that starts a new event in the timeline.
 EVENT_GAP_HOURS = env.float("EVENT_GAP_HOURS", default=6.0)
 ORG_INVITATION_TTL_HOURS = env.int("ORG_INVITATION_TTL_HOURS", default=72)
+
+
+def _plan_limit(plan, kind, default):
+    """What ``plan`` allows of ``kind`` (``moderators`` or ``members``); ``None`` is unlimited. Override from the environment, for example
+    ``ORG_PLAN_FREE_MODERATORS=2`` or ``ORG_PLAN_TEAM_MEMBERS=unlimited``."""
+    name = f"ORG_PLAN_{plan.upper()}_{kind.upper()}"
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in ("unlimited", "none"):
+        return None
+    if not raw.isdigit():
+        raise ImproperlyConfigured(f"{name} must be a whole number or 'unlimited', not {raw!r}.")
+    return int(raw)
+
+
+# How many moderators and plain members an organization may have, by plan (organizations/services.py enforces it wherever people are added; the owner is
+# not counted). No billing: the plan is a label the administrator sets. Organizations already above a limit keep everyone and simply cannot add more.
+ORGANIZATION_PLAN_LIMITS = {
+    "free": {"moderators": _plan_limit("free", "moderators", 1), "members": _plan_limit("free", "members", 10)},
+    "team": {"moderators": _plan_limit("team", "moderators", 5), "members": _plan_limit("team", "members", 100)},
+    "enterprise": {"moderators": _plan_limit("enterprise", "moderators", None), "members": _plan_limit("enterprise", "members", None)},
+}
 # Administrator invitations to create an account (accounts/invitations.py).
 ACCOUNT_INVITATION_TTL_HOURS = env.int("ACCOUNT_INVITATION_TTL_HOURS", default=72)
 
@@ -925,6 +1277,10 @@ ACCOUNT_INVITATION_TTL_HOURS = env.int("ACCOUNT_INVITATION_TTL_HOURS", default=7
 # (scripts/run_beat.ps1 or `celery -A config beat`). Every entry is safe to run
 # repeatedly and does nothing when the feature it serves is switched off.
 CELERY_BEAT_SCHEDULE = {
+    "release-waiting-auto-enhancements": {
+        "task": "enhancement.release_waiting_auto",
+        "schedule": crontab(minute="*/2"),
+    },
     "reap-stuck-jobs": {
         "task": "operations.reap_stuck_jobs",
         "schedule": crontab(minute="*/5"),
@@ -949,9 +1305,13 @@ CELERY_BEAT_SCHEDULE = {
         "task": "downloads.cleanup_expired",
         "schedule": crontab(minute=5),
     },
-    "expire-collages": {
-        "task": "collages.cleanup_expired",
-        "schedule": crontab(minute=25),
+    "index-semantic-search": {
+        "task": "search.index_pending",
+        "schedule": crontab(minute="*/15"),
+    },
+    "purge-trash": {
+        "task": "uploads.purge_trash",
+        "schedule": crontab(minute=30, hour=3),
     },
     "expire-organization-exports": {
         "task": "privacy.cleanup_organization_exports",
@@ -1072,8 +1432,12 @@ REST_FRAMEWORK = {
         "anon": "100/hour",
         "user": "1000/hour",
         "registration": "10/hour",
+        # Sign-in counts FAILED attempts only: per address and account name together (login), and per address across all names (login_ip).
         "login": "20/hour",
+        "login_ip": "300/hour",
+        # Token refresh counts per address and refresh token (token_refresh), with a ceiling per address (token_refresh_ip).
         "token_refresh": "60/hour",
+        "token_refresh_ip": "1200/hour",
         "verification": "10/hour",
         "verification_status": "60/hour",
         "contact": "5/hour",
@@ -1083,11 +1447,17 @@ REST_FRAMEWORK = {
         "password_reset": "10/hour",
         "password_change": "10/hour",
         "image_upload": "100/hour",
+        "image_delete": "300/hour",
+        "image_favorite": "1200/hour",
+        "image_trash": "600/hour",
+        "semantic_search": "600/hour",
+        "places": "1200/hour",
+        "album": "1200/hour",
+        "memories": "600/hour",
         "zip_upload": "20/hour",
         "image_preprocess": "100/hour",
         "report_generation": "60/hour",
         "download_package": "30/hour",
-        "collage": "20/hour",
         "thumbnail": "6000/hour",
         "notification_action": "300/hour",
         "admin_analytics": "120/hour",
@@ -1103,12 +1473,24 @@ REST_FRAMEWORK = {
         "share_public": "120/hour",
         "org_invite": "30/hour",
         "org_export": "10/hour",
+        "org_branding": "30/hour",
         "org_batch_action": "60/hour",
         "org_report": "20/hour",
         "org_bulk_moderation": "60/hour",
         "org_moderation_metrics": "120/hour",
     },
 }
+
+# Any request rate can be changed from the environment without a code change, for example ``THROTTLE_RATE_LOGIN=300/hour`` in the ``.env`` of a
+# demo where many people sign in from one network (the default 20/hour is per address). The name is the scope in upper case. Production refuses
+# a login rate above 100/hour (config/production_guard.py).
+_THROTTLE_RATE_FORMAT = re.compile(r"^[1-9][0-9]*/(second|minute|hour|day)$")
+for _scope in list(REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]):
+    _override = os.environ.get(f"THROTTLE_RATE_{_scope.upper()}", "").strip()
+    if _override:
+        if not _THROTTLE_RATE_FORMAT.match(_override):
+            raise ImproperlyConfigured(f"THROTTLE_RATE_{_scope.upper()} must look like 300/hour (second, minute, hour or day), not {_override!r}.")
+        REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"][_scope] = _override
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "FaceCloud API",
@@ -1131,6 +1513,8 @@ SPECTACULAR_SETTINGS = {
         "SecurityAlertSeverityEnum": "security.models.SecurityAlert.Severity",
         "EnhancementLevelEnum": "enhancement.models.EnhancementLevel",
         "EnhancementStyleEnum": "enhancement.models.EnhancementStyle",
+        "EnhancementLightingEnum": "enhancement.models.EnhancementLighting",
+        "LightingMethodEnum": "enhancement.models.LIGHTING_METHODS",
         "PackageStatusEnum": "downloads.models.DownloadPackage.Status",
         "ProcessingReportStatusEnum": "reports.models.ProcessingReport.Status",
         "IdentityAnalysisStatusEnum": "identities.models.IdentityAnalysis.Status",
@@ -1138,6 +1522,7 @@ SPECTACULAR_SETTINGS = {
         "UserRoleEnum": "accounts.models.User.ROLE_CHOICES",
         "ProcessingReportFormatEnum": "reports.models.ProcessingReport.Format",
         "ImageUploadStatusEnum": "uploads.models.ImageUpload.STATUS_CHOICES",
+        "UploadBatchStatusEnum": "uploads.models.UploadBatch.STATUS_CHOICES",
         "OrganizationStatusEnum": "organizations.models.Organization.Status",
         "OrganizationPlanEnum": "organizations.models.Organization.Plan",
         "OrganizationMembershipRoleEnum": "organizations.models.OrganizationMembership.Role",
@@ -1146,6 +1531,8 @@ SPECTACULAR_SETTINGS = {
         "OrganizationInvitationStatusEnum": "organizations.models.OrganizationInvitation.Status",
         "OrganizationAuditActionEnum": "organizations.models.OrganizationAuditEvent.Action",
         "ModeratorReportTypeEnum": "moderation.models.ModeratorReport.ReportType",
+        "ModeratorReviewStatusEnum": "moderation.models.ModeratorReview.Status",
+        "ModeratorReviewSourceEnum": "moderation.models.ModeratorReview.Source",
     },
 }
 
@@ -1210,6 +1597,9 @@ EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True").lower() == "true"
 SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "False").lower() == "true"
 SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "False").lower() == "true"
 CSRF_COOKIE_SECURE = os.environ.get("CSRF_COOKIE_SECURE", "False").lower() == "true"
+# Origins allowed to POST to Django's own forms (the admin site) over https, comma-separated. The browser app talks to the API with a bearer token
+# and needs no CSRF exception; list the API's own address here if the admin site is used behind a proxy (https://api.facecloudai.com).
+CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",") if origin.strip()]
 # Set when a reverse proxy terminates TLS and forwards X-Forwarded-Proto, so Django
 # knows the original request was HTTPS. Only enable it behind a proxy that
 # overwrites that header.
@@ -1226,9 +1616,9 @@ SECURE_HSTS_PRELOAD = os.environ.get("SECURE_HSTS_PRELOAD", "False").lower() == 
 LOG_LEVEL = env("LOG_LEVEL", default="INFO").upper()
 LOG_FILE = env("LOG_FILE", default="")
 _APP_LOGGERS = (
-    "accounts", "activity", "collages", "config", "contact", "downloads", "duplicates", "enhancement", "events", "identities", "moderation",
+    "accounts", "activity", "config", "contact", "downloads", "duplicates", "enhancement", "events", "identities", "moderation",
     "notifications", "operations", "organizations", "privacy", "quality_control", "reports", "security", "sharing", "thumbnails", "uploads",
-    "validation",
+    "validation", "albums", "memories", "places", "search",
 )
 _LOG_HANDLERS = ["console"] + (["file"] if LOG_FILE else [])
 LOGGING = {
@@ -1247,6 +1637,12 @@ LOGGING = {
 from config.log_redaction import install as install_log_redaction  # noqa: E402
 
 install_log_redaction()
+
+# Which settings the operator actually wrote down (rather than took the development default for). The production guard refuses to start when a
+# setting that must be a deliberate choice was left to its default: see config/production_guard.py (explicit_rule).
+ENV_EXPLICIT = {name: bool(os.environ.get(name)) for name in (
+    "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND", "MEDIA_ROOT", "CACHE_URL", "DB_NAME", "DB_USER", "DB_HOST", "EMAIL_HOST",
+)}
 
 # In production, refuse to start on an unsafe configuration. Kept last so every
 # setting above is final; see config/production_guard.py for the rules.

@@ -4,6 +4,7 @@ from rest_framework import serializers
 from . import comparison as comparison_engine
 from . import watermark as wm
 from .controls import INTENTS, ControlsSerializer
+from .outcome import result_lighting, result_outcome, result_summary
 from .models import (
     AdvisorRecommendation,
     AdvisorRun,
@@ -11,6 +12,7 @@ from .models import (
     EditPreview,
     EnhancementBatchJob,
     EnhancementLevel,
+    EnhancementLighting,
     EnhancementStatus,
     EnhancementStyle,
     ImageEditVersion,
@@ -20,17 +22,64 @@ from .models import (
 )
 
 
+# Friendly names for a strength + look pair that already exists. A preset is a DEFAULT SETTER, resolved here before anything is queued: it fills in the `level` and the `style` the client did
+# not send, a `level` or `style` that was sent wins, and the job, the batch and the stored `requested_level` / `requested_style` carry the pair that was used, so the engine never sees a preset.
+# "auto" is what a request with neither field already means; "pro" is ai_max at the strongest level; "standard" (the owner's decision, 2026-11-05) is a stronger result that stays natural: the
+# strongest level with the natural style, which never colourizes a black-and-white photograph (adaptive/profile.py) and keeps the identity requirement. A test pins all three pairs.
+PRESETS = {
+    "auto": (EnhancementLevel.AUTO, EnhancementStyle.NATURAL),
+    "standard": (EnhancementLevel.HIGH, EnhancementStyle.NATURAL),
+    "pro": (EnhancementLevel.HIGH, EnhancementStyle.AI_MAX),
+}
+PRESET_CHOICES = [("auto", "Auto"), ("standard", "Standard"), ("pro", "Pro")]
+
+
 class EnhancementRequestSerializer(serializers.Serializer):
+    preset = serializers.ChoiceField(
+        choices=PRESET_CHOICES, required=False,
+        help_text=(
+            "A name for a `level` + `style` pair, so a client can send one field: "
+            + "; ".join(f"`{name}` = level `{level}` + style `{style}`" for name, (level, style) in PRESETS.items())
+            + ". It fills in whichever of `level` and `style` is not sent; a `level` or `style` that is sent wins over the preset's value "
+            "(`{\"preset\": \"auto\", \"level\": \"high\"}` is level `high` with style `natural`). "
+            "Without a preset, `level` and `style` work exactly as before. The result's `requested_level` and `requested_style` "
+            "show the pair that was used, never the preset's name. `pro` uses the `ai_max` style: see `style` about the identity check."
+        ),
+    )
     level = serializers.ChoiceField(choices=EnhancementLevel.choices, default=EnhancementLevel.AUTO)
     style = serializers.ChoiceField(
         choices=EnhancementStyle.choices, default=EnhancementStyle.NATURAL,
         help_text=(
-            "`natural` and `dynamic` restore faces only when the result can be checked against "
-            "the original. `ai_max` skips that requirement: it may restore faces without a "
-            "verified identity check. The result says so in `identity_check_bypassed` and "
-            "`identity_notice`."
+            "No style skips the identity requirement for a face restoration. The adaptive engine "
+            "(`ENHANCEMENT_RENDER_POLICY=adaptive_v1`) restores a face only when it can be compared "
+            "with the upload and keeps the restored face only if it still matches, for `ai_max` too; "
+            "when identity cannot be verified it skips the face restoration (the other steps still run) "
+            "and says so in `identity_status` and `identity_notice`, and `identity_check_bypassed` stays "
+            "false. Only the earlier staged pipeline (the other policies, when they run it) lets `ai_max` "
+            "restore faces without a verified identity check; it reports that in `identity_check_bypassed` "
+            "and `identity_notice`."
         ),
     )
+    lighting = serializers.ChoiceField(
+        choices=EnhancementLighting.choices, default=EnhancementLighting.AUTO,
+        help_text=(
+            "What the person says about the photograph's lighting. `auto` (the default; what a request without the field means) lets the engine decide. "
+            "`dark` runs the dark-photo method whatever the engine saw: the shadows are lifted first (a dark scene, a back-lit subject's shadows, or the whole frame) and noise is then reduced. "
+            "`light` runs the light-photo method: the brightness is kept and only detail, blur, size and polish are worked on. A forced method goes through every safety gate "
+            "and limit an automatic one does: a lift that is not safe is refused, the photograph keeps what else passed, and the result's `enhancement_summary` says so. "
+            "The result's `lighting` block reports `used` and `forced`. Only the adaptive engine (`ENHANCEMENT_RENDER_POLICY=adaptive_v1`) follows it."
+        ),
+    )
+
+    def validate(self, attrs):
+        preset = attrs.get("preset")
+        if preset is None:
+            return attrs
+        # level and style have defaults, so `attrs` cannot tell a field the client sent from one it left out: the raw input can. The preset fills in what was left out; what was sent wins.
+        for name, value in zip(("level", "style"), PRESETS[preset]):
+            if name not in self.initial_data:
+                attrs[name] = value
+        return attrs
 
 
 class WatermarkOptionsSerializer(serializers.Serializer):
@@ -104,11 +153,15 @@ IDENTITY_STATUS_HELP = (
     "match. Null when nothing was enhanced, and for records made before this field existed."
 )
 IDENTITY_BYPASSED_HELP = (
-    "True when faces were generatively restored without a verified identity check, "
-    "which only AI Max (or an operator setting) allows. Show `identity_notice` to the user."
+    "True when faces were generatively restored without a verified identity check. Only the earlier "
+    "staged pipeline can do that (the AI Max style, or an operator setting that switches the requirement "
+    "off); the adaptive engine never does, so this is false for its results. Show `identity_notice` to "
+    "the user whenever it is not empty."
 )
 IDENTITY_NOTICE_HELP = (
-    "A sentence for the user when identity was not verified under a bypass; otherwise empty."
+    "A sentence for the user when identity could not be verified or confirmed: the adaptive engine says "
+    "that no face restoration was applied; the earlier staged pipeline says so when faces were restored "
+    "without a verified check (the AI Max bypass). Empty when there is nothing to say."
 )
 
 
@@ -128,12 +181,17 @@ def identity_fields(summary, legacy_status=None):
 
 class ImageEditVersionSerializer(serializers.ModelSerializer):
     download_url = serializers.SerializerMethodField()
+    stage = serializers.SerializerMethodField(help_text=(
+        "While the edit is active: queued (waiting for a worker), reading, enhancing or finishing. null once it has completed, failed or been cancelled."))
+    progress_percent = serializers.SerializerMethodField(help_text=(
+        "A coarse 0 to 100 for the polling client: 0 while queued, then moving through reading, enhancing and finishing; 100 when completed; "
+        "null when the edit failed or was cancelled. It never goes backwards."))
 
     class Meta:
         model = ImageEditVersion
         fields = [
             "id", "enhancement_result", "mode", "requested_adjustments",
-            "applied_adjustments", "status", "output_name", "output_format",
+            "applied_adjustments", "status", "stage", "progress_percent", "output_name", "output_format",
             "output_width", "output_height", "output_file_size",
             "processing_duration_ms", "task_id", "quality_metadata",
             "failure_reason", "is_current", "download_url", "started_at",
@@ -141,12 +199,71 @@ class ImageEditVersionSerializer(serializers.ModelSerializer):
             "advisor_recommendation",
         ]
 
+    def get_stage(self, obj) -> str | None:
+        if obj.status in (EnhancementStatus.PENDING, EnhancementStatus.QUEUED):
+            return "queued"
+        if obj.status == EnhancementStatus.PROCESSING:
+            return obj.progress_stage or "reading"
+        return None
+
+    def get_progress_percent(self, obj) -> int | None:
+        if obj.status in (EnhancementStatus.PENDING, EnhancementStatus.QUEUED):
+            return 0
+        if obj.status == EnhancementStatus.PROCESSING:
+            return obj.progress_percent
+        if obj.status == EnhancementStatus.COMPLETED:
+            return 100
+        return None
+
     def get_download_url(self, obj) -> str | None:
         if obj.status != EnhancementStatus.COMPLETED or not obj.edited_file:
             return None
         path = f"/api/enhancements/edits/{obj.pk}/download/"
         request = self.context.get("request")
         return request.build_absolute_uri(path) if request else path
+
+
+class AppliedStageSerializer(serializers.Serializer):
+    stage = serializers.CharField(help_text="low_light, denoise, deblur, face_restore, upscale, polish, detail (the detail model, which is also the final layer of every photograph) or colourize. Never null.")
+    engine = serializers.CharField(allow_null=True, help_text="The model that produced it, e.g. nafnet_gopro or realesrgan.")
+    variant = serializers.CharField(allow_null=True, required=False)
+    scale = serializers.IntegerField(allow_null=True, required=False, help_text="Upscale only: 2 means twice the width and height.")
+    input_size = serializers.ListField(child=serializers.IntegerField(), allow_null=True, required=False)
+    output_size = serializers.ListField(child=serializers.IntegerField(), allow_null=True, required=False)
+
+
+class SkippedStageSerializer(serializers.Serializer):
+    stage = serializers.CharField()
+    reason = serializers.CharField()
+
+
+class LightingSerializer(serializers.Serializer):
+    detected = serializers.ChoiceField(choices=["dark", "light"], help_text="dark: the photograph is under-exposed or a dark scene (the dark-photo method may brighten it); light: normal, over-exposed or back-lit (with the server's back-lit switch on, AI Enhance lifts the shadows of a back-lit subject: `brightened` is then true while this stays light).")
+    exposure = serializers.CharField(help_text="The analyzer's own status: low_light, low_light_subject, dark_scene, backlit_subject, normal or overexposed.")
+    scene_median = serializers.FloatField(allow_null=True, help_text="Median grey level of the frame, 0 (black) to 255.")
+    brightened = serializers.BooleanField(help_text="Whether a brightening step really changed the photograph. A dark photograph can be detected dark and still not be brightened when the brightening was not safe to apply.")
+    used = serializers.ChoiceField(choices=["dark", "light"], help_text=(
+        "The method the engine followed: the person's own choice when `forced`, else what it detected. Whether the dark-photo method actually changed the photograph is `brightened`: "
+        "a forced `dark` whose lift was refused reads used `dark`, brightened false, and `enhancement_summary` says nothing was changed."))
+    forced = serializers.BooleanField(help_text="True when the person chose Dark photo or Light photo (the request's `lighting`) and the engine followed it; false for `auto` and for results made before the choice existed.")
+
+
+class ProcessingStageSerializer(serializers.Serializer):
+    stage = serializers.CharField(help_text="The same names as applied_stages[].stage: low_light, denoise, deblur, face_restore, upscale, polish, detail or colourize.")
+    engine = serializers.CharField(allow_null=True, help_text="The engine whose result was kept, e.g. zero_dce (a learned model) or opencv_exposure (classical OpenCV).")
+    kind = serializers.ChoiceField(choices=["ai", "classical", "unknown"], help_text=(
+        "ai: a learned model. classical: OpenCV / NumPy only, no model. unknown: an engine this version does not classify (it is never counted as ai)."))
+    fallback = serializers.BooleanField(help_text=(
+        "True when an engine that stood ahead of this one did not produce the result: it was not available on this server, or its result did not pass the safety checks."))
+    replaced = serializers.ListField(child=serializers.CharField(), help_text="The engines that stood ahead of this one, in order of preference. Empty when fallback is false.")
+
+
+class ProcessingSummarySerializer(serializers.Serializer):
+    ai_applied = serializers.BooleanField(help_text="A learned model produced at least one stage of the result.")
+    classical_fallback = serializers.BooleanField(help_text=(
+        "A classical OpenCV engine produced at least one stage because the learned model for it was unavailable or its result was refused. "
+        "False when the classical stages are classical by design (the polish) or have no learned model switched on."))
+    stages = ProcessingStageSerializer(many=True, help_text="One entry per stage that changed the photograph, in order. Empty when the original was kept.")
 
 
 class ImageEnhancementResultSerializer(serializers.ModelSerializer):
@@ -162,12 +279,30 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
         "What the adaptive engine did: enhanced, partially_enhanced or original_preserved (the output is the original "
         "pixels); failed when the job failed. null for results made by the staged pipeline, which does not classify."))
     enhancement_summary = serializers.SerializerMethodField(help_text="One plain sentence on the outcome, safe to show a user.")
+    lighting = serializers.SerializerMethodField(help_text=(
+        "How the engine saw the lighting and which method it followed: {detected: dark|light, exposure, scene_median, brightened, used: dark|light, forced}. Show "
+        "\"Dark-photo method\" for `used` dark and \"Light-photo method\" for light, and \"chosen by you\" when `forced` (the request's `lighting`). Results made before the choice existed "
+        "read forced false and used = detected. null for results made before this field existed or by the staged pipeline."))
+    applied_stages = serializers.SerializerMethodField(help_text=(
+        "The restoration and enhancement stages that changed the photograph, in order: stage (low_light, denoise, deblur, face_restore, "
+        "upscale), engine, variant, and for upscale the scale, input_size and output_size ([width, height]). Empty when nothing changed."))
+    skipped_stages = serializers.SerializerMethodField(help_text=(
+        "Restoration stages the photograph called for that did not run: [{stage, reason}]. Empty when everything needed was done."))
+    hd_unavailable_reason = serializers.SerializerMethodField(help_text=(
+        "A plain sentence when restoration was needed but could not be done (a model is switched off, not installed or its result was "
+        "not safe to use); null otherwise. A barely changed photograph always has either applied_stages or this."))
+    processing_summary = serializers.SerializerMethodField(help_text=(
+        "Which engine produced each stage and whether AI restoration or a classical OpenCV fallback did the work: {ai_applied, classical_fallback, "
+        "stages: [{stage, engine, kind (ai|classical|unknown), fallback, replaced}]}. ai_applied: a learned model produced at least one stage. "
+        "classical_fallback: an OpenCV engine produced a stage in place of a learned model that was unavailable or refused. stages is empty when the "
+        "original was kept. null for a failed job and for results made by the staged pipeline, which keeps no per-stage record."))
 
     class Meta:
         model = ImageEnhancementResult
         fields = [
             "id", "image", "batch_job", "requested_level", "applied_level",
-            "requested_style", "status", "enhancement_outcome", "enhancement_summary",
+            "requested_style", "requested_lighting", "trigger", "status", "enhancement_outcome", "enhancement_summary", "lighting",
+            "applied_stages", "skipped_stages", "hd_unavailable_reason", "processing_summary",
             "identity_status", "identity_check_bypassed", "identity_notice",
             "output_name", "output_format", "output_width", "output_height",
             "output_file_size", "processing_duration_ms", "task_id", "applied_parameters",
@@ -185,18 +320,36 @@ class ImageEnhancementResultSerializer(serializers.ModelSerializer):
         return identity_fields(parameters.get("identity_verification"), parameters.get("identity_status"))
 
     def get_enhancement_outcome(self, obj) -> str | None:
-        if obj.status == "failed":
-            return "failed"
-        parameters = obj.applied_parameters if isinstance(obj.applied_parameters, dict) else {}
-        adaptive = parameters.get("adaptive")
-        return adaptive.get("outcome") if isinstance(adaptive, dict) else None
+        return result_outcome(obj)
 
     def get_enhancement_summary(self, obj) -> str:
-        if obj.status == "failed":
-            return "The photograph could not be enhanced. Your original photograph is unchanged."
-        parameters = obj.applied_parameters if isinstance(obj.applied_parameters, dict) else {}
-        adaptive = parameters.get("adaptive")
-        return str(adaptive.get("summary", "")) if isinstance(adaptive, dict) else ""
+        return result_summary(obj)
+
+    @extend_schema_field(LightingSerializer(allow_null=True))
+    def get_lighting(self, obj):
+        return result_lighting(obj)
+
+    def _stages(self, obj):
+        from .restoration import describe_stages
+
+        return describe_stages(obj.applied_parameters, failed=obj.status == "failed")
+
+    @extend_schema_field(AppliedStageSerializer(many=True))
+    def get_applied_stages(self, obj):
+        return self._stages(obj)["applied_stages"]
+
+    @extend_schema_field(SkippedStageSerializer(many=True))
+    def get_skipped_stages(self, obj):
+        return self._stages(obj)["skipped_stages"]
+
+    def get_hd_unavailable_reason(self, obj) -> str | None:
+        return self._stages(obj)["hd_unavailable_reason"]
+
+    @extend_schema_field(ProcessingSummarySerializer(allow_null=True))
+    def get_processing_summary(self, obj):
+        from .restoration import processing_summary
+
+        return processing_summary(obj.applied_parameters, failed=obj.status == "failed")
 
     def get_identity_status(self, obj) -> str | None:
         return self._identity(obj)[0]

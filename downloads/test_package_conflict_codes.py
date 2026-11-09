@@ -1,6 +1,6 @@
 """When a package cannot be made yet, the 409 says why in a way a client can act on."""
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
 
@@ -11,6 +11,7 @@ from uploads.models import ImagePreprocessingResult, ImageUpload, UploadBatch
 User = get_user_model()
 
 
+@override_settings(QUALITY_CHECKS_REJECT=True)      # these tests are about photographs the checks refused; the product default no longer refuses (quality_control/test_never_reject.py)
 class PackageConflictCodeTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(

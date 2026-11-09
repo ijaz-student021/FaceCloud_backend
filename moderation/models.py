@@ -81,6 +81,8 @@ class ModeratorReview(models.Model):
     sla_breached_at = models.DateTimeField(null=True, blank=True)
     decision_reason = models.TextField(blank=True)
     decision_notes = models.TextField(blank=True)
+    # The ONLY free text the member who uploaded the photograph is shown about this decision (the reason and notes above stay internal).
+    message_to_member = models.CharField(max_length=500, blank=True)
     decided_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
     )
@@ -225,8 +227,9 @@ class ModeratorReport(models.Model):
         ordering = ["-created_at"]
         indexes = [models.Index(fields=["organization", "status", "-created_at"])]
         constraints = [
+            # One in-flight report per person, type, format and window: two moderators who see different members each need their own.
             models.UniqueConstraint(
-                fields=["organization", "report_type", "format", "period_key"],
+                fields=["organization", "requested_by", "report_type", "format", "period_key"],
                 condition=models.Q(status__in=["queued", "generating"]),
                 name="moderation_one_active_report_per_period",
             ),

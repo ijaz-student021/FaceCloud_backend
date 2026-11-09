@@ -35,7 +35,29 @@ def analyze_image_identity_task(self, analysis_id):
     if analysis.task_id and self.request.id and analysis.task_id != self.request.id:
         return {"analysis_id": analysis_id, "status": "superseded"}
     analysis = process_identity_analysis(analysis_id)
+    _announce_suggested_merges(analysis.image.batch_id)
+    _batch_enhancement_may_be_finished(analysis.image.batch_id)
     return {"analysis_id": analysis_id, "status": analysis.status, "face_count": analysis.face_count, "assigned_count": analysis.assigned_count, "review_count": analysis.review_count}
+
+
+def _batch_enhancement_may_be_finished(batch_id):
+    """The person folders come after the enhancement, so the last photograph to be grouped can be what the batch's "N photos enhanced" notification was waiting for. Never fails the analysis."""
+    from enhancement.auto import notify_batch_if_finished
+
+    try:
+        notify_batch_if_finished(batch_id)
+    except Exception:
+        logger.exception("Could not look at the enhancement notification of batch_id=%s.", batch_id)
+
+
+def _announce_suggested_merges(batch_id):
+    """When this was the batch's last photograph to be grouped, tell the owner which of their folders may be one person. Never fails the analysis."""
+    from .suggestions import announce_suggested_merges
+
+    try:
+        announce_suggested_merges(batch_id)
+    except Exception:
+        logger.exception("Could not work out the suggested folder merges of batch_id=%s.", batch_id)
 
 
 def process_identity_group_export(export_id, task_id=""):

@@ -219,3 +219,111 @@ class AdminAnalyticsEndpointTests(BuildAdminAnalyticsFixtureMixin, TestCase):
         response = self.client.get(self.url, {"status": "not-a-real-status"})
         self.assertEqual(response.status_code, 400)
         self.assertIn("detail", response.data)
+
+
+class PlatformOverviewTests(TestCase):
+    """The extra numbers the administrator screens need: upload types, rejections per day, weekly success, storage, change."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.admin = User.objects.create_user(username="ov-admin", email="ov-admin@example.com", password="x", role="admin")
+        cls.owner = User.objects.create_user(username="ov-owner", email="ov-owner@example.com", password="x")
+        cls.other = User.objects.create_user(username="ov-other", email="ov-other@example.com", password="x")
+
+    def _image(self, owner, upload_type="single", size=1000, status="uploaded", decision=None, days_ago=0):
+        batch = UploadBatch.objects.create(owner=owner, upload_type=upload_type, total_files=1)
+        image = ImageUpload.objects.create(
+            owner=owner, batch=batch, original_name="a.jpg", file_extension=".jpg", mime_type="image/jpeg",
+            file_size=size, width=100, height=100, status=status,
+        )
+        pre = ImagePreprocessingResult.objects.create(owner=owner, image=image, status="completed", output_format="jpeg")
+        if decision:
+            ImageQualityDecision.objects.create(
+                image=image, owner=owner, preprocessing_result=pre,
+                status=ImageQualityDecision.Status.COMPLETED, decision=decision,
+            )
+        stamp = timezone.now() - timedelta(days=days_ago)
+        ImageUpload.objects.filter(pk=image.pk).update(created_at=stamp)
+        UploadBatch.objects.filter(pk=batch.pk).update(created_at=stamp)
+        return image
+
+    def _overview(self, **filters):
+        window_from, window_to = resolve_window(filters.pop("date_from", None), filters.pop("date_to", None))
+        from .analytics import build_platform_overview
+        return build_platform_overview(window_from=window_from, window_to=window_to, **filters)
+
+    def test_uploads_are_counted_by_how_they_arrived(self):
+        self._image(self.owner, "single")
+        self._image(self.owner, "multiple")
+        self._image(self.owner, "multiple")
+        self._image(self.owner, "zip", size=3000)
+        uploads = self._overview()["uploads"]
+        self.assertEqual(uploads["by_type"], {"single": 1, "multiple": 2, "zip": 1})
+        self.assertEqual(uploads["total"], 4)
+        self.assertEqual(uploads["average_file_size_bytes"], 1500)
+        self.assertEqual(sum(day["single"] + day["multiple"] + day["zip"] for day in uploads["per_day_by_type"]), 4)
+
+    def test_recent_counts_ignore_the_chosen_window(self):
+        self._image(self.owner)
+        self._image(self.owner, days_ago=3)
+        self._image(self.owner, days_ago=20)
+        recent = self._overview(date_from=(timezone.now() - timedelta(days=2)).date().isoformat())["uploads"]["recent"]
+        self.assertEqual(recent, {"today": 1, "this_week": 2, "this_month": 3})
+
+    def test_a_photo_refused_at_upload_and_one_rejected_by_quality_each_count_once(self):
+        self._image(self.owner, status="rejected", decision="rejected")      # both reasons, still one photo
+        self._image(self.owner, decision="rejected")
+        self._image(self.owner, decision="accepted")
+        rejections = self._overview()["rejections"]
+        self.assertEqual(rejections["total"], 2)
+        self.assertEqual(rejections["rate_percent"], 66.67)
+        self.assertEqual(sum(day["count"] for day in rejections["per_day"]), 2)
+
+    def test_an_empty_window_gives_nulls_not_zero_divisions(self):
+        overview = self._overview()
+        self.assertIsNone(overview["rejections"]["rate_percent"])
+        self.assertIsNone(overview["uploads"]["average_file_size_bytes"])
+        self.assertEqual(overview["enhancement_success_per_week"], [])
+        self.assertEqual(overview["change_vs_previous_period"]["uploads_percent"], None)
+
+    def test_the_owner_filter_narrows_every_part(self):
+        self._image(self.owner, "zip")
+        self._image(self.other, "single")
+        uploads = self._overview(owner_id=self.owner.pk)["uploads"]
+        self.assertEqual(uploads["by_type"], {"single": 0, "multiple": 0, "zip": 1})
+
+    def test_change_against_the_previous_period(self):
+        for _ in range(3):
+            self._image(self.owner, days_ago=1)
+        self._image(self.owner, days_ago=40)       # 30-day window: previous period is days 31-60
+        self._image(self.owner, days_ago=41)
+        self.assertEqual(self._overview()["change_vs_previous_period"]["uploads_percent"], 50.0)
+
+    def test_weekly_success_counts_only_finished_enhancements(self):
+        image = self._image(self.owner)
+        for outcome in ("completed", "completed", "completed", "failed", "processing"):
+            ImageEnhancementResult.objects.create(
+                image=image, owner=self.owner, preprocessing_result=image.preprocessing_result, status=outcome,
+            )
+        weeks = self._overview()["enhancement_success_per_week"]
+        self.assertEqual(len(weeks), 1)
+        self.assertEqual((weeks[0]["completed"], weeks[0]["failed"], weeks[0]["success_percent"], weeks[0]["failed_percent"]), (3, 1, 75.0, 25.0))
+
+    def test_storage_reports_capacity_usage_and_monthly_growth(self):
+        self._image(self.owner, size=4000)
+        storage = self._overview()["storage"]
+        self.assertEqual(storage["originals_and_outputs_bytes"], 4000)
+        self.assertGreater(storage["capacity_bytes"], 0)
+        self.assertEqual(storage["growth_by_month"][-1]["total_bytes"], 4000)
+        with self.settings(STORAGE_BACKEND="s3", AWS_STORAGE_BUCKET_NAME="x"):
+            self.assertIsNone(self._overview()["storage"]["capacity_bytes"])
+
+    def test_the_endpoint_returns_the_overview_for_an_administrator_only(self):
+        self._image(self.owner)
+        client = APIClient()
+        client.force_authenticate(self.owner)
+        self.assertEqual(client.get(reverse("operations:admin-analytics")).status_code, 403)
+        client.force_authenticate(self.admin)
+        body = client.get(reverse("operations:admin-analytics")).json()
+        self.assertEqual(body["overview"]["uploads"]["total"], 1)
+        self.assertIn("growth_by_month", body["overview"]["storage"])

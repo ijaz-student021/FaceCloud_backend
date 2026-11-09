@@ -223,6 +223,9 @@ class AccountInvitation(models.Model):
 
     email = models.EmailField()
     role = models.CharField(max_length=20, choices=User.ROLE_CHOICES)
+    # The organization a moderator invitation brings the person into: accepting it creates their moderator membership there. Required for
+    # the moderator role (checked when inviting and again when accepting), absent for every other role.
+    organization = models.ForeignKey("organizations.Organization", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     token_hash = models.CharField(max_length=64, unique=True)
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.PENDING)
     invited_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")

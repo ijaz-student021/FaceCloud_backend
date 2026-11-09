@@ -8,6 +8,8 @@ Records (users, uploads, enhancement results, identity groups, consents, audit e
 The photographs themselves live **outside the database as files** (a folder under `MEDIA_ROOT` while developing; a private S3 bucket in production). The database stores only the *path* of
 each file plus its size, dimensions and SHA-256. With `IMAGE_ENCRYPTION_ENABLED=True` the files are **encrypted** (AES-256-GCM), so opening one directly shows unreadable bytes; the only way to
 see the photograph is through the authenticated API, which checks ownership and decrypts. **Logs** are the console output (and an optional rotating file), and the **audit trail** is database tables.
+For a demonstration that has to show the picture from the database side there are two optional switches, off by default and described in `docs/features/enhanced-image-database-copy.md`: a copy of each enhanced image as a
+database row (only with encryption off, because the copy is plain bytes) and an image preview on the admin result page.
 
 ## 2. Set up a demo (2 minutes)
 
@@ -21,12 +23,16 @@ DJANGO_SUPERUSER_USERNAME=admin DJANGO_SUPERUSER_EMAIL=admin@example.com DJANGO_
 python manage.py runserver                                                     # then open http://127.0.0.1:8000/admin/
 ```
 
+`--dark` darkens the photograph to **x0.40** of its light (a normal portrait, brightness about 70, becomes about 28; only a photograph so bright that x0.40 would leave it above 30 is darkened further, to 30). The script prints each photograph's brightness, its quality verdict and the reasons, and if the checks refuse a photograph it says so and carries on. The quality check refuses a photograph only when it is practically black (brightness under about 6) or has almost no contrast; a dark one is lifted. (x0.25, the earlier setting, left a normal portrait at brightness 18, which the check used to refuse.)
+
 For the adaptive engine add `ENHANCEMENT_RENDER_POLICY=adaptive_v1` (and the model flags you want). The seed script prints the database path, the files folder and the ids it created. Your own `db.sqlite3` in the
 project folder was **empty (0 bytes)** when checked: it has never been migrated, which is why a demo database is the safe choice.
 
 ## 3. See the database
 
 **a) Django admin** (`/admin/`, sign in as the superuser): browse and search every table: users, upload batches, images, preprocessing results, enhancement results, identity groups, consents, activity events, authentication events.
+With `ADMIN_IMAGE_PREVIEW_ENABLED=True` an enhancement result's page shows the original and the enhanced image and says where the enhanced one came from (the stored file, or the database row when
+`ENHANCED_IMAGE_DATABASE_COPY_ENABLED=True` and `python manage.py copy_enhanced_images_to_database` have made it). The stored path is shown as text: the default link to `/media/…` led nowhere, because photographs are not served from a public folder.
 
 **b) SQLite command line** (installed on macOS): `sqlite3 -header -column /tmp/demo/demo.sqlite3`, then:
 
@@ -39,6 +45,7 @@ select json_extract(applied_parameters,'$.adaptive.outcome'), json_extract(appli
        json_extract(applied_parameters,'$.identity_verification.state') from enhancement_imageenhancementresult;
 select id, category, event, object_type, object_id, created_at from activity_activityevent order by id desc limit 10;   -- processing audit trail
 select event, identifier, created_at from accounts_authevent order by id desc limit 10;                                  -- logins, failures, resets
+select result_id, content_type, byte_size, substr(sha256,1,12) as sha, hex(substr(data,1,4)) as first_bytes from enhancement_enhancedimageblob;   -- the optional database copy of each enhanced image (FFD8FFE0 = JPEG)
 ```
 
 Real output from the demo run: `partially_enhanced | adaptive_v1+zero_dce | not_verifiable` for the result row, and `enhancement_completed`, `batch_completed`, `quality_rejected` rows in the activity trail.
@@ -89,6 +96,7 @@ INFO enhancement.adaptive.service adaptive_enhancement {"outcome":"partially_enh
 |---|---|
 | Where are the photographs? | In files, not the database: `MEDIA_ROOT/users/<id>/…` in development, a private S3 bucket in production. The database holds the path, size, dimensions and checksum. |
 | Can an administrator or someone with the disk just open them? | With encryption on, no: the files are AES-256-GCM ciphertext (`FCIMG1`). The key is in the server's environment. Access to a photograph is through the API, after an ownership check (another user gets a 404). |
+| Can I see the enhanced image from the database? | Not by default: the database holds the path. For a demonstration, `ENHANCED_IMAGE_DATABASE_COPY_ENABLED` keeps a verified copy as a BLOB row (only with encryption off; it doubles the storage, 8.4 MB to 175 MB for 189 images) and `ADMIN_IMAGE_PREVIEW_ENABLED` shows it on the admin page. A production server keeps encryption on and makes no copy. |
 | What is in the database about a face? | Face embeddings and identity groups, only with the user's recorded biometric consent (`privacy_biometricconsent`); the user can export their data and erase their facial data (`/api/privacy/...`). |
 | How do you know what happened to a photograph? | `enhancement_imageenhancementresult.applied_parameters` records the analysis, each model that ran, what was rejected and why, the outcome and the identity check; plus the activity and audit tables and the structured log line. |
 | What happens if a model fails or the result is unsafe? | The original is returned (`original_preserved`) with a plain sentence; nothing unvalidated is shown. |

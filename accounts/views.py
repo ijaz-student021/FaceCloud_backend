@@ -6,7 +6,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import make_password
 from django.contrib.auth.tokens import default_token_generator
 from django.db import IntegrityError, transaction
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.utils import timezone
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
@@ -27,6 +27,10 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from organizations.services import create_personal_organization
 
 from . import lockout
+from .throttles import (
+    FailedSignInPerAccountThrottle, FailedSignInPerAddressThrottle, TokenRefreshPerAddressThrottle, TokenRefreshPerTokenThrottle,
+    record_failed_sign_in,
+)
 from .models import PendingRegistration
 from .dashboard import build_user_dashboard
 from .permissions import IsAdminRole
@@ -34,9 +38,12 @@ from .sessions import revoke as revoke_session
 from .sessions import revoke_all as revoke_all_sessions
 from .sessions import session_for_token
 from .serializers import (
+    MAX_PASSWORD_LENGTH,
+    TOO_LONG_PASSWORD,
     AdminUserDetailSerializer,
     AdminUserCreateSerializer,
     AdminUserSerializer,
+    AdminUserUpdateSerializer,
     ChangePasswordSerializer,
     DeleteAccountSerializer,
     FaceCloudTokenObtainPairSerializer,
@@ -52,6 +59,10 @@ from .serializers import (
     VerifyRegistrationSerializer,
 )
 from .services import (
+    has_moderator_organization,
+    invitation_for_registration,
+    register_from_invitation,
+    resolve_moderator_organization,
     issue_login_tokens,
     create_account_as_admin,
     derive_username,
@@ -81,6 +92,12 @@ LoginResponseSerializer = inline_serializer("LoginResponse", {
         help_text="Which dashboard the frontend should route to: user, moderator or admin. A moderator of an organization gets moderator.",
     ),
     "user": UserSerializer(),
+    "organization_roles": inline_serializer("OrganizationRole", {
+        "organization_id": serializers.IntegerField(),
+        "name": serializers.CharField(),
+        "role": serializers.CharField(help_text="owner, moderator or member."),
+        "status": serializers.CharField(help_text="The organization's status: active or suspended."),
+    }, many=True),
 })
 
 
@@ -91,10 +108,21 @@ LoginResponseSerializer = inline_serializer("LoginResponse", {
             "Creates a pending registration and emails a verification **link** "
             "(`{FRONTEND_URL}/verify-email?registration_id=...&token=...`). "
             "No account exists until the link's `registration_id` and `token` are sent to POST /verify-email/. "
-            "`username` is optional: when omitted it is derived from the email address."
+            "`username` is optional: when omitted it is derived from the email address. "
+            "**With `invitation_token`** (the token in an organization invitation email, sent to this same address) no verification is needed: "
+            "the account is created verified, the invitation accepted and the normal login tokens returned with **201**. "
+            "A token that is unknown, used, cancelled, expired, for an organization that is suspended, or for another email address answers the same "
+            "**404** `This invitation is invalid, used or expired.` as the invitation preview, and creates nothing; "
+            "**403** `plan_limit_reached` when the organization's plan has no seat left."
         ),
         request=RegisterSerializer,
-        responses={202: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+        responses={
+            202: OpenApiTypes.OBJECT,
+            201: LoginResponseSerializer,
+            400: OpenApiTypes.OBJECT,
+            403: OpenApiTypes.OBJECT,
+            404: OpenApiTypes.OBJECT,
+        },
         examples=[
             OpenApiExample(
                 "New account",
@@ -115,8 +143,21 @@ class RegisterView(APIView):
     throttle_scope = "registration"
 
     def post(self, request):
+        invitation_token = request.data.get("invitation_token") if hasattr(request.data, "get") else None
+        if isinstance(invitation_token, str) and invitation_token.strip():
+            # Checked before anything else about the request: a bad token, or a token for another address, answers one 404 sentence and creates nothing.
+            invitation_for_registration(invitation_token, str(request.data.get("email") or ""))
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        if isinstance(invitation_token, str) and invitation_token.strip():
+            try:
+                user = register_from_invitation(
+                    token=invitation_token, full_name=serializer.validated_data["full_name"], email=serializer.validated_data["email"],
+                    password=serializer.validated_data["password"], username=serializer.validated_data.get("username"), request=request,
+                )
+            except IntegrityError:           # two sign-ups chose the same username at once; nothing was created
+                return Response({"detail": "That username was just taken. Please try again."}, status=status.HTTP_409_CONFLICT)
+            return Response(issue_login_tokens(user, request), status=status.HTTP_201_CREATED)
         supplied_username = serializer.validated_data.get("username")
         full_name = serializer.validated_data["full_name"]
         email = serializer.validated_data["email"]
@@ -254,13 +295,30 @@ class RegisterView(APIView):
     )
 )
 class FaceCloudTokenObtainPairView(TokenObtainPairView):
+    """Sign in. Limited by *failed* attempts per (address, account name) and per address (``accounts/throttles.py``), plus the per-account backoff,
+    so a room full of people on one address is never locked out by each other, while guessing one account's password is."""
+
     serializer_class = FaceCloudTokenObtainPairSerializer
-    throttle_scope = "login"
+    throttle_classes = [FailedSignInPerAccountThrottle, FailedSignInPerAddressThrottle]
+
+    def get_throttles(self):
+        # The same instances for the check before the view and the count after it.
+        if not hasattr(self, "_sign_in_throttles"):
+            self._sign_in_throttles = super().get_throttles()
+        return self._sign_in_throttles
+
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        if response.status_code == status.HTTP_400_BAD_REQUEST:          # wrong password, unknown account, unverified, suspended...
+            record_failed_sign_in(request, self.get_throttles())
+        return response
 
 
 class FaceCloudTokenRefreshView(TokenRefreshView):
+    """Refresh an access token. Limited per (address, refresh token), so many people refreshing from one address each have their own allowance."""
+
     serializer_class = FaceCloudTokenRefreshSerializer
-    throttle_scope = "token_refresh"
+    throttle_classes = [TokenRefreshPerTokenThrottle, TokenRefreshPerAddressThrottle]
 
 
 class VerifyEmailView(APIView):
@@ -843,6 +901,38 @@ class AdminUserListView(generics.ListCreateAPIView):
     def get_serializer_class(self):
         return AdminUserCreateSerializer if self.request.method == "POST" else AdminUserSerializer
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("q", OpenApiTypes.STR, description="Part of the username, email or full name."),
+            OpenApiParameter("role", OpenApiTypes.STR, description="user, moderator or admin."),
+            OpenApiParameter("status", OpenApiTypes.STR, description="active, suspended or inactive."),
+        ],
+    )
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
+    def get_queryset(self):
+        queryset = User.objects.annotate(uploads_count=Count("image_uploads", distinct=True)).order_by("-date_joined", "-id")
+        params = self.request.query_params
+        search = (params.get("q") or "").strip()
+        if search:
+            queryset = queryset.filter(
+                Q(username__icontains=search) | Q(email__icontains=search) | Q(first_name__icontains=search) | Q(last_name__icontains=search),
+            )
+        role = params.get("role")
+        if role:
+            roles = [value for value, _label in User.ROLE_CHOICES]
+            if role not in roles:
+                raise serializers.ValidationError({"role": [f"Choose one of: {', '.join(roles)}."]})
+            queryset = queryset.filter(role=role)
+        state = params.get("status")
+        if state:
+            filters = {"active": Q(is_active=True, is_suspended=False), "suspended": Q(is_suspended=True), "inactive": Q(is_active=False)}
+            if state not in filters:
+                raise serializers.ValidationError({"status": [f"Choose one of: {', '.join(filters)}."]})
+            queryset = queryset.filter(filters[state])
+        return queryset
+
     def create(self, request, *args, **kwargs):
         serializer = AdminUserCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -862,7 +952,7 @@ class AdminUserUpdateView(generics.RetrieveUpdateAPIView):
     """GET: an account's detail for administrators. PATCH: role, suspension, activity."""
 
     queryset = User.objects.all()
-    serializer_class = AdminUserSerializer
+    serializer_class = AdminUserUpdateSerializer
     permission_classes = [permissions.IsAuthenticated, IsAdminRole]
     http_method_names = ["get", "patch"]
 
@@ -885,8 +975,26 @@ class AdminUserUpdateView(generics.RetrieveUpdateAPIView):
             from .invitations import assert_can_grant
 
             assert_can_grant(self.request.user, new_role)
+        organization_id = serializer.validated_data.pop("organization_id", None)
+        moderator_organization = None
+        if new_role == "moderator" and new_role != target.role and not has_moderator_organization(target):
+            # A moderator works for an organization: name it (or the only one), with the same messages as when creating a moderator account.
+            moderator_organization = resolve_moderator_organization(organization_id)
+        if moderator_organization is not None:
+            from organizations.models import OrganizationMembership
+            from organizations.services import assert_seat_available
+
+            assert_seat_available(moderator_organization, OrganizationMembership.Role.MODERATOR, excluding_user=target)
         previous = {"role": target.role, "is_suspended": target.is_suspended, "is_active": target.is_active}
         user = serializer.save()
+        if moderator_organization is not None:
+            from organizations.models import OrganizationMembership
+
+            OrganizationMembership.objects.update_or_create(
+                organization=moderator_organization, user=user,
+                defaults={"role": OrganizationMembership.Role.MODERATOR, "status": OrganizationMembership.Status.ACTIVE,
+                          "invited_by": self.request.user},
+            )
         changed = [key for key, value in previous.items() if getattr(user, key) != value]
         if changed:
             user.token_version += 1
@@ -996,11 +1104,20 @@ class AccountInvitationSerializer(serializers.Serializer):
     id = serializers.IntegerField(read_only=True)
     email = serializers.EmailField()
     role = serializers.ChoiceField(choices=["user", "moderator", "admin"])
+    organization_id = serializers.IntegerField(
+        required=False, allow_null=True, write_only=True,
+        help_text="Required for a moderator invitation: the organization the moderator will work for. Refused for any other role.",
+    )
+    organization = serializers.SerializerMethodField(help_text="{id, name} of the organization a moderator invitation is for; null otherwise.")
     status = serializers.CharField(read_only=True)
     invited_by = serializers.CharField(source="invited_by.username", read_only=True, allow_null=True)
     expires_at = serializers.DateTimeField(read_only=True)
     accepted_at = serializers.DateTimeField(read_only=True, allow_null=True)
     created_at = serializers.DateTimeField(read_only=True)
+
+    def get_organization(self, invitation) -> dict | None:
+        organization = invitation.organization
+        return {"id": organization.pk, "name": organization.name} if organization else None
 
 
 class AccountInvitationListCreateView(generics.ListAPIView):
@@ -1017,7 +1134,7 @@ class AccountInvitationListCreateView(generics.ListAPIView):
     def get_queryset(self):
         from .models import AccountInvitation
 
-        queryset = AccountInvitation.objects.select_related("invited_by").order_by("-created_at", "-pk")
+        queryset = AccountInvitation.objects.select_related("invited_by", "organization").order_by("-created_at", "-pk")
         state = self.request.query_params.get("status")
         return queryset.filter(status=state) if state else queryset
 
@@ -1030,8 +1147,9 @@ class AccountInvitationListCreateView(generics.ListAPIView):
         payload = AccountInvitationSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         invitation = invite(actor=request.user, email=payload.validated_data["email"],
-                            role=payload.validated_data["role"])
-        record_auth_event("account_invited", request, request.user, invitation.email, {"role": invitation.role})
+                            role=payload.validated_data["role"], organization_id=payload.validated_data.get("organization_id"))
+        record_auth_event("account_invited", request, request.user, invitation.email,
+                          {"role": invitation.role, "organization_id": invitation.organization_id})
         return Response(AccountInvitationSerializer(invitation).data, status=status.HTTP_201_CREATED)
 
 
@@ -1071,13 +1189,17 @@ class InvitationTokenSerializer(serializers.Serializer):
 
 class InvitationAcceptSerializer(InvitationTokenSerializer):
     username = serializers.CharField(max_length=150)
-    password = serializers.CharField(write_only=True, trim_whitespace=False)
+    password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=MAX_PASSWORD_LENGTH, error_messages=TOO_LONG_PASSWORD)
 
 
 class InvitationPreviewSerializer(serializers.Serializer):
     email = serializers.EmailField()
     role = serializers.CharField()
     expires_at = serializers.DateTimeField()
+    organization_name = serializers.SerializerMethodField(help_text="The organization a moderator invitation is for; null otherwise.")
+
+    def get_organization_name(self, invitation) -> str | None:
+        return invitation.organization.name if invitation.organization_id else None
 
 
 class InvitationInspectView(APIView):

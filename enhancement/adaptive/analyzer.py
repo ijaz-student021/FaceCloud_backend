@@ -26,6 +26,9 @@ from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
+from django.conf import settings
+
+from enhancement.face_sharpness import face_detail
 
 
 @dataclass(frozen=True)
@@ -65,6 +68,10 @@ class Thresholds:
     highlight_clip_percent: float = 8.0
     # --- resolution ---
     image_short_edge_low: int = 480
+    # A photograph is black and white when its own colour channels are empty: mean chroma and the 99th percentile (8-bit CIELAB units; a grey
+    # JPEG decodes to exactly 0, a faintly tinted print does not and is not colourized: the tint is the photographer's).
+    greyscale_mean_chroma_max: float = 1.0
+    greyscale_p99_chroma_max: float = 5.0
     face_short_edge_too_small: int = 48
     face_short_edge_low: int = 96
     # --- face quality ---
@@ -72,6 +79,10 @@ class Thresholds:
     # Gaussian blur 1.5 px -> 21, 3 px -> 7; a 2.5x smaller (low-resolution) face -> 36 (p90 48); JPEG q15 -> 90.
     face_detail_poor: float = 50.0
     face_detail_acceptable: float = 75.0
+    # The face itself is blurred (not just soft): below this detail the deblurring model is considered even when the frame reads as
+    # sharp (a blurred subject in front of a sharp background) or as defocus (a large defocus is where the model helps; see
+    # docs/evaluation/2026-10-15-blur-routing.md). Between this and face_detail_poor the face is "low": soft, restored if a face model is on.
+    face_blur_high: float = field(default_factory=lambda: float(getattr(settings, "ADAPTIVE_FACE_BLUR_HIGH", 25.0)))
     min_face_confidence: float = 0.5
 
 
@@ -99,10 +110,15 @@ class QualityReport:
     compression: dict
     colour: dict
     faces: list = field(default_factory=list)
+    face_blur: dict = field(default_factory=dict)   # the main face's own blur: {"status": none|low|high|unknown, "detail": ...}
+    subject_exposure: dict = field(default_factory=dict)    # the main face against the frame: {"backlit": bool, "subject_median", "frame_mean", "ratio", "judged_on"}
     conditions: list = field(default_factory=list)
     recommended_operations: list = field(default_factory=list)
     limitations: list = field(default_factory=list)
     base: dict = field(default_factory=dict)  # the classic analyze_image_quality result, for the guards that use it
+    # The faces the detector found beyond the ``max_faces`` largest that ``faces`` keeps, largest first. They are measured (the detector's boxes were observed anyway) but not reported, restored or counted
+    # (``face_count``, ``as_dict`` and the stored report are unchanged); the validator's geometry gate matches the original's faces against them too (see ``landmark_shift``).
+    other_faces: list = field(default_factory=list)
 
     @property
     def face_count(self):
@@ -127,7 +143,8 @@ class QualityReport:
             "resolution_status": self.resolution["status"], "face_count": self.face_count,
             "face_quality": main.quality if main else "none",
             "exposure": self.exposure, "noise": self.noise, "blur": self.blur, "resolution": self.resolution,
-            "compression": self.compression, "colour": self.colour, "faces": faces, "conditions": self.conditions,
+            "compression": self.compression, "colour": self.colour, "faces": faces, "face_blur": self.face_blur,
+            "subject_exposure": self.subject_exposure, "conditions": self.conditions,
             "recommended_operations": self.recommended_operations, "limitations": self.limitations,
         }
 
@@ -226,9 +243,7 @@ class ImageQualityAnalyzer:
                 "p5": round(p5, 1), "p50": round(p50, 1), "p95": round(p95, 1), "dynamic_range": round(p95 - p5, 1),
                 "crushed_fraction": round(float((values < self.t.crushed_level).mean()), 3),
             }
-            if min(region.shape[:2]) >= 16:
-                standard = cv2.resize(values, (128, 128), interpolation=cv2.INTER_AREA)
-                detail = round(float(cv2.Laplacian(standard, cv2.CV_32F).var()), 1)
+            detail = face_detail(values)   # one definition, shared with the quality decision (enhancement/face_sharpness.py)
         short_edge = int(min(w, h))
         # (Blur also narrows a face's range, and a face's detail cannot tell blur from darkness: a contrast-normalised detail
         # measure was tried and overlaps too much, sharp p10 0.025 against blurred 0.02. The frame decides instead, below.)
@@ -256,13 +271,31 @@ class ImageQualityAnalyzer:
         try:
             detection = self._detector().detect(image)
         except Exception:  # a detector failure is "no faces measured", reported as a limitation, never a crash
-            return [], "face detection failed"
+            return [], [], "face detection failed"
         observations = []
         for box, score, landmarks in zip(detection.boxes, detection.scores, detection.landmarks):
             score = 1.0 if score is None else float(score)
             observations.append(self._observe_face(image, gray, box, min(score, 1.0) if score <= 1.0 else 1.0, landmarks))
         observations.sort(key=lambda face: face.box[2] * face.box[3], reverse=True)
-        return observations[: self.max_faces], ""
+        return observations[: self.max_faces], observations[self.max_faces:], ""
+
+    @staticmethod
+    def _subject_exposure(gray, scene_median, main):
+        """Is the subject (the main face) crushed in the shadows while the frame is bright? ``{"backlit": bool, ...}``.
+
+        The frame's exposure status cannot say: a person against a window or a sunset leaves the frame bright, so no frame rule calls the photograph dark. The face is judged
+        (as everywhere here) by its tonal range first (``visibility`` poor: a compressed range or many crushed pixels, which a well-lit dark skin does not have), then by how dark
+        its typical pixel (the median of the inset face region, which the corners of the box do not pull up) is, alone and next to the frame. A silhouetted head under 48 px
+        (``too_small``) is judged the same way: its box is a guess, but its median is what the person looks like.
+        """
+        subject = main.luminance.get("p50") if main is not None else None
+        if subject is None:
+            return {"backlit": False, "judged_on": "no face"}
+        frame = float(gray.mean())
+        ratio = float(subject) / max(frame, 1e-6)
+        backlit = (main.visibility == "poor" and subject < settings.ADAPTIVE_BACKLIT_SUBJECT_BRIGHTNESS_MAX and ratio < settings.ADAPTIVE_BACKLIT_SUBJECT_MAX_RATIO
+                   and scene_median >= settings.ADAPTIVE_BACKLIT_MIN_SCENE_MEDIAN)
+        return {"backlit": bool(backlit), "subject_median": round(float(subject), 1), "frame_mean": round(frame, 1), "ratio": round(ratio, 3), "judged_on": "face"}
 
     # -- the report -------------------------------------------------------------------------------------------
     def analyze(self, image):
@@ -274,9 +307,9 @@ class ImageQualityAnalyzer:
         height, width = image.shape[:2]
         gray = _luminance(image)
         base = analyze_image_quality(image)
-        faces, face_error = self._faces(image, gray)
+        faces, other_faces, face_error = self._faces(image, gray)
         report = QualityReport(width=width, height=height, exposure={}, noise={}, blur={}, resolution={}, compression={},
-                               colour={}, faces=faces, base=base)
+                               colour={}, faces=faces, base=base, other_faces=other_faces)
 
         # exposure: the face when there is one, the frame otherwise
         percentiles = base["luminance_percentiles"]
@@ -305,6 +338,7 @@ class ImageQualityAnalyzer:
             "crushed_fraction": round(crushed, 3), "highlight_clipping_percent": base["highlight_clipping_percent"],
             "judged_on": "face" if main is not None and main.quality != "too_small" else "frame",
         }
+        report.subject_exposure = self._subject_exposure(gray, median, main)
 
         # noise
         noise = float(base["estimated_noise"])
@@ -332,6 +366,13 @@ class ImageQualityAnalyzer:
                 blur_type = "motion" if ratio <= t.motion_ratio_max else "defocus" if ratio >= t.defocus_ratio_min else "mixed"
             blur = {"status": status, "type": blur_type, "retention": round(retention, 3), "direction_ratio": round(ratio, 3)}
         report.blur = blur
+        # The main face's own blur: the frame cannot see a blurred subject in front of a sharp background, nor tell a portrait-mode
+        # background from a blurred photograph.
+        if main is not None and main.detail is not None and main.quality != "too_small":
+            face_status = "high" if main.detail < t.face_blur_high else "low" if main.detail < t.face_detail_poor else "none"
+            report.face_blur = {"status": face_status, "detail": main.detail, "judged_on": "main face"}
+        else:
+            report.face_blur = {"status": "unknown", "detail": None, "judged_on": "main face"}
 
         # resolution, compression, colour
         short_edge = min(width, height)
@@ -343,9 +384,10 @@ class ImageQualityAnalyzer:
         report.compression = {"status": "heavy" if compression["detected"] else "none", "blockiness": compression["blockiness"]}
         lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB).astype(np.float32)
         cast = float(np.hypot(lab[:, :, 1].mean() - 128.0, lab[:, :, 2].mean() - 128.0))
+        chroma = np.hypot(lab[:, :, 1] - 128.0, lab[:, :, 2] - 128.0)
         report.colour = {
-            "status": "cast" if cast > 18.0 else "normal", "cast": round(cast, 1),
-            "saturation": round(float(np.hypot(lab[:, :, 1] - 128.0, lab[:, :, 2] - 128.0).mean()), 1),
+            "status": "cast" if cast > 18.0 else "normal", "cast": round(cast, 1), "saturation": round(float(chroma.mean()), 1),
+            "greyscale": bool(chroma.mean() <= t.greyscale_mean_chroma_max and np.percentile(chroma[::4, ::4], 99) <= t.greyscale_p99_chroma_max),
         }
 
         self._conclude(report, face_error)
@@ -363,6 +405,8 @@ class ImageQualityAnalyzer:
             conditions.append("visible_noise")
         if report.blur["status"] in ("low", "high"):
             conditions.append(f"{report.blur['type']}_blur")
+        if report.face_blur.get("status") in ("low", "high"):
+            conditions.append("face_blur")
         if report.resolution["status"] == "low":
             conditions.append("low_resolution")
         if report.compression["status"] == "heavy":
@@ -383,6 +427,8 @@ class ImageQualityAnalyzer:
             operations.append("denoising")
         if report.blur["status"] == "high" and report.blur["type"] in ("motion", "mixed") \
                 and "compression_artifacts" not in conditions:
+            operations.append("motion_deblurring")
+        elif report.face_blur.get("status") == "high" and "compression_artifacts" not in conditions:
             operations.append("motion_deblurring")
         if main is not None and main.quality == "poor" and main.short_edge >= self.t.face_short_edge_too_small:
             operations.append("face_restoration")

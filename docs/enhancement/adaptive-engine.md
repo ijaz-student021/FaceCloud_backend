@@ -99,6 +99,109 @@ Turn restoration on only after validating it on a larger, more diverse set of fa
 * **Denoising** offers blend 1.0 and 0.65 and lets the validator choose, because 65 % beat full strength on light-to-moderate noise and
   full strength won on heavy noise (`docs/evaluation/2026-10-15-denoising.md`).
 
+## 5.0 Every photograph is enhanced: the final layer (`ADAPTIVE_ALWAYS_ENHANCE`, on by default; 2026-11-03)
+
+The owner's rule: the model used for light photographs is the **last layer of every photograph**, whether anything needed correcting or not ("just apply it"). After the router has nothing
+more to do (the corrective steps, then colourization), the service asks for two more things (`router.final_layer_step`, `router.finish_step`):
+
+1. **The final layer**: the compact `realesr-general-x4v3` network (`general` only; the slow networks are not its fallback) at about 1.0 and 0.7 of its own output, stacked on whatever the
+   earlier steps accepted (a lifted dark photograph, a deblurred and face-restored one, an enlarged one). It is skipped when the router's own detail step already accepted the same model,
+   when the compact model is off, or when the photograph is over `ADAPTIVE_DETAIL_MAX_PIXELS` (4 MP: the model's time and memory grow with the pixels). It is **applied unless** it smooths the
+   photograph by more than `ADAPTIVE_REFINE_MIN_GAIN` allows (structure energy x0.75; on a brightened dark photograph the model cleans amplified noise and JPEG blocks, which reads as 0.6-0.9; a
+   defocused portrait is smoothed to 0.94), adds an invented amount (> 1.6), changes nothing visible (mean change under `ADAPTIVE_REFINE_MIN_CHANGE`, 0.5 of 255), a face grows past
+   `max(260, 1.1 x its detail before)`, or any other gate (identity, face geometry, halo, clipping, colour) refuses it. 2-9 s for a 1400 px photograph. What is left unresolved is judged
+   before this layer (its smoothing can read as a blur to the analyzer).
+2. **The finishing polish, as the fallback**, only when nothing at all was accepted (also when a corrective step was refused, and without `ADAPTIVE_POLISH_ENABLED`): `ADAPTIVE_FINISH_STRENGTH` (3)
+   times the gentle share, vibrance `ADAPTIVE_FINISH_VIBRANCE` (15 percent instead of 6) and a ladder of five variants, strongest first (finish, finish blended 0.65, finish with soft edges,
+   finish gentle, finish colour: no sharpening at all). Kept if every safety gate passes, no measure falls below `ADAPTIVE_FINISH_TOLERANCE` (0.97) and the photograph really changes
+   (mean change of at least `ADAPTIVE_FINISH_MIN_CHANGE`, 1.5 of 255). The gentle polish needed a 5 percent gain, which a balanced, sharp photograph does not give, so 26 of the owner's 48
+   results had been returned unchanged. The main face's detail ratio is not asked to hold here (the detector can pick another face after a small change); a face that gets too sharp is still
+   refused by the ceiling.
+3. A refused candidate releases its pixels and no longer counts against `ADAPTIVE_MAX_CANDIDATES` (the total ever proposed is capped at 6 times the limit): refused lift and model candidates
+   used to fill the pool, so the polish was only offered its first one or two (strongest) variants.
+
+Evidence (`docs/evaluation/2026-11-03-always-enhance.md`): of 14 photographs, the final layer was applied to 8 (4 of them stacked on a lift, a deblur and face restoration, or a
+super-resolution); 5 got the finishing polish; 1 stayed as it was because every candidate was refused by the identity, face-geometry and highlight gates.
+
+## 5a. Polish: a gentle improvement for a photograph with nothing to fix (`ADAPTIVE_POLISH_ENABLED`, off by default)
+
+Without it, a well-lit, sharp photograph runs no operation and ends as `original_preserved`. With `ADAPTIVE_POLISH_ENABLED=True` the
+router may offer one more operation, **polish**, and only for a photograph on which nothing else was found:
+
+* the analyzer recommends no operation, none was tried (a rejected low-light lift, denoise, ... also blocks polish) and none was applied;
+* the scene is not a `dark_scene` left as photographed;
+* the style is `natural` (CLAHE share 25 %, unsharp amount 0.25) or `dynamic` (55 %, 0.50); `ai_max` is unchanged and never polished;
+* the engine is OpenCV and NumPy only (`opencv_polish`): no model, no licence, nothing to install.
+
+What it does, on CIELAB lightness first: (a) local contrast, CLAHE (clip 1.5, 8 x 8 tiles) blended in at the style's share, keeping
+only its mid-scale band (the full CLAHE change also lifted grain and JPEG blocks: noise estimate x1.17 and landmark jitter of 1.9 %
+on two compressed portraits, measured in `docs/evaluation/2026-10-24-adaptive-polish.md`); (b) a lightness-only unsharp mask (sigma 1.2
+at the 1024 px working scale, soft threshold so grain and flat regions are not amplified), lower inside a face and none at all for a
+face that is already sharp (detail 119 to 175 is the measured range of a sharp face); (c) a levels stretch of at most 8 %, only when the
+1st to 99th percentile of lightness covers under 85 % of the range, never into clipping; (d) at most 6 % more chroma, on low-chroma
+pixels only. Two variants (`blend 1.0`, `blend 0.65`) are proposed, like the other operations.
+
+The result is kept only if **all** of these hold (`Limits.polish_*` in `validator.py`): the main face's detail or the frame's contrast
+(standard deviation of luminance) rises by at least 5 % and none of face detail, frame contrast, local contrast and frame sharpness gets
+worse; a face does not leave the sharp range (detail 175, or 10 % above a face that was already above it); no more than 0.5 percentage
+points of newly clipped highlights; the noise estimate is not more than 10 % worse; the mean CIELAB distance from the original is at
+most 3; face landmarks move by at most 2 % of the face width; and the existing gates (data consistency, colour, halos, identity) pass.
+Otherwise the output is the original pixels, `original_preserved`, and `skipped_stages` carries
+`{"stage": "polish", "reason": "Already balanced and sharp: nothing to improve."}`. A polished result is `enhanced` (or
+`partially_enhanced` when a defect the engine cannot fix remains, as for any operation), with the summary "Polished: balanced the
+contrast and sharpened lightly." Polish never changes a photograph that has a defect, and with the flag off the engine is
+byte-for-byte what it was (`enhancement/test_adaptive_polish.py`, and the golden before/after run in the evaluation note).
+
+## 5b. The person's own word on the lighting (`lighting`: auto | dark | light; 2026-11-06)
+
+A request (`POST /api/enhancements/images/{id}/`, the batch request) and an upload (`preset` / `level` / `style` / `lighting` form fields, stored on `UploadBatch.auto_enhance_options` and used by that batch's
+automatic enhancement) may say how the photograph's lighting should be treated. It is a third axis next to the style and the strength (`adaptive/profile.py`, `Profile.lighting`), and like them it changes only
+**when an operation is tried**, never what the validator accepts.
+
+* `auto` (the default, and every request before this): the analyzer decides, byte for byte as before.
+* `dark`: the dark-photo method whatever the analyzer saw. The router (`_consider`, LOW_LIGHT) proposes the lift that fits the photograph: a dark scene or a low-light photograph the usual whole-frame lift; a
+  back-lit subject the **shadow** lift (the bright background stays as photographed) **whatever** `ADAPTIVE_BACKLIT_SUBJECT_LIFT` says, because the person asked for it; a photograph the analyzer calls well exposed the
+  whole-frame lift with the blends the automatic path uses. The step is `optional` (a refused lift does not hold the polish back), and noise is treated from the "low" level (`treat_low_noise`): the shadows are lifted
+  first, then noise is reduced.
+* `light`: the light-photo method. No lift is tried at all (`lift_dark_scenes` and `lift_backlit_subjects` off, and the router returns no LOW_LIGHT step), only detail, blur, size and polish.
+
+A forced lift goes through **every** gate and limit an automatic one does (data consistency, colour, halo, size, identity, face geometry, `compression_blocks` for a shadow lift, the time budget): there is no looser limit
+for a person's word. A forced lift the gates refuse is a refused candidate like any other: the photograph keeps whatever else passed, or is returned as it was (`original_preserved`). A forced `dark` on a well-exposed
+synthetic portrait is refused for `colour_drift` and `subject_not_clearer_or_too_bright` (`enhancement/test_lighting_choice.py`). The result never claims a method ran that did not: `adaptive.summary` begins with one sentence
+("As you asked, the dark-photo method brightened the photograph." / "Brightening was not safe to apply, so the dark-photo method changed nothing." / "The brightening model was not available, ..." / "As you asked,
+the light-photo method was used: the brightness was kept."), `adaptive.profile.lighting` and `requested_lighting` record the request, and the API's `lighting` block reports `used` (the method followed) and `forced`
+(`enhancement/outcome.py`). Only `adaptive_v1` follows the word; `enhance_bgr` hands it to the engine only when it is not `auto`, so the call for every other request is the call it always was.
+
+## 5c. The enlargement after a lift (2026-11-06; `ADAPTIVE_UPSCALE_HIGHLIGHT_GUARD`, `ADAPTIVE_BASELINE_AFTER_LIGHTING`, both on by default)
+
+A lifted photograph used to keep its size in two measured cases (`docs/evaluation/2026-11-06-enlargement-after-lift.md`). Every step is judged against the image it was GIVEN (the lifted photograph) except the
+identity embedding and the face-landmark checks, which read the upload. Neither change touches a result that exists without it: each can only turn a refusal into an acceptance, and every other gate still decides.
+
+* **Highlights.** After a whole-frame lift a bright window or sky sits at the top of the range; the few levels Real-ESRGAN adds to it were counted as many points of newly clipped pixels (`highlight_clipping_increased`,
+  limit 3.0 points). An enlargement refused for that reason **alone** is judged once more with the model's brightening of already bright pixels taken back (`operations.keep_highlights`: where the plain enlargement is
+  brighter than luminance 215, fading in to 240, no channel may exceed it; everything else is the model's own). The retry is a second candidate (`"x2, highlights kept"`, the stage's `notes` say so) and must pass **every**
+  gate; the model is not run again. `ADAPTIVE_UPSCALE_HIGHLIGHT_GUARD=False` gives the earlier behaviour.
+* **Face geometry.** The landmarks of the dark original (and of a plain enlargement of it) are guesses. Once a lift is accepted (`validator.lifted_input`), a step the share limit and the plain-enlargement rule
+  refused gets a second opinion against the lit image it was given (`validator._lifted_input_opinion`): its landmarks within its own limit of that image's, or, for an enlargement, within
+  `ADAPTIVE_LANDMARK_ENLARGEMENT_SHIFT_MAX` of a plain enlargement of it. Never for a face restoration or polish; a face no longer found is still a loss; the identity embedding is judged as before (the brief's
+  proposal to move that baseline too was not applied: no measured photograph was lost to it). `ADAPTIVE_BASELINE_AFTER_LIGHTING=False` gives the earlier behaviour.
+* **The enlargement factor** (`ADAPTIVE_UPSCALE_SCALE`, default 2). The router proposes 2x for a small photograph (Real-ESRGAN is a x4 network; its output is resized and blended with the plain enlargement at
+  `REALESRGAN_OUTPUT_BLEND`). Set to 4 it proposes 4x, and falls back to 2x when 4x would pass `ADAPTIVE_MAX_OUTPUT_EDGE`; any other value means 2. Every gate judges the 4x candidate as it judges a 2x one. Measured
+  (`docs/evaluation/2026-11-06-enlargement-after-lift.md`, section 6): six small photographs all passed at 4x, but on 25.jpg the face restoration is refused at 4x (the detector places a bigger enlargement's
+  landmarks further away: 0.042 against the strict 0.04), so its 4x face is the lifted one and the 2x face is the restored one. The front end's "HD restoration is not available on this server" is its own text for
+  any result with `hd_unavailable_reason` (a restoration the photograph needed was not completed), not a statement about the models.
+* **The back-lit lift for every preset** (`ADAPTIVE_BACKLIT_LIFT_ALL_PRESETS`, default off). The shadow lift of a back-lit subject is AI Enhance's; switched on, Natural, Dynamic and Auto propose it too, with the
+  same switch (`ADAPTIVE_BACKLIT_SUBJECT_LIFT`), the same guards and every gate; "Light photo" still turns it off, and the person's "Dark photo" asks for it per request without the switch. It is a SHADOW lift, never a
+  global Zero-DCE of a bright frame (that burns the window: the highlights gate refuses it). 29 results (9 photographs) with a face under 60 in a bright frame had none under Natural / Dynamic.
+* **Zero-DCE is the paper's** (`enhancement/zero_dce.py`, pinned by `enhancement/test_zero_dce_curve.py`): the ONNX is DCE-Net only (official Epoch99 weights; 24 tanh channels = 8 iterations x 3 curve channels), and
+  the adapter applies `x = x + r (x^2 - x)` eight times on RGB in [0, 1] at the photograph's full resolution (curves predicted at most `ZERO_DCE_MAX_INFERENCE_EDGE` wide and interpolated); with the real network on a
+  real photograph it equals an independent implementation of the formula to 0 grey levels (1 on the interpolating path). The engine then keeps the photograph's own colour and takes only the brightness
+  (`ADAPTIVE_LOWLIGHT_COLOUR=chromaticity`: the raw output is paler and hue-shifted), and blends. The classical `opencv_exposure` engine (a gamma) names itself as such. The curve network runs on the CPU
+  (OpenCV DNN), 0.1 to 1.5 s: there is nothing to run on MPS.
+* **Reading the log** (`worker.log`; `adaptive_stage` when a stage starts, `adaptive_enhancement` at the end with `size` and `refused`, and one `SKIPPED` line per failed gate): `SKIPPED <model> for Photo ID <image>
+  (result <id>). Reason: <gate> failed (<reason>). Metric: <reading>=<value>, Threshold: <limit>`. A model that cannot run, an operation the router left out and a face restoration refused for want of a verifiable
+  identity are logged the same way. `python scripts/time_pipeline.py PHOTO` prints the same for any file, with the limits in force.
+
 ## 5. Outcomes and the API contract
 
 `GET /api/enhancements/results/{id}/` now also returns:

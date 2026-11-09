@@ -64,6 +64,34 @@ class NotificationApiTests(APITestCase):
         self.assertTrue(response.data["email_notifications"])
         self.assertTrue(response.data["live_session_alerts"])
 
+    def test_the_moderator_review_switch_is_shown_defaults_on_and_can_be_changed(self):
+        shown = self.client.get(reverse("notification-preferences"))
+        self.assertEqual(shown.status_code, 200)
+        self.assertIs(shown.data["moderator_review_updates"], True)
+
+        off = self.client.patch(reverse("notification-preferences"), {"moderator_review_updates": False}, format="json")
+        self.assertEqual(off.status_code, 200)
+        self.assertIs(off.data["moderator_review_updates"], False)
+        self.assertIs(self.client.get(reverse("notification-preferences")).data["moderator_review_updates"], False)
+        self.assertFalse(NotificationPreference.objects.get(user=self.user).moderator_review_updates)
+
+        on = self.client.patch(reverse("notification-preferences"), {"moderator_review_updates": True}, format="json")
+        self.assertIs(on.data["moderator_review_updates"], True)
+
+    def test_changing_the_moderator_review_switch_leaves_the_other_switches_and_other_people_alone(self):
+        self.client.patch(reverse("notification-preferences"), {"photo_rejected": False}, format="json")
+        self.client.patch(reverse("notification-preferences"), {"moderator_review_updates": False}, format="json")
+
+        mine = NotificationPreference.objects.get(user=self.user)
+        self.assertFalse(mine.photo_rejected)
+        self.assertTrue(mine.photo_accepted)
+        self.assertFalse(NotificationPreference.objects.filter(user=self.other).exists())
+
+    def test_the_moderator_review_switch_must_be_true_or_false(self):
+        response = self.client.patch(reverse("notification-preferences"), {"moderator_review_updates": "maybe"}, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("moderator_review_updates", response.data)
+
     def test_creation_is_idempotent_and_filters_unsafe_metadata(self):
         first = self.create_notification()
         second, created = create_user_notification(

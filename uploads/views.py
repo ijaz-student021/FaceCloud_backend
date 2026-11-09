@@ -1,7 +1,8 @@
 from django.conf import settings
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
-from django.db.models import OuterRef, Prefetch, Q, Subquery
+from django.utils import timezone
+from django.db.models import Exists, OuterRef, Prefetch, Q, Subquery
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import generics, permissions, serializers, status
@@ -14,14 +15,19 @@ from rest_framework.pagination import PageNumberPagination
 from enhancement.models import ImageEnhancementResult
 from identities.models import IdentityFace, IdentityMembership
 
+from .deletion import delete_images
+from quality_control.effective import effective_q
+
 from .display_status import with_status_relations
 from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
 from .progress import batch_progress_payload
 from .serializers import (
+    BatchProgressSerializer,
     ImagePreprocessingResultSerializer,
     ImageUploadSerializer,
     MyImageSerializer,
     PreprocessImageRequestSerializer,
+    UploadBatchCreatedSerializer,
     UploadBatchSerializer,
 )
 from .services import (
@@ -39,6 +45,63 @@ def _all_request_files(request):
     return [uploaded for field in request.FILES for uploaded in request.FILES.getlist(field)]
 
 
+ORGANIZATION_FIELD = {"type": "integer", "description": (
+    "Optional. File this upload under one of your organizations (you must be an active member) so its moderators can review it. "
+    "Without it the upload stays in your own workspace, as before."
+)}
+
+
+AUTO_ENHANCE_FIELD = {"type": "boolean", "description": (
+    "Optional. true or false: whether the photographs of this upload that pass the checks are enhanced automatically. Absent means the account setting "
+    "(`auto_enhance` of `GET /api/notifications/preferences/`, on unless the person turned it off)."
+)}
+
+
+ENHANCEMENT_FIELDS = {
+    "preset": {"type": "string", "enum": ["auto", "standard", "pro"], "description": (
+        "Optional. A name for a level + style pair, as on `POST /api/enhancements/images/{id}/`: it fills in whichever of `level` and `style` is not sent.")},
+    "level": {"type": "string", "enum": ["auto", "low", "medium", "high"], "description": "Optional. The strength of the automatic enhancement (default auto)."},
+    "style": {"type": "string", "enum": ["natural", "dynamic", "ai_max"], "description": "Optional. The look of the automatic enhancement (default natural; ai_max is AI Enhance, the Pro preset)."},
+    "lighting": {"type": "string", "enum": ["auto", "dark", "light"], "description": (
+        "Optional. The person's word on the lighting: dark runs the dark-photo method, light the light-photo method, auto (default) lets the engine decide.")},
+}
+"""The four optional form fields of an upload that say what ITS automatic enhancement does. They mean exactly what they mean on an enhancement request (same names, same preset rule,
+same validation, a value that is not allowed is a 400), they are stored on the batch (``UploadBatch.auto_enhance_options``) and ignored when ``auto_enhance`` is false."""
+
+
+def _upload_enhancement(request):
+    """What the automatic enhancement of this upload is asked to do: the ``preset`` / ``level`` / ``style`` / ``lighting`` form fields, validated exactly like an enhancement request.
+
+    ``{}`` when the upload sent none of them (every upload before this was enhanced with automatic strength, natural, the lighting left to the engine). Raised before the batch is created.
+    """
+    from enhancement.serializers import EnhancementRequestSerializer
+
+    sent = {name: request.data.get(name) for name in ENHANCEMENT_FIELDS if request.data.get(name) not in (None, "")}
+    if not sent:
+        return {}
+    payload = EnhancementRequestSerializer(data=sent)
+    payload.is_valid(raise_exception=True)
+    values = payload.validated_data
+    return {"level": str(values["level"]), "style": str(values["style"]), "lighting": str(values["lighting"])}
+
+
+def _upload_organization(request):
+    from organizations.services import resolve_upload_organization
+
+    return resolve_upload_organization(request.user, request.data.get("organization_id"))
+
+
+def _upload_auto_enhance(request):
+    """Whether this upload is enhanced automatically: its own ``auto_enhance`` field, else the account setting (``enhancement/auto.py``)."""
+    from enhancement.auto import parse_auto_enhance, resolve_auto_enhance
+
+    try:
+        requested = parse_auto_enhance(request.data.get("auto_enhance"))
+    except ValueError as error:
+        raise ValidationError({"auto_enhance": str(error)}) from error
+    return resolve_auto_enhance(request.user, requested)
+
+
 def _images_with_status():
     return Prefetch("images", queryset=with_status_relations(ImageUpload.objects.select_related("preprocessing_result")))
 
@@ -46,7 +109,7 @@ def _images_with_status():
 def _batch_response(request, batch):
     """The upload response: the batch with each photo's status, loaded in a fixed number of queries."""
     batch = UploadBatch.objects.prefetch_related(_images_with_status()).get(pk=batch.pk)
-    return Response(UploadBatchSerializer(batch, context={"request": request}).data, status=status.HTTP_201_CREATED)
+    return Response(UploadBatchCreatedSerializer(batch, context={"request": request}).data, status=status.HTTP_201_CREATED)
 
 
 class SingleImageUploadView(APIView):
@@ -56,15 +119,18 @@ class SingleImageUploadView(APIView):
 
     @extend_schema(
         request={"multipart/form-data": {"type": "object", "properties": {
-            "file": {"type": "string", "format": "binary"},
+            "file": {"type": "string", "format": "binary"}, "organization_id": ORGANIZATION_FIELD, "auto_enhance": AUTO_ENHANCE_FIELD, **ENHANCEMENT_FIELDS,
         }}},
-        responses={201: UploadBatchSerializer},
+        responses={201: UploadBatchCreatedSerializer},
     )
     def post(self, request):
         files = _all_request_files(request)
         if len(files) != 1:
             raise ValidationError({"file": "Select exactly one image for single-image upload."})
-        batch = create_image_batch(request.user, "single", files)
+        batch = create_image_batch(
+            request.user, "single", files, organization=_upload_organization(request), auto_enhance=_upload_auto_enhance(request),
+            enhancement_options=_upload_enhancement(request),
+        )
         return _batch_response(request, batch)
 
 
@@ -75,9 +141,10 @@ class MultipleImageUploadView(APIView):
 
     @extend_schema(
         request={"multipart/form-data": {"type": "object", "properties": {
-            "files": {"type": "array", "items": {"type": "string", "format": "binary"}},
+            "files": {"type": "array", "items": {"type": "string", "format": "binary"}}, "organization_id": ORGANIZATION_FIELD,
+            "auto_enhance": AUTO_ENHANCE_FIELD, **ENHANCEMENT_FIELDS,
         }}},
-        responses={201: UploadBatchSerializer},
+        responses={201: UploadBatchCreatedSerializer},
     )
     def post(self, request):
         files = request.FILES.getlist("files")
@@ -85,7 +152,10 @@ class MultipleImageUploadView(APIView):
             raise ValidationError({"files": "Select at least two images for multiple-image upload."})
         if len(files) != len(_all_request_files(request)):
             raise ValidationError({"files": "Submit all images using the repeated 'files' field."})
-        batch = create_image_batch(request.user, "multiple", files)
+        batch = create_image_batch(
+            request.user, "multiple", files, organization=_upload_organization(request), auto_enhance=_upload_auto_enhance(request),
+            enhancement_options=_upload_enhancement(request),
+        )
         batch = enqueue_batch_preprocessing(batch)
         return _batch_response(request, batch)
 
@@ -97,16 +167,19 @@ class ZipImageUploadView(APIView):
 
     @extend_schema(
         request={"multipart/form-data": {"type": "object", "properties": {
-            "file": {"type": "string", "format": "binary"},
+            "file": {"type": "string", "format": "binary"}, "organization_id": ORGANIZATION_FIELD, "auto_enhance": AUTO_ENHANCE_FIELD, **ENHANCEMENT_FIELDS,
         }}},
-        responses={201: UploadBatchSerializer},
+        responses={201: UploadBatchCreatedSerializer},
     )
     def post(self, request):
         files = _all_request_files(request)
         if len(files) != 1:
             raise ValidationError({"file": "Select exactly one ZIP archive."})
         uploaded_zip = files[0]
-        batch = create_zip_batch(request.user, uploaded_zip)
+        batch = create_zip_batch(
+            request.user, uploaded_zip, organization=_upload_organization(request), auto_enhance=_upload_auto_enhance(request),
+            enhancement_options=_upload_enhancement(request),
+        )
         batch = enqueue_batch_preprocessing(batch)
         return _batch_response(request, batch)
 
@@ -133,7 +206,7 @@ class UploadBatchDetailView(generics.RetrieveUpdateDestroyAPIView):
 class UploadBatchProgressView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
-    @extend_schema(responses={200: OpenApiTypes.OBJECT})
+    @extend_schema(responses={200: BatchProgressSerializer})
     def get(self, request, batch_id):
         batch = get_object_or_404(UploadBatch.objects.filter(owner=request.user), pk=batch_id)
         return Response(batch_progress_payload(batch))
@@ -181,6 +254,9 @@ class ImageUploadListView(generics.ListAPIView):
         return queryset
 
 
+BULK_DELETE_LIMIT = 200
+
+
 class MyImagesPagination(PageNumberPagination):
     page_size = 24
     page_size_query_param = "page_size"
@@ -203,9 +279,9 @@ def my_images_queryset(user):
     return (
         ImageUpload.objects.filter(owner=user)
         .select_related(
-            "batch", "preprocessing_result", "face_validation",
+            "batch__organization", "preprocessing_result", "face_validation",
             "quality_decision", "duplicate_analysis",
-            "identity_analysis",
+            "identity_analysis", "place",
         )
         .prefetch_related(
             Prefetch(
@@ -275,6 +351,57 @@ class MyImageListView(generics.ListAPIView):
                 raise ValidationError({"upload_type": "Use single, multiple, or zip."})
             queryset = queryset.filter(batch__upload_type=upload_type)
 
+        taken_from = self.request.query_params.get("taken_from", "").strip()
+        taken_to = self.request.query_params.get("taken_to", "").strip()
+        if taken_from or taken_to:
+            from django.db.models.functions import Coalesce
+
+            from memories.services import parse_date
+
+            queryset = queryset.annotate(captured=Coalesce("taken_at", "created_at"))
+            for name, value, lookup in (("taken_from", taken_from, "captured__date__gte"), ("taken_to", taken_to, "captured__date__lte")):
+                if value:
+                    parsed = parse_date(value)
+                    if parsed is None:
+                        raise ValidationError({name: "Use a date like 2026-10-22."})
+                    queryset = queryset.filter(**{lookup: parsed})
+
+        album = self.request.query_params.get("album")
+        if album:
+            if not album.isdigit():
+                raise ValidationError({"album": "Album must be a positive integer."})
+            from albums.models import AlbumImage
+
+            queryset = queryset.filter(Exists(AlbumImage.objects.filter(album_id=int(album), album__owner=self.request.user, image_id=OuterRef("pk"))))
+
+        # ?person=<folder id>, repeated for photographs that contain ALL of those people (a photograph with both Ayesha and Bilal).
+        for person in self.request.query_params.getlist("person"):
+            if not person.isdigit():
+                raise ValidationError({"person": "Person must be a positive integer."})
+            from identities.models import IdentityMembership
+
+            queryset = queryset.filter(Exists(IdentityMembership.objects.filter(
+                identity_face__image_id=OuterRef("pk"), identity_group_id=int(person), identity_group__owner=self.request.user,
+                state__in=["auto_matched", "new_group", "confirmed"],
+            )))
+
+        place = self.request.query_params.get("place")
+        if place:
+            if not place.isdigit():
+                raise ValidationError({"place": "Place must be a positive integer."})
+            queryset = queryset.filter(place_id=int(place))
+        country = self.request.query_params.get("country", "").strip()
+        if country:
+            if len(country) != 2 or not country.isalpha():
+                raise ValidationError({"country": "Use a two-letter country code."})
+            queryset = queryset.filter(place__country_code=country.upper())
+
+        favorite = self.request.query_params.get("favorite", "").strip().lower()
+        if favorite:
+            if favorite not in {"true", "false", "1", "0"}:
+                raise ValidationError({"favorite": "Use true or false."})
+            queryset = queryset.filter(is_favorite=favorite in {"true", "1"})
+
         selected_status = self.request.query_params.get("status", "").strip().lower()
         if selected_status and selected_status != "all":
             if selected_status not in self.valid_statuses:
@@ -284,7 +411,8 @@ class MyImageListView(generics.ListAPIView):
                     Q(status="rejected") | Q(quality_decision__decision="rejected")
                 )
             elif selected_status in {"accepted", "needs_review"}:
-                queryset = queryset.filter(quality_decision__decision=selected_status)
+                # The effective verdict: "needs_review" only where a moderator can decide, and a personal photograph that was doubted counts as accepted.
+                queryset = queryset.filter(effective_q(selected_status))
             elif selected_status == "quality_processing":
                 queryset = queryset.filter(quality_decision__status__in=["pending", "queued", "processing"])
             elif selected_status == "quality_failed":
@@ -341,6 +469,106 @@ class ImageUploadDetailView(generics.RetrieveDestroyAPIView):
 
     def get_queryset(self):
         return my_images_queryset(self.request.user)
+
+    def perform_destroy(self, instance):
+        delete_images([instance])
+
+
+class BulkDeleteRequestSerializer(serializers.Serializer):
+    image_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), min_length=1, max_length=BULK_DELETE_LIMIT, allow_empty=False,
+        help_text=f"Up to {BULK_DELETE_LIMIT} photo ids.",
+    )
+
+
+class BulkDeleteResultSerializer(serializers.Serializer):
+    deleted_ids = serializers.ListField(child=serializers.IntegerField())
+    not_found_ids = serializers.ListField(child=serializers.IntegerField(), help_text="Ids that are not yours or do not exist: nothing was done for them.")
+    folders_updated = serializers.IntegerField(help_text="Person folders whose count and matching were recomputed.")
+    folders_deleted = serializers.IntegerField(help_text="Person folders that were left with no photograph and were deleted (the photographs of other folders are untouched).")
+    folders_renumbered = serializers.IntegerField(help_text="Folders whose automatic name (Person 004) was renumbered (Person 002) to close the gap the deleted folders left; their ids do not change.")
+    packages_expired = serializers.IntegerField(help_text="Ready ZIPs of the affected uploads that were expired because they held a copy.")
+    exports_expired = serializers.IntegerField(help_text="Ready person-folder exports that were expired for the same reason.")
+
+
+class ImageBulkDeleteView(APIView):
+    """Delete several of your photographs at once; the effects are those of deleting each (see ``uploads/deletion.py``)."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "image_delete"
+
+    @extend_schema(request=BulkDeleteRequestSerializer, responses={200: BulkDeleteResultSerializer, 400: OpenApiTypes.OBJECT})
+    def post(self, request):
+        payload = BulkDeleteRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        wanted = list(dict.fromkeys(payload.validated_data["image_ids"]))
+        images = list(ImageUpload.all_objects.filter(owner=request.user, pk__in=wanted))   # permanent: reaches the trash too
+        found = {image.pk for image in images}
+        summary = delete_images(images)
+        return Response({
+            "deleted_ids": [pk for pk in wanted if pk in found],
+            "not_found_ids": [pk for pk in wanted if pk not in found],
+            **{key: value for key, value in summary.items() if key != "deleted"},
+        })
+
+
+class FavoriteResultSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    is_favorite = serializers.BooleanField()
+    favorited_at = serializers.DateTimeField(allow_null=True)
+
+
+class ImageFavoriteView(APIView):
+    """Mark one of your photographs as a favourite (``PUT``) or take the mark off (``DELETE``). Both are idempotent."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "image_favorite"
+
+    def _set(self, request, pk, favorite):
+        photo = get_object_or_404(ImageUpload.objects.filter(owner=request.user, status="uploaded"), pk=pk)
+        if photo.is_favorite != favorite:
+            ImageUpload.objects.filter(pk=photo.pk).update(is_favorite=favorite, favorited_at=timezone.now() if favorite else None)
+        photo.refresh_from_db(fields=["is_favorite", "favorited_at"])
+        return Response({"id": photo.pk, "is_favorite": photo.is_favorite, "favorited_at": photo.favorited_at})
+
+    @extend_schema(request=None, responses={200: FavoriteResultSerializer, 404: OpenApiTypes.OBJECT})
+    def put(self, request, pk):
+        return self._set(request, pk, True)
+
+    @extend_schema(request=None, responses={200: FavoriteResultSerializer, 404: OpenApiTypes.OBJECT})
+    def delete(self, request, pk):
+        return self._set(request, pk, False)
+
+
+class BulkFavoriteRequestSerializer(serializers.Serializer):
+    image_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), min_length=1, max_length=BULK_DELETE_LIMIT, allow_empty=False,
+        help_text=f"Up to {BULK_DELETE_LIMIT} photo ids.",
+    )
+    favorite = serializers.BooleanField(help_text="true to mark them as favourites, false to take the mark off.")
+
+
+class BulkFavoriteResultSerializer(serializers.Serializer):
+    favorite = serializers.BooleanField()
+    updated_ids = serializers.ListField(child=serializers.IntegerField(), help_text="Photos that now have the requested state (including ones that already had it).")
+    not_found_ids = serializers.ListField(child=serializers.IntegerField(), help_text="Ids that are not yours, do not exist or are not stored photographs; nothing was done for them.")
+
+
+class ImageBulkFavoriteView(APIView):
+    """Mark or unmark several of your photographs at once."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = "image_favorite"
+
+    @extend_schema(request=BulkFavoriteRequestSerializer, responses={200: BulkFavoriteResultSerializer, 400: OpenApiTypes.OBJECT})
+    def post(self, request):
+        payload = BulkFavoriteRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        wanted = list(dict.fromkeys(payload.validated_data["image_ids"]))
+        favorite = payload.validated_data["favorite"]
+        found = set(ImageUpload.objects.filter(owner=request.user, status="uploaded", pk__in=wanted).values_list("pk", flat=True))
+        ImageUpload.objects.filter(pk__in=found).exclude(is_favorite=favorite).update(is_favorite=favorite, favorited_at=timezone.now() if favorite else None)
+        return Response({"favorite": favorite, "updated_ids": [pk for pk in wanted if pk in found], "not_found_ids": [pk for pk in wanted if pk not in found]})
 
 
 class ImageDownloadView(APIView):
@@ -405,7 +633,7 @@ class ImagePreprocessingDetailView(APIView):
     @extend_schema(responses={200: ImagePreprocessingResultSerializer})
     def get(self, request, pk):
         result = get_object_or_404(
-            ImagePreprocessingResult.objects.filter(owner=request.user).select_related("image"),
+            ImagePreprocessingResult.objects.filter(owner=request.user, image__trashed_at__isnull=True).select_related("image"),
             image_id=pk,
         )
         return Response(ImagePreprocessingResultSerializer(result, context={"request": request}).data)
@@ -417,7 +645,7 @@ class ImagePreprocessingDownloadView(APIView):
     @extend_schema(responses={200: OpenApiTypes.BINARY, 404: OpenApiTypes.OBJECT})
     def get(self, request, pk):
         result = get_object_or_404(
-            ImagePreprocessingResult.objects.filter(owner=request.user, status="completed"),
+            ImagePreprocessingResult.objects.filter(owner=request.user, status="completed", image__trashed_at__isnull=True),
             image_id=pk,
         )
         if not result.processed_file:

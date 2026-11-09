@@ -78,11 +78,11 @@ jobs:
         run: pip-audit -r requirements.txt --progress-spinner off
       # enhancement/archs is vendored third-party network code (licences in its file headers); it is not scanned.
       # Every application package, not a hand-kept subset: the previous list had
-      # fallen behind and left moderation, organizations, collages, events and
+      # fallen behind and left moderation, organizations, events and
       # thumbnails unscanned.
       - name: Static analysis (medium and high severity)
         run: >-
-          bandit -r accounts activity collages config contact downloads duplicates enhancement
+          bandit -r accounts activity config contact downloads duplicates enhancement
           events identities moderation notifications operations organizations privacy
           quality_control reports search sharing thumbnails uploads validation scripts
           -x "*/tests.py,*/test_*.py,*/migrations,enhancement/archs" -ll
@@ -113,12 +113,19 @@ jobs:
       DB_PORT: "5432"
       EMAIL_BACKEND: django.core.mail.backends.smtp.EmailBackend
       EMAIL_HOST: smtp.mailer-service.net
+      EMAIL_HOST_USER: mailer-account
       CELERY_TASK_ALWAYS_EAGER: "False"
+      # The guard requires these to be chosen, not left at their development defaults.
+      CELERY_BROKER_URL: redis://127.0.0.1:6379/0
+      CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/1
+      MEDIA_ROOT: /var/lib/facecloud/media
       # Rate limits need a shared cache in production; the guard checks only that one is configured.
       CACHE_URL: redis://127.0.0.1:6379/2
       BIOMETRIC_CONSENT_REQUIRED: "True"
       FACIAL_DATA_RETENTION_DAYS: "365"
       IMAGE_ENCRYPTION_ENABLED: "True"
+      # Automatic enhancement after upload is on by default and would use Zero-DCE (licence not on file); a correct environment has decided that.
+      ZERO_DCE_ENABLED: "False"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -128,7 +135,7 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Generate throwaway secrets
         run: |
-          for name in DJANGO_SECRET_KEY IDENTITY_EMBEDDING_KEY IMAGE_ENCRYPTION_KEY DB_PASSWORD; do
+          for name in DJANGO_SECRET_KEY IDENTITY_EMBEDDING_KEY IMAGE_ENCRYPTION_KEY DB_PASSWORD EMAIL_HOST_PASSWORD; do
             value=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
             echo "::add-mask::$value"
             echo "$name=$value" >> "$GITHUB_ENV"

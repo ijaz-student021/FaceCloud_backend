@@ -14,6 +14,7 @@ from PIL import Image, ImageColor, UnidentifiedImageError
 from rest_framework.exceptions import ValidationError
 
 from .decoding import to_working_colour
+from .enlarge import enlarge_small_image
 from .models import BatchImageProgress, ImagePreprocessingResult, ImageUpload, UploadBatch
 from .validators import safe_original_name, validate_image_file, validate_zip_archive
 
@@ -56,6 +57,9 @@ def _save_valid_image(batch, owner, uploaded_file, original_name=None):
         if image.original_file:
             image.original_file.storage.delete(image.original_file.name)
         raise
+    if image.gps_lat is not None:
+        from places.service import attach_place
+        attach_place(image)                                       # a named place when the offline gazetteer is installed and approved; never raises
     return image
 
 
@@ -75,7 +79,7 @@ def _finalize_batch(batch):
 
 
 @transaction.atomic
-def create_image_batch(owner, upload_type, files):
+def create_image_batch(owner, upload_type, files, organization=None, auto_enhance=False, enhancement_options=None):
     if not files:
         raise ValidationError("At least one image file is required.")
     from django.conf import settings
@@ -83,7 +87,8 @@ def create_image_batch(owner, upload_type, files):
         raise ValidationError(f"A batch cannot contain more than {settings.MAX_UPLOAD_BATCH_FILES} images.")
     from organizations.services import get_default_organization
     batch = UploadBatch.objects.create(
-        owner=owner, upload_type=upload_type, organization=get_default_organization(owner),
+        owner=owner, upload_type=upload_type, organization=organization or get_default_organization(owner), auto_enhance=bool(auto_enhance),
+        auto_enhance_options=dict(enhancement_options or {}),      # what the automatic enhancement is asked to do (level, style, lighting); empty = the defaults, as before
     )
     from notifications.events import notify_upload_received
     transaction.on_commit(
@@ -131,14 +136,16 @@ def create_image_batch(owner, upload_type, files):
 
 
 @transaction.atomic
-def create_zip_batch(owner, uploaded_zip):
+def create_zip_batch(owner, uploaded_zip, organization=None, auto_enhance=False, enhancement_options=None):
     members = validate_zip_archive(uploaded_zip)
     from organizations.services import get_default_organization
     batch = UploadBatch.objects.create(
         owner=owner,
         upload_type="zip",
         original_archive_name=safe_original_name(uploaded_zip.name),
-        organization=get_default_organization(owner),
+        organization=organization or get_default_organization(owner),
+        auto_enhance=bool(auto_enhance),
+        auto_enhance_options=dict(enhancement_options or {}),
     )
     from notifications.events import notify_upload_received
 
@@ -176,9 +183,11 @@ def create_zip_batch(owner, uploaded_zip):
 
 @transaction.atomic
 def delete_batch(batch):
-    for image in list(batch.images.all()):
-        image.delete()
-    batch.delete()
+    from .deletion import delete_images
+
+    with transaction.atomic():
+        delete_images(ImageUpload.all_objects.filter(batch=batch))   # the batch's photographs in the trash go with it
+        batch.delete()
 
 
 def safe_output_stem(value, fallback):
@@ -258,15 +267,20 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
         ):
             from duplicates.services import enqueue_duplicate_analysis
             enqueue_duplicate_analysis(image_upload)
-        if settings.IDENTITY_AUTO_ANALYZE and not hasattr(image_upload, "identity_analysis"):
-            from identities.services import enqueue_identity_analysis
-            try:
-                enqueue_identity_analysis(image_upload)
-            except ValidationError:
-                pass
         if not hasattr(image_upload, "quality_decision"):
             from quality_control.services import enqueue_quality_analysis
             enqueue_quality_analysis(image_upload)
+        if hasattr(image_upload, "quality_decision"):
+            # Already decided and never enhanced automatically (a retry, a re-analysis): started now if its verdict allows it, and never twice.
+            from enhancement.auto import enhance_after_verdict
+            enhance_after_verdict(image_upload)
+            if not hasattr(image_upload, "identity_analysis"):
+                # Person folders follow the verdict and the enhancement (identities/verdict.py); one that is already decided and was never grouped is grouped
+                # now, or when its enhancement ends.
+                from identities.verdict import group_when_enhancement_ends
+                group_when_enhancement_ends(image_upload)
+            from search.semantic.service import index_after_verdict
+            index_after_verdict(image_upload)
         return existing, False
 
     started = time.perf_counter()
@@ -297,6 +311,7 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
                 (settings.PREPROCESS_MAX_WIDTH, settings.PREPROCESS_MAX_HEIGHT),
                 Image.Resampling.LANCZOS,
             )
+            working, enlargement = enlarge_small_image(working)   # a very small photograph is enlarged here (off unless SMALL_IMAGE_ENLARGE_ENABLED)
             extension = ".png" if output_format == "PNG" else ".jpg"
             output_name = f"{requested_stem}{extension}"
             output = tempfile.SpooledTemporaryFile(max_size=10 * 1024 * 1024, mode="w+b")
@@ -323,6 +338,7 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
             result.original_file_size = image_upload.file_size
             result.processed_file_size = output_size
             result.had_transparency = had_transparency
+            result.enlargement = enlargement
             result.processing_duration_ms = max(1, round((time.perf_counter() - started) * 1000))
             result.failure_reason = ""
             result.save()
@@ -331,18 +347,8 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
         if settings.DUPLICATE_AUTO_ANALYZE:
             from duplicates.services import enqueue_duplicate_analysis
             enqueue_duplicate_analysis(image_upload, force=force)
-        if settings.IDENTITY_AUTO_ANALYZE:
-            from identities.services import enqueue_identity_analysis
-            try:
-                enqueue_identity_analysis(image_upload, force=force)
-            except ValidationError:
-                # Not being eligible yet (e.g. face validation rejected the
-                # image) is an expected outcome for this best-effort auto
-                # trigger, not a preprocessing failure. Letting it propagate
-                # would roll back this whole @transaction.atomic function,
-                # discarding the preprocessing result and face-validation
-                # result that had already succeeded.
-                pass
+        # No identity analysis here: a photograph is filed into a person folder only once its quality verdict allows it, and that is queued from where
+        # the verdict is saved (quality_control.services.process_quality_decision, identities/verdict.py).
         from quality_control.services import enqueue_quality_analysis
         enqueue_quality_analysis(image_upload)
         if old_file_name and old_file_name != result.processed_file.name:
@@ -413,8 +419,14 @@ def enqueue_batch_preprocessing(batch):
     return batch
 
 
+FINISHED_PROCESSING_STATUSES = ("completed", "partial", "failed", "cancelled")
+
+
 def cancel_batch(batch):
     """Mark ``batch`` (and every non-terminal image in it) cancelled.
+
+    A batch that has already finished (``completed``, ``partial``, ``failed`` or ``cancelled``) is returned unchanged: cancelling it again is
+    harmless, and it keeps its real outcome.
 
     Extracted from the owner-facing cancel endpoint so the org-scoped
     moderator cancel endpoint (T-007) can call the exact same, already-used
@@ -422,6 +434,9 @@ def cancel_batch(batch):
     """
     with transaction.atomic():
         locked = UploadBatch.objects.select_for_update().get(pk=batch.pk)
+        if locked.processing_status in FINISHED_PROCESSING_STATUSES:
+            # Nothing is running, so there is nothing to cancel: relabelling a finished batch "cancelled" would contradict its photos.
+            return locked
         locked.cancellation_requested = True
         locked.processing_status = "cancelled"
         locked.save(update_fields=["cancellation_requested", "processing_status", "updated_at"])
@@ -434,6 +449,19 @@ def cancel_batch(batch):
         )
     locked.refresh_from_db()
     return locked
+
+
+def retry_obstacle(batch, failed_count):
+    """Why ``batch`` cannot be retried right now, as the error ``retry_batch`` raises for it; ``None`` when a retry would go ahead.
+
+    The one place that decides it, so what a screen shows ("Retry" available or not) and what the retry does can never disagree.
+    """
+    if not failed_count:
+        return BatchHasNoFailedImages()
+    maximum = getattr(settings, "BATCH_PROGRESS_MAX_RETRIES", 3)
+    if batch.retry_count >= maximum:
+        return BatchRetryLimitReached(f"The maximum of {maximum} batch retries has been reached.")
+    return None
 
 
 def retry_batch(batch):
@@ -453,11 +481,9 @@ def retry_batch(batch):
     failed = list(
         BatchImageProgress.objects.filter(batch=batch, status="failed").select_related("image")
     )
-    if not failed:
-        raise BatchHasNoFailedImages()
-    maximum = getattr(settings, "BATCH_PROGRESS_MAX_RETRIES", 3)
-    if batch.retry_count >= maximum:
-        raise BatchRetryLimitReached(f"The maximum of {maximum} batch retries has been reached.")
+    obstacle = retry_obstacle(batch, len(failed))
+    if obstacle is not None:
+        raise obstacle
 
     batch.cancellation_requested = False
     batch.retry_count += 1

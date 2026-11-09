@@ -294,7 +294,7 @@ item. Detailed acceptance criteria remain in `FEATURES.md`.
 | 46 | Organization and tenant management | In progress (Phases A+B done 2026-09-22, C done 2026-09-23) | T-008 |
 | 47 | Gallery-editor frontend integration | Next | T-034 |
 | 48 | Automatic event/timeline grouping | Done, backend (no face data involved -- see `FEATURES.md`) | T-035 |
-| 49 | AI-generated photo collages (face-aware smart crop) | Done, backend (face-box crop needs no consent; person-specific collage reuses existing identity consent gate -- see `FEATURES.md`) | T-036 |
+| 49 | AI-generated photo collages (face-aware smart crop) | Removed (2026-10-22): the whole feature was taken out of the product -- see `FEATURES.md` | T-036 |
 | 50 | Face-based visual search | Done, backend (new biometric processing, consent-gated, query embedding never persisted -- see `FEATURES.md`) | T-037 |
 
 ### Register workstreams

@@ -1,6 +1,7 @@
 """Checksum-pinned local NAFNet and Real-ESRGAN inference adapters."""
 
 import hashlib
+import re
 from pathlib import Path
 
 import cv2
@@ -150,6 +151,30 @@ def _build_nafnet(nn, functional, kind="nafnet"):
     return NAFNet()
 
 
+def _build_srvgg(nn, functional):
+    """SRVGGNetCompact, the small network of Real-ESRGAN's ``realesr-general-x4v3`` (xinntao/Real-ESRGAN, BSD-3-Clause): 32 conv + PReLU blocks, 4x by pixel shuffle, plus a
+    nearest-neighbour base. 4.9 MB, about twelve times faster than the 23-block RRDBNet of x4plus (measured 5-6 s against 69 s for a 2x pass over a 1600 x 1382 photograph)."""
+
+    class SRVGGNetCompact(nn.Module):
+        def __init__(self, num_feat=64, num_conv=32, upscale=4):
+            super().__init__()
+            self.upscale = upscale
+            body = [nn.Conv2d(3, num_feat, 3, 1, 1), nn.PReLU(num_parameters=num_feat)]
+            for _ in range(num_conv):
+                body += [nn.Conv2d(num_feat, num_feat, 3, 1, 1), nn.PReLU(num_parameters=num_feat)]
+            body.append(nn.Conv2d(num_feat, 3 * upscale * upscale, 3, 1, 1))
+            self.body = nn.ModuleList(body)
+            self.upsampler = nn.PixelShuffle(upscale)
+
+        def forward(self, source):
+            value = source
+            for layer in self.body:
+                value = layer(value)
+            return self.upsampler(value) + functional.interpolate(source, scale_factor=self.upscale, mode="nearest")
+
+    return SRVGGNetCompact()
+
+
 def _build_realesrgan(nn, functional):
     class RDB(nn.Module):
         def __init__(self):
@@ -203,6 +228,25 @@ def _build_realesrgan(nn, functional):
     return RRDBNet()
 
 
+def convert_esrgan_keys(state):
+    """A checkpoint in the original ESRGAN layout (``model.1.sub.N.RDBk.convJ.0.weight``: 4x-UltraSharp and most community models) renamed to this project's RRDBNet keys.
+
+    Raises ``ValueError`` for any key it does not know, so a checkpoint of another network is refused, not half loaded.
+    """
+    fixed = {"model.0": "conv_first", "model.1.sub.23": "conv_body", "model.3": "conv_up1", "model.6": "conv_up2", "model.8": "conv_hr", "model.10": "conv_last"}
+    converted = {}
+    for key, value in state.items():
+        match = re.fullmatch(r"model\.1\.sub\.(\d+)\.RDB(\d)\.conv(\d)\.0\.(weight|bias)", key)
+        if match:
+            converted[f"body.{match[1]}.rdb{match[2]}.conv{match[3]}.{match[4]}"] = value
+            continue
+        stem, _, leaf = key.rpartition(".")
+        if stem not in fixed or leaf not in ("weight", "bias"):
+            raise ValueError(f"Unknown checkpoint key {key!r}.")
+        converted[f"{fixed[stem]}.{leaf}"] = value
+    return converted
+
+
 def _load_model(kind):
     torch, nn, functional = _runtime()
     if kind == "nafnet":
@@ -211,6 +255,12 @@ def _load_model(kind):
     elif kind == "nafnet_sidd":
         path = _verified_path(settings.NAFNET_SIDD_MODEL_PATH, settings.NAFNET_SIDD_MODEL_SHA256, "NAFNet-SIDD")
         builder = lambda nn_, functional_: _build_nafnet(nn_, functional_, "nafnet_sidd")  # noqa: E731
+    elif kind == "realesrgan_general":
+        path = _verified_path(settings.REALESRGAN_GENERAL_MODEL_PATH, settings.REALESRGAN_GENERAL_MODEL_SHA256, "Real-ESRGAN general")
+        builder = _build_srvgg
+    elif kind == "ultrasharp":
+        path = _verified_path(settings.ULTRASHARP_MODEL_PATH, settings.ULTRASHARP_MODEL_SHA256, "4x-UltraSharp")
+        builder = _build_realesrgan       # the same RRDBNet as Real-ESRGAN x4plus, in the original ESRGAN key layout
     else:
         path = _verified_path(settings.REALESRGAN_MODEL_PATH, settings.REALESRGAN_MODEL_SHA256, "Real-ESRGAN")
         builder = _build_realesrgan
@@ -223,6 +273,8 @@ def _load_model(kind):
     try:
         checkpoint = torch.load(path, map_location="cpu", weights_only=True)
         state = checkpoint.get("params_ema", checkpoint.get("params", checkpoint))
+        if kind == "ultrasharp":
+            state = convert_esrgan_keys(state)
         model.load_state_dict(state, strict=True)
     except (RuntimeError, KeyError, TypeError, ValueError, OSError) as error:
         raise HDRestorationUnavailable(f"The {kind} checkpoint is incompatible.") from error
@@ -299,8 +351,22 @@ def denoise_with_nafnet(image):
 
 def upscale_with_realesrgan(image, output_scale=None):
     """Upscale by ``output_scale`` (2 or 4; the HD_RESTORATION_OUTPUT_SCALE setting when not given)."""
+    return _upscale("realesrgan", "Real-ESRGAN", "realesrgan_x4plus", settings.REALESRGAN_MODEL_SHA256, image, output_scale)
+
+
+def upscale_with_general(image, output_scale=None):
+    """The same, with the compact ``realesr-general-x4v3`` network: fast (seconds for a 2 MP photograph) and trained to remove real-world compression and noise."""
+    return _upscale("realesrgan_general", "Real-ESRGAN general", "realesr_general_x4v3", settings.REALESRGAN_GENERAL_MODEL_SHA256, image, output_scale)
+
+
+def upscale_with_ultrasharp(image, output_scale=None):
+    """The same, with 4x-UltraSharp (CC BY-NC-SA 4.0; docs/model-licenses/ultrasharp.md): sharper edges and less smoothing than Real-ESRGAN x4plus."""
+    return _upscale("ultrasharp", "4x-UltraSharp", "ultrasharp_4x", settings.ULTRASHARP_MODEL_SHA256, image, output_scale)
+
+
+def _upscale(kind, label, provider, checkpoint_sha256, image, output_scale):
     if image is None or image.size == 0:
-        raise HDRestorationUnavailable("The Real-ESRGAN input image is invalid.")
+        raise HDRestorationUnavailable(f"The {label} input image is invalid.")
     height, width = image.shape[:2]
     scale = int(output_scale or settings.HD_RESTORATION_OUTPUT_SCALE)
     if scale not in (2, 4):
@@ -313,11 +379,11 @@ def upscale_with_realesrgan(image, output_scale=None):
         raise HDRestorationUnavailable("The HD output exceeds the configured safety limit.")
     if scale == 4 and output_pixels > settings.HD_RESTORATION_MAX_NATIVE_OUTPUT_PIXELS:
         raise HDRestorationUnavailable("The native 4x output exceeds the configured safety limit.")
-    output, inference = _infer("realesrgan", "Real-ESRGAN", image, 4, output_scale=scale)
+    output, inference = _infer(kind, label, image, 4, output_scale=scale)
     return output, {
-        "provider": "realesrgan_x4plus",
+        "provider": provider,
         "native_scale": 4,
         "output_scale": scale,
-        "checkpoint_sha256_prefix": settings.REALESRGAN_MODEL_SHA256[:12],
+        "checkpoint_sha256_prefix": checkpoint_sha256[:12],
         **inference,
     }

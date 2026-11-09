@@ -14,3 +14,7 @@ from django.core.wsgi import get_wsgi_application
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
 
 application = get_wsgi_application()
+
+from operations.inline import warn_if_inline  # noqa: E402
+
+warn_if_inline()      # a web server is starting: say so if background jobs would run inside its requests

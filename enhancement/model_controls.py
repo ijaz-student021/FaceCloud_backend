@@ -147,12 +147,15 @@ def clear_cache():
         _CACHE.clear()
 
 
-def apply_model_controls(source, controls, strength=1.0):
+def apply_model_controls(source, controls, strength=1.0, instrument=None):
     """Apply the model-backed sliders in order. Returns ``(image, report, fallback_reasons)``.
 
-    ``controls`` holds 0-100 values by name; ``strength`` (0-1) scales every one, which is how the safety
-    guards reduce a render. ``report`` has one entry per slider that was moved.
+    ``controls`` holds 0-100 values by name; ``strength`` (0-1) scales every one. ``report`` has one entry per slider that was moved.
+    ``instrument`` (``edit_instrument``) records the time each slider took as ``model_<control>``.
     """
+    from .edit_instrument import ENHANCING, MODELS_FROM, MODELS_TO, NO_INSTRUMENT
+
+    instrument = instrument or NO_INSTRUMENT
     from .codeformer import CodeFormerUnavailable
     from .hd_restoration import HDRestorationUnavailable
     from .lowlight import LowLightUnavailable
@@ -162,6 +165,8 @@ def apply_model_controls(source, controls, strength=1.0):
     engines = _engines()
     image = source
     report, reasons = [], []
+    moved = sum(1 for name in MODEL_CONTROL_NAMES if float(controls.get(name, 0.0)) * strength > 0)
+    done = 0
     for control in MODEL_CONTROL_NAMES:
         value = float(controls.get(control, 0.0)) * strength
         if value <= 0:
@@ -173,7 +178,8 @@ def apply_model_controls(source, controls, strength=1.0):
             if not enabled:
                 continue
             try:
-                candidate, metadata = _candidate(control, engine, image)
+                with instrument.stage(f"model_{control}"):
+                    candidate, metadata = _candidate(control, engine, image)
             except failures as error:
                 entry.setdefault("skipped_engines", []).append({"engine": engine, "reason": str(error)})
                 reasons.append(f"{control}_{engine}_unavailable")
@@ -187,4 +193,6 @@ def apply_model_controls(source, controls, strength=1.0):
             entry["reason"] = "No engine for this control is available."
             reasons.append(f"{control}_not_applied")
         report.append(entry)
+        done += 1
+        instrument.progress(ENHANCING, MODELS_FROM + (MODELS_TO - MODELS_FROM) * done // (moved + 1))      # the tone render is the last share
     return image, report, reasons

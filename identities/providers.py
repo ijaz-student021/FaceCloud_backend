@@ -16,16 +16,22 @@ class IdentityEmbeddingProvider(ABC):
     # Similarity scales differ between models, so thresholds belong to the provider. ``None`` means "use the
     # SFace-calibrated settings" (IDENTITY_GUARD_MIN_SIMILARITY, IDENTITY_MATCH_THRESHOLD, ...).
     guard_min_similarity = None
+    # The enhancement guard's limit for a FACE RESTORATION (the restored face against a degraded upload); ``None`` = the guard's own limit, i.e. no difference.
+    restore_guard_min_similarity = None
     match_threshold = None
     new_group_threshold = None
     ambiguity_margin = None
+    # The similarity at which two of one person's folders are suggested for merging; ``None`` = this provider's match threshold.
+    merge_suggestion_similarity = None
     embedding_model_label = "sface_embedding_similarity"
 
     def thresholds(self):
         """``{guard, match, new_group, margin}`` for this provider, falling back to the settings."""
         pick = lambda own, fallback: float(fallback if own is None else own)  # noqa: E731
+        guard = pick(self.guard_min_similarity, settings.IDENTITY_GUARD_MIN_SIMILARITY)
         return {
-            "guard": pick(self.guard_min_similarity, settings.IDENTITY_GUARD_MIN_SIMILARITY),
+            "guard": guard,
+            "restore_guard": min(guard, pick(self.restore_guard_min_similarity, guard)),      # a restoration is never held to MORE than the guard
             "match": pick(self.match_threshold, settings.IDENTITY_MATCH_THRESHOLD),
             "new_group": pick(self.new_group_threshold, settings.IDENTITY_NEW_GROUP_THRESHOLD),
             "margin": pick(self.ambiguity_margin, settings.IDENTITY_AMBIGUITY_MARGIN),
@@ -73,6 +79,20 @@ def thresholds_for(provider):
     }
 
 
+def merge_suggestion_minimum(provider=None):
+    """How alike two of one person's folders must be for the Identity Review screen to suggest merging them.
+
+    ``MODERATOR_MERGE_SUGGESTION_MIN_SIMILARITY`` when it is set; otherwise the provider's own figure, so the suggestion is on the same scale as the
+    grouping itself (a 0.75 chosen for one model means nothing for another).
+    """
+    explicit = settings.MODERATOR_MERGE_SUGGESTION_MIN_SIMILARITY
+    if explicit is not None:
+        return float(explicit)
+    provider = provider or get_identity_provider()
+    own = getattr(provider, "merge_suggestion_similarity", None)
+    return float(own if own is not None else thresholds_for(provider)["match"])
+
+
 class DisabledIdentityProvider(IdentityEmbeddingProvider):
     name = "disabled"
     dimension = settings.IDENTITY_EMBEDDING_DIMENSION
@@ -92,6 +112,14 @@ class SFaceOnnxProvider(IdentityEmbeddingProvider):
     def __init__(self):
         self.dimension = settings.IDENTITY_EMBEDDING_DIMENSION
         self.model_checksum = settings.IDENTITY_MODEL_SHA256.lower()
+        # SFace's own limits (measured, see settings.SFACE_*), not the generic ones; a subclass that sets its own keeps them.
+        for attribute, name in (
+            ("guard_min_similarity", "SFACE_GUARD_MIN_SIMILARITY"), ("restore_guard_min_similarity", "SFACE_RESTORE_GUARD_MIN_SIMILARITY"), ("match_threshold", "SFACE_MATCH_THRESHOLD"),
+            ("new_group_threshold", "SFACE_NEW_GROUP_THRESHOLD"), ("ambiguity_margin", "SFACE_AMBIGUITY_MARGIN"),
+            ("merge_suggestion_similarity", "SFACE_MERGE_SUGGESTION_MIN_SIMILARITY"),
+        ):
+            if getattr(self, attribute) is None:
+                setattr(self, attribute, getattr(settings, name))
         self._recognizer = None
 
     def healthcheck(self):

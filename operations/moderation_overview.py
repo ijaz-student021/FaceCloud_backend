@@ -56,7 +56,8 @@ def build_admin_moderation_overview(*, stale_hours=None):
     hours = _parse_stale_hours(stale_hours)
     now = timezone.now()
     stale_cutoff = now - timezone.timedelta(hours=hours)
-    reviews = ModeratorReview.objects.all()
+    # A personal workspace has no moderator, so it has nothing to monitor: it is left out of every figure here.
+    reviews = ModeratorReview.objects.filter(organization__is_personal=False)
     today = timezone.localdate()
     # The same open set the org dashboard uses, so the service-level counts
     # below mean platform-wide exactly what they mean per organization.
@@ -87,7 +88,7 @@ def build_admin_moderation_overview(*, stale_hours=None):
     }
 
     organizations = (
-        Organization.objects.annotate(
+        Organization.objects.filter(is_personal=False).annotate(
             pending=Count("moderator_reviews", filter=Q(moderator_reviews__status=ModeratorReview.Status.PENDING)),
             in_review=Count("moderator_reviews", filter=Q(moderator_reviews__status=ModeratorReview.Status.IN_REVIEW)),
             escalated=Count("moderator_reviews", filter=Q(moderator_reviews__status=ModeratorReview.Status.ESCALATED)),

@@ -125,6 +125,31 @@ class ImageUploadTests(APITestCase):
         self.assertTrue(batch.cancellation_requested)
         self.assertEqual(response.data["images"][0]["status"], "cancelled")
 
+    def test_cancelling_a_finished_batch_changes_nothing(self):
+        """A batch whose work is over keeps its outcome; "cancel" is then a harmless no-op, not a relabel."""
+        from uploads.services import cancel_batch
+
+        for finished in ("completed", "partial", "failed"):
+            with self.subTest(finished):
+                batch = UploadBatch.objects.create(
+                    owner=self.user, upload_type="multiple", total_files=1, accepted_files=1, processing_status=finished,
+                )
+                image = ImageUpload.objects.create(owner=self.user, batch=batch, original_name="done.jpg", status="uploaded")
+                BatchImageProgress.objects.filter(image=image).update(stage="completed", status="accepted", progress_percentage=100)
+                cancelled = cancel_batch(batch)
+                self.assertEqual(cancelled.processing_status, finished)
+                self.assertFalse(cancelled.cancellation_requested)
+                self.assertEqual(BatchImageProgress.objects.get(image=image).status, "accepted")     # the photo keeps its verdict
+
+    def test_cancelling_a_batch_that_is_still_working_still_cancels_it(self):
+        from uploads.services import cancel_batch
+
+        batch = UploadBatch.objects.create(owner=self.user, upload_type="multiple", total_files=1, accepted_files=1, processing_status="processing")
+        image = ImageUpload.objects.create(owner=self.user, batch=batch, original_name="busy.jpg", status="uploaded")
+        cancelled = cancel_batch(batch)
+        self.assertEqual((cancelled.processing_status, cancelled.cancellation_requested), ("cancelled", True))
+        self.assertEqual(BatchImageProgress.objects.get(image=image).status, "cancelled")
+
     @patch("uploads.services.enqueue_batch_preprocessing")
     def test_batch_retry_only_requeues_failed_images(self, enqueue):
         batch = UploadBatch.objects.create(owner=self.user, upload_type="multiple", total_files=1, accepted_files=1)

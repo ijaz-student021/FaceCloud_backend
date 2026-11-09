@@ -107,6 +107,8 @@ def resolve_public_link(token):
         raise LinkGone()
     if link.identity_export_id and not export_is_servable(link.identity_export):
         raise LinkGone()
+    if link.enhancement_result_id and link.enhancement_result.image.trashed_at is not None:
+        raise LinkGone()                                       # the photograph is in the trash: the link is dormant, and works again if it is restored
     return link
 
 

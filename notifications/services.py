@@ -30,6 +30,13 @@ EVENT_POLICY = {
     # A missed review deadline is worth an email: the whole point is that
     # nobody noticed it in the queue.
     UserNotification.EventType.MODERATOR_REVIEW_OVERDUE: ("moderator_review_updates", True),
+    # What a moderator decided about the member's own photograph: switched by the same two preferences as the automatic verdicts.
+    UserNotification.EventType.PHOTO_REVIEW_APPROVED: ("photo_accepted", True),
+    UserNotification.EventType.PHOTO_REVIEW_REJECTED: ("photo_rejected", True),
+    # "Some of your person folders may be one person": in-app only, switched by the same preference as new person folders.
+    UserNotification.EventType.IDENTITY_MERGE_SUGGESTED: ("person_group_created", False),
+    # "N photos enhanced": once per batch, when its automatic enhancements are finished; in-app only, switched by the same preference as the batch result.
+    UserNotification.EventType.BATCH_ENHANCED: ("batch_upload_finished", False),
 }
 
 
@@ -46,7 +53,8 @@ def _safe_metadata(metadata):
         if key in {
             "filename", "batch_id", "image_id", "report_id", "package_id",
             "status", "accepted", "rejected", "needs_review", "failed", "format",
-            "review_id", "organization_id", "source", "due_at",
+            "review_id", "organization_id", "source", "due_at", "folder_count", "suggested_merge_count",
+            "enhanced", "kept", "skipped", "total",
         } and isinstance(value, (str, int, float, bool, type(None))):
             safe[str(key)[:40]] = value
     return safe

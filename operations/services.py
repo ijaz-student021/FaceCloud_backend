@@ -2,6 +2,7 @@ import hashlib
 import shutil
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, wait
 from functools import lru_cache
 from pathlib import Path
 
@@ -11,8 +12,9 @@ from django.conf import settings
 from enhancement.policy import learned_stage_enabled
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
+from django.core.cache.backends.locmem import LocMemCache
 from django.core.mail import get_connection
-from django.db import connection
+from django.db import connection, connections
 from django.utils import timezone
 
 from config.celery import app as celery_app
@@ -67,6 +69,15 @@ def check_redis():
 
 
 def check_celery():
+    from .inline import background_jobs_inline
+
+    result = _inspect_workers()
+    if background_jobs_inline():
+        result["eager"] = True        # tasks run inside the request that queued them: workers are not what is doing the work
+    return result
+
+
+def _inspect_workers():
     started = time.perf_counter()
     try:
         replies = celery_app.control.inspect(
@@ -169,6 +180,40 @@ def _model_status(path_value, expected_checksum, enabled=True, disabled_reason="
     }
 
 
+# The pipeline's stages in plain words, with the models that can do each (in order of preference), what runs when none can, and whether it needs the person's face-processing consent.
+PIPELINE_STAGES = (
+    ("low_light", "Dark photographs are brightened", ("zero_dce", "retinexformer"), "a plain OpenCV exposure correction", False),
+    ("denoise", "Noise is reduced", ("nafnet_sidd",), "an OpenCV noise filter", False),
+    ("deblur", "Motion blur is removed", ("nafnet",), "", False),
+    ("face_restore", "Degraded faces are restored", ("codeformer", "gfpgan"), "", True),
+    ("upscale", "Small photographs are enlarged", ("realesrgan",), "", False),
+    ("detail", "The detail model, the last layer of every photograph", ("realesrgan_general",), "the finishing polish", False),
+    ("colourize", "Black-and-white photographs get colour", ("ddcolor",), "", False),
+)
+
+
+def pipeline_stages(models):
+    """Which enhancement stages are on and which are off, and why, from the models check: nobody has to guess from the results.
+
+    ``[{stage, label, active, model, reason?, instead?, needs_consent?}]``: ``model`` is the first model of the stage that is healthy; when none is, ``reason`` says why each cannot run
+    ("its setting is off", an unreadable or unverified file) and ``instead`` what the engine does in its place, when it does anything.
+    """
+    stages = []
+    for key, label, names, instead, needs_consent in PIPELINE_STAGES:
+        present = [(name, models[name]) for name in names if name in models]
+        active = next((name for name, item in present if item["status"] == HEALTHY), None)
+        item = {"stage": key, "label": label, "active": active is not None, "model": active}
+        if active is None:
+            reasons = [f"{name}: {state.get('reason') or 'its file cannot be used (' + str(state.get('code') or 'unavailable') + ')'}" for name, state in present]
+            item["reason"] = "; ".join(reasons) or "no model is configured"
+            if instead:
+                item["instead"] = instead
+        if needs_consent:
+            item["needs_consent"] = "Face restoration needs the person's face-processing consent."
+        stages.append(item)
+    return stages
+
+
 def check_models():
     started = time.perf_counter()
     from enhancement import policy
@@ -188,6 +233,9 @@ def check_models():
             settings.REALESRGAN_MODEL_PATH, settings.REALESRGAN_MODEL_SHA256,
             learned_stage_enabled("HD_RESTORATION_ENABLED") and bool(settings.REALESRGAN_MODEL_PATH),
         ),
+        "ddcolor": (settings.DDCOLOR_MODEL_PATH, settings.DDCOLOR_MODEL_SHA256, learned_stage_enabled("DDCOLOR_ENABLED")),
+        "realesrgan_general": (settings.REALESRGAN_GENERAL_MODEL_PATH, settings.REALESRGAN_GENERAL_MODEL_SHA256, learned_stage_enabled("HD_RESTORATION_ENABLED")),
+        "ultrasharp": (settings.ULTRASHARP_MODEL_PATH, settings.ULTRASHARP_MODEL_SHA256, learned_stage_enabled("ULTRASHARP_ENABLED")),
         "gfpgan": (
             settings.GFPGAN_MODEL_PATH, settings.GFPGAN_MODEL_SHA256,
             learned_stage_enabled("GFPGAN_ENABLED") and bool(settings.GFPGAN_MODEL_PATH),
@@ -200,7 +248,7 @@ def check_models():
     status = DEGRADED if any(
         item["status"] == DEGRADED for item in models.values()
     ) else HEALTHY
-    return _result(status, started, models=models, render_policy=policy.active_policy())
+    return _result(status, started, models=models, stages=pipeline_stages(models), render_policy=policy.active_policy())
 
 
 def job_counts():
@@ -225,19 +273,95 @@ CHECKS = {
 
 REQUIRED_CHECKS = {"database", "redis", "storage"}
 
+PROCESS_STARTED_AT = timezone.now()
+PROCESS_STARTED_MONOTONIC = time.monotonic()
 
-def build_system_health():
+# How a check reads on the administrator's System Health screen: a name, and the word for its state.
+SERVICE_NAMES = {
+    "api": "API", "database": "Database", "redis": "Cache and message broker", "celery": "Background workers",
+    "storage": "File storage", "email": "Email", "models": "AI models",
+}
+SERVICE_STATES = {HEALTHY: "operational", DEGRADED: "degraded", UNAVAILABLE: "down"}
+
+
+def _services(checks, jobs, checked_at):
+    """One row per check for the System Health screen: ``key``, ``name``, ``status`` (operational / degraded / down), the latency and, for the
+    workers, how much work is waiting. Nothing here is measured that the checks did not already measure (no CPU or memory figures)."""
+    waiting = None if jobs.get("pending") is None else jobs["pending"] + jobs["active"]
+    rows = []
+    for key, result in checks.items():
+        row = {
+            "key": key, "name": SERVICE_NAMES.get(key, key), "status": SERVICE_STATES.get(result["status"], result["status"]),
+            "latency_ms": result.get("latency_ms"), "checked_at": checked_at,
+            "detail": ("eager" if result.get("eager") else "") or result.get("code") or result.get("reason") or "",
+        }
+        if key == "celery":
+            row["queue_size"] = waiting
+            row["workers"] = result.get("workers")
+        if key == "storage":
+            row["available_bytes"] = result.get("available_bytes")
+        rows.append(row)
+    return rows
+
+
+def _failed_check(name, code, latency_ms=0.0):
+    return {"status": UNAVAILABLE if name in REQUIRED_CHECKS else DEGRADED, "latency_ms": latency_ms, "code": code}
+
+
+def _run_check(name, checker):
+    """One check, in its own thread: a failure is the check's own result, and the thread's database connection is closed when it ends."""
+    try:
+        return checker()
+    except Exception:
+        return _failed_check(name, "check_failed")
+    finally:
+        connections.close_all()
+
+
+def run_checks():
+    """Every check at the same time, waiting at most ``SYSTEM_HEALTH_DEADLINE_SECONDS`` for all of them.
+
+    They used to run one after another, so a stopped Redis made the answer wait for each timeout in turn (6 to 18 seconds; the worker inspection alone waits about 6). A check that has
+    not answered by the deadline is reported as failed with the code ``timeout`` (``unavailable`` for a required service, ``degraded`` for the others) and its thread is left to finish
+    on its own.
+    """
+    deadline = settings.SYSTEM_HEALTH_DEADLINE_SECONDS
+    pool = ThreadPoolExecutor(max_workers=max(len(CHECKS), 1), thread_name_prefix="system-health")
+    futures = {name: pool.submit(_run_check, name, checker) for name, checker in CHECKS.items()}
+    done, _late = wait(futures.values(), timeout=deadline)
+    pool.shutdown(wait=False, cancel_futures=True)
+    return {
+        name: future.result() if future in done else _failed_check(name, "timeout", round(deadline * 1000, 2))
+        for name, future in futures.items()
+    }
+
+
+# The finished answer is kept for a few seconds, so several admin screens and the bell asking at once cost one round of checks. It lives in this process's memory on purpose: the cache
+# server may be the very thing that is down, and asking it would be one more thing to wait for.
+_health_cache = LocMemCache("system-health", {"TIMEOUT": None, "OPTIONS": {"MAX_ENTRIES": 4}})
+HEALTH_CACHE_KEY = "system-health"
+
+
+def clear_health_cache():
+    _health_cache.clear()
+
+
+def build_system_health(use_cache=False):
+    """The system health answer. ``use_cache`` (what the endpoint passes) returns a copy made in the last ``SYSTEM_HEALTH_CACHE_SECONDS`` seconds, if there is one."""
+    seconds = settings.SYSTEM_HEALTH_CACHE_SECONDS if use_cache else 0
+    if seconds > 0:
+        cached = _health_cache.get(HEALTH_CACHE_KEY)
+        if cached is not None:
+            return cached
+    health = _build_system_health()
+    if seconds > 0:
+        _health_cache.set(HEALTH_CACHE_KEY, health, timeout=seconds)
+    return health
+
+
+def _build_system_health():
     started = time.perf_counter()
-    checks = {}
-    for name, checker in CHECKS.items():
-        try:
-            checks[name] = checker()
-        except Exception:
-            checks[name] = {
-                "status": UNAVAILABLE if name in REQUIRED_CHECKS else DEGRADED,
-                "latency_ms": 0.0,
-                "code": "check_failed",
-            }
+    checks = run_checks()
 
     if any(checks[name]["status"] == UNAVAILABLE for name in REQUIRED_CHECKS):
         overall = UNAVAILABLE
@@ -253,12 +377,21 @@ def build_system_health():
         if overall == HEALTHY:
             overall = DEGRADED
 
+    from .inline import background_jobs_inline
+
+    checked_at = timezone.now().isoformat()
     return {
         "status": overall,
+        "background_jobs_inline": background_jobs_inline(),
         "version": settings.FACECLOUD_VERSION,
-        "checked_at": timezone.now().isoformat(),
+        "checked_at": checked_at,
         "response_time_ms": _elapsed_ms(started),
         "checks": checks,
         "jobs": jobs,
+        "services": _services(checks, jobs, checked_at),
+        "process": {
+            "started_at": PROCESS_STARTED_AT.isoformat(),
+            "uptime_seconds": int(time.monotonic() - PROCESS_STARTED_MONOTONIC),
+        },
     }
 

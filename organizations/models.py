@@ -1,6 +1,13 @@
+import uuid
+
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
+
+
+def organization_logo_upload_path(instance, filename):
+    # Every FileField in the project uploads under users/<id>/<subdir>/<file> (privacy/cleanup.py's orphan scanner); a logo is keyed by the person who uploaded it.
+    return f"users/{instance.logo_uploaded_by_id}/organization-logos/{uuid.uuid4().hex}.png"
 
 
 class Organization(models.Model):
@@ -13,13 +20,28 @@ class Organization(models.Model):
         TEAM = "team", "Team"
         ENTERPRISE = "enterprise", "Enterprise"
 
+    class ModeratorDataScope(models.TextChoices):
+        OWN_MEMBERS = "own_members", "Each moderator sees their own members"
+        ORGANIZATION = "organization", "Every moderator sees the whole organization"
+
     name = models.CharField(max_length=150)
     slug = models.SlugField(max_length=60, unique=True)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.ACTIVE)
+    # What a MODERATOR of this organization can see (an owner always sees everything). New organizations start with ``own_members``; organizations
+    # that existed before this setting keep ``organization`` (their behaviour is unchanged until the owner or the administrator chooses).
+    # Enforced on the server by organizations/scope.py.
+    moderator_data_scope = models.CharField(max_length=16, choices=ModeratorDataScope.choices, default=ModeratorDataScope.OWN_MEMBERS)
     plan = models.CharField(max_length=16, choices=Plan.choices, default=Plan.FREE)
     # Auto-created alongside every account (see organizations.services.create_personal_organization)
     # so existing user-scoped ownership keeps working unchanged until someone is invited in.
     is_personal = models.BooleanField(default=False)
+    # Branding the owner chooses and every member sees (organizations/branding.py): a name to show instead of ``name``, an accent colour (#rrggbb)
+    # and a logo that is re-encoded on upload and served only to members through an authenticated endpoint.
+    brand_name = models.CharField(max_length=100, blank=True)
+    brand_accent = models.CharField(max_length=7, blank=True)
+    logo = models.FileField(upload_to=organization_logo_upload_path, blank=True)
+    logo_updated_at = models.DateTimeField(null=True, blank=True)
+    logo_uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     storage_quota_bytes = models.BigIntegerField(null=True, blank=True)
     upload_quota_per_day = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -142,6 +164,12 @@ class OrganizationAuditEvent(models.Model):
         MODERATOR_BULK_DECISION = "moderator_bulk_decision", "Moderator bulk decision"
         MODERATOR_IMAGE_PREVIEWED = "moderator_image_previewed", "Image previewed by moderator"
         BATCH_REPROCESSED_BY_MODERATOR = "batch_reprocessed_by_moderator", "Batch reprocessed by moderator"
+        MEMBER_NOTIFIED_OF_REVIEW = "member_notified_of_review", "Member told about a review decision"
+        ORGANIZATION_UPDATED = "organization_updated", "Organization details changed"
+        ORGANIZATION_SUSPENDED = "organization_suspended", "Organization suspended"
+        ORGANIZATION_REACTIVATED = "organization_reactivated", "Organization reactivated"
+        ORGANIZATION_LOGO_CHANGED = "organization_logo_changed", "Organization logo changed"
+        ORGANIZATION_LOGO_REMOVED = "organization_logo_removed", "Organization logo removed"
 
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="audit_events",

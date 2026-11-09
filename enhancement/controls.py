@@ -18,7 +18,9 @@ highlights, warmth and the model-backed sliders have no Pillow equivalent.
 
 Manual and automatic ranges are separate. Manual input may use the whole
 range; the local recipe and the cloud advisor are held to the much smaller
-AUTO range.
+AUTO range. (The editor's Auto, ``intent`` "auto", first reads the photograph's
+nature in ``auto_edit.py``, which has its own wider range and falls back to the
+local recipe below for every photograph it has no reason to treat differently.)
 """
 import math
 from dataclasses import dataclass
@@ -217,7 +219,7 @@ def recommend_local_adjustments(quality, intent="auto", *, blockiness_detected=F
     ``quality`` is ``analyze_image_quality`` output. The outcome is
     ``{"action": "apply" | "no_change", "controls", "rationale", "caution_flags"}``.
 
-    * ``auto`` (default): fixes clear technical faults only: blown highlights,
+    * ``auto`` (default; the editor reads the photograph's nature first, see ``auto_edit.py``): fixes clear technical faults only: blown highlights,
       flat contrast, measured softness. It never lifts or darkens the photo's
       overall exposure, because whether a dark or bright photo is meant to be
       so cannot be told from its pixels.

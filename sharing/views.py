@@ -45,7 +45,7 @@ class ShareLinkListCreateView(generics.ListCreateAPIView):
         return ShareLinkCreateSerializer if self.request.method == "POST" else ShareLinkSerializer
 
     def get_queryset(self):
-        return ShareLink.objects.filter(owner=self.request.user)
+        return ShareLink.objects.filter(owner=self.request.user).exclude(enhancement_result__image__trashed_at__isnull=False)
 
     @extend_schema(
         summary="Create a share link",
@@ -87,7 +87,7 @@ class ShareLinkDetailView(generics.RetrieveAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return ShareLink.objects.filter(owner=self.request.user)
+        return ShareLink.objects.filter(owner=self.request.user).exclude(enhancement_result__image__trashed_at__isnull=False)
 
 
 class ShareLinkRevokeView(APIView):

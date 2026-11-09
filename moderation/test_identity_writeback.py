@@ -14,6 +14,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from identities.models import IdentityChange, IdentityGroup, IdentityMembership
 from identities.storage import protect_embedding
+from organizations.models import OrganizationMembership
 from organizations.services import create_organization
 from uploads.models import ImagePreprocessingResult, ImageUpload, UploadBatch
 from validation.models import FaceValidationResult
@@ -160,6 +161,22 @@ class IdentityReviewWritebackTests(IdentityWritebackFixtureMixin, TestCase):
         membership.refresh_from_db()
         self.assertIsNotNone(membership.identity_group_id)
         self.assertEqual(membership.identity_group.owner, self.owner)
+
+    def test_correcting_an_identity_review_tells_the_member_whose_photograph_it_is(self):
+        from notifications.models import UserNotification
+
+        member = self.make_user("identity-mod-member")
+        OrganizationMembership.objects.create(organization=self.organization, user=member, role="member", status="active")
+        review, membership = self.make_identity_review(member, self.organization, with_suggested_group=False)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.authenticated_client(self.moderator).post(
+                self.decision_url(review), {"action": "correct", "message_to_member": "I put you in your own folder."}, format="json",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        (note,) = UserNotification.objects.filter(recipient=member, event_type__startswith="photo_review")
+        self.assertEqual((note.event_type, note.message, note.resource_id), ("photo_review_approved", "I put you in your own folder.", review.image_id))
 
     def test_approving_with_no_suggested_group_returns_a_client_error_not_a_silent_success(self):
         review, membership = self.make_identity_review(self.owner, self.organization, with_suggested_group=False)

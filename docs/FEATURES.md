@@ -33,12 +33,22 @@ Status definitions:
 | Secure image and batch downloads | Complete backend; frontend integration remains |
 | Admin analytics and administrative management | Complete backend; frontend dashboards remain |
 | In-app and email notifications | Complete backend baseline; frontend integration remains |
+| Review only where someone can review (no "In review" in a personal workspace) | Complete backend; see the Google-Photos parity pack |
+| Group photographs and small faces accepted, up to 20 faces grouped | Complete backend; measured on 11 composites |
+| People as avatars and chips, person filter on My Images | Complete backend; frontend integration remains |
+| Albums, favourites | Complete backend; frontend integration remains |
+| Memories (on this day, events, people) and capture dates | Complete backend; frontend integration remains |
+| Trash with 30-day restore | Complete backend; every listing audited by a test; frontend integration remains |
+| Places: where a photograph was taken (GPS read locally, offline place names, owner-only coordinates) | Complete backend; place names wait for the owner's approval of the GeoNames licence record; frontend integration remains |
+| Search by what is in the photograph | Backend and plumbing complete, **off by default**; waits for the owner to approve the model's licence record |
 | Live camera detection and enhancement | Planned |
 | Frontend dashboards | Planned for frontend integration |
 
 ### Detailed documentation available
 
 - [Remaining user-dashboard features and implementation order](USER_DASHBOARD_REMAINING_FEATURES.md)
+- [Places (feature 9): PRD](product/google-photos-parity/PRD_LOCATION.md)
+- [Google-Photos parity pack: PRD, implementation plan and frontend prompts](product/google-photos-parity/PRD.md) ([plan](product/google-photos-parity/IMPLEMENTATION_PLAN.md), [frontend prompts](product/google-photos-parity/FRONTEND_PROMPTS.md))
 - [Features 01–03: Authentication, accounts, authorization, and audit](features/01-authentication-and-authorization.md)
 - [Features 04–08: Image uploads, batches, secure storage, and cleanup](features/02-image-upload-and-secure-storage.md)
 - [Feature 09: Image preprocessing and standardization](features/09-image-preprocessing-and-standardization.md)
@@ -983,64 +993,13 @@ Feature 41's classification, this feature touches none of the three facial-
 data categories, so it requires no biometric consent and works identically
 for an account that has never granted identity-analysis consent at all.
 
-### Feature 49: AI-generated photo collages — Done (backend)
+### Feature 49: AI-generated photo collages — Removed
 
-Auto-generates a collage from a set of photos (an event's photos, or a
-specific person's photos), using face-aware cropping so a collage never
-crops through a detected face.
-
-- Face-centered smart-crop: crop/resize a photo to a target aspect ratio
-  using the image's own `IdentityFace.bounding_box`(es), keeping the
-  detected face(s) inside the frame
-- A small set of fixed collage layouts (3/4/5+ photos)
-- Collage generation as a Celery job (consistent with every other
-  file-producing feature in this codebase -- `downloads`, `reports`,
-  Feature 46's organization export), not a synchronous request
-
-**As shipped** (`collages` app, `/api/collages/`):
-- Sources: an event (Feature 48, by event id and optional `gap_hours`) or a
-  person (an existing active identity group). 3 to 6 photos are used; more are
-  sampled evenly across the source, fewer than 3 is a clear 400. Layouts are
-  fixed for 3, 4, 5 and 6 photos on a 1600x1200 JPEG canvas.
-- Photos are cut from the **standardized (preprocessed) image**, because face
-  boxes are stored in that image's coordinates. Unprocessed photos are skipped.
-- The crop takes the largest window of the tile's shape and slides it so every
-  detected face stays inside; if the faces together cannot fit the tile shape it
-  keeps the largest face and records `faces_in_frame: false` for that photo.
-- The face boxes come from the face-validation result (Haar/YuNet detection),
-  not from `IdentityFace`. It is the same image-metadata class, and it works for
-  every processed photo even while identity analysis (Feature 18) is switched
-  off, so event collages never depend on identity data.
-- One active collage per user; the file expires after `COLLAGE_TTL_HOURS` (72)
-  and the beat task `collages.cleanup_expired` removes it. Stuck jobs are
-  covered by the shared job reaper. Rate limit `collage`: 20/hour.
-- The stored manifest holds only image ids, crop rectangles, `faces_in_frame`
-  and, for a person collage, the group's display name (tests assert no
-  embedding, score, centroid or distance ever appears in it).
-- A person collage requires `biometric_processing_allowed`, checked at request
-  time **and again when the job runs**, so a consent withdrawn in between stops
-  it. It only reads memberships that already exist.
-- Not built: notifications when a collage is ready (poll the detail endpoint),
-  choosing photos by hand, custom layouts, organization collages.
-
-**Facial data usage: mixed, and each part is already covered by an existing
-rule.**
-- The face-aware crop itself reads only `bounding_box`/`landmarks` --
-  **image metadata** under Feature 41's classification ("they locate a face
-  in an image... they cannot recognise a person"), not biometric data, so
-  it needs no consent check of its own.
-- A **person-specific** collage ("make a collage of this person") instead
-  reads `IdentityGroup`/`IdentityMembership` rows, which are biometric data
-  -- but this feature does not need a *new* consent gate for that, because
-  those rows only exist for an owner who already passed the existing
-  identity-analysis consent check (`biometric_processing_allowed`) when the
-  grouping itself ran. The one new obligation is scoping: only ever query a
-  person's *already-existing* group membership, never compute a new
-  embedding or run new face matching as part of collage-building.
-- A generated collage must never overlay or leak biometric identifiers
-  (embeddings, similarity scores) into the output image or its metadata --
-  only the crop coordinates and, for a person collage, the group's display
-  name.
+Photo collages (face-aware collages of an event's or a person's photos) were part of the product and have been removed completely: the `collages` app, the
+`/api/collages/` endpoints, the `collage` job kind in the failed-jobs list, the `COLLAGE_TTL_HOURS` setting, the `collages.cleanup_expired` beat task and the
+`collage` rate limit no longer exist. Migration `privacy.0005_drop_collages` drops the table; generated files left under `users/<id>/collages/` are removed by the
+orphan-file sweep (`privacy.cleanup.RETIRED_MEDIA_SUBDIRECTORIES`). Nothing else changed: event grouping (Feature 48), visual search (Feature 50), enhancement,
+identities and uploads work as before, and no consent rule was relaxed or added.
 
 ### Feature 50: Face-based visual search — Done (backend)
 
@@ -1051,7 +1010,7 @@ contain the same face -- "search by a photo" rather than by text.
   existing `identities` app -- no new app or model, since nothing is stored.
   Detects the largest confident face in the query photo, embeds it, and
   compares it against the searching user's own ACTIVE identity groups' centroids
-  using the exact same similarity function and `IDENTITY_MATCH_THRESHOLD` as
+  using the exact same similarity function and the provider's match threshold (`SFACE_MATCH_THRESHOLD`) as
   `_choose_group` -- not a new algorithm or a new threshold, so "found a match"
   means the same thing here as everywhere else in `identities/`. Returns every
   group at or above the threshold (best first; usually zero or one, more only
@@ -1082,6 +1041,29 @@ guarantee for embeddings/centroids, both implemented as described:
   organization-wide identity search anywhere else in `identities`/`moderation`
   to extend yet, and adding one is a separate decision, not implied by this.
   Never a platform-wide search across accounts.
+
+### Feature 51: Automatic enhancement after upload — Done (backend)
+
+The core of the product: a photograph that passes the checks is enhanced **without anyone asking**, safely, and exactly once.
+
+- **When** (`enhancement/auto.py`, started from the same three places that queue the person folders): `accepted` at once; `rejected` (at upload, by the face
+  check or by quality) never; `needs_review` at once in a personal workspace and after a moderator approves it in an organization. A photograph that already has a
+  result of any kind, or a record, is left alone, so a retry or a re-analysis never makes a second enhancement.
+- **How:** level `auto`, style `natural`, under `AUTO_ENHANCEMENT_RENDER_POLICY` (default `adaptive_v1`: analyser, router, candidates, validator; a clean photograph
+  ends as `original_preserved`, which is a successful outcome). A person's own request keeps `ENHANCEMENT_RENDER_POLICY`. No model setting changes; the production
+  guard counts the new policy, so Zero-DCE under it still needs `NONCOMMERCIAL_MODELS_ACKNOWLEDGED`.
+- **Off switches:** `AUTO_ENHANCEMENT_ENABLED` (operator); `auto_enhance` on the account (`PATCH /api/notifications/preferences/`, on by default); `auto_enhance=true|false` on
+  any of the three upload endpoints (absent = the account setting). The answer is stored on the batch.
+- **Capacity:** `ensure_enhancement_capacity` is respected. A photograph over the limit waits and starts as slots free up (when an enhancement ends, and every
+  two minutes by the scheduler), or is skipped as `capacity` after `AUTO_ENHANCEMENT_CAPACITY_WAIT_MINUTES`. Nothing here ever fails an upload.
+- **Progress:** each photograph reports `enhancement: {status, outcome, summary, waiting_for, skipped_reason}`; the batch is not `completed` before its enhancements
+  finished or were skipped (a photograph waiting for a moderator does not hold it back). `enhancement_finished` and `auto_enhance` are on the batch progress.
+- **Notification:** `batch_enhanced`, once per batch ("N photos enhanced"), none per photograph.
+- **Package:** `accepted_results` holds the enhanced version of each accepted photograph that has one and the original for the rest; the manifest says which.
+- **Failure:** a failed automatic enhancement leaves the original untouched and shows as that photograph's `enhancement` stage failing; the existing retry
+  (`POST /api/images/batches/{id}/retry/`) runs it again.
+
+Facial data usage: none new. The enhancement engine's own identity check (SFace, consent-gated) is unchanged; this feature only decides when an enhancement starts.
 
 ## 14. Optional future extensions
 

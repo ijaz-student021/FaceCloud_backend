@@ -10,14 +10,16 @@ and 429 responses are added to every operation in the OpenAPI schema
 | Status | Body | When |
 |---|---|---|
 | 400 | `{"field": ["message", ...], ...}` | Request validation failed. Keys are field names. |
-| 400 | `{"detail": ["message"], "code": "consent_required"}` | A face-recognition feature was refused because the person has not given consent (identity analysis, face search, person collage). Match on `code`. |
+| 400 | `{"detail": ["message"], "code": "consent_required"}` | A face-recognition feature was refused because the person has not given consent (identity analysis, face search). Match on `code`. |
 | 400 | `{"detail": ["message"]}` | A rule raised inside a serializer (login failures, password reset link, batch has nothing to enhance). Note `detail` is a **list** here. |
 | 401 | `{"detail": "message"}` | No credentials, or the account was rejected (see below). |
 | 401 | `{"detail": "...", "code": "token_not_valid", "messages": [...]}` | The token is malformed, expired or blacklisted. |
 | 403 | `{"detail": "message"}` | Authenticated, but the role is not allowed. |
 | 404 | `{"detail": "message"}` | The record does not exist **or belongs to someone else**. |
+| 404 | `{"detail": "Not found."}` | An address under `/api/` that matches no route (for example `/api/images/abc/`, where the route expects a number). JSON, `application/json`; outside `/api/` Django's own page is unchanged. |
 | 410 | `{"detail": "message"}` | A public share link that has expired, been revoked, or whose owner is no longer active. |
 | 429 | `{"detail": "message"}` | Rate limit or job limit reached. |
+| 500 | `{"detail": "Server error."}` | An uncaught failure under `/api/` (nothing about the failure is told to the caller; it is in the server log). JSON, `application/json`. |
 
 Treat `detail` as either a string or a one-element list and show it as is; the
 messages are written for end users.

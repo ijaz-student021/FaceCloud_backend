@@ -1,6 +1,6 @@
 from django.urls import include, path
 
-from .admin_images import AdminImageDetailView, AdminImageListView, AdminImagePreviewView
+from .admin_images import AdminImageDecisionView, AdminImageDetailView, AdminImageListView, AdminImagePreviewView
 
 from .views import (
     AdminAnalyticsView,
@@ -29,5 +29,6 @@ urlpatterns = [
     path("images/", AdminImageListView.as_view(), name="admin-images"),
     path("images/<int:pk>/", AdminImageDetailView.as_view(), name="admin-image-detail"),
     path("images/<int:pk>/preview/", AdminImagePreviewView.as_view(), name="admin-image-preview"),
+    path("images/<int:pk>/decision/", AdminImageDecisionView.as_view(), name="admin-image-decision"),
 ]
 

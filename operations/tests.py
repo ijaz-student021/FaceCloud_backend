@@ -61,6 +61,45 @@ class SystemHealthServiceTests(SimpleTestCase):
 
 
 @override_settings(FACECLOUD_VERSION="test-version")
+class SystemHealthServicesTests(SimpleTestCase):
+    """The rows the System Health screen draws, taken from the checks and the job counts."""
+
+    @patch("operations.services.job_counts", return_value={"pending": 4, "active": 2, "failed": 0})
+    @patch.dict(
+        "operations.services.CHECKS",
+        {
+            "database": lambda: {"status": HEALTHY, "latency_ms": 0.4},
+            "redis": lambda: {"status": HEALTHY, "latency_ms": 1.2},
+            "celery": lambda: {"status": DEGRADED, "latency_ms": 90.0, "code": "no_workers", "workers": 0},
+            "storage": lambda: {"status": HEALTHY, "latency_ms": 0.6, "available_bytes": 5000},
+        },
+        clear=True,
+    )
+    def test_each_check_becomes_a_named_row_with_the_screen_s_state_words(self, _counts):
+        health = build_system_health()
+        rows = {row["key"]: row for row in health["services"]}
+        self.assertEqual([row["key"] for row in health["services"]], ["database", "redis", "celery", "storage"])
+        self.assertEqual((rows["database"]["name"], rows["database"]["status"], rows["database"]["latency_ms"]), ("Database", "operational", 0.4))
+        self.assertEqual((rows["celery"]["status"], rows["celery"]["detail"], rows["celery"]["workers"]), ("degraded", "no_workers", 0))
+        self.assertEqual(rows["celery"]["queue_size"], 6)                  # waiting plus running
+        self.assertEqual(rows["storage"]["available_bytes"], 5000)
+        self.assertNotIn("cpu_percent", rows["database"])                  # nothing is claimed that was not measured
+
+    @patch("operations.services.job_counts", return_value={"pending": None, "active": None, "failed": None})
+    @patch.dict("operations.services.CHECKS", {"celery": lambda: {"status": UNAVAILABLE, "latency_ms": 0}, "database": lambda: {"status": HEALTHY, "latency_ms": 0}, "redis": lambda: {"status": HEALTHY, "latency_ms": 0}, "storage": lambda: {"status": HEALTHY, "latency_ms": 0}}, clear=True)
+    def test_an_unknown_queue_is_null_not_zero_and_a_failed_check_reads_down(self, _counts):
+        rows = {row["key"]: row for row in build_system_health()["services"]}
+        self.assertIsNone(rows["celery"]["queue_size"])
+        self.assertEqual(rows["celery"]["status"], "down")
+
+    @patch("operations.services.job_counts", return_value={"pending": 0, "active": 0, "failed": 0})
+    @patch.dict("operations.services.CHECKS", {"database": lambda: {"status": HEALTHY, "latency_ms": 0}, "redis": lambda: {"status": HEALTHY, "latency_ms": 0}, "storage": lambda: {"status": HEALTHY, "latency_ms": 0}}, clear=True)
+    def test_the_process_says_when_it_started(self, _counts):
+        process = build_system_health()["process"]
+        self.assertGreaterEqual(process["uptime_seconds"], 0)
+        self.assertIn("T", process["started_at"])
+
+
 class SystemHealthApiTests(APITestCase):
     def setUp(self):
         self.user = User.objects.create_user(

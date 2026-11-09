@@ -44,6 +44,33 @@ class ReviewAssignmentNotificationTests(ModerationFixtureMixin, TestCase):
         )
         self.assertEqual(notification.resource_id, self.review.pk)
 
+    def test_a_moderator_who_turned_review_updates_off_in_settings_is_not_told_about_an_assignment(self):
+        moderator_client = self.authenticated_client(self.moderator_user)
+        shown = moderator_client.get(reverse("notification-preferences"))
+        self.assertIs(shown.data["moderator_review_updates"], True)
+        changed = moderator_client.patch(reverse("notification-preferences"), {"moderator_review_updates": False}, format="json")
+        self.assertEqual(changed.status_code, status.HTTP_200_OK)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.owner_client.post(self.assign_url(), {"moderator_id": self.moderator_user.pk}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)                  # the assignment itself still happens
+        self.review.refresh_from_db()
+        self.assertEqual(self.review.assigned_moderator_id, self.moderator_user.pk)
+        self.assertFalse(UserNotification.objects.filter(
+            recipient=self.moderator_user, event_type=UserNotification.EventType.MODERATOR_REVIEW_ASSIGNED).exists())
+
+    def test_turning_it_back_on_in_settings_brings_the_notification_back(self):
+        moderator_client = self.authenticated_client(self.moderator_user)
+        moderator_client.patch(reverse("notification-preferences"), {"moderator_review_updates": False}, format="json")
+        moderator_client.patch(reverse("notification-preferences"), {"moderator_review_updates": True}, format="json")
+
+        with self.captureOnCommitCallbacks(execute=True):
+            self.owner_client.post(self.assign_url(), {"moderator_id": self.moderator_user.pk}, format="json")
+
+        self.assertEqual(UserNotification.objects.filter(
+            recipient=self.moderator_user, event_type=UserNotification.EventType.MODERATOR_REVIEW_ASSIGNED).count(), 1)
+
     def test_assigning_to_someone_outside_the_organization_is_rejected(self):
         outsider = self.make_user("notif-outsider")
 

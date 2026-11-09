@@ -49,6 +49,16 @@ def biometric_processing_allowed(user):
     return (not settings.BIOMETRIC_CONSENT_REQUIRED) or has_active_consent(user)
 
 
+# What the face-processing consent covers, in the person's words (shown next to the switch; the purpose itself is "face_identity").
+PURPOSE_COVERS = {
+    ConsentPurpose.FACE_IDENTITY: [
+        "Person folders: finding the same person across your photographs",
+        "Face restoration when an enhancement repairs a blurred or degraded face",
+        "Checking that an enhancement did not change who is in a photograph",
+    ],
+}
+
+
 def consent_status(user):
     purposes = []
     for purpose, label in ConsentPurpose.choices:
@@ -61,10 +71,13 @@ def consent_status(user):
                 "active": has_active_consent(user, purpose),
                 "policy_version": latest.policy_version if latest else None,
                 "updated_at": latest.created_at if latest else None,
+                "covers": PURPOSE_COVERS.get(purpose, []),
             }
         )
     return {
         "required": bool(settings.BIOMETRIC_CONSENT_REQUIRED),
+        # The one answer a screen needs: may faces be processed for this person right now (consent not required, or active against the current policy)?
+        "face_processing_allowed": biometric_processing_allowed(user),
         "current_policy_version": current_policy_version(),
         "purposes": purposes,
     }
@@ -270,8 +283,8 @@ def build_privacy_export(user):
 
     images = collect(
         "images",
-        ImageUpload.objects.filter(owner=user).order_by("-created_at"),
-        ("id", "original_name", "file_size", "width", "height", "status", "created_at"),
+        ImageUpload.all_objects.filter(owner=user).order_by("-created_at"),         # everything held about the person, the trash included
+        ("id", "original_name", "file_size", "width", "height", "status", "created_at", "trashed_at", "gps_lat", "gps_lon"),
     )
     enhancement_rows = collect(
         "enhancements",
@@ -425,8 +438,8 @@ def build_organization_export_payload(organization):
     )
     images = collect(
         "images",
-        ImageUpload.objects.filter(batch__organization=organization),
-        ("id", "batch_id", "original_name", "status", "created_at"),
+        ImageUpload.all_objects.filter(batch__organization=organization),
+        ("id", "batch_id", "original_name", "status", "created_at", "trashed_at"),
     )
     quality_decisions = collect(
         "quality_decisions",

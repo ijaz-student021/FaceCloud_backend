@@ -40,6 +40,8 @@ class IdentityAnalysis(models.Model):
     policy_version = models.CharField(max_length=40)
     task_id = models.CharField(max_length=255, blank=True, db_index=True)
     failure_reason = models.TextField(blank=True)
+    # Why the analysis did what it did, in plain data: the faces the detector found that were not grouped (too small, too unsure) and the limits used.
+    evidence = models.JSONField(default=dict, blank=True)
     processing_duration_ms = models.PositiveIntegerField(default=0)
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
@@ -158,6 +160,7 @@ class IdentityChange(models.Model):
         PROFILE_SET = "profile_set", "Profile set"
         DELETED = "deleted", "Deleted"
         REVIEWED = "reviewed", "Reviewed"
+        ARCHIVED = "archived", "Archived"
 
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="identity_changes")
     actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="performed_identity_changes")

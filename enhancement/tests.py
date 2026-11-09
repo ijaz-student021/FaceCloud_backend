@@ -743,6 +743,44 @@ class EnhancementProcessingAndAPITests(TestCase):
             "full_resolution_original",
         )
 
+    def test_a_photograph_enlarged_in_preprocessing_is_enhanced_from_the_enlarged_copy(self):
+        """A tiny upload that preprocessing enlarged is enhanced from that copy, not from the tiny upload (which would enlarge it again, smaller)."""
+        success, tiny = cv2.imencode(".jpg", np.full((24, 40, 3), 90, dtype=np.uint8))
+        self.assertTrue(success)
+        self.image.original_file.delete(save=False)
+        self.image.original_file.save("tiny.jpg", ContentFile(tiny.tobytes()))
+        self.image.width = 40
+        self.image.height = 24
+        self.image.save(update_fields=["width", "height", "updated_at"])
+        success, enlarged = cv2.imencode(".jpg", np.full((96, 160, 3), 90, dtype=np.uint8))
+        self.assertTrue(success)
+        self.preprocessing.processed_file.delete(save=False)
+        self.preprocessing.processed_file.save("enlarged.jpg", ContentFile(enlarged.tobytes()))
+        self.preprocessing.output_width = 160
+        self.preprocessing.output_height = 96
+        self.preprocessing.enlargement = {"applied": True, "from": [40, 24], "to": [160, 96], "scale": 4, "engine": "opencv_lanczos"}
+        self.preprocessing.save(update_fields=["output_width", "output_height", "enlargement", "updated_at"])
+        result = ImageEnhancementResult.objects.create(
+            owner=self.user, image=self.image, preprocessing_result=self.preprocessing, requested_level=EnhancementLevel.LOW,
+        )
+
+        result = process_enhancement_result(result)
+
+        self.assertEqual((result.output_width, result.output_height), (160, 96))
+        self.assertEqual(result.applied_parameters["source_resolution_strategy"], "standardized_enlarged")
+        self.assertEqual(result.applied_parameters["source_dimensions"], [160, 96])
+
+    def test_an_enlargement_that_was_not_applied_does_not_change_the_source(self):
+        """``enlargement`` of ``{}`` (large photograph) or ``applied: False`` (enlarging failed) keeps the original-resolution source."""
+        from enhancement.services import _enlarged_in_preprocessing
+
+        result = ImageEnhancementResult(preprocessing_result=self.preprocessing)
+        for enlargement in ({}, {"applied": False, "reason": "boom"}, None):
+            self.preprocessing.enlargement = enlargement
+            self.assertFalse(_enlarged_in_preprocessing(result))
+        self.preprocessing.enlargement = {"applied": True}
+        self.assertTrue(_enlarged_in_preprocessing(result))
+
     @patch("enhancement.views.process_enhancement_image.apply_async")
     def test_owner_can_queue_enhancement_and_other_user_cannot_read_or_download(
         self, apply_async
