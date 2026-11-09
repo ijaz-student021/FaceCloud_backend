@@ -12,7 +12,8 @@ is how the real service behaves: its answers are scripted, and the shapes it ans
 * ``{"polls": 2}``                        status requests answered ``in_progress`` before ``complete``
 * ``{"status_names": ["received", "predicting"]}``  the in-progress statuses reported, in turn (the last repeats): the real service says ``predicting``
 * ``{"status_redirect": "<url>"}``        the status request is answered with a redirect there (a request that carries the key must never follow it)
-* ``{"upload_status": 402}``              refuse the upload with this HTTP status (``{"error": ...}`` body)
+* ``{"upload_status": 402}``              refuse the upload with this HTTP status (a ``{"message": ..., "code": "BAD_REQUEST"}`` body, the shape the real service uses)
+* ``{"upload_message": "..."}``           with ``upload_status``: the message in that body
 * ``{"status_after": "failed"}``          the status the job ends in instead of ``complete``
 * ``{"status_errors": 2}``                the first status requests fail with HTTP 503
 * ``{"result_status": 404}``              the result address answers with this HTTP status
@@ -101,7 +102,7 @@ class FakeDeepImageServer:
                     return self._send(307, b"", "text/plain", {"Location": behaviour["upload_redirect"]})
                 if behaviour.get("upload_status"):
                     echoed = {"key": self.headers.get("x-api-key")} if behaviour.get("echo_key") else {}
-                    return self._json(behaviour["upload_status"], {"error": "refused by the scripted behaviour", **echoed})
+                    return self._json(behaviour["upload_status"], {"message": behaviour.get("upload_message", "refused by the scripted behaviour"), "code": "BAD_REQUEST", **echoed})
                 if behaviour.get("bad_json"):
                     return self._send(200, b"this is not json", "text/plain")
                 if behaviour.get("no_job"):

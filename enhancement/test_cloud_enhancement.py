@@ -184,6 +184,14 @@ class ClientTests(ServerCase):
                 self.assertEqual(self.reason_of(self.submit), reason)
                 self.assertEqual(len(server.uploads()), 1)
 
+    def test_the_providers_plan_refusal_has_its_own_reason(self):
+        self.serve([{"upload_status": 400, "upload_message": "This Auto Enhance preset is available only for paid accounts."}])
+        self.assertEqual(self.reason_of(self.submit), "plan_required")
+        self.serve([{"upload_status": 400, "upload_message": "The preset is not valid."}])
+        self.assertEqual(self.reason_of(self.submit), "rejected")
+        self.serve([{"upload_status": 402, "upload_message": "Only for paid accounts."}])
+        self.assertEqual(self.reason_of(self.submit), "no_credits")          # the words alone are not enough: a plan refusal is a 400
+
     def test_a_wrong_key_is_refused(self):
         self.serve(key="another-key")
         self.assertEqual(self.reason_of(self.submit), "unauthorized")
@@ -295,6 +303,76 @@ class ClientTests(ServerCase):
         self.assertEqual(self.reason_of(lambda: cloud.decode_result(b"this is not an image")), "bad_result")
         with override_settings(DEEP_IMAGE_MAX_RESULT_PIXELS=10):
             self.assertEqual(self.reason_of(lambda: cloud.decode_result(payload)), "result_too_large")
+
+
+class ResultFallbackTests(SimpleTestCase):
+    S3 = "https://neuroapi-store.s3.eu-central-1.amazonaws.com/2026-11-09/a.jpg"
+
+    def make_client(self, calls):
+        client = cloud.DeepImageClient(api_key="k" * 30, base_url=cloud.DEFAULT_BASE_URL)
+        seen = []
+
+        def call(request, limit, opener, too_big):
+            seen.append(request.full_url)
+            outcome = calls[min(len(seen), len(calls)) - 1]
+            if isinstance(outcome, str):
+                raise cloud.CloudDeclined(outcome)
+            return outcome
+
+        patcher = patch.object(client, "_call", side_effect=call)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return client, seen
+
+    def test_a_bucket_host_is_turned_into_the_regional_endpoints_address(self):
+        self.assertEqual(cloud.path_style(self.S3), "https://s3.eu-central-1.amazonaws.com/neuroapi-store/2026-11-09/a.jpg")
+        self.assertEqual(cloud.path_style(self.S3 + "?X-Amz-Signature=abc&x=1"), "https://s3.eu-central-1.amazonaws.com/neuroapi-store/2026-11-09/a.jpg?X-Amz-Signature=abc&x=1")
+        self.assertEqual(cloud.path_style("https://my.bucket.with.dots.s3.us-east-2.amazonaws.com/k.jpg"), "https://s3.us-east-2.amazonaws.com/my.bucket.with.dots/k.jpg")
+
+    def test_nothing_else_is_rewritten(self):
+        for url in ("http://neuroapi-store.s3.eu-central-1.amazonaws.com/a.jpg", "https://s3.eu-central-1.amazonaws.com/neuroapi-store/a.jpg", "https://deep-image.ai/files/a.jpg",
+                    "https://neuroapi-store.s3.amazonaws.com/a.jpg", "https://evil.example.com/x.s3.eu-central-1.amazonaws.com/a.jpg", "https://93.184.216.34/a.jpg",
+                    "https://s3.eu-central-1.amazonaws.com.evil.example.com/a.jpg", "", "not a url"):
+            with self.subTest(url):
+                self.assertIsNone(cloud.path_style(url))
+
+    def test_an_unreachable_bucket_host_is_asked_for_again_through_the_regional_endpoint(self):
+        for reason in ("connection_error", "timeout"):
+            with self.subTest(reason):
+                client, seen = self.make_client([reason, b"the image"])
+                self.assertEqual(client.download(self.S3), b"the image")
+                self.assertEqual(seen, [self.S3, "https://s3.eu-central-1.amazonaws.com/neuroapi-store/2026-11-09/a.jpg"])
+
+    def test_a_host_that_answers_is_not_asked_twice(self):
+        client, seen = self.make_client([b"the image"])
+        self.assertEqual(client.download(self.S3), b"the image")
+        self.assertEqual(seen, [self.S3])
+
+    def test_only_an_unreachable_host_is_tried_again(self):
+        for reason in ("rejected", "result_too_large", "provider_error", "bad_reply"):
+            with self.subTest(reason):
+                client, seen = self.make_client([reason, b"the image"])
+                with self.assertRaises(cloud.CloudDeclined) as caught:
+                    client.download(self.S3)
+                self.assertEqual((caught.exception.reason, len(seen)), (reason, 1))
+
+    def test_an_address_that_is_not_a_bucket_host_is_not_tried_again(self):
+        client, seen = self.make_client(["connection_error", b"the image"])
+        with self.assertRaises(cloud.CloudDeclined) as caught:
+            client.download("https://cdn.example.net/a.jpg")
+        self.assertEqual((caught.exception.reason, len(seen)), ("connection_error", 1))
+
+    def test_when_both_addresses_fail_the_second_failure_is_the_answer(self):
+        client, seen = self.make_client(["connection_error", "timeout"])
+        with self.assertRaises(cloud.CloudDeclined) as caught:
+            client.download(self.S3)
+        self.assertEqual((caught.exception.reason, len(seen)), ("timeout", 2))
+
+    def test_the_regional_address_is_checked_like_any_other(self):
+        client, seen = self.make_client(["connection_error", b"the image"])
+        with patch("enhancement.cloud.path_style", return_value="https://127.0.0.1/neuroapi-store/a.jpg"), self.assertRaises(cloud.CloudDeclined) as caught:
+            client.download(self.S3)
+        self.assertEqual((caught.exception.reason, len(seen)), ("bad_reply", 1))
 
 
 class ResultAddressTests(SimpleTestCase):
@@ -594,8 +672,8 @@ class SettingsAndRegistryTests(SimpleTestCase):
 
     def test_a_fallback_is_recorded_and_said_in_words_only_where_a_person_should_know(self):
         said = {}
-        for reason in ("not_configured", "daily_limit", "unauthorized", "no_credits", "identity_unverifiable", "timeout", "bad_result", "unexpected_error", "structure_changed",
-                       "face_lost", "identity_changed", "no_consent", "lighting_requested", "transparency", "disabled"):
+        for reason in ("not_configured", "daily_limit", "unauthorized", "no_credits", "plan_required", "identity_unverifiable", "timeout", "bad_result", "unexpected_error",
+                       "structure_changed", "face_lost", "identity_changed", "no_consent", "lighting_requested", "transparency", "disabled"):
             parameters = {"warnings": []}
             cloud.note_fallback(parameters, reason, attempted=reason in ("timeout", "structure_changed"))
             said[reason] = parameters["warnings"]
@@ -603,8 +681,8 @@ class SettingsAndRegistryTests(SimpleTestCase):
             self.assertFalse(parameters["cloud_enhancement"]["used"])
         for reason in ("no_consent", "lighting_requested", "transparency", "disabled"):
             self.assertEqual(said[reason], [], reason)
-        for reason in ("not_configured", "daily_limit", "unauthorized", "no_credits", "identity_unverifiable", "timeout", "bad_result", "unexpected_error", "structure_changed",
-                       "face_lost", "identity_changed"):
+        for reason in ("not_configured", "daily_limit", "unauthorized", "no_credits", "plan_required", "identity_unverifiable", "timeout", "bad_result", "unexpected_error",
+                       "structure_changed", "face_lost", "identity_changed"):
             self.assertEqual(len(said[reason]), 1, reason)
         self.assertEqual(said["timeout"], [cloud.SERVICE_SENTENCE])
         self.assertEqual(said["bad_result"], [cloud.SERVICE_SENTENCE])

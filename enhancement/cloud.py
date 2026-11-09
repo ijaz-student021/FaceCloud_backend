@@ -17,12 +17,13 @@ import io
 import ipaddress
 import json
 import logging
+import re
 import time
 import uuid
 from http.client import HTTPException
 from urllib import error as urllib_error
 from urllib import request as urllib_request
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import cv2
 import numpy as np
@@ -52,6 +53,7 @@ DEFAULT_BASE_URL = "https://deep-image.ai/rest_api"       # the address the prod
 IN_PROGRESS = frozenset({"received", "in_progress", "not_started", "queued", "pending", "processing", "predicting"})
 FAILED = frozenset({"failed", "failure", "error", "errored", "cancelled", "canceled", "rejected", "blocked", "expired", "timeout"})
 TRANSIENT = frozenset({"timeout", "connection_error", "rate_limited", "provider_error"})      # a status request that fails like this is worth another try; an upload is never repeated
+S3_BUCKET_HOST = re.compile(r"^(?P<bucket>[a-z0-9][a-z0-9.-]*[a-z0-9])\.s3\.(?P<region>[a-z0-9-]+)\.amazonaws\.com$")
 POLL_RETRIES = 3                  # consecutive failed status requests before the job is given up on
 MAX_REPLY_BYTES = 1024 * 1024     # a JSON reply is a few hundred bytes
 ASPECT_TOLERANCE = 0.02           # the result's width / height against the upload's: a rounded pixel is far below it, a crop or an extension far above
@@ -67,6 +69,7 @@ SENTENCES = {
     "unauthorized": "The cloud service refused the request, so the local engine was used.",
     "no_credits": "The cloud service has no credits left, so the local engine was used.",
     "identity_unverifiable": "The faces in this photograph could not be verified for the cloud result, so the local engine was used.",
+    "plan_required": "The cloud service's plan does not include this enhancement, so the local engine was used.",
     "no_consent": None, "lighting_requested": None, "transparency": None, "disabled": None,
 }
 SERVICE_SENTENCE = "The cloud service could not deliver an enhanced photograph, so the local engine was used."
@@ -180,6 +183,19 @@ def check_result_url(url, base_url):
             raise CloudDeclined("bad_reply")
 
 
+def path_style(url):
+    """The same S3 object through the region's own endpoint (``https://s3.<region>.amazonaws.com/<bucket>/<key>``), or ``None`` for an address that is not a bucket's own host.
+
+    The provider answers with ``https://<bucket>.s3.<region>.amazonaws.com/<key>``. On the owner's network (2026-11-09) a connection to that hostname was reset in the TLS handshake,
+    for Python and for curl alike, while the regional endpoint answered: the same object, through the other address, was fetched at once.
+    """
+    parts = urlsplit(str(url))
+    match = S3_BUCKET_HOST.match(parts.hostname or "")
+    if parts.scheme != "https" or not match:
+        return None
+    return urlunsplit(("https", f"s3.{match.group('region')}.amazonaws.com", f"/{match.group('bucket')}{parts.path}", parts.query, ""))
+
+
 def _status_reason(code):
     if code in (401, 403):
         return "unauthorized"
@@ -253,7 +269,20 @@ class DeepImageClient:
             time.sleep(float(settings.DEEP_IMAGE_POLL_SECONDS))
 
     def download(self, url):
-        """The finished image's bytes. No key is sent: the address is the provider's reply, not the provider's API."""
+        """The finished image's bytes. No key is sent: the address is the provider's reply, not the provider's API.
+
+        When the address cannot be reached (a reset or a timeout) and it is a bucket's own S3 host, the same object is asked for through the regional endpoint (``path_style``).
+        """
+        try:
+            return self._fetch(url)
+        except CloudDeclined as error:
+            fallback = path_style(url) if error.reason in ("connection_error", "timeout") else None
+            if fallback is None:
+                raise
+            logger.warning("The result's own host could not be reached (%s): asking the regional S3 endpoint for the same object.", error.reason)
+            return self._fetch(fallback)
+
+    def _fetch(self, url):
         check_result_url(url, self.base_url)
         request = urllib_request.Request(url, headers={"Accept": "image/*"})
         return self._call(request, int(settings.DEEP_IMAGE_MAX_RESULT_BYTES), urllib_request.build_opener(_CheckedRedirect(self.base_url)), "result_too_large")
@@ -274,8 +303,9 @@ class DeepImageClient:
             with opener.open(request, timeout=self.timeout) as response:     # nosec B310 - the provider's own https address (settings), or an address check_result_url accepted
                 data = response.read(limit + 1)
         except urllib_error.HTTPError as error:
-            self._note_refusal(error)
-            raise CloudDeclined(_status_reason(error.code)) from None
+            said = self._note_refusal(error)
+            # The first real refusal (2026-11-09, a free account asking for auto_enhance_pro) was an HTTP 400 whose message said "available only for paid accounts": worth its own code.
+            raise CloudDeclined("plan_required" if error.code == 400 and "paid account" in said.lower() else _status_reason(error.code)) from None
         except urllib_error.URLError as error:
             raise CloudDeclined("timeout" if isinstance(error.reason, TimeoutError) else "connection_error") from None
         except TimeoutError:
@@ -296,7 +326,9 @@ class DeepImageClient:
             text = ""
         if self.api_key:
             text = text.replace(self.api_key, "[key]")
-        logger.warning("Deep Image answered HTTP %s: %s", error.code, " ".join(text.split())[:200])
+        text = " ".join(text.split())[:200]
+        logger.warning("Deep Image answered HTTP %s: %s", error.code, text)
+        return text
 
 
 # -- the photograph, there and back --------------------------------------------------------------------------------------------------------------------------------------------
