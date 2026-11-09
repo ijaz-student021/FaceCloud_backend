@@ -457,6 +457,11 @@ POST /api/enhancements/batches/{batch_id}/  {level, style}  or  {preset}     [+ 
     only = "no AI model could be used, a classical fallback was applied"; neither, with `stages` not empty = "classical enhancement only"; neither, `stages` empty = original kept.
   - `stage` uses the same names as `applied_stages[].stage`, and `engine` agrees with `applied_stages[].engine`. (Until 2026-11-05 `applied_stages[].engine` could name the first model
     that ran instead of the one whose result was kept, when a refused model was followed by a fallback; the engine named is now the one that produced the pixels.)
+  - **Optional cloud engine (off unless the operator switches it on: `docs/enhancement/cloud-auto-enhance.md`).** When it made the photograph the result has ONE stage, `stage`
+    `cloud_enhance`, `engine` `deep_image_<preset>` (for example `deep_image_auto_enhance_pro`), `kind` `ai`, `fallback` `false`; `enhancement_summary` says a cloud AI model was used.
+    Nothing else in the response changed, but the output is usually much larger than the upload (up to 4096 px wide), so read `output_width` / `output_height`. A client that does not know
+    the names shows them as text and is not broken by them. When the cloud engine was wanted and was not used, the result is the local engine's, the summary names the engines that
+    really made it, and `warnings` (on the comparison endpoint) has one sentence for the reasons that need one.
 - **Blur and low resolution do not reject a photograph that has a face.** The quality decision (`GET /api/quality/images/{id}/` and
   `quality_decision` in `GET /api/images/my/`) measures sharpness on the face: `measurements.sharpness_basis` is `face` or `frame`,
   `measurements.face_blur_warning` is `true` for a blurred face (show a "will be sharpened" hint, not an error), and

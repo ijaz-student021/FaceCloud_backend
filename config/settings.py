@@ -273,6 +273,39 @@ if min(OPENAI_ADVISOR_MAX_ATTEMPTS, OPENAI_ADVISOR_MAX_CONCURRENCY, OPENAI_ADVIS
 if OPENAI_ADVISOR_TIMEOUT_SECONDS * OPENAI_ADVISOR_MAX_ATTEMPTS > OPENAI_ADVISOR_DEADLINE_SECONDS * 2:
     raise ImproperlyConfigured("OPENAI_ADVISOR_DEADLINE_SECONDS is too short for the timeout and attempts configured.")
 
+# Optional cloud enhancement (enhancement/cloud.py): Deep Image's Auto Enhance presets make the pixels in place of the local engine. Off until an operator turns it
+# on AND supplies a key; with either missing nothing is sent anywhere and every result is exactly what it was. The key lives only in the environment / secret store:
+# it is never logged, put in an error, returned by an endpoint or committed. Only the six auto_enhance presets can be named, so no other Deep Image operation is ever
+# called. Each photograph is judged on its own (size, structure, face geometry and identity against the upload); any failure hands it to the local engine, and the
+# result's processing_summary names the engine that really made the pixels. DEEP_IMAGE_BASE_URL is for a local test server in development: the production guard
+# refuses any address but the provider's. A photograph is sent only for an owner whose face-processing consent is on (the same switch as face restoration).
+CLOUD_ENHANCEMENT_ENABLED = env.bool("CLOUD_ENHANCEMENT_ENABLED", default=False)
+DEEP_IMAGE_API_KEY = env("DEEP_IMAGE_API_KEY", default="")
+DEEP_IMAGE_PRESETS = ("auto_enhance_pro", "auto_enhance_qwen", "auto_enhance_klein9b", "auto_enhance_generative", "auto_enhance_tone_correction", "auto_enhance")
+DEEP_IMAGE_PRESET = env("DEEP_IMAGE_PRESET", default="auto_enhance_pro")
+DEEP_IMAGE_BASE_URL = env("DEEP_IMAGE_BASE_URL", default="https://deep-image.ai/rest_api")
+# One HTTP request, and the whole photograph (upload, waiting, download): the pro and qwen presets take about 30 s by the provider's own figures. The poll interval is
+# the pause between two status requests (free, unlike the upload, which is never repeated: every attempt is paid for).
+DEEP_IMAGE_REQUEST_TIMEOUT_SECONDS = env.float("DEEP_IMAGE_REQUEST_TIMEOUT_SECONDS", default=30.0)
+DEEP_IMAGE_DEADLINE_SECONDS = env.int("DEEP_IMAGE_DEADLINE_SECONDS", default=150)
+DEEP_IMAGE_POLL_SECONDS = env.float("DEEP_IMAGE_POLL_SECONDS", default=2.0)
+DEEP_IMAGE_UPLOAD_JPEG_QUALITY = env.int("DEEP_IMAGE_UPLOAD_JPEG_QUALITY", default=95)
+DEEP_IMAGE_MAX_RESULT_BYTES = env.int("DEEP_IMAGE_MAX_RESULT_BYTES", default=64 * 1024 * 1024)
+DEEP_IMAGE_MAX_RESULT_PIXELS = env.int("DEEP_IMAGE_MAX_RESULT_PIXELS", default=40_000_000)
+# Requests sent per calendar day, a backstop against a loop or a huge batch spending the credits (0: no limit). A photograph over the limit is enhanced locally.
+DEEP_IMAGE_DAILY_REQUEST_LIMIT = env.int("DEEP_IMAGE_DAILY_REQUEST_LIMIT", default=300)
+# The result must still be the same picture: structure similarity of its brightness-normalised luminance with the upload (validator.structure_ssim). A backstop against a
+# re-composed image, not a taste: the face checks (geometry and identity) are what protect a person's likeness.
+CLOUD_ENHANCEMENT_MIN_STRUCTURE_SSIM = env.float("CLOUD_ENHANCEMENT_MIN_STRUCTURE_SSIM", default=0.5)
+if DEEP_IMAGE_PRESET not in DEEP_IMAGE_PRESETS:
+    raise ImproperlyConfigured(f"DEEP_IMAGE_PRESET must be one of: {', '.join(DEEP_IMAGE_PRESETS)}.")
+if min(DEEP_IMAGE_REQUEST_TIMEOUT_SECONDS, DEEP_IMAGE_DEADLINE_SECONDS, DEEP_IMAGE_POLL_SECONDS, DEEP_IMAGE_MAX_RESULT_BYTES, DEEP_IMAGE_MAX_RESULT_PIXELS) <= 0:
+    raise ImproperlyConfigured("The DEEP_IMAGE_* time and size limits must be positive.")
+if DEEP_IMAGE_DEADLINE_SECONDS < DEEP_IMAGE_REQUEST_TIMEOUT_SECONDS:
+    raise ImproperlyConfigured("DEEP_IMAGE_DEADLINE_SECONDS must be at least DEEP_IMAGE_REQUEST_TIMEOUT_SECONDS.")
+if not 50 <= DEEP_IMAGE_UPLOAD_JPEG_QUALITY <= 100 or DEEP_IMAGE_DAILY_REQUEST_LIMIT < 0 or not 0.0 <= CLOUD_ENHANCEMENT_MIN_STRUCTURE_SSIM <= 1.0:
+    raise ImproperlyConfigured("DEEP_IMAGE_UPLOAD_JPEG_QUALITY must be 50-100, DEEP_IMAGE_DAILY_REQUEST_LIMIT at least 0 and CLOUD_ENHANCEMENT_MIN_STRUCTURE_SSIM 0-1.")
+
 # Which enhancement stages may run (enhancement/policy.py). "lightweight_v1"
 # (default): OpenCV and Pillow only; the learned-model settings below
 # (ZERO_DCE_ENABLED, HD_RESTORATION_ENABLED, ...) are ignored. "learned_v1": the

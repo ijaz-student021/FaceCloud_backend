@@ -18,6 +18,7 @@ LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}  # nosec B104 - a den
 MIN_SECRET_LENGTH = 50
 MIN_KEY_LENGTH = 32
 MIN_HSTS_SECONDS = 31_536_000  # one year
+DEEP_IMAGE_BASE_URL = "https://deep-image.ai/rest_api"  # the cloud engine's provider; enhancement/cloud.py DEFAULT_BASE_URL is the same address (a test pins them together)
 
 
 def _is_placeholder(value):
@@ -195,6 +196,12 @@ def policy_rule(cfg):
             problems.append("OPENAI_BASE_URL must be empty in production: previews may only go to the provider itself.")
         if not cfg.get("OPENAI_ADVISOR_MODEL"):
             problems.append("OPENAI_ADVISOR_ENABLED needs OPENAI_ADVISOR_MODEL (an image-capable model).")
+    if cfg.get("CLOUD_ENHANCEMENT_ENABLED"):
+        # Switching the cloud engine on sends whole photographs to an external service: complete (a real key) and pointed only at the provider itself.
+        if not cfg.get("DEEP_IMAGE_API_KEY") or _is_placeholder(cfg.get("DEEP_IMAGE_API_KEY")):
+            problems.append("CLOUD_ENHANCEMENT_ENABLED needs a real DEEP_IMAGE_API_KEY from the secret store.")
+        if str(cfg.get("DEEP_IMAGE_BASE_URL") or "").rstrip("/") != DEEP_IMAGE_BASE_URL:
+            problems.append(f"DEEP_IMAGE_BASE_URL must be {DEEP_IMAGE_BASE_URL} in production: photographs may only go to the provider itself.")
     threshold = int(cfg.get("LOGIN_LOCK_THRESHOLD") or 0)
     if not 3 <= threshold <= 20:
         problems.append("LOGIN_LOCK_THRESHOLD must be between 3 and 20.")
