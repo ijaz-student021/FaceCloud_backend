@@ -12,7 +12,7 @@ so they are unit-tested one by one (`config/test_production_guard.py`).
 from urllib.parse import urlsplit
 
 PLACEHOLDERS = ("replace-with", "example.com", "changeme", "change-me", "your-")
-DEV_MAIL_BACKENDS = ("console", "locmem", "dummy", "filebased")
+DEV_MAIL_BACKENDS = ("console", "locmem", "dummy", "filebased", "dev_email")
 DEV_HOSTS = {"testserver", "*"}
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}  # nosec B104 - a deny-list entry for FRONTEND_URL, never bound
 MIN_SECRET_LENGTH = 50

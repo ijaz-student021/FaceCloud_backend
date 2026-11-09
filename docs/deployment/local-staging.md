@@ -65,6 +65,27 @@ The end-to-end queue checks in `scripts/check_queue_integration.py` run
 outside Docker (they start their own Redis and database). Run them on the host
 before relying on staging.
 
+## Emails while developing (copyable verification and reset links)
+
+With `EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend` (the development default) Django prints the raw message, which is
+quoted-printable: `=` becomes `=3D` and long lines are cut with a trailing `=`. A verification link copied from that output has a
+mangled `registration_id` and `token`, and verification fails.
+
+When `DJANGO_DEBUG=True` the console backend is replaced by `config.dev_email.DevConsoleEmailBackend`, which prints the decoded text and one
+clearly marked line per link, for sign-up verification, password reset and both kinds of invitation:
+
+```text
+[dev email] To: ada@example.com
+[dev email] Subject: Verify your FaceCloud email address
+[dev email] verify link: http://localhost:5173/verify-email?registration_id=...&token=...
+```
+
+Copy the line after `verify link:` (or `password reset link:`, `invitation link:`) into the browser.
+
+* `DEV_PRINT_EMAIL_LINKS=False` keeps Django's plain console output even in development.
+* It never applies when `DJANGO_DEBUG` is off, the production guard refuses it as an `EMAIL_BACKEND`, and real SMTP recipients get exactly
+  the message they got before.
+
 ## Local development after pulling
 
 A local SQLite database does not follow the code by itself. After every `git pull` (or branch switch) that brings new
