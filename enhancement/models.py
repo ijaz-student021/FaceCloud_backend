@@ -218,6 +218,26 @@ def delete_enhanced_image(sender, instance, **kwargs):
         instance.enhanced_file.storage.delete(instance.enhanced_file.name)
 
 
+class EnhancedImageBlob(models.Model):
+    """The enhanced image itself as a database row, for opening it from a database viewer (``ENHANCED_IMAGE_DATABASE_COPY_ENABLED``).
+
+    The stored file stays what the product serves; this is a copy of the same bytes with their size and SHA-256, made by ``enhancement.database_copy``
+    and checked by ``manage.py copy_enhanced_images_to_database --verify``. It is plain bytes, so it is never made while stored images are encrypted.
+    Deleting the result deletes the copy.
+    """
+
+    result = models.OneToOneField(ImageEnhancementResult, on_delete=models.CASCADE, related_name="database_copy")
+    content_type = models.CharField(max_length=40)
+    byte_size = models.PositiveBigIntegerField()
+    sha256 = models.CharField(max_length=64)
+    source_name = models.CharField(max_length=255)
+    data = models.BinaryField(editable=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"enhanced image of result {self.result_id} ({self.byte_size} bytes)"
+
+
 class AutoEnhancement(models.Model):
     """The automatic enhancement of one photograph: the single record that makes it happen once, and says where it is.
 
