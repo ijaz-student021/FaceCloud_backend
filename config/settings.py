@@ -1049,6 +1049,11 @@ if DEBUG and IMAGE_ENCRYPTION_ENABLED and len(IMAGE_ENCRYPTION_KEY) < 32:
     )
 if not 1 <= IMAGE_ENCRYPTION_KEY_ID <= 255:
     raise ImproperlyConfigured("IMAGE_ENCRYPTION_KEY_ID must be between 1 and 255.")
+# For showing the work from a database viewer. A copy of each enhanced image kept as a row (enhancement_enhancedimageblob), and the original
+# and enhanced image on the Django admin result page. Both off by default. The copy is plain bytes, so it is never made while
+# IMAGE_ENCRYPTION_ENABLED is on (production requires that) nor from a file stored encrypted. docs/features/enhanced-image-database-copy.md
+ENHANCED_IMAGE_DATABASE_COPY_ENABLED = env.bool("ENHANCED_IMAGE_DATABASE_COPY_ENABLED", default=False)
+ADMIN_IMAGE_PREVIEW_ENABLED = env.bool("ADMIN_IMAGE_PREVIEW_ENABLED", default=False)
 STORAGES = {
     "default": {"BACKEND": "config.storage.EncryptedFileSystemStorage"},
     "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},

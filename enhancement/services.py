@@ -54,6 +54,7 @@ from .models import (
     ImageEditVersion,
     ImageEnhancementResult,
 )
+from .database_copy import copy_after_completion
 from .denoise_guard import DenoiseReference, judge_candidate
 from .codeformer import restore_faces_codeformer
 from .face_fidelity import check_face_regions
@@ -2964,6 +2965,7 @@ def _process_claimed_result(result, token):
             if current.claim_token != token or current.status != EnhancementStatus.PROCESSING:
                 raise EnhancementSuperseded()
             result.save()
+        copy_after_completion(result)
         return result
     except EnhancementSuperseded:
         logger.warning("Result %s was taken over or closed by another worker; this output was discarded.", result.pk)
