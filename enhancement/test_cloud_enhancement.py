@@ -11,6 +11,7 @@ import tempfile
 import time
 from contextlib import ExitStack
 from unittest.mock import patch
+from urllib import request as urllib_request
 
 import cv2
 import numpy as np
@@ -125,11 +126,36 @@ class ClientTests(ServerCase):
         self.assertEqual([item["method"] for item in server.requests], ["POST", "GET", "GET", "GET"])
         self.assertTrue(all(item["headers"]["x-api-key"] == KEY for item in server.requests))
 
-    def test_a_job_that_ends_in_another_status_is_declined(self):
-        self.serve([{"status_after": "failed"}])
+    def test_a_job_that_ends_in_a_failure_status_is_declined(self):
+        for status in ("failed", "error", "cancelled", "canceled", "blocked", "expired"):
+            with self.subTest(status):
+                self.serve([{"status_after": status}])
+                client = cloud.DeepImageClient()
+                job = self.submit(client)
+                self.assertEqual(self.reason_of(lambda: client.wait(job, time.monotonic() + 5, lambda _name: None)), "job_failed")
+
+    def test_the_status_the_real_service_reports_while_it_works_is_waited_for(self):
+        server = self.serve([{"polls": 3, "status_names": ["received", "predicting", "predicting"]}])
         client = cloud.DeepImageClient()
         job = self.submit(client)
-        self.assertEqual(self.reason_of(lambda: client.wait(job, time.monotonic() + 5, lambda _name: None)), "job_failed")
+        url = client.wait(job, time.monotonic() + 5, lambda _name: None)
+        self.assertEqual(url, f"{server.origin}/files/{job}.jpg")
+        self.assertEqual(len([item for item in server.requests if item["method"] == "GET"]), 4)
+
+    def test_a_status_nobody_knows_is_waited_for_and_named_once_in_the_log(self):
+        self.serve([{"polls": 3, "status_names": ["queued_for_gpu"]}])
+        client = cloud.DeepImageClient()
+        job = self.submit(client)
+        with self.assertLogs("enhancement.cloud", level="WARNING") as logs:
+            client.wait(job, time.monotonic() + 5, lambda _name: None)
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("queued_for_gpu", logs.output[0])
+
+    def test_a_status_nobody_knows_that_never_ends_is_given_up_at_the_deadline(self):
+        self.serve([{"status_after": "somewhere_else"}])
+        client = cloud.DeepImageClient()
+        job = self.submit(client)
+        self.assertEqual(self.reason_of(lambda: client.wait(job, time.monotonic() + 0.15, lambda _name: None)), "deadline")
 
     def test_a_job_that_never_finishes_is_given_up_at_the_deadline(self):
         self.serve([{"never_done": True}])
@@ -221,6 +247,15 @@ class ClientTests(ServerCase):
         self.assertEqual(self.reason_of(self.submit), "redirected")
         self.assertEqual(other.requests, [])
 
+    def test_a_status_request_that_carries_the_key_is_not_redirected(self):
+        other = FakeDeepImageServer().start()
+        self.addCleanup(other.stop)
+        self.serve([{"status_redirect": other.origin + "/rest_api/result/abc"}])
+        client = cloud.DeepImageClient()
+        job = self.submit(client)
+        self.assertEqual(self.reason_of(lambda: client.wait(job, time.monotonic() + 5, lambda _name: None)), "redirected")
+        self.assertEqual(other.requests, [])
+
     def test_a_result_that_is_too_big_is_declined(self):
         self.serve(DEEP_IMAGE_MAX_RESULT_BYTES=1000)
         client = cloud.DeepImageClient()
@@ -271,6 +306,16 @@ class ResultAddressTests(SimpleTestCase):
                     "https://printer.local/x.jpg", "ftp://deep-image.ai/x", "https:///x.jpg", "not a url", ""):
             with self.subTest(url), self.assertRaises(cloud.CloudDeclined):
                 cloud.check_result_url(url, cloud.DEFAULT_BASE_URL)
+
+    def test_every_hop_of_a_result_redirect_is_checked_like_the_first(self):
+        handler = cloud._CheckedRedirect(cloud.DEFAULT_BASE_URL)
+        request = urllib_request.Request("https://deep-image.ai/files/a.jpg")
+        for target in ("https://127.0.0.1/x.jpg", "http://deep-image.ai/x.jpg", "https://10.1.2.3/x.jpg"):
+            with self.subTest(target), self.assertRaises(cloud.CloudDeclined):
+                handler.redirect_request(request, None, 302, "Found", {}, target)
+        hop = handler.redirect_request(request, None, 302, "Found", {}, "https://s3.eu-central-1.amazonaws.com/deep-image.ai/b.jpg")
+        self.assertEqual(hop.full_url, "https://s3.eu-central-1.amazonaws.com/deep-image.ai/b.jpg")
+        self.assertEqual(handler.max_redirections, 3)
 
     def test_a_test_server_may_be_plain_http_on_this_machine_but_nothing_else_goes_through(self):
         cloud.check_result_url("http://127.0.0.1:9/x.jpg", "http://127.0.0.1:9/rest_api")
@@ -490,6 +535,14 @@ class EnhanceTests(ServerCase):
             cloud.enhance(SOURCE, "auto", "natural", allow_biometric_processing=True, analyzer=analyzer_with(), checkpoint=checkpoint)
         self.assertEqual(stages[:3], ["cloud_analyze", "cloud_enhance", "cloud_wait"])
         self.assertEqual(len([item for item in server.requests if item["method"] == "GET"]), 1)
+
+    def test_a_declined_run_names_the_job_in_the_log_so_a_paid_job_can_be_found(self):
+        server = self.serve([{"status_after": "failed"}])
+        with patch("enhancement.adaptive.service.IdentityChecker", return_value=StubIdentity()), self.assertLogs("enhancement.cloud", level="INFO") as logs:
+            with self.assertRaises(cloud.CloudDeclined):
+                cloud.enhance(SOURCE, "auto", "natural", allow_biometric_processing=True, analyzer=analyzer_with())
+        record = json.loads(next(entry for entry in logs.output if "cloud_enhancement" in entry).split("cloud_enhancement ", 1)[1])
+        self.assertEqual((record["outcome"], record["reason"], record["attempted"], record["job"]), ("declined", "job_failed", True, next(iter(server.jobs))))
 
     def test_the_log_line_names_the_decision_and_no_secret(self):
         with self.assertLogs("enhancement.cloud", level="INFO") as logs:

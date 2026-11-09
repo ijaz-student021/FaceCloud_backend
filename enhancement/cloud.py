@@ -46,7 +46,11 @@ LABELS = {
 }
 DEFAULT_BASE_URL = "https://deep-image.ai/rest_api"       # the address the production guard insists on (config/production_guard.py repeats it)
 
-IN_PROGRESS = frozenset({"received", "in_progress", "not_started", "queued", "pending", "processing"})
+# The provider's job statuses. The documentation's samples show ``received``, ``in_progress``, ``not_started`` and ``complete``; the first real run (2026-11-09) also showed ``predicting``,
+# which an earlier version of this client took for a failure and so abandoned a paid job. A status in neither set is not a verdict: the client keeps waiting (and says so once in the log)
+# until the deadline, because giving up on a job that is still running wastes the credit it costs.
+IN_PROGRESS = frozenset({"received", "in_progress", "not_started", "queued", "pending", "processing", "predicting"})
+FAILED = frozenset({"failed", "failure", "error", "errored", "cancelled", "canceled", "rejected", "blocked", "expired", "timeout"})
 TRANSIENT = frozenset({"timeout", "connection_error", "rate_limited", "provider_error"})      # a status request that fails like this is worth another try; an upload is never repeated
 POLL_RETRIES = 3                  # consecutive failed status requests before the job is given up on
 MAX_REPLY_BYTES = 1024 * 1024     # a JSON reply is a few hundred bytes
@@ -221,7 +225,7 @@ class DeepImageClient:
 
     def wait(self, job, deadline, checkpoint):
         """The address of the finished image, polling until the deadline. ``checkpoint`` keeps the claim alive and stops the wait when the job is cancelled."""
-        failures = 0
+        failures, unknown = 0, set()
         while True:
             checkpoint("cloud_wait")
             try:
@@ -238,9 +242,12 @@ class DeepImageClient:
                     if not isinstance(url, str) or not url:
                         raise CloudDeclined("bad_reply")
                     return url
-                if state not in IN_PROGRESS:
+                if state in FAILED:
                     logger.warning("Deep Image reported the job status %r.", state[:40])
                     raise CloudDeclined("job_failed")
+                if state not in IN_PROGRESS and state not in unknown:
+                    unknown.add(state)
+                    logger.warning("Deep Image reported the job status %r, which this client does not know: it keeps waiting.", state[:40])
             if time.monotonic() + float(settings.DEEP_IMAGE_POLL_SECONDS) > deadline:
                 raise CloudDeclined("deadline")
             time.sleep(float(settings.DEEP_IMAGE_POLL_SECONDS))
@@ -460,7 +467,7 @@ def enhance(image, requested_level, style, *, allow_biometric_processing, checkp
 
     preset = settings.DEEP_IMAGE_PRESET
     started = time.perf_counter()
-    sent = False
+    sent, job = False, None
     try:
         checkpoint("cloud_analyze")
         analyzer = analyzer or AdaptiveImageEnhancementService()._analyzer()
@@ -486,7 +493,7 @@ def enhance(image, requested_level, style, *, allow_biometric_processing, checkp
         readings, small, report_after, checked = judge(image, result, identity, analyzer, checkable)
     except CloudDeclined as error:
         error.attempted = sent
-        _log("declined", preset=preset, reason=error.reason, attempted=sent, seconds=round(time.perf_counter() - started, 2))
+        _log("declined", preset=preset, reason=error.reason, attempted=sent, job=job, seconds=round(time.perf_counter() - started, 2))
         raise
     run = {
         "preset": preset, "requested_level": requested_level, "style": style, "allow_biometric_processing": allow_biometric_processing, "job": job,

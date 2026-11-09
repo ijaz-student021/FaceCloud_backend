@@ -10,6 +10,8 @@ is how the real service behaves: its answers are scripted, and the shapes it ans
 * ``{}``                                  accept the upload, report ``in_progress`` ``polls`` times, then ``complete`` with the image (default)
 * ``{"image": bytes}``                    the bytes served as the result (default: the upload enlarged 2x, a plausible "enhancement")
 * ``{"polls": 2}``                        status requests answered ``in_progress`` before ``complete``
+* ``{"status_names": ["received", "predicting"]}``  the in-progress statuses reported, in turn (the last repeats): the real service says ``predicting``
+* ``{"status_redirect": "<url>"}``        the status request is answered with a redirect there (a request that carries the key must never follow it)
 * ``{"upload_status": 402}``              refuse the upload with this HTTP status (``{"error": ...}`` body)
 * ``{"status_after": "failed"}``          the status the job ends in instead of ``complete``
 * ``{"status_errors": 2}``                the first status requests fail with HTTP 503
@@ -136,13 +138,16 @@ class FakeDeepImageServer:
                     if job is None:
                         return self._json(404, {"error": "unknown job"})
                     behaviour = job["behaviour"]
+                    if behaviour.get("status_redirect"):
+                        return self._send(302, b"", "text/plain", {"Location": behaviour["status_redirect"]})
                     if job["status_errors"] < behaviour.get("status_errors", 0):
                         job["status_errors"] += 1
                         return self._json(503, {"error": "try again"})
                     job["polls"] += 1
                     done = not behaviour.get("never_done") and job["polls"] > behaviour.get("polls", 0)
                 if not done:
-                    return self._json(200, {"status": "in_progress"})
+                    names = behaviour.get("status_names") or ["in_progress"]
+                    return self._json(200, {"status": names[min(job["polls"], len(names)) - 1]})
                 if behaviour.get("status_after"):
                     return self._json(200, {"status": behaviour["status_after"]})
                 if behaviour.get("no_result_url"):
