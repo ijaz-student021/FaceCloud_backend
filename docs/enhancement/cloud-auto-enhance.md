@@ -1,7 +1,7 @@
 # Optional cloud enhancement (Deep Image Auto Enhance)
 
-Status: implemented on branch `feat/cloud-auto-enhance`; **tested against a scripted stand-in only** (`enhancement/fake_deep_image.py`). Until the section 9 table says otherwise, no
-request to Deep Image has ever been made from this code.
+Status: implemented on branch `feat/cloud-auto-enhance`; tested against a scripted stand-in (`enhancement/fake_deep_image.py`) **and, on 2026-11-09, by three real requests for one
+photograph** (section 9: what they showed, and what is still not verified). Off by default.
 
 With the switch on, a photograph the enhancement engine would have worked on is sent to Deep Image and one of its six `auto_enhance*` presets makes the result. Nothing else of
 Deep Image is called (no background removal, no upscale-only, no other preset: `DEEP_IMAGE_PRESETS` is the whole list). The local engine stays in place as the fallback and does
@@ -55,6 +55,10 @@ are deleted within 40 days; its servers for customer files are on AWS in the EU/
 providers" may be used for some operations, may process data outside the EEA (the UK and the US are named) and may retain material temporarily; **which presets use them is not stated**,
 and no data-processing agreement is published. The people in a photograph are not asked: the provider's terms put the permission of the people shown on the person who uploads.
 
+What the first real run added (section 9): the provider's reply for a finished job carries `nsfw_moderation` with `"model": "omni-moderation-latest"`, an OpenAI model, so the photograph is
+also seen by OpenAI for moderation (at least for the `auto_enhance` preset); and the finished image is served from a public S3 address (`https://<bucket>.s3.eu-central-1.amazonaws.com/<date>/<uuid>.jpg`,
+no signature): whoever has the address can fetch the enhanced photograph until the provider deletes it. The address is a random UUID and this code never logs or stores it.
+
 **Consent.** The only switch consulted is the existing face-processing consent, and its text (`privacy.services.PURPOSE_COVERS`) does not say that a photograph may leave the server.
 There is deliberately no new screen: the interface did not change. So the switch is an operator's decision for a deployment whose users have been told (the privacy notice must say it),
 or for a demonstration with the operator's own photographs. It must not be on for strangers' photographs. The advisor's separate, versioned consent (`docs/enhancement/openai-advisor.md`)
@@ -98,10 +102,17 @@ A cancelled job stops waiting at once and is not turned into a local result.
 
 | Reason | Cause |
 |---|---|
+| `plan_required` | HTTP 400 with "paid account" in its message: seen when a free account asked for `auto_enhance_pro` |
 | `unauthorized`, `no_credits`, `rate_limited`, `provider_error`, `rejected`, `redirected` | the provider answered with HTTP 401/403, 402, 429, 5xx, another 4xx, a redirect. The provider's own words for a refusal go to the log (short, with the key taken out) so the first misconfiguration can be read |
 | `timeout`, `connection_error`, `deadline`, `job_failed`, `bad_reply`, `bad_result`, `result_too_large` | no answer in time, no connection, the job did not complete, an answer that is not what the documentation shows, an image that cannot be read or is too large |
 | `unexpected_error` | a bug in this path; logged with its traceback, and the local engine takes over |
 | the checks of section 4 | the result was delivered and refused |
+
+A job status that is neither known to be in progress nor known to be a failure is **not** a verdict: the client keeps waiting (and names the status once in the log) until the deadline. An
+earlier version gave up on `predicting`, a status the real service reports while a job runs, and so abandoned a job that was paid for.
+
+When the result's own address cannot be reached (a reset or a timeout) and is a bucket host, the same object is asked for through the regional endpoint
+(`https://s3.<region>.amazonaws.com/<bucket>/<key>`). On the owner's network the bucket host was reset in the TLS handshake, for Python and curl alike, while the regional endpoint answered.
 
 A Celery task that is retried after a database failure runs the whole job again, so the photograph is sent again; the daily limit bounds that.
 
@@ -113,17 +124,31 @@ non-commercial use. Count the credits on the provider's dashboard after the firs
 
 ## 8. Tests
 
-`enhancement/test_cloud_enhancement.py` (67 tests): the real client against `fake_deep_image.py` (the multipart upload, the key and where it does not go, redirects, every refusal, timeouts, a
+`enhancement/test_cloud_enhancement.py` (88 tests): the real client against `fake_deep_image.py` (the multipart upload, the key and where it does not go, redirects, every refusal, timeouts, a
 closed port, the key never in a log even when the provider repeats it), the checks one by one, the stored record read by `describe_stages` / `processing_summary` / the API,
 the job code (claim, publish, API fields, comparison endpoint), the switch off (the network is blocked while it runs), consent, lighting, transparency, the daily limit, cancellation,
-the production guard. Mutation check: see the pull request.
+the production guard. A first mutation run (17 of 69 mutations, stopped to change the status handling) found two guards no test needed; both are now tested. The full run is repeated on the final code (see the pull request).
 
-## 9. What is not verified
+## 9. What the first real run showed, and what is still not verified
 
-| Not verified | Why it matters |
+One photograph (a 1920 x 1080 webcam capture, its standardized copy: the engine's own input), three requests, 2026-11-09, a free account's key.
+
+| Seen | |
 |---|---|
-| Any request to Deep Image from this code | every shape here is the one its documentation shows; nothing has been sent to it |
-| That a file upload with `parameters: {"preset": ...}` is accepted | the documentation shows a preset only with a public `url`; a file upload only with other parameters |
-| The HTTP status for "no credits" or a bad key, and the job statuses other than `received`, `in_progress`, `not_started`, `complete` | unknown ones are treated as a failed job; the status mapping above is a guess for 401/402/403 |
-| That the result is better than the local engine's on real photographs, and how often the face checks refuse it | the first real run answers it; the structure limit is a backstop, not calibrated |
-| Result address lifetime, rate limits, maximum input size | not stated by the provider |
+| A file upload (`multipart/form-data`, field `image`, field `parameters` = `{"preset": ...}`) is accepted | for `auto_enhance_pro` it reached the plan check; for `auto_enhance` it was processed |
+| `auto_enhance_pro` with a free account | HTTP 400, `{"message": "This Auto Enhance preset is available only for paid accounts.", "code": "BAD_REQUEST"}` (reason `plan_required`) |
+| Job statuses | `received`/`predicting` (not in the documentation's samples) then `complete`; the reply holds `status`, `job`, `queue`, `result_url`, `nsfw_moderation` |
+| Time | about 10 s for `auto_enhance` |
+| The result | a 4096 x 2304 JPEG (900 KB) for the 1920 x 1080 upload; sharper (Laplacian variance +47 %), more saturated (+29 %), smoother skin; the live engine's result of the same photograph was nearly identical to the original |
+| **A watermark** | the free account's result has the text "watermark" laid across the whole picture, the face included. The engine's checks do not see it (a light overlay): a free key must not be used for real results |
+| The engine's checks on it | accepted: structure 0.962, landmark shift 0.010 (limit 0.06), identity 0.915 (limit 0.80) |
+| The result's host | reset on this network (see section 6); the regional endpoint worked and the fixed client fetched the same 899,985 bytes |
+| Credits | not read; how many the three requests used is not known (check the provider's dashboard) |
+
+| Still not verified | Why it matters |
+|---|---|
+| That a paid account removes the watermark and unlocks `auto_enhance_pro`, `auto_enhance_qwen`, `auto_enhance_klein9b` | the presets the owner wants; the quality of `pro` has not been seen |
+| Anything on a second photograph | one photograph says little about how often the face checks refuse a generative result |
+| The HTTP status for a bad key or for "no credits" (a bad key was never sent) | the 401/402/403 mapping is a guess |
+| Credits per preset, rate limits, maximum input size, how long a result address stays valid | not stated by the provider |
+| That the structure limit (0.5) and the other limits are right for the provider's output | they are backstops, not calibrated on more than one result |
