@@ -64,6 +64,26 @@ def render_thumbnail(image_field, size):
         raise ThumbnailUnavailable("The image could not be read.") from error
 
 
+VERSIONS = ("original", "enhanced")
+
+
+def enhanced_result(image):
+    """The photograph's latest finished enhancement that has a picture to show, or ``None``.
+
+    "Latest" decides: when the newest finished enhancement kept the original (the engine found nothing safe to improve) there is nothing to show but the original, even if an older
+    run changed something. Imported here because the enhancement app imports this one.
+    """
+    from enhancement.models import EnhancementStatus, ImageEnhancementResult
+
+    result = ImageEnhancementResult.objects.filter(image=image, status=EnhancementStatus.COMPLETED).exclude(enhanced_file="").order_by("-id").first()
+    if result is None:
+        return None
+    adaptive = (result.applied_parameters or {}).get("adaptive") if isinstance(result.applied_parameters, dict) else None
+    if isinstance(adaptive, dict) and adaptive.get("outcome") == "original_preserved":
+        return None
+    return result
+
+
 def get_or_create_thumbnail(image, size):
     """The cached thumbnail for ``image`` at ``size``, generating it when missing."""
     existing = ImageThumbnail.objects.filter(image=image, size=size).first()
