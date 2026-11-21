@@ -300,6 +300,11 @@ DEEP_IMAGE_DAILY_REQUEST_LIMIT = env.int("DEEP_IMAGE_DAILY_REQUEST_LIMIT", defau
 # The result must still be the same picture: structure similarity of its brightness-normalised luminance with the upload (validator.structure_ssim). A backstop against a
 # re-composed image, not a taste: the face checks (geometry and identity) are what protect a person's likeness.
 CLOUD_ENHANCEMENT_MIN_STRUCTURE_SSIM = env.float("CLOUD_ENHANCEMENT_MIN_STRUCTURE_SSIM", default=0.5)
+# CLOUD_ENHANCEMENT_WHEN: "always" (default: every enhancement the engine would do) or "ai_style" (only when the person chose the AI style: the Pro preset, style ai_max; Auto and Standard, and
+# the automatic enhancement after an upload, use the local models and spend no credit).
+CLOUD_ENHANCEMENT_WHEN = env("CLOUD_ENHANCEMENT_WHEN", default="always")
+if CLOUD_ENHANCEMENT_WHEN not in ("always", "ai_style"):
+    raise ImproperlyConfigured("CLOUD_ENHANCEMENT_WHEN must be always or ai_style.")
 if DEEP_IMAGE_PRESET not in DEEP_IMAGE_PRESETS:
     raise ImproperlyConfigured(f"DEEP_IMAGE_PRESET must be one of: {', '.join(DEEP_IMAGE_PRESETS)}.")
 if min(DEEP_IMAGE_REQUEST_TIMEOUT_SECONDS, DEEP_IMAGE_DEADLINE_SECONDS, DEEP_IMAGE_POLL_SECONDS, DEEP_IMAGE_MAX_RESULT_BYTES, DEEP_IMAGE_MAX_RESULT_PIXELS) <= 0:

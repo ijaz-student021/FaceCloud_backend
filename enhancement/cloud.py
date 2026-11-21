@@ -70,7 +70,7 @@ SENTENCES = {
     "no_credits": "The cloud service has no credits left, so the local engine was used.",
     "identity_unverifiable": "The faces in this photograph could not be verified for the cloud result, so the local engine was used.",
     "plan_required": "The cloud service's plan does not include this enhancement, so the local engine was used.",
-    "no_consent": None, "lighting_requested": None, "transparency": None, "disabled": None,
+    "no_consent": None, "lighting_requested": None, "transparency": None, "disabled": None, "not_requested": None,
 }
 SERVICE_SENTENCE = "The cloud service could not deliver an enhanced photograph, so the local engine was used."
 RESULT_SENTENCE = "The cloud result changed the photograph too much to be used, so the local engine was used."
@@ -108,13 +108,16 @@ def availability():
     return {"available": True, "reason": ""}
 
 
-def skip_reason(*, allow_biometric_processing, lighting="auto", has_alpha=False):
+def skip_reason(*, allow_biometric_processing, lighting="auto", has_alpha=False, style="natural"):
     """Why this photograph is not sent although the engine is available (a code), or ``None`` when it may be. Decided before anything leaves the server.
 
     Faces are processed by the provider's model, so the owner's face-processing consent is required (the switch face restoration already needs) unless the operator turned that requirement
     off (``CLOUD_ENHANCEMENT_REQUIRES_CONSENT``, for a demonstration); a person who named a lighting method asked for the local engine's method; and a transparent PNG would lose its
-    transparency in a round trip through a format the provider's result does not carry.
+    transparency in a round trip through a format the provider's result does not carry. With ``CLOUD_ENHANCEMENT_WHEN=ai_style`` only the AI style (``ai_max``, the Pro preset) is sent:
+    the other presets, and the automatic enhancement after an upload, are the local models' work.
     """
+    if settings.CLOUD_ENHANCEMENT_WHEN == "ai_style" and str(getattr(style, "value", style) or "natural") != "ai_max":
+        return "not_requested"
     if not allow_biometric_processing and settings.CLOUD_ENHANCEMENT_REQUIRES_CONSENT:
         return "no_consent"
     if str(getattr(lighting, "value", lighting) or "auto") != "auto":

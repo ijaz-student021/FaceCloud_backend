@@ -708,6 +708,19 @@ class SettingsAndRegistryTests(SimpleTestCase):
             self.assertEqual(cloud.skip_reason(allow_biometric_processing=False, has_alpha=True), "transparency")
         self.assertEqual(cloud.skip_reason(allow_biometric_processing=False), "no_consent")      # and without the override the default is the safe one
 
+    def test_with_ai_style_only_the_pro_preset_goes_to_the_cloud(self):
+        self.assertEqual(settings.CLOUD_ENHANCEMENT_WHEN, "always")                       # the default: every enhancement
+        self.assertIsNone(cloud.skip_reason(allow_biometric_processing=True, style="natural"))
+        with override_settings(CLOUD_ENHANCEMENT_WHEN="ai_style"):
+            self.assertEqual(cloud.skip_reason(allow_biometric_processing=True, style="natural"), "not_requested")
+            self.assertEqual(cloud.skip_reason(allow_biometric_processing=True), "not_requested")                  # no style given = the default, natural
+            self.assertEqual(cloud.skip_reason(allow_biometric_processing=True, style="dynamic"), "not_requested")
+            self.assertIsNone(cloud.skip_reason(allow_biometric_processing=True, style="ai_max"))
+            self.assertIsNone(cloud.skip_reason(allow_biometric_processing=True, style=__import__("enhancement.models", fromlist=["x"]).EnhancementStyle.AI_MAX))
+            self.assertEqual(cloud.skip_reason(allow_biometric_processing=False, style="natural"), "not_requested")   # the style is judged first: nothing to say about consent
+            self.assertEqual(cloud.skip_reason(allow_biometric_processing=False, style="ai_max"), "no_consent")      # the other conditions still apply to the AI style
+            self.assertEqual(cloud.skip_reason(allow_biometric_processing=True, style="ai_max", lighting="dark"), "lighting_requested")
+
     def test_the_summary_calls_the_cloud_engines_ai_and_nothing_else_a_cloud_engine(self):
         for preset in cloud.PRESETS:
             self.assertEqual(engine_kind(cloud.engine_name(preset)), "ai")
@@ -875,6 +888,35 @@ class JobTests(ResultFixture):
         self.assertIn("not allowed", body["identity_notice"])
         self.assertEqual(result.applied_parameters["cloud_enhancement"]["identity_checked"], False)
         self.assertEqual((result.output_width, result.output_height), (960, 1280))
+
+    def run_styled_job(self, style, **overrides):
+        from .models import EnhancementStyle
+
+        result = self.make_from(SOURCE)
+        result.requested_style = style
+        result.save(update_fields=["requested_style"])
+        server = FakeDeepImageServer(key=KEY).start()
+        self.addCleanup(server.stop)
+        with ExitStack() as stack:
+            stack.enter_context(override_settings(**{**SETTINGS, "DEEP_IMAGE_BASE_URL": server.base_url, "CLOUD_ENHANCEMENT_WHEN": "ai_style", **overrides}))
+            stack.enter_context(stub_analyzer_service()[0])
+            stack.enter_context(patch("enhancement.adaptive.service.IdentityChecker", return_value=StubIdentity()))
+            stack.enter_context(patch("privacy.services.biometric_processing_allowed", return_value=True))
+            return process_enhancement_result(result), server, EnhancementStyle
+
+    def test_with_ai_style_the_auto_and_standard_presets_use_the_local_models_and_spend_no_credit(self):
+        for style in ("natural", "dynamic"):
+            with self.subTest(style):
+                result, server, _styles = self.run_styled_job(style)
+                self.assertEqual(server.requests, [])
+                self.assertEqual(result.applied_parameters["cloud_enhancement"], {"attempted": False, "used": False, "provider": "deep_image", "preset": "auto_enhance_pro", "reason": "not_requested"})
+                self.assertTrue(result.applied_parameters["algorithm"].startswith("adaptive_v1"))
+                self.assertEqual(result.applied_parameters["warnings"], [])                       # a choice, not a failure: nothing is said
+
+    def test_with_ai_style_the_pro_preset_uses_the_cloud(self):
+        result, server, _styles = self.run_styled_job("ai_max")
+        self.assertEqual(len(server.uploads()), 1)
+        self.assertEqual(result.applied_parameters["algorithm"], "cloud_v1+deep_image_auto_enhance_pro")
 
     def test_a_person_who_names_the_lighting_gets_the_local_engines_method(self):
         result, server = self.run_job(lighting="dark")
