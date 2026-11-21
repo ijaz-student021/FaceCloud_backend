@@ -9,7 +9,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from enhancement.face_sharpness import primary_face_detail
-from enhancement.services import analyze_image_quality
+from enhancement.services import analyze_image_quality, coarse_blur
 from uploads.models import ImagePreprocessingResult
 from validation.models import FaceValidationResult
 
@@ -182,6 +182,7 @@ def process_quality_decision(decision_id):
     try:
         image = _read_standardized(result.preprocessing_result)
         metrics = with_face_sharpness(analyze_image_quality(image), image, result.face_validation)
+        metrics["blur_coarse"] = coarse_blur(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY))      # kept out of analyze_image_quality (its output is compared with a reference); only the rejection rule reads it
         enlargement = getattr(result.preprocessing_result, "enlargement", None) or {}
         if enlargement.get("applied"):
             # The size above is that of the enlarged copy: say so, so a score is never read as if the photograph had been taken at this size.

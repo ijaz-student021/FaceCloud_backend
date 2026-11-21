@@ -344,7 +344,7 @@ def measure_blur(gray, proxy_edge=BLUR_PROXY_LONG_EDGE):
     }
 
 
-def _coarse_blur(gray):
+def coarse_blur(gray):
     """``{"edge_sharpness", "verdict", "measured_at_long_edge"}`` of ``gray`` at BLUR_COARSE_LONG_EDGE, or ``None`` when the photograph is not larger than the normal measuring scale."""
     if max(gray.shape[:2]) <= BLUR_PROXY_LONG_EDGE:
         return None
@@ -424,7 +424,6 @@ def analyze_image_quality(image):
         # noise, so it no longer decides blur (see ``measure_blur``).
         "laplacian_sharpness": round(sharpness, 2),
         "blur": blur,
-        "blur_coarse": _coarse_blur(gray),
         "estimated_noise": round(noise, 2),
         "shadow_clipping_percent": round(shadow_clipping, 3),
         "highlight_clipping_percent": round(highlight_clipping, 3),

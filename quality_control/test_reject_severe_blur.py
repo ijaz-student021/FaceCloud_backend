@@ -55,12 +55,12 @@ class RuleTests(SimpleTestCase):
         self.assertEqual(decide("sharp", coarse={"edge_sharpness": 0.336, "verdict": "mild"})[0], "rejected")
 
     def test_the_coarse_measure_only_exists_for_a_photograph_larger_than_the_normal_scale(self):
-        from enhancement.services import _coarse_blur
+        from enhancement.services import coarse_blur
 
         photo = synthetic_photo(mean=120.0, spread=50.0)
-        self.assertIsNone(_coarse_blur(cv2.cvtColor(photo, cv2.COLOR_RGB2GRAY)))                   # 480 px: measured at its own size either way
+        self.assertIsNone(coarse_blur(cv2.cvtColor(photo, cv2.COLOR_RGB2GRAY)))                   # 480 px: measured at its own size either way
         big = cv2.resize(photo, None, fx=3, fy=3, interpolation=cv2.INTER_LINEAR)
-        found = _coarse_blur(cv2.cvtColor(big, cv2.COLOR_RGB2GRAY))
+        found = coarse_blur(cv2.cvtColor(big, cv2.COLOR_RGB2GRAY))
         self.assertEqual(found["measured_at_long_edge"], 512)
 
     def test_off_by_default_a_severe_blur_is_not_refused(self):
