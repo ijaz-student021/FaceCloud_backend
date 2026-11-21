@@ -104,7 +104,12 @@ BLURRY_MESSAGE = "This photo is too blurry to enhance, so it was rejected. Pleas
 
 def too_blurry_to_enhance(metrics):
     """Whether QUALITY_REJECT_SEVERE_BLUR refuses this photograph: its blur measured ``severe`` (a face or not)."""
-    return bool(settings.QUALITY_REJECT_SEVERE_BLUR) and (metrics.get("blur") or {}).get("verdict") == "severe"
+    if not settings.QUALITY_REJECT_SEVERE_BLUR:
+        return False
+    if (metrics.get("blur") or {}).get("verdict") == "severe":
+        return True
+    coarse = metrics.get("blur_coarse") or {}
+    return coarse.get("verdict") not in (None, "uncertain") and coarse.get("edge_sharpness", 1.0) < settings.QUALITY_REJECT_BLUR_COARSE_EDGE
 
 
 def make_decision(metrics, scores, face_validation):

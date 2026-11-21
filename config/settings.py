@@ -954,6 +954,9 @@ QUALITY_CHECKS_REJECT = env.bool("QUALITY_CHECKS_REJECT", default=False)
 # scan or a mild blur still goes to the restoration chain). Independent of QUALITY_CHECKS_REJECT: only this one reason refuses, and the upload is marked rejected (status "rejected"), so it is
 # never enhanced, never grouped, and shows under Rejected.
 QUALITY_REJECT_SEVERE_BLUR = env.bool("QUALITY_REJECT_SEVERE_BLUR", default=False)
+# QUALITY_REJECT_BLUR_COARSE_EDGE: with that flag on, a photograph larger than 1024 px is also refused when its edge sharpness at 512 px is below this (grain hides a defocus at 1024 px: a defocused grainy
+# photograph measured 0.504 there and 0.279 here; the next-lowest of 136 distinct live photographs measured 0.336). Set from a single blurry example: validate on more before relying on it.
+QUALITY_REJECT_BLUR_COARSE_EDGE = env.float("QUALITY_REJECT_BLUR_COARSE_EDGE", default=0.30)
 QUALITY_REJECT_MIN_LUMINANCE = env.float("QUALITY_REJECT_MIN_LUMINANCE", default=6.0)
 QUALITY_REVIEW_MIN_LUMINANCE = env.float("QUALITY_REVIEW_MIN_LUMINANCE", default=55.0)
 QUALITY_REJECT_MAX_LUMINANCE = env.float("QUALITY_REJECT_MAX_LUMINANCE", default=235.0)

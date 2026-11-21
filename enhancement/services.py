@@ -299,9 +299,12 @@ BLUR_SEVERE_BELOW = 0.232
 BLUR_MILD_BELOW = 0.422
 BLUR_MIN_TONAL_RANGE = 8.0
 BLUR_MIN_EDGE_STRENGTH = 1.0
+# The same measure on a coarser copy (quality_control QUALITY_REJECT_SEVERE_BLUR): grain and thin lines read as sharp edges at 1024 px but not at 512, so a defocused, grainy photograph
+# is caught there. Only for photographs larger than the normal measuring scale (a smaller one is measured at its own size either way).
+BLUR_COARSE_LONG_EDGE = 512
 
 
-def measure_blur(gray):
+def measure_blur(gray, proxy_edge=BLUR_PROXY_LONG_EDGE):
     """``{"edge_sharpness", "edge_strength", "verdict", ...}`` for a grayscale image.
 
     ``verdict`` is ``sharp``, ``mild``, ``severe`` or ``uncertain``: with too
@@ -309,7 +312,7 @@ def measure_blur(gray):
     claimed, and no blur correction is routed.
     """
     height, width = gray.shape[:2]
-    scale = min(1.0, BLUR_PROXY_LONG_EDGE / float(max(height, width)))
+    scale = min(1.0, proxy_edge / float(max(height, width)))
     if scale < 1.0:
         gray = cv2.resize(gray, (max(1, round(width * scale)), max(1, round(height * scale))),
                           interpolation=cv2.INTER_AREA)
@@ -339,6 +342,14 @@ def measure_blur(gray):
         "measured_at_long_edge": int(round(max(height, width) * scale)),
         "verdict": verdict,
     }
+
+
+def _coarse_blur(gray):
+    """``{"edge_sharpness", "verdict", "measured_at_long_edge"}`` of ``gray`` at BLUR_COARSE_LONG_EDGE, or ``None`` when the photograph is not larger than the normal measuring scale."""
+    if max(gray.shape[:2]) <= BLUR_PROXY_LONG_EDGE:
+        return None
+    coarse = measure_blur(gray, BLUR_COARSE_LONG_EDGE)
+    return {key: coarse[key] for key in ("edge_sharpness", "verdict", "measured_at_long_edge")}
 
 
 def analyze_image_quality(image):
@@ -413,6 +424,7 @@ def analyze_image_quality(image):
         # noise, so it no longer decides blur (see ``measure_blur``).
         "laplacian_sharpness": round(sharpness, 2),
         "blur": blur,
+        "blur_coarse": _coarse_blur(gray),
         "estimated_noise": round(noise, 2),
         "shadow_clipping_percent": round(shadow_clipping, 3),
         "highlight_clipping_percent": round(highlight_clipping, 3),

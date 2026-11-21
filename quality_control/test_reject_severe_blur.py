@@ -24,8 +24,8 @@ def blurred(sigma):
     return cv2.GaussianBlur(synthetic_photo(mean=120.0, spread=50.0), (0, 0), sigma)
 
 
-def decide(verdict, face=True):
-    found = CLEAN | {"blur": {"verdict": verdict}}
+def decide(verdict, face=True, coarse=None):
+    found = CLEAN | {"blur": {"verdict": verdict}, "blur_coarse": coarse}
     return make_decision(found, calculate_scores(found), FACE if face else None)
 
 
@@ -41,6 +41,27 @@ class RuleTests(SimpleTestCase):
     def test_a_mild_or_unmeasured_blur_is_not_refused(self):
         for verdict in ("mild", "sharp", "uncertain", None):
             self.assertNotEqual(decide(verdict)[0], "rejected", verdict)
+
+    @override_settings(QUALITY_REJECT_SEVERE_BLUR=True)
+    def test_a_grainy_defocused_photograph_is_caught_at_the_coarse_scale(self):
+        # Measured on a real one: "sharp" (0.504) at 1024 px, 0.279 at 512 px; the next-lowest of 136 live photographs was 0.336.
+        decision, reasons, _ = decide("sharp", coarse={"edge_sharpness": 0.279, "verdict": "mild", "measured_at_long_edge": 512})
+        self.assertEqual((decision, reasons), ("rejected", ["severe_blur"]))
+        for coarse in ({"edge_sharpness": 0.336, "verdict": "mild"}, {"edge_sharpness": 0.2, "verdict": "uncertain"}, None):
+            self.assertNotEqual(decide("sharp", coarse=coarse)[0], "rejected", coarse)
+
+    @override_settings(QUALITY_REJECT_SEVERE_BLUR=True, QUALITY_REJECT_BLUR_COARSE_EDGE=0.40)
+    def test_the_coarse_line_is_a_setting(self):
+        self.assertEqual(decide("sharp", coarse={"edge_sharpness": 0.336, "verdict": "mild"})[0], "rejected")
+
+    def test_the_coarse_measure_only_exists_for_a_photograph_larger_than_the_normal_scale(self):
+        from enhancement.services import _coarse_blur
+
+        photo = synthetic_photo(mean=120.0, spread=50.0)
+        self.assertIsNone(_coarse_blur(cv2.cvtColor(photo, cv2.COLOR_RGB2GRAY)))                   # 480 px: measured at its own size either way
+        big = cv2.resize(photo, None, fx=3, fy=3, interpolation=cv2.INTER_LINEAR)
+        found = _coarse_blur(cv2.cvtColor(big, cv2.COLOR_RGB2GRAY))
+        self.assertEqual(found["measured_at_long_edge"], 512)
 
     def test_off_by_default_a_severe_blur_is_not_refused(self):
         self.assertFalse(__import__("django.conf", fromlist=["settings"]).settings.QUALITY_REJECT_SEVERE_BLUR)
