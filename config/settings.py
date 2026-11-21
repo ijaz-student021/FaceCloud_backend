@@ -273,6 +273,47 @@ if min(OPENAI_ADVISOR_MAX_ATTEMPTS, OPENAI_ADVISOR_MAX_CONCURRENCY, OPENAI_ADVIS
 if OPENAI_ADVISOR_TIMEOUT_SECONDS * OPENAI_ADVISOR_MAX_ATTEMPTS > OPENAI_ADVISOR_DEADLINE_SECONDS * 2:
     raise ImproperlyConfigured("OPENAI_ADVISOR_DEADLINE_SECONDS is too short for the timeout and attempts configured.")
 
+# Optional cloud enhancement (enhancement/cloud.py): Deep Image's Auto Enhance presets make the pixels in place of the local engine. Off until an operator turns it
+# on AND supplies a key; with either missing nothing is sent anywhere and every result is exactly what it was. The key lives only in the environment / secret store:
+# it is never logged, put in an error, returned by an endpoint or committed. Only the six auto_enhance presets can be named, so no other Deep Image operation is ever
+# called. Each photograph is judged on its own (size, structure, face geometry and identity against the upload); any failure hands it to the local engine, and the
+# result's processing_summary names the engine that really made the pixels. DEEP_IMAGE_BASE_URL is for a local test server in development: the production guard
+# refuses any address but the provider's. By default a photograph is sent only for an owner whose face-processing consent is on (the same switch as face restoration).
+CLOUD_ENHANCEMENT_ENABLED = env.bool("CLOUD_ENHANCEMENT_ENABLED", default=False)
+# CLOUD_ENHANCEMENT_REQUIRES_CONSENT=False sends EVERY owner's photographs, the owners who never agreed to face processing included. A result for such an owner cannot be identity-checked
+# (that needs a face embedding, which needs the consent), so it is judged by structure and face geometry only. The production guard refuses False: it is for a demonstration the operator controls.
+CLOUD_ENHANCEMENT_REQUIRES_CONSENT = env.bool("CLOUD_ENHANCEMENT_REQUIRES_CONSENT", default=True)
+DEEP_IMAGE_API_KEY = env("DEEP_IMAGE_API_KEY", default="")
+DEEP_IMAGE_PRESETS = ("auto_enhance_pro", "auto_enhance_qwen", "auto_enhance_klein9b", "auto_enhance_generative", "auto_enhance_tone_correction", "auto_enhance")
+DEEP_IMAGE_PRESET = env("DEEP_IMAGE_PRESET", default="auto_enhance_pro")
+DEEP_IMAGE_BASE_URL = env("DEEP_IMAGE_BASE_URL", default="https://deep-image.ai/rest_api")
+# One HTTP request, and the whole photograph (upload, waiting, download): the pro and qwen presets take about 30 s by the provider's own figures. The poll interval is
+# the pause between two status requests (free, unlike the upload, which is never repeated: every attempt is paid for).
+DEEP_IMAGE_REQUEST_TIMEOUT_SECONDS = env.float("DEEP_IMAGE_REQUEST_TIMEOUT_SECONDS", default=30.0)
+DEEP_IMAGE_DEADLINE_SECONDS = env.int("DEEP_IMAGE_DEADLINE_SECONDS", default=150)
+DEEP_IMAGE_POLL_SECONDS = env.float("DEEP_IMAGE_POLL_SECONDS", default=2.0)
+DEEP_IMAGE_UPLOAD_JPEG_QUALITY = env.int("DEEP_IMAGE_UPLOAD_JPEG_QUALITY", default=95)
+DEEP_IMAGE_MAX_RESULT_BYTES = env.int("DEEP_IMAGE_MAX_RESULT_BYTES", default=64 * 1024 * 1024)
+DEEP_IMAGE_MAX_RESULT_PIXELS = env.int("DEEP_IMAGE_MAX_RESULT_PIXELS", default=40_000_000)
+# Requests sent per calendar day, a backstop against a loop or a huge batch spending the credits (0: no limit). A photograph over the limit is enhanced locally.
+DEEP_IMAGE_DAILY_REQUEST_LIMIT = env.int("DEEP_IMAGE_DAILY_REQUEST_LIMIT", default=300)
+# The result must still be the same picture: structure similarity of its brightness-normalised luminance with the upload (validator.structure_ssim). A backstop against a
+# re-composed image, not a taste: the face checks (geometry and identity) are what protect a person's likeness.
+CLOUD_ENHANCEMENT_MIN_STRUCTURE_SSIM = env.float("CLOUD_ENHANCEMENT_MIN_STRUCTURE_SSIM", default=0.5)
+# CLOUD_ENHANCEMENT_WHEN: "always" (default: every enhancement the engine would do) or "ai_style" (only when the person chose the AI style: the Pro preset, style ai_max; Auto and Standard, and
+# the automatic enhancement after an upload, use the local models and spend no credit).
+CLOUD_ENHANCEMENT_WHEN = env("CLOUD_ENHANCEMENT_WHEN", default="always")
+if CLOUD_ENHANCEMENT_WHEN not in ("always", "ai_style"):
+    raise ImproperlyConfigured("CLOUD_ENHANCEMENT_WHEN must be always or ai_style.")
+if DEEP_IMAGE_PRESET not in DEEP_IMAGE_PRESETS:
+    raise ImproperlyConfigured(f"DEEP_IMAGE_PRESET must be one of: {', '.join(DEEP_IMAGE_PRESETS)}.")
+if min(DEEP_IMAGE_REQUEST_TIMEOUT_SECONDS, DEEP_IMAGE_DEADLINE_SECONDS, DEEP_IMAGE_POLL_SECONDS, DEEP_IMAGE_MAX_RESULT_BYTES, DEEP_IMAGE_MAX_RESULT_PIXELS) <= 0:
+    raise ImproperlyConfigured("The DEEP_IMAGE_* time and size limits must be positive.")
+if DEEP_IMAGE_DEADLINE_SECONDS < DEEP_IMAGE_REQUEST_TIMEOUT_SECONDS:
+    raise ImproperlyConfigured("DEEP_IMAGE_DEADLINE_SECONDS must be at least DEEP_IMAGE_REQUEST_TIMEOUT_SECONDS.")
+if not 50 <= DEEP_IMAGE_UPLOAD_JPEG_QUALITY <= 100 or DEEP_IMAGE_DAILY_REQUEST_LIMIT < 0 or not 0.0 <= CLOUD_ENHANCEMENT_MIN_STRUCTURE_SSIM <= 1.0:
+    raise ImproperlyConfigured("DEEP_IMAGE_UPLOAD_JPEG_QUALITY must be 50-100, DEEP_IMAGE_DAILY_REQUEST_LIMIT at least 0 and CLOUD_ENHANCEMENT_MIN_STRUCTURE_SSIM 0-1.")
+
 # Which enhancement stages may run (enhancement/policy.py). "lightweight_v1"
 # (default): OpenCV and Pillow only; the learned-model settings below
 # (ZERO_DCE_ENABLED, HD_RESTORATION_ENABLED, ...) are ignored. "learned_v1": the
@@ -909,6 +950,13 @@ QUALITY_REVIEW_MIN_EDGE = env.int("QUALITY_REVIEW_MIN_EDGE", default=480)
 # is still refused (at upload). True restores the old behaviour. Found on a real portrait (mean brightness 29, 3456 x 5184) refused as "Too blurry": a dark photograph has weak gradients, the
 # face detector missed its large face, and the engine, once allowed to run, brightened it to a natural 82.5 (docs/evaluation/2026-11-03-enhance-every-photograph.md).
 QUALITY_CHECKS_REJECT = env.bool("QUALITY_CHECKS_REJECT", default=False)
+# QUALITY_REJECT_SEVERE_BLUR (default False): refuse a photograph whose blur measures "severe" (enhancement.services.measure_blur: edge sharpness below BLUR_SEVERE_BELOW, so a soft old
+# scan or a mild blur still goes to the restoration chain). Independent of QUALITY_CHECKS_REJECT: only this one reason refuses, and the upload is marked rejected (status "rejected"), so it is
+# never enhanced, never grouped, and shows under Rejected.
+QUALITY_REJECT_SEVERE_BLUR = env.bool("QUALITY_REJECT_SEVERE_BLUR", default=False)
+# QUALITY_REJECT_BLUR_COARSE_EDGE: with that flag on, a photograph larger than 1024 px is also refused when its edge sharpness at 512 px is below this (grain hides a defocus at 1024 px: a defocused grainy
+# photograph measured 0.504 there and 0.279 here; the next-lowest of 136 distinct live photographs measured 0.336). Set from a single blurry example: validate on more before relying on it.
+QUALITY_REJECT_BLUR_COARSE_EDGE = env.float("QUALITY_REJECT_BLUR_COARSE_EDGE", default=0.30)
 QUALITY_REJECT_MIN_LUMINANCE = env.float("QUALITY_REJECT_MIN_LUMINANCE", default=6.0)
 QUALITY_REVIEW_MIN_LUMINANCE = env.float("QUALITY_REVIEW_MIN_LUMINANCE", default=55.0)
 QUALITY_REJECT_MAX_LUMINANCE = env.float("QUALITY_REJECT_MAX_LUMINANCE", default=235.0)
@@ -1588,6 +1636,9 @@ EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
 EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True").lower() == "true"
+# Seconds to wait for the SMTP server (the connection and each command). Without it Django waits as long as the operating system does, and a sign-up request
+# would hang until then; with it the request answers 503 and the log says why. The console and file backends ignore it. docs/deployment/smtp-email.md
+EMAIL_TIMEOUT = env.int("EMAIL_TIMEOUT", default=10)
 
 SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "False").lower() == "true"
 SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "False").lower() == "true"

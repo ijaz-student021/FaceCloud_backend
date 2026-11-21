@@ -173,10 +173,10 @@ class SearchTests(TestCase):
         body = self.search(q="zzzz").json()
         self.assertEqual((body["images"], body["groups"], body["jobs"]), ([], [], []))
 
-    def test_rejected_images_have_no_thumbnail_and_report_rejected(self):
-        self.image(self.user, "blurry.jpg", status="rejected")
+    def test_a_rejected_image_with_a_file_can_be_previewed_and_reports_rejected(self):
+        image = self.image(self.user, "blurry.jpg", status="rejected")                     # rejected by the checks (e.g. too blurry): its file is kept, so the owner can look at it
         item = self.search(q="blurry").json()["images"][0]
-        self.assertIsNone(item["thumbnail_url"])
+        self.assertTrue(item["thumbnail_url"].endswith(f"/api/images/{image.pk}/thumbnail/"))
         self.assertEqual(item["status"], "rejected")
 
     def test_the_search_is_rate_limited(self):

@@ -340,6 +340,22 @@ class AuthenticationTests(APITestCase):
         self.assertEqual(len(mail.outbox), 1)
         self.assertEqual(self.client.get(reverse("profile")).status_code, status.HTTP_401_UNAUTHORIZED)
 
+    @override_settings(FRONTEND_URL="https://facecloudai.com/")
+    def test_the_email_change_mail_links_to_the_frontend_page_which_confirms_through_the_api(self):
+        import re
+
+        user = self.create_user()
+        self.authenticate(user)
+        self.client.patch(reverse("profile"), {"email": "new@example.com", "current_password": self.password}, format="json")
+        link = re.search(r"https://\S+", mail.outbox[0].body).group(0)
+        match = re.fullmatch(r"https://facecloudai\.com/verify-email-change/([^/]+)/([^/]+)", link)
+        self.assertIsNotNone(match, link)                                                           # the frontend route, not the API
+        self.client.credentials()                                                                   # the page is opened by someone who may not be signed in
+        confirmed = self.client.get(reverse("verify-email-change", kwargs={"uidb64": match.group(1), "token": match.group(2)}))
+        self.assertEqual(confirmed.status_code, status.HTTP_200_OK)
+        user.refresh_from_db()
+        self.assertTrue(user.is_email_verified)
+
     def test_email_change_needs_the_current_password(self):
         user = self.create_user()
         self.authenticate(user)

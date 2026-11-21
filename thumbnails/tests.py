@@ -173,11 +173,11 @@ class ThumbnailApiTests(ThumbnailTestCase):
         self.assertEqual(self.client.get(reverse("image-thumbnail", kwargs={"pk": 999999})).status_code, 404)
         self.assertFalse(ImageThumbnail.objects.exists())
 
-    def test_rejected_or_fileless_images_have_no_thumbnail(self):
-        rejected = self.photo(encode(noisy_rgb(400, 300)), status="rejected")
+    def test_fileless_images_have_no_thumbnail(self):
         fileless = self.photo(b"", store=False)
-        self.assertEqual(self.client.get(self.url(rejected)).status_code, 404)
+        refused = self.photo(b"", status="rejected", store=False)
         self.assertEqual(self.client.get(self.url(fileless)).status_code, 404)
+        self.assertEqual(self.client.get(self.url(refused)).status_code, 404)
 
     def test_an_undecodable_photo_is_a_clean_404_not_a_crash(self):
         image = self.photo(b"definitely not an image")
@@ -252,10 +252,24 @@ class UrlExposureTests(ThumbnailTestCase):
             if isinstance(response.data, dict) else next(item for item in response.data if item["id"] == image.pk)
         self.assertTrue(row["thumbnail_url"].endswith(f"/api/images/{image.pk}/thumbnail/"))
 
-    def test_a_rejected_image_has_no_thumbnail_link(self):
-        rejected = self.photo(encode(noisy_rgb(400, 300)), status="rejected")
+    def test_a_photograph_the_checks_rejected_can_still_be_looked_at(self):
+        rejected = self.photo(encode(noisy_rgb(400, 300)), status="rejected")                     # e.g. too blurry: its file is kept
         response = self.client.get(reverse("image-upload-detail", kwargs={"pk": rejected.pk}))
+        self.assertTrue(response.data["thumbnail_url"].endswith(f"/api/images/{rejected.pk}/thumbnail/"))
+        self.assertIsNone(response.data["download_url"])                                           # looked at, not downloaded
+        served, body = self.fetch(rejected)
+        self.assertEqual(served.status_code, 200)
+        self.assertEqual(Image.open(io.BytesIO(body)).size, (256, 192))
+
+    def test_a_file_refused_at_upload_has_no_thumbnail_link(self):
+        refused = self.photo(b"", status="rejected", store=False)                                 # nothing was stored
+        response = self.client.get(reverse("image-upload-detail", kwargs={"pk": refused.pk}))
         self.assertIsNone(response.data["thumbnail_url"])
+        self.assertEqual(self.client.get(self.url(refused)).status_code, 404)
+
+    def test_another_persons_rejected_photograph_is_not_served(self):
+        theirs = self.photo(encode(noisy_rgb(400, 300)), owner=self.other, status="rejected")
+        self.assertEqual(self.client.get(self.url(theirs)).status_code, 404)
 
     @override_settings(THUMBNAIL_SIZES=(128, 512))
     def test_configured_sizes_are_used(self):
@@ -263,3 +277,126 @@ class UrlExposureTests(ThumbnailTestCase):
         response, body = self.fetch(image)
         self.assertEqual(Image.open(io.BytesIO(body)).size, (128, 64))
         self.assertEqual(self.client.get(self.url(image, size=256)).status_code, 400)
+
+
+@override_settings(MEDIA_ROOT=__import__("tempfile").mkdtemp(), THUMBNAIL_PREGENERATE=False)
+class EnhancedVersionTests(ThumbnailTestCase):
+    """``?version=enhanced``: the picture of the photograph's latest finished enhancement, so lists show what the enhancement made; the original stays the default (the before/after slider needs it)."""
+
+    RED, BLUE, GREEN = (200, 30, 30), (30, 30, 200), (30, 200, 30)
+
+    def solid(self, colour, width=400, height=300):
+        return encode(Image.new("RGB", (width, height), colour), "PNG")
+
+    def result(self, image, colour, status="completed", outcome="enhanced"):
+        from enhancement.models import ImageEnhancementResult
+        from uploads.models import ImagePreprocessingResult
+
+        preprocessing, _made = ImagePreprocessingResult.objects.get_or_create(      # one per photograph
+            image=image, defaults=dict(owner=image.owner, status="completed", output_format="png", output_name="p.png", output_width=400, output_height=300, processed_file_size=1))
+        result = ImageEnhancementResult.objects.create(
+            owner=image.owner, image=image, preprocessing_result=preprocessing, status=status, requested_level="auto",
+            applied_parameters={"adaptive": {"outcome": outcome}} if outcome else {})
+        if colour is not None:
+            result.enhanced_file.save("enhanced.png", ContentFile(self.solid(colour)))
+        return result
+
+    def mean(self, body):
+        return tuple(round(v) for v in np.asarray(Image.open(io.BytesIO(body)).convert("RGB")).reshape(-1, 3).mean(axis=0))
+
+    def assert_colour(self, body, expected, tolerance=6):
+        self.assertTrue(all(abs(a - b) <= tolerance for a, b in zip(self.mean(body), expected)), (self.mean(body), expected))
+
+    def test_the_default_is_still_the_original_even_when_an_enhancement_exists(self):
+        image = self.photo(self.solid(self.RED))
+        self.result(image, self.BLUE)
+        response, body = self.fetch(image)
+        self.assertEqual(response["X-Thumbnail-Version"], "original")
+        self.assert_colour(body, self.RED)
+        response, body = self.fetch(image, version="original")
+        self.assert_colour(body, self.RED)
+
+    def test_the_enhanced_version_shows_the_enhanced_picture(self):
+        image = self.photo(self.solid(self.RED))
+        self.result(image, self.BLUE)
+        response, body = self.fetch(image, version="enhanced", size=256)
+        self.assertEqual((response.status_code, response["X-Thumbnail-Version"]), (200, "enhanced"))
+        self.assertEqual(response["Content-Type"], "image/jpeg")
+        self.assertEqual(Image.open(io.BytesIO(body)).size, (256, 192))
+        self.assert_colour(body, self.BLUE)
+
+    def test_without_a_finished_enhancement_the_original_is_served(self):
+        image = self.photo(self.solid(self.RED))
+        for status in ("queued", "processing", "failed", "cancelled"):
+            with self.subTest(status):
+                unfinished = self.result(image, self.BLUE, status=status)          # even one that left a picture behind is not an enhancement
+                response, body = self.fetch(image, version="enhanced")
+                self.assertEqual((response.status_code, response["X-Thumbnail-Version"]), (200, "original"))
+                self.assert_colour(body, self.RED)
+                unfinished.delete()                                  # only one active enhancement per photograph at a time
+
+    def test_a_result_that_kept_the_original_is_not_shown_as_an_enhancement(self):
+        image = self.photo(self.solid(self.RED))
+        self.result(image, self.BLUE, outcome="original_preserved")
+        response, body = self.fetch(image, version="enhanced")
+        self.assertEqual(response["X-Thumbnail-Version"], "original")
+        self.assert_colour(body, self.RED)
+
+    def test_the_latest_finished_enhancement_decides(self):
+        image = self.photo(self.solid(self.RED))
+        self.result(image, self.BLUE)
+        newer = self.result(image, self.GREEN)
+        _response, body = self.fetch(image, version="enhanced")
+        self.assert_colour(body, self.GREEN)
+        newer.applied_parameters = {"adaptive": {"outcome": "original_preserved"}}
+        newer.save(update_fields=["applied_parameters"])
+        response, body = self.fetch(image, version="enhanced")
+        self.assertEqual(response["X-Thumbnail-Version"], "original")                      # the newest run kept the original: not the older run's picture
+        self.assert_colour(body, self.RED)
+
+    def test_a_result_with_no_adaptive_record_still_counts(self):
+        image = self.photo(self.solid(self.RED))
+        self.result(image, self.BLUE, outcome=None)
+        response, _body = self.fetch(image, version="enhanced")
+        self.assertEqual(response["X-Thumbnail-Version"], "enhanced")
+
+    def test_the_tag_names_the_result_and_the_size_so_a_browser_revalidates_cheaply(self):
+        image = self.photo(self.solid(self.RED))
+        first = self.result(image, self.BLUE)
+        response, _body = self.fetch(image, version="enhanced", size=256)
+        tag = response["ETag"]
+        self.assertEqual(tag, f'W/"enhanced-{first.pk}-256"')
+        self.assertEqual(response["Cache-Control"], "private, no-cache")
+        again = self.client.get(self.url(image, version="enhanced", size=256), HTTP_IF_NONE_MATCH=tag)
+        self.assertEqual((again.status_code, again.content, again["X-Thumbnail-Version"]), (304, b"", "enhanced"))
+        other_size = self.client.get(self.url(image, version="enhanced", size=1024), HTTP_IF_NONE_MATCH=tag)
+        self.assertEqual(other_size.status_code, 200)
+        newer = self.result(image, self.GREEN)                                               # a newer enhancement is shown at once: the old tag no longer matches
+        stale = self.client.get(self.url(image, version="enhanced", size=256), HTTP_IF_NONE_MATCH=tag)
+        self.assertEqual((stale.status_code, stale["ETag"]), (200, f'W/"enhanced-{newer.pk}-256"'))
+
+    def test_an_unknown_version_and_a_bad_size_are_refused(self):
+        image = self.photo(self.solid(self.RED))
+        self.result(image, self.BLUE)
+        self.assertEqual(self.client.get(self.url(image, version="best")).status_code, 400)
+        self.assertEqual(self.client.get(self.url(image, version="enhanced", size=333)).status_code, 400)
+
+    def test_nobody_sees_another_persons_enhanced_picture(self):
+        image = self.photo(self.solid(self.RED), owner=self.other)
+        self.result(image, self.BLUE)
+        self.assertEqual(self.client.get(self.url(image, version="enhanced")).status_code, 404)
+
+    def test_a_missing_enhanced_file_is_a_404_not_a_crash(self):
+        image = self.photo(self.solid(self.RED))
+        result = self.result(image, self.BLUE)
+        result.enhanced_file.storage.delete(result.enhanced_file.name)
+        response, _body = self.fetch(image, version="enhanced")
+        self.assertEqual(response.status_code, 404)
+
+    def test_the_original_thumbnail_is_still_cached_and_the_enhanced_one_is_not_stored(self):
+        image = self.photo(self.solid(self.RED))
+        self.result(image, self.BLUE)
+        self.fetch(image, version="enhanced")
+        self.assertEqual(ImageThumbnail.objects.filter(image=image).count(), 0)
+        self.fetch(image)
+        self.assertEqual(ImageThumbnail.objects.filter(image=image).count(), 1)

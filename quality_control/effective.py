@@ -56,8 +56,8 @@ def effective_decision(image, decision=None):
     if decision is None:
         quality = getattr(image, "quality_decision", None)
         decision = quality.decision if quality is not None else ""
-    if decision == "rejected" and not _rejection_applies():
-        decision = "needs_review"                 # a row from before quality checks stopped refusing photographs
+    if decision == "rejected" and not _rejection_applies() and getattr(image, "status", "") != "rejected":
+        decision = "needs_review"                 # a row from before quality checks stopped refusing photographs (an upload marked rejected, e.g. too blurry, stays rejected)
     if decision == "needs_review" and not moderator_can_decide(image):
         return "accepted"
     return decision
@@ -68,7 +68,7 @@ def review_required(image, decision=None):
     if decision is None:
         quality = getattr(image, "quality_decision", None)
         decision = quality.decision if quality is not None else ""
-    if decision == "rejected" and not _rejection_applies():
+    if decision == "rejected" and not _rejection_applies() and getattr(image, "status", "") != "rejected":
         decision = "needs_review"
     return decision == "needs_review" and moderator_can_decide(image)
 

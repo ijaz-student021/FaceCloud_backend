@@ -62,7 +62,8 @@ class ImageUploadSerializer(serializers.ModelSerializer):
         return request.build_absolute_uri(path) if request else path
 
     def get_thumbnail_url(self, obj) -> str | None:
-        if obj.status != "uploaded" or not obj.original_file:
+        # A photograph the checks rejected (status "rejected", e.g. too blurry) still has its file: the owner can look at it. One refused at upload has none.
+        if obj.status not in ("uploaded", "rejected") or not obj.original_file:
             return None
         request = self.context.get("request")
         path = f"/api/images/{obj.pk}/thumbnail/"

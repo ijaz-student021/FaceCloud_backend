@@ -28,6 +28,7 @@ OPERATION_STAGE = {
     "low_light_enhancement": "low_light", "denoising": "denoise", "motion_deblurring": "deblur",
     "face_restoration": "face_restore", "super_resolution": "upscale", "polish": "polish",
     "detail_restoration": "detail", "colourization": "colourize",       # the detail model (also the final layer of every photograph) and DDColor; a missing name here sent `stage: null`
+    "cloud_enhancement": "cloud_enhance",                               # the optional cloud engine (enhancement/cloud.py): one stage for the whole photograph
 }
 POLISH_REFUSED_REASON = "Already balanced and sharp: nothing to improve."
 RESTORATION_OPERATIONS = ("motion_deblurring", "face_restoration", "super_resolution")
@@ -202,10 +203,15 @@ def winning_engine(stage):
 
 
 def engine_kind(engine):
-    """``ai`` (a learned model), ``classical`` (OpenCV / NumPy only) or ``unknown`` (an engine this version does not classify, which is never claimed to be AI)."""
+    """``ai`` (a learned model), ``classical`` (OpenCV / NumPy only) or ``unknown`` (an engine this version does not classify, which is never claimed to be AI).
+
+    The cloud engine's names (``deep_image_<preset>``) are learned models that ran at the provider; they are not in ``AI_ENGINES``, which is the local engines' table.
+    """
+    from .cloud import is_cloud_engine
+
     if engine in CLASSICAL_ENGINES:
         return "classical"
-    return "ai" if engine in AI_ENGINES else "unknown"
+    return "ai" if engine in AI_ENGINES or is_cloud_engine(engine) else "unknown"
 
 
 def _from_adaptive(parameters, adaptive):

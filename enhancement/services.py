@@ -299,9 +299,12 @@ BLUR_SEVERE_BELOW = 0.232
 BLUR_MILD_BELOW = 0.422
 BLUR_MIN_TONAL_RANGE = 8.0
 BLUR_MIN_EDGE_STRENGTH = 1.0
+# The same measure on a coarser copy (quality_control QUALITY_REJECT_SEVERE_BLUR): grain and thin lines read as sharp edges at 1024 px but not at 512, so a defocused, grainy photograph
+# is caught there. Only for photographs larger than the normal measuring scale (a smaller one is measured at its own size either way).
+BLUR_COARSE_LONG_EDGE = 512
 
 
-def measure_blur(gray):
+def measure_blur(gray, proxy_edge=BLUR_PROXY_LONG_EDGE):
     """``{"edge_sharpness", "edge_strength", "verdict", ...}`` for a grayscale image.
 
     ``verdict`` is ``sharp``, ``mild``, ``severe`` or ``uncertain``: with too
@@ -309,7 +312,7 @@ def measure_blur(gray):
     claimed, and no blur correction is routed.
     """
     height, width = gray.shape[:2]
-    scale = min(1.0, BLUR_PROXY_LONG_EDGE / float(max(height, width)))
+    scale = min(1.0, proxy_edge / float(max(height, width)))
     if scale < 1.0:
         gray = cv2.resize(gray, (max(1, round(width * scale)), max(1, round(height * scale))),
                           interpolation=cv2.INTER_AREA)
@@ -339,6 +342,14 @@ def measure_blur(gray):
         "measured_at_long_edge": int(round(max(height, width) * scale)),
         "verdict": verdict,
     }
+
+
+def coarse_blur(gray):
+    """``{"edge_sharpness", "verdict", "measured_at_long_edge"}`` of ``gray`` at BLUR_COARSE_LONG_EDGE, or ``None`` when the photograph is not larger than the normal measuring scale."""
+    if max(gray.shape[:2]) <= BLUR_PROXY_LONG_EDGE:
+        return None
+    coarse = measure_blur(gray, BLUR_COARSE_LONG_EDGE)
+    return {key: coarse[key] for key in ("edge_sharpness", "verdict", "measured_at_long_edge")}
 
 
 def analyze_image_quality(image):
@@ -2865,6 +2876,40 @@ def process_enhancement_result(result, claim_owner=None, token=None, resume_toke
         return _process_claimed_result(result, token)
 
 
+def _enhance_photo(source, requested_level, *, style, allow_biometric_processing, checkpoint, has_alpha=False, **engine_options):
+    """Which engine makes the pixels: the cloud engine when it is switched on and this photograph may use it, else (or when it cannot deliver) the local one.
+
+    With the cloud engine off this is ``enhance_bgr`` and nothing else: the result is exactly what it was and no network is touched. When the cloud engine was wanted and was not used, the
+    local result records why (``applied_parameters["cloud_enhancement"]``) and says so in words where a person should know; the processing summary names the engine that really made the pixels.
+    """
+    from . import cloud
+
+    declined = None
+    state = cloud.availability()
+    if state["reason"] == "not_configured":
+        declined = cloud.CloudDeclined("not_configured")
+    elif state["available"]:
+        skipped = cloud.skip_reason(allow_biometric_processing=allow_biometric_processing, lighting=engine_options.get("lighting", "auto"), has_alpha=has_alpha, style=style)
+        if skipped:
+            declined = cloud.CloudDeclined(skipped)
+        else:
+            try:
+                return cloud.enhance(source, requested_level, style, allow_biometric_processing=allow_biometric_processing, checkpoint=checkpoint)
+            except PipelineInterrupted:
+                raise
+            except cloud.CloudDeclined as error:
+                declined = error
+            except Exception:
+                logger.exception("The cloud enhancement failed unexpectedly; the local engine takes over.")
+                declined = cloud.CloudDeclined("unexpected_error", attempted=True)
+    enhanced, applied_level, parameters = enhance_bgr(
+        source, requested_level, style=style, allow_biometric_processing=allow_biometric_processing, checkpoint=checkpoint, **engine_options,
+    )
+    if declined is not None:
+        cloud.note_fallback(parameters, declined.reason, declined.attempted)
+    return enhanced, applied_level, parameters
+
+
 def _process_claimed_result(result, token):
     batch_id = result.image.batch_id
 
@@ -2899,10 +2944,10 @@ def _process_claimed_result(result, token):
         from .adaptive.trace import photo
 
         with photo(f"{result.image_id} (result {result.pk})"):           # the engine's log lines say which photograph a skipped model belongs to
-            enhanced, applied_level, parameters = enhance_bgr(
+            enhanced, applied_level, parameters = _enhance_photo(
                 source, result.requested_level, style=result.requested_style,
                 allow_biometric_processing=biometric_processing_allowed(result.owner),
-                checkpoint=checkpoint, **engine_options,
+                checkpoint=checkpoint, has_alpha=alpha is not None, **engine_options,
             )
         parameters["source_resolution_strategy"] = source_strategy
         if decoding:
