@@ -281,7 +281,7 @@ def my_images_queryset(user):
         .select_related(
             "batch__organization", "preprocessing_result", "face_validation",
             "quality_decision", "duplicate_analysis",
-            "identity_analysis", "place",
+            "identity_analysis",
         )
         .prefetch_related(
             Prefetch(
@@ -384,17 +384,6 @@ class MyImageListView(generics.ListAPIView):
                 identity_face__image_id=OuterRef("pk"), identity_group_id=int(person), identity_group__owner=self.request.user,
                 state__in=["auto_matched", "new_group", "confirmed"],
             )))
-
-        place = self.request.query_params.get("place")
-        if place:
-            if not place.isdigit():
-                raise ValidationError({"place": "Place must be a positive integer."})
-            queryset = queryset.filter(place_id=int(place))
-        country = self.request.query_params.get("country", "").strip()
-        if country:
-            if len(country) != 2 or not country.isalpha():
-                raise ValidationError({"country": "Use a two-letter country code."})
-            queryset = queryset.filter(place__country_code=country.upper())
 
         favorite = self.request.query_params.get("favorite", "").strip().lower()
         if favorite:

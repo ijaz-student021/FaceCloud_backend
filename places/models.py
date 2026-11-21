@@ -1,3 +1,8 @@
+"""RETIRED: the Places feature (where a photograph was taken) was removed; no view, URL, setting or task uses this model any more.
+
+The table and ``ImageUpload.place`` / ``gps_lat`` / ``gps_lon`` / ``location_checked_at`` stay in the schema so that no migration has to touch a live database; nothing writes them.
+A later migration may drop them.
+"""
 from django.db import models
 
 
