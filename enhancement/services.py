@@ -2878,7 +2878,7 @@ def _enhance_photo(source, requested_level, *, style, allow_biometric_processing
     if state["reason"] == "not_configured":
         declined = cloud.CloudDeclined("not_configured")
     elif state["available"]:
-        skipped = cloud.skip_reason(allow_biometric_processing=allow_biometric_processing, lighting=engine_options.get("lighting", "auto"), has_alpha=has_alpha)
+        skipped = cloud.skip_reason(allow_biometric_processing=allow_biometric_processing, lighting=engine_options.get("lighting", "auto"), has_alpha=has_alpha, style=style)
         if skipped:
             declined = cloud.CloudDeclined(skipped)
         else:
