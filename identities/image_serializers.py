@@ -15,7 +15,7 @@ class IdentityGroupImageSerializer(MyImageSerializer):
         model = ImageUpload
         fields = (
             "id", "original_name", "thumbnail_url", "file_size", "width", "height",
-            "display_status", "matching_confidence", "membership_id", "membership_state",
+            "display_status", "matching_confidence", "membership_id", "membership_state", "created_at",
         )
 
     def get_membership_id(self, obj) -> int | None:
