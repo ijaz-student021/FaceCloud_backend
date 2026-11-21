@@ -9,6 +9,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
+from reportlab.platypus import Image as PdfImage
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from .labels import (
@@ -82,6 +83,12 @@ PAGE_MARGIN = 14 * mm
 CONTENT_WIDTH = A4[0] - 2 * PAGE_MARGIN              # 182 mm
 CELL_PADDING = 4                                       # points, each side (see table_style)
 PHOTO_COLUMNS = [50 * mm, 24 * mm, 20 * mm, 21 * mm, 29 * mm, 12 * mm, 26 * mm]
+PREVIEW_COLUMN = 20 * mm                                # the small picture of the photo, when the report has any (a column is added only then)
+PHOTO_COLUMNS_WITH_PREVIEW = [42 * mm, 22 * mm, 17 * mm, 19 * mm, 25 * mm, 11 * mm, 26 * mm, PREVIEW_COLUMN]
+REJECTED_COLUMNS = [60 * mm, 122 * mm]
+REJECTED_COLUMNS_WITH_PREVIEW = [20 * mm, 50 * mm, 112 * mm]
+PREVIEW_LIMIT = 40                                      # photos that get a picture: a big report stays quick and small
+PREVIEW_EDGE = 160                                      # pixels of the longest side stored in the PDF
 PHOTO_HEADERS = [
     "Filename", "Status", "Quality score (0–100)", "Brightness (0–100)", "Sharpness (0–100)", "Faces", "Duplicate check",
 ]
@@ -185,33 +192,71 @@ def _rejection_text(image):
     return "; ".join(reasons) or "No reason was recorded."
 
 
-def _rejected_table(images, styles):
+def _previews(images):
+    """``{image_id: jpeg bytes}`` of a small picture for the first PREVIEW_LIMIT photos: the enhanced picture when there is one (what the owner sees in the lists), else the photo itself
+    (a photograph the checks rejected is previewed too). A photo that is gone, has no file or cannot be read has none; this never fails the report."""
+    ids = [image["image_id"] for image in images[:PREVIEW_LIMIT] if isinstance(image.get("image_id"), int)]
+    if not ids:
+        return {}
+    from thumbnails.services import enhanced_result, render_thumbnail
+    from uploads.models import ImageUpload
+
+    found = {}
+    try:
+        photos = list(ImageUpload.objects.filter(pk__in=ids))
+    except Exception:
+        return found                                    # no database to ask (or it failed): a report without pictures
+    for photo in photos:
+        try:
+            result = enhanced_result(photo)
+            source = result.enhanced_file if result is not None else photo.original_file
+            if not source:
+                continue
+            found[photo.pk] = render_thumbnail(source, PREVIEW_EDGE)[0]
+        except Exception:
+            continue
+    return found
+
+
+def _picture(previews, image):
+    data = previews.get(image.get("image_id"))
+    if data is None:
+        return ""
+    return PdfImage(io.BytesIO(data), width=PREVIEW_COLUMN - 8, height=PREVIEW_COLUMN - 8, kind="proportional")
+
+
+def _rejected_table(images, styles, previews=None):
+    previews = previews or {}
     rejected = [image for image in images if image["status"] == "rejected"]
     if not rejected:
         return None
-    rows = [[Paragraph("Rejected photo", styles.head), Paragraph("Why it was rejected", styles.head)]]
+    with_preview = any(image.get("image_id") in previews for image in rejected)
+    rows = [([Paragraph("Preview", styles.head)] if with_preview else []) + [Paragraph("Rejected photo", styles.head), Paragraph("Why it was rejected", styles.head)]]
     for image in rejected:
-        rows.append([_wrapped(image["filename"], 60 * mm, styles.cell), Paragraph(escape(_rejection_text(image)), styles.cell)])
-    table = Table(rows, colWidths=[60 * mm, 122 * mm], repeatRows=1)
+        rows.append(([_picture(previews, image)] if with_preview else []) + [_wrapped(image["filename"], (REJECTED_COLUMNS_WITH_PREVIEW if with_preview else REJECTED_COLUMNS)[-2], styles.cell), Paragraph(escape(_rejection_text(image)), styles.cell)])
+    table = Table(rows, colWidths=REJECTED_COLUMNS_WITH_PREVIEW if with_preview else REJECTED_COLUMNS, repeatRows=1)
     table.setStyle(table_style(font_size=7))
     return table
 
 
-def _photos_table(images, styles):
-    rows = [[Paragraph(escape(header), styles.head) for header in PHOTO_HEADERS]]
+def _photos_table(images, styles, previews=None):
+    previews = previews or {}
+    with_preview = any(image.get("image_id") in previews for image in images)
+    columns = PHOTO_COLUMNS_WITH_PREVIEW if with_preview else PHOTO_COLUMNS
+    rows = [[Paragraph(escape(header), styles.head) for header in PHOTO_HEADERS] + ([Paragraph("Preview", styles.head)] if with_preview else [])]
     for image in images:
         quality = image["quality"]
         faces = image["face_validation"]["face_count"]
         rows.append([
-            _wrapped(image["filename"], PHOTO_COLUMNS[0], styles.cell),
+            _wrapped(image["filename"], columns[0], styles.cell),
             Paragraph(escape(status_label(image["status"])), styles.cell),
             Paragraph(format_score(quality["overall_score"]), styles.cell),
             Paragraph(format_score(quality["brightness_score"]), styles.cell),
             Paragraph(escape(sharpness_words(quality["sharpness_score"])), styles.cell),
             Paragraph("—" if faces is None else str(faces), styles.cell),
             Paragraph(escape(duplicate_label(image["duplicate_analysis"]["decision"])), styles.cell),
-        ])
-    table = Table(rows, colWidths=PHOTO_COLUMNS, repeatRows=1)
+        ] + ([_picture(previews, image)] if with_preview else []))
+    table = Table(rows, colWidths=columns, repeatRows=1)
     table.setStyle(table_style(font_size=7))
     return table
 
@@ -293,13 +338,14 @@ def render_pdf(payload):
         story.append(Spacer(1, 4 * mm))
     story += [_summary_table(payload, styles), Spacer(1, 5 * mm)]
 
-    rejected = _rejected_table(images, styles)
+    previews = _previews(images)
+    rejected = _rejected_table(images, styles, previews)
     if rejected is not None:
         story += [Paragraph("Why photos were rejected", styles.heading), rejected, Spacer(1, 5 * mm)]
 
     story.append(Paragraph("Photos", styles.heading))
     if images:
-        story += [_photos_table(images, styles), Paragraph(escape(LEGEND), styles.legend)]
+        story += [_photos_table(images, styles, previews), Paragraph(escape(LEGEND), styles.legend)]
     else:
         story.append(Paragraph("There are no photos to list in this report.", styles.body))
     document.build(story, canvasmaker=_footer_canvas(f"{report_label} · {_source_label(payload)}"))

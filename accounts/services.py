@@ -2,14 +2,13 @@ import hashlib
 import hmac
 import re
 import secrets
-from urllib.parse import urlencode, urljoin
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.core.mail import EmailMultiAlternatives, send_mail
 from django.db import transaction
-from django.urls import reverse
 from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.html import escape
@@ -43,11 +42,9 @@ def record_auth_event(event, request=None, user=None, identifier="", details=Non
 def send_verification_email(user):
     uid = urlsafe_base64_encode(force_bytes(user.pk))
     token = default_token_generator.make_token(user)
-    path = reverse(
-        "verify-email-change",
-        kwargs={"uidb64": uid, "token": token},
-    )
-    link = urljoin(settings.PUBLIC_BACKEND_URL.rstrip("/") + "/", path.lstrip("/"))
+    # The link opens the frontend's confirmation page (/verify-email-change/<uid>/<token>), which calls GET /api/auth/verify-email/change/<uid>/<token>/ itself; a link straight to the
+    # API would show the person raw JSON.
+    link = f"{settings.FRONTEND_URL.rstrip('/')}/verify-email-change/{uid}/{token}"
     send_mail(
         subject="Verify your FaceCloud account",
         message=f"Click the link to verify your email: {link}",

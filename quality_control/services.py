@@ -9,7 +9,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from enhancement.face_sharpness import primary_face_detail
-from enhancement.services import analyze_image_quality
+from enhancement.services import analyze_image_quality, coarse_blur
 from uploads.models import ImagePreprocessingResult
 from validation.models import FaceValidationResult
 
@@ -99,7 +99,22 @@ def photo_has_face(face_validation):
     return face_validation is not None and (face_validation.face_count or 0) > 0
 
 
+BLURRY_MESSAGE = "This photo is too blurry to enhance, so it was rejected. Please upload a sharper one."
+
+
+def too_blurry_to_enhance(metrics):
+    """Whether QUALITY_REJECT_SEVERE_BLUR refuses this photograph: its blur measured ``severe`` (a face or not)."""
+    if not settings.QUALITY_REJECT_SEVERE_BLUR:
+        return False
+    if (metrics.get("blur") or {}).get("verdict") == "severe":
+        return True
+    coarse = metrics.get("blur_coarse") or {}
+    return coarse.get("verdict") not in (None, "uncertain") and coarse.get("edge_sharpness", 1.0) < settings.QUALITY_REJECT_BLUR_COARSE_EDGE
+
+
 def make_decision(metrics, scores, face_validation):
+    if too_blurry_to_enhance(metrics):
+        return "rejected", ["severe_blur"], BLURRY_MESSAGE
     reject = []
     review = []
     shortest = min(metrics["width"], metrics["height"])
@@ -167,6 +182,7 @@ def process_quality_decision(decision_id):
     try:
         image = _read_standardized(result.preprocessing_result)
         metrics = with_face_sharpness(analyze_image_quality(image), image, result.face_validation)
+        metrics["blur_coarse"] = coarse_blur(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY))      # kept out of analyze_image_quality (its output is compared with a reference); only the rejection rule reads it
         enlargement = getattr(result.preprocessing_result, "enlargement", None) or {}
         if enlargement.get("applied"):
             # The size above is that of the enlarged copy: say so, so a score is never read as if the photograph had been taken at this size.
@@ -184,6 +200,11 @@ def process_quality_decision(decision_id):
         result.processing_duration_ms = max(1, round((time.perf_counter() - started) * 1000))
         result.finished_at = timezone.now()
         result.save()
+        if decision == "rejected" and too_blurry_to_enhance(metrics):
+            # The upload itself is marked rejected: that is what every later step already honours (no automatic or requested enhancement, no person folder, the Rejected filter).
+            result.image.status = "rejected"
+            result.image.rejection_reason = message
+            result.image.save(update_fields=["status", "rejection_reason", "updated_at"])
         from quality_control.effective import moderator_can_decide
 
         if decision == "needs_review" and moderator_can_decide(result.image):      # a personal workspace has no moderator: nothing to queue
