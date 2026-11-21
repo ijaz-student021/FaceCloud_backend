@@ -20,6 +20,17 @@ logger = logging.getLogger(__name__)
 TRANSIENT_INFRASTRUCTURE_ERRORS = (OperationalError, InterfaceError)
 
 
+@shared_task(name="identities.group_held_photos")
+def group_held_photos_task(user_id):
+    """Group a person's earlier photographs once they have consented to face processing (see ``identities.verdict.group_held_photos``)."""
+    from django.contrib.auth import get_user_model
+
+    from .verdict import group_held_photos
+
+    user = get_user_model().objects.filter(pk=user_id).first()
+    return {"user_id": user_id, "tried": group_held_photos(user) if user is not None else 0}
+
+
 @shared_task(
     bind=True,
     name="identities.analyze_image",
