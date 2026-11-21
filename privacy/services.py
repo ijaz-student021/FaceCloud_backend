@@ -83,6 +83,16 @@ def consent_status(user):
     }
 
 
+def _group_earlier_photos(user_id):
+    """Queue the grouping of the photographs this person uploaded before they said yes; never raises (a queue problem must not undo their answer)."""
+    try:
+        from identities.tasks import group_held_photos_task
+
+        group_held_photos_task.delay(user_id)
+    except Exception:
+        logger.warning("Could not queue the grouping of user_id=%s's earlier photographs.", user_id, exc_info=True)
+
+
 @transaction.atomic
 def record_consent(user, purpose, granted, policy_version):
     """Append a consent change; unchanged state is not duplicated."""
@@ -101,6 +111,8 @@ def record_consent(user, purpose, granted, policy_version):
     row = BiometricConsent.objects.create(
         user=user, purpose=purpose, granted=granted, policy_version=version
     )
+    if granted and purpose == ConsentPurpose.FACE_IDENTITY:
+        transaction.on_commit(lambda: _group_earlier_photos(user.pk))
     record_activity_event(
         user,
         "privacy",

@@ -125,6 +125,24 @@ def group_when_enhancement_ends(image, verdict=None):
     return group_after_verdict(image, verdict=verdict)
 
 
+HELD_PHOTO_LIMIT = 200
+
+
+def group_held_photos(user, limit=HELD_PHOTO_LIMIT):
+    """Group the photographs ``user`` uploaded before they consented to face processing; returns how many were tried.
+
+    Such a photograph was checked and enhanced but never analysed (no consent), so it sat outside every person folder until the person picked it by hand. Called when consent is
+    granted. Only the owner's own photographs that were never analysed, are not rejected and have a face; ``group_when_enhancement_ends`` skips one that is not eligible (the verdict,
+    an enhancement still to come, no usable face), so this changes nothing for them, and it never raises.
+    """
+    from uploads.models import ImageUpload
+
+    images = list(ImageUpload.objects.filter(owner=user, status="uploaded", identity_analysis__isnull=True, face_validation__face_count__gt=0).order_by("pk")[:limit])
+    for image in images:
+        group_when_enhancement_ends(image)
+    return len(images)
+
+
 def grouping_expected_soon(image, seconds=120):
     """Whether ``image`` is about to be grouped: its automatic enhancement ended in the last ``seconds`` seconds, its verdict allows grouping, a face was found and the owner consented, but
     the analysis is not queued yet. Used only so that the progress never shows a finished photograph in the instant between the two stages."""
