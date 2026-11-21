@@ -306,7 +306,14 @@ class DeepImageClient:
         except urllib_error.HTTPError as error:
             said = self._note_refusal(error)
             # The first real refusal (2026-11-09, a free account asking for auto_enhance_pro) was an HTTP 400 whose message said "available only for paid accounts": worth its own code.
-            raise CloudDeclined("plan_required" if error.code == 400 and "paid account" in said.lower() else _status_reason(error.code)) from None
+            lowered = said.lower()
+            if error.code == 400 and "paid account" in lowered:
+                reason = "plan_required"
+            elif "not_enough_credits" in lowered or "no more requests" in lowered:
+                reason = "no_credits"            # seen 2026-11-21 when the free credits ran out: HTTP 403 {"message": "No more requests are available.", "code": "NOT_ENOUGH_CREDITS"}
+            else:
+                reason = _status_reason(error.code)
+            raise CloudDeclined(reason) from None
         except urllib_error.URLError as error:
             raise CloudDeclined("timeout" if isinstance(error.reason, TimeoutError) else "connection_error") from None
         except TimeoutError:
