@@ -192,6 +192,12 @@ class ClientTests(ServerCase):
         self.serve([{"upload_status": 402, "upload_message": "Only for paid accounts."}])
         self.assertEqual(self.reason_of(self.submit), "no_credits")          # the words alone are not enough: a plan refusal is a 400
 
+    def test_running_out_of_credits_is_no_credits_not_a_bad_key(self):
+        self.serve([{"upload_status": 403, "upload_message": "No more requests are available."}])
+        self.assertEqual(self.reason_of(self.submit), "no_credits")                       # what the real service answered when the free credits were used up (HTTP 403)
+        self.serve([{"upload_status": 403, "upload_message": "Invalid key"}])
+        self.assertEqual(self.reason_of(self.submit), "unauthorized")
+
     def test_a_wrong_key_is_refused(self):
         self.serve(key="another-key")
         self.assertEqual(self.reason_of(self.submit), "unauthorized")
