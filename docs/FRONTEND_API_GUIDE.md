@@ -711,7 +711,10 @@ GET    /api/images/trash/{id}/thumbnail/                          -> image/jpeg 
 - **Not in the trash view:** photographs that were refused at upload, and ones permanently deleted.
 - The retention is the server setting `TRASH_RETENTION_DAYS`; show `days_left` from each row, not a fixed 30.
 
-## 5-places. Places: where a photograph was taken (new)
+## 5-places. Places: RETIRED (2026-11-21)
+
+> The Places feature was removed: `/api/places/`, `/api/images/{id}/location/`, `/api/images/location/remove/`, the `place` / `country` filters on `GET /api/images/my/`, the `place` and `has_location` fields of a photograph and `places` in the search answer no longer exist, and uploads no longer read GPS. The text below is kept only as history.
+
 
 "Places" groups the person's own photographs by where they were taken ("Lahore", "Murree", "Paris"). The position comes from the photograph's own EXIF GPS block when it has one, is read on the
 server, and **no coordinate ever leaves it**. Names come from an offline file; until the server has installed and approved it, photographs keep a position but get no named place.

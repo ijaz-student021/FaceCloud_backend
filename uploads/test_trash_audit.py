@@ -239,12 +239,12 @@ class TrashAuditTests(FolderFixtures, TestCase):
         after = self.crawl(admin, paths, self.ids | {self.team.pk}, pk=ORG_PK, marker=ORG_MARKER)
         self.assertEqual(after, {}, f"the organization's admin still sees it ({len(after)}; before: {len(before)}):\n{json.dumps(sorted(after), indent=1)}")
 
-    def test_a_photographs_coordinates_are_shown_by_no_other_endpoint_than_the_owners_location_and_export(self):
+    def test_a_photographs_coordinates_are_shown_by_no_other_endpoint_than_the_owners_export(self):
+        # The Places feature (and its /location/ endpoint) was retired: no endpoint shows a position any more, except the owner's own privacy export of what is stored.
         paths = get_paths()
         found = self.crawl(self.client_for(self.owner), paths, self.ids, marker=str(COORDINATE), watch=("name",))
-        allowed = {address for address in found if address.endswith("/location/") or address.startswith("/api/privacy/export/")}
+        allowed = {address for address in found if address.startswith("/api/privacy/export/")}
         self.assertEqual(sorted(set(found) - allowed), [], "the owner's other endpoints show coordinates")
-        self.assertTrue(any(address.endswith("/location/") for address in allowed), "the location endpoint should have shown them")
 
     def test_the_organizations_admin_never_sees_a_members_coordinates(self):
         paths = get_paths()

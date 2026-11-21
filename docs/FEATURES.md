@@ -39,7 +39,7 @@ Status definitions:
 | Albums, favourites | Complete backend; frontend integration remains |
 | Memories (on this day, events, people) and capture dates | Complete backend; frontend integration remains |
 | Trash with 30-day restore | Complete backend; every listing audited by a test; frontend integration remains |
-| Places: where a photograph was taken (GPS read locally, offline place names, owner-only coordinates) | Complete backend; place names wait for the owner's approval of the GeoNames licence record; frontend integration remains |
+| Places: where a photograph was taken | **Retired (2026-11-21).** The `/api/places/` and `/location/` endpoints, GPS reading, place names, the `place` / `country` filters and the Places screens were removed. The table and the `ImageUpload` location columns stay (unused, no migration) |
 | Search by what is in the photograph | Backend and plumbing complete, **off by default**; waits for the owner to approve the model's licence record |
 | Live camera detection and enhancement | Planned |
 | Frontend dashboards | Planned for frontend integration |
