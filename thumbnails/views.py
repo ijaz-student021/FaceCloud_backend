@@ -18,7 +18,7 @@ class ImageThumbnailView(APIView):
 
     def images(self, request):
         """The photographs this endpoint may serve."""
-        return ImageUpload.objects.filter(owner=request.user, status="uploaded")
+        return ImageUpload.objects.filter(owner=request.user, status__in=("uploaded", "rejected"))     # a rejected photograph can still be looked at (never downloaded or enhanced)
 
     @extend_schema(
         parameters=[OpenApiParameter(
