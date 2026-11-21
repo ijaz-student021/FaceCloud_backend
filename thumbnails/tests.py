@@ -173,11 +173,11 @@ class ThumbnailApiTests(ThumbnailTestCase):
         self.assertEqual(self.client.get(reverse("image-thumbnail", kwargs={"pk": 999999})).status_code, 404)
         self.assertFalse(ImageThumbnail.objects.exists())
 
-    def test_rejected_or_fileless_images_have_no_thumbnail(self):
-        rejected = self.photo(encode(noisy_rgb(400, 300)), status="rejected")
+    def test_fileless_images_have_no_thumbnail(self):
         fileless = self.photo(b"", store=False)
-        self.assertEqual(self.client.get(self.url(rejected)).status_code, 404)
+        refused = self.photo(b"", status="rejected", store=False)
         self.assertEqual(self.client.get(self.url(fileless)).status_code, 404)
+        self.assertEqual(self.client.get(self.url(refused)).status_code, 404)
 
     def test_an_undecodable_photo_is_a_clean_404_not_a_crash(self):
         image = self.photo(b"definitely not an image")
@@ -252,10 +252,24 @@ class UrlExposureTests(ThumbnailTestCase):
             if isinstance(response.data, dict) else next(item for item in response.data if item["id"] == image.pk)
         self.assertTrue(row["thumbnail_url"].endswith(f"/api/images/{image.pk}/thumbnail/"))
 
-    def test_a_rejected_image_has_no_thumbnail_link(self):
-        rejected = self.photo(encode(noisy_rgb(400, 300)), status="rejected")
+    def test_a_photograph_the_checks_rejected_can_still_be_looked_at(self):
+        rejected = self.photo(encode(noisy_rgb(400, 300)), status="rejected")                     # e.g. too blurry: its file is kept
         response = self.client.get(reverse("image-upload-detail", kwargs={"pk": rejected.pk}))
+        self.assertTrue(response.data["thumbnail_url"].endswith(f"/api/images/{rejected.pk}/thumbnail/"))
+        self.assertIsNone(response.data["download_url"])                                           # looked at, not downloaded
+        served, body = self.fetch(rejected)
+        self.assertEqual(served.status_code, 200)
+        self.assertEqual(Image.open(io.BytesIO(body)).size, (256, 192))
+
+    def test_a_file_refused_at_upload_has_no_thumbnail_link(self):
+        refused = self.photo(b"", status="rejected", store=False)                                 # nothing was stored
+        response = self.client.get(reverse("image-upload-detail", kwargs={"pk": refused.pk}))
         self.assertIsNone(response.data["thumbnail_url"])
+        self.assertEqual(self.client.get(self.url(refused)).status_code, 404)
+
+    def test_another_persons_rejected_photograph_is_not_served(self):
+        theirs = self.photo(encode(noisy_rgb(400, 300)), owner=self.other, status="rejected")
+        self.assertEqual(self.client.get(self.url(theirs)).status_code, 404)
 
     @override_settings(THUMBNAIL_SIZES=(128, 512))
     def test_configured_sizes_are_used(self):
