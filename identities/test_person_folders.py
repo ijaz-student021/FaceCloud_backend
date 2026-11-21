@@ -164,7 +164,7 @@ class GroupImagesTests(FolderFixtures, TestCase):
         self.assertEqual(
             set(item),
             {"id", "original_name", "thumbnail_url", "file_size", "width", "height", "display_status", "matching_confidence",
-             "membership_id", "membership_state"},
+             "membership_id", "membership_state", "created_at"},
         )
         self.assertEqual(item["id"], image.pk)
         self.assertEqual(item["original_name"], "face.jpg")
