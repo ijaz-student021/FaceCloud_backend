@@ -950,6 +950,10 @@ QUALITY_REVIEW_MIN_EDGE = env.int("QUALITY_REVIEW_MIN_EDGE", default=480)
 # is still refused (at upload). True restores the old behaviour. Found on a real portrait (mean brightness 29, 3456 x 5184) refused as "Too blurry": a dark photograph has weak gradients, the
 # face detector missed its large face, and the engine, once allowed to run, brightened it to a natural 82.5 (docs/evaluation/2026-11-03-enhance-every-photograph.md).
 QUALITY_CHECKS_REJECT = env.bool("QUALITY_CHECKS_REJECT", default=False)
+# QUALITY_REJECT_SEVERE_BLUR (default False): refuse a photograph whose blur measures "severe" (enhancement.services.measure_blur: edge sharpness below BLUR_SEVERE_BELOW, so a soft old
+# scan or a mild blur still goes to the restoration chain). Independent of QUALITY_CHECKS_REJECT: only this one reason refuses, and the upload is marked rejected (status "rejected"), so it is
+# never enhanced, never grouped, and shows under Rejected.
+QUALITY_REJECT_SEVERE_BLUR = env.bool("QUALITY_REJECT_SEVERE_BLUR", default=False)
 QUALITY_REJECT_MIN_LUMINANCE = env.float("QUALITY_REJECT_MIN_LUMINANCE", default=6.0)
 QUALITY_REVIEW_MIN_LUMINANCE = env.float("QUALITY_REVIEW_MIN_LUMINANCE", default=55.0)
 QUALITY_REJECT_MAX_LUMINANCE = env.float("QUALITY_REJECT_MAX_LUMINANCE", default=235.0)

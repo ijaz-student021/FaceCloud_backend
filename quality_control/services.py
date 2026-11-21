@@ -99,7 +99,17 @@ def photo_has_face(face_validation):
     return face_validation is not None and (face_validation.face_count or 0) > 0
 
 
+BLURRY_MESSAGE = "This photo is too blurry to enhance, so it was rejected. Please upload a sharper one."
+
+
+def too_blurry_to_enhance(metrics):
+    """Whether QUALITY_REJECT_SEVERE_BLUR refuses this photograph: its blur measured ``severe`` (a face or not)."""
+    return bool(settings.QUALITY_REJECT_SEVERE_BLUR) and (metrics.get("blur") or {}).get("verdict") == "severe"
+
+
 def make_decision(metrics, scores, face_validation):
+    if too_blurry_to_enhance(metrics):
+        return "rejected", ["severe_blur"], BLURRY_MESSAGE
     reject = []
     review = []
     shortest = min(metrics["width"], metrics["height"])
@@ -184,6 +194,11 @@ def process_quality_decision(decision_id):
         result.processing_duration_ms = max(1, round((time.perf_counter() - started) * 1000))
         result.finished_at = timezone.now()
         result.save()
+        if decision == "rejected" and too_blurry_to_enhance(metrics):
+            # The upload itself is marked rejected: that is what every later step already honours (no automatic or requested enhancement, no person folder, the Rejected filter).
+            result.image.status = "rejected"
+            result.image.rejection_reason = message
+            result.image.save(update_fields=["status", "rejection_reason", "updated_at"])
         from quality_control.effective import moderator_can_decide
 
         if decision == "needs_review" and moderator_can_decide(result.image):      # a personal workspace has no moderator: nothing to queue
