@@ -307,7 +307,7 @@ class AdaptiveImageEnhancementService:
                 local = {"local": variant["local"]} if variant.get("local") else {}      # only a shadow lift says so: every other call is as it was
                 candidate.verdict = validator.evaluate(
                     current.image, candidate.image, step.operation, report, expected_scale=scale if step.operation == ops.UPSCALE else 1,
-                    refine=bool(variant.get("refine")), **local,
+                    refine=bool(variant.get("refine")), edge_boost=bool(variant.get("edge_boost")), **local,
                 )
                 candidate.validation_seconds = time.perf_counter() - validation_started
                 engine_produced.append(candidate)

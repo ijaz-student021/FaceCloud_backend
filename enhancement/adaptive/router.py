@@ -200,7 +200,7 @@ class AdaptiveEnhancementRouter:
         if amount <= 0 or not engines or profile.style != "natural" or profile.level != "auto":
             return None
         faces = [[*face.box, face.detail] for face in report.faces]
-        variants = [{"name": f"edge boost {share:g}", "blend": 1.0, "clahe": 0.1, "amount": round(amount * share, 4), "faces": faces, "vibrance": 0.0} for share in (1.0, 0.65, 0.4)]
+        variants = [{"name": f"edge boost {share:g}", "blend": 1.0, "clahe": 0.1, "amount": round(amount * share, 4), "faces": faces, "vibrance": 0.0, "edge_boost": True} for share in (1.0, 0.65, 0.4)]
         return Step(ops.POLISH, engines, variants, "Edge boost: the finished photograph's edges are sharpened once more.", optional=True)
 
     @staticmethod

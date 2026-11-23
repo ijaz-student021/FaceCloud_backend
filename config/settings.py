@@ -447,6 +447,8 @@ ADAPTIVE_UPSCALE_SCALE = env.int("ADAPTIVE_UPSCALE_SCALE", default=2)
 ADAPTIVE_EDGE_BOOST = env.float("ADAPTIVE_EDGE_BOOST", default=0.0)
 if not 0.0 <= ADAPTIVE_EDGE_BOOST <= 1.5:
     raise ImproperlyConfigured("ADAPTIVE_EDGE_BOOST must be between 0 and 1.5.")
+# ADAPTIVE_EDGE_BOOST_MIN_GAIN: the rise of the frame's structure energy (its edges) the edge boost must show to be kept (measured: 1.06 to 1.15 for amounts 0.32 to 0.8 on a 4 MP portrait).
+ADAPTIVE_EDGE_BOOST_MIN_GAIN = env.float("ADAPTIVE_EDGE_BOOST_MIN_GAIN", default=1.05)
 # ADAPTIVE_UPSCALE_MODEL: the network that makes the enlargement: "realesrgan" (x4plus, the default and what the engine always used) or "general" (the compact realesr-general-x4v3: tried first, x4plus
 # stays the fallback). Both are blended with the plain enlargement at REALESRGAN_OUTPUT_BLEND. Measured on 5 photographs (0.13 to 4.9 MP, Apple M1, CPU/MPS): 352 s with x4plus against 27 s with the
 # compact network (12.9 times faster), the two results 44.7 to 48.8 dB apart (PSNR), x4plus slightly sharper on three of them.

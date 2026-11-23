@@ -36,6 +36,7 @@ class RouterTests(SimpleTestCase):
         self.assertEqual((step.operation, step.optional), (ops.POLISH, True))
         self.assertEqual([variant["amount"] for variant in step.variants], [0.8, 0.52, 0.32])          # strongest first; the validator keeps the strongest that passes every gate
         self.assertTrue(all(variant["vibrance"] == 0.0 and variant["blend"] == 1.0 for variant in step.variants))
+        self.assertTrue(all(variant["edge_boost"] for variant in step.variants))                       # the validator judges it on the frame's edges, not on the mean change
         self.assertTrue(all(variant["clahe"] <= 0.1 for variant in step.variants))                       # edges, not a contrast change
         self.assertTrue(step.reason.startswith("Edge boost"))
 
