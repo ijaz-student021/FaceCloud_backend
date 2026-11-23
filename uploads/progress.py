@@ -224,6 +224,8 @@ def batch_progress_payload(batch):
         "suggested_merge_count": len(suggested_pairs_of_batch(batch)) if grouping_finished else 0,
         "images": [{
             "image_id": item.image_id, "filename": item.image.original_name,
+            # Whether the photograph's file is kept, so it can be looked at (a photograph the checks rejected keeps its file; one refused at upload never had one stored).
+            "has_preview": item.image.status in ("uploaded", "rejected") and bool(item.image.original_file),
             "stage": item.stage, "status": item.status,
             "display_status": image_display_status(item.image),
             "progress_percentage": item.progress_percentage,
