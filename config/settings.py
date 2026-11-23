@@ -209,6 +209,10 @@ MAX_IMAGE_UPLOAD_SIZE = int(os.environ.get("MAX_IMAGE_UPLOAD_SIZE", str(400 * 10
 MAX_ZIP_UPLOAD_SIZE = int(os.environ.get("MAX_ZIP_UPLOAD_SIZE", str(2 * 1024 * 1024 * 1024)))
 MAX_UPLOAD_BATCH_FILES = int(os.environ.get("MAX_UPLOAD_BATCH_FILES", "150"))
 MAX_IMAGE_PIXELS = int(os.environ.get("MAX_IMAGE_PIXELS", "100000000"))
+# HEIC_JPEG_QUALITY: the JPEG quality an iPhone (HEIC/HEIF) photograph is stored with (uploads/heic.py; 4:4:4 chroma, orientation applied).
+HEIC_JPEG_QUALITY = int(os.environ.get("HEIC_JPEG_QUALITY", "95"))
+if not 70 <= HEIC_JPEG_QUALITY <= 100:
+    raise ImproperlyConfigured("HEIC_JPEG_QUALITY must be between 70 and 100.")
 MAX_ZIP_COMPRESSION_RATIO = int(os.environ.get("MAX_ZIP_COMPRESSION_RATIO", "100"))
 MAX_ZIP_UNCOMPRESSED_SIZE = int(
     os.environ.get("MAX_ZIP_UNCOMPRESSED_SIZE", str(5 * 1024 * 1024 * 1024))
@@ -304,6 +308,14 @@ DEEP_IMAGE_DAILY_REQUEST_LIMIT = env.int("DEEP_IMAGE_DAILY_REQUEST_LIMIT", defau
 # The result must still be the same picture: structure similarity of its brightness-normalised luminance with the upload (validator.structure_ssim). A backstop against a
 # re-composed image, not a taste: the face checks (geometry and identity) are what protect a person's likeness.
 CLOUD_ENHANCEMENT_MIN_STRUCTURE_SSIM = env.float("CLOUD_ENHANCEMENT_MIN_STRUCTURE_SSIM", default=0.5)
+# The two face checks a cloud result must pass, each overridable (0 = the local engine's own limit, the default). CLOUD_ENHANCEMENT_LANDMARK_SHIFT_MAX: the largest landmark displacement
+# (share of the face width; the engine's limit for an enlargement is 0.06). CLOUD_ENHANCEMENT_MIN_IDENTITY: the lowest SFace similarity accepted (the engine's guard is 0.80; the
+# model's own same-person line is about 0.36). Measured 2026-11-23 on 5 Deep Image results: shifts 0.0095, 0.0175, 0.0246 and 0.0707 (a visibly faithful result of a backlit, sunglassed
+# portrait), similarities 0.905, 0.915, 0.815 and 0.577 for that last one.
+CLOUD_ENHANCEMENT_LANDMARK_SHIFT_MAX = env.float("CLOUD_ENHANCEMENT_LANDMARK_SHIFT_MAX", default=0.0)
+CLOUD_ENHANCEMENT_MIN_IDENTITY = env.float("CLOUD_ENHANCEMENT_MIN_IDENTITY", default=0.0)
+if not 0.0 <= CLOUD_ENHANCEMENT_LANDMARK_SHIFT_MAX <= 0.5 or not 0.0 <= CLOUD_ENHANCEMENT_MIN_IDENTITY <= 1.0:
+    raise ImproperlyConfigured("CLOUD_ENHANCEMENT_LANDMARK_SHIFT_MAX must be 0-0.5 and CLOUD_ENHANCEMENT_MIN_IDENTITY 0-1 (0 = the engine's own limit).")
 # CLOUD_ENHANCEMENT_WHEN: "always" (default: every enhancement the engine would do) or "ai_style" (only when the person chose the AI style: the Pro preset, style ai_max; Auto and Standard, and
 # the automatic enhancement after an upload, use the local models and spend no credit).
 CLOUD_ENHANCEMENT_WHEN = env("CLOUD_ENHANCEMENT_WHEN", default="always")
@@ -440,6 +452,15 @@ ADAPTIVE_BASELINE_AFTER_LIGHTING = env.bool("ADAPTIVE_BASELINE_AFTER_LIGHTING", 
 #   photographs were all enlarged 4x (a 1.4 to 3 megapixel result in 15 to 38 s), but on 25.jpg the face restoration the 2x run accepts is refused at 4x (face_geometry_changed, 0.042 against the strict 0.04), the
 #   identity margin of the dark photographs is thinner (0.8085 against 0.80), and the pixels are the plain enlargement's plus REALESRGAN_OUTPUT_BLEND of the model's, so 4x is more pixels, not more detail per pixel.
 ADAPTIVE_UPSCALE_SCALE = env.int("ADAPTIVE_UPSCALE_SCALE", default=2)
+# ADAPTIVE_EDGE_BOOST (0 = off, the default): after the final layer, the Auto preset (natural style, automatic strength) sharpens the edges of the finished photograph once more: an unsharp
+# amount (the laddered variants are this, 0.65 of it and 0.4 of it, strongest first; none touches the colour) that every gate of the validator (halo / overshoot, highlights, face detail, identity)
+# still judges. Measured on four portraits (1.6 MP, the engine's own halo measure, limit 0.04): amount 0.25 (today's polish) edge sharpness 0.50 -> 0.54; 0.8 -> 0.60, halo 0.002-0.018;
+# 1.1 -> 0.63, halo 0.004-0.029. A face is sharpened less (the polish's own face share).
+ADAPTIVE_EDGE_BOOST = env.float("ADAPTIVE_EDGE_BOOST", default=0.0)
+if not 0.0 <= ADAPTIVE_EDGE_BOOST <= 1.5:
+    raise ImproperlyConfigured("ADAPTIVE_EDGE_BOOST must be between 0 and 1.5.")
+# ADAPTIVE_EDGE_BOOST_MIN_GAIN: the rise of the frame's structure energy (its edges) the edge boost must show to be kept (measured: 1.06 to 1.15 for amounts 0.32 to 0.8 on a 4 MP portrait).
+ADAPTIVE_EDGE_BOOST_MIN_GAIN = env.float("ADAPTIVE_EDGE_BOOST_MIN_GAIN", default=1.05)
 # ADAPTIVE_UPSCALE_MODEL: the network that makes the enlargement: "realesrgan" (x4plus, the default and what the engine always used) or "general" (the compact realesr-general-x4v3: tried first, x4plus
 # stays the fallback). Both are blended with the plain enlargement at REALESRGAN_OUTPUT_BLEND. Measured on 5 photographs (0.13 to 4.9 MP, Apple M1, CPU/MPS): 352 s with x4plus against 27 s with the
 # compact network (12.9 times faster), the two results 44.7 to 48.8 dB apart (PSNR), x4plus slightly sharper on three of them.

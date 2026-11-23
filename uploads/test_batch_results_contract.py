@@ -80,3 +80,22 @@ class BatchResultsContractTests(APITestCase):
         self.assertEqual(progress.status_code, 200)
         self.assertIn("progress_percentage", progress.json())
         self.assertEqual(len(progress.json()["images"]), 2)
+
+    def test_a_progress_row_says_whether_the_photograph_can_be_looked_at(self):
+        response = self.client.post(
+            reverse("image-upload-multiple"),
+            {"files": [upload_tests.make_image("one.jpg"), SimpleUploadedFile("notes.txt", b"hello", content_type="text/plain")]},
+            format="multipart",
+        )
+        rows = {row["filename"]: row for row in self.client.get(reverse("upload-batch-progress", args=[response.json()["id"]])).json()["images"]}
+        self.assertTrue(rows["one.jpg"]["has_preview"])                    # stored
+        self.assertFalse(rows["notes.txt"]["has_preview"])                 # refused at upload: nothing was stored, so there is nothing to show
+
+    def test_a_zip_leaves_the_system_files_out_of_the_batch(self):
+        photo = upload_tests.image_bytes()
+        archive = upload_tests.make_zip([("a.jpg", photo), ("__MACOSX/._a.jpg", b"x" * 40), (".DS_Store", b"x" * 40), ("b.jpg", photo)])
+        response = self.client.post(reverse("image-upload-zip"), {"file": archive}, format="multipart")
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual((body["total_files"], body["rejected_files"]), (2, 0))
+        self.assertEqual(sorted(image["original_name"] for image in body["images"]), ["a.jpg", "b.jpg"])

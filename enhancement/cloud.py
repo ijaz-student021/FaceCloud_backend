@@ -441,7 +441,8 @@ def judge(source, result, identity, analyzer, checkable, verify_identity=True):
     readings["landmark_shift"] = None if shift is None else round(shift, 4)
     if shift is None:
         raise CloudDeclined("face_lost")
-    limit = limits.face_landmark_shift_max_upscale
+    # CLOUD_ENHANCEMENT_LANDMARK_SHIFT_MAX (0 = the local engine's limit for an enlargement): a generative result may move the landmarks a little more than a resampled one.
+    limit = float(settings.CLOUD_ENHANCEMENT_LANDMARK_SHIFT_MAX) or limits.face_landmark_shift_max_upscale
     readings["landmark_limit"] = round(limit, 4)
     if shift > limit:
         raise CloudDeclined("face_geometry_changed")
@@ -449,6 +450,11 @@ def judge(source, result, identity, analyzer, checkable, verify_identity=True):
         readings["identity"] = {"status": "not_checked", "reason": "no_consent"}
         return readings, small, report_after, None
     checked = identity.check(small, restoring=False)
+    # CLOUD_ENHANCEMENT_MIN_IDENTITY (0 = the engine's own guard): a lower similarity that is still well above the identity model's own same-person line is accepted. A backlit or
+    # sunglassed face, brightened by the provider, can score far under the strict restoration limit while looking the same.
+    minimum = float(settings.CLOUD_ENHANCEMENT_MIN_IDENTITY)
+    if checked["status"] == "failed" and minimum > 0 and checked.get("similarity") is not None and checked["similarity"] >= minimum:
+        checked = {**checked, "status": "verified", "threshold": minimum, "relaxed": True}
     readings["identity"] = {"status": checked["status"], "similarity": checked.get("similarity"), "threshold": checked.get("threshold")}
     if checked["status"] == "failed":
         raise CloudDeclined("identity_changed")

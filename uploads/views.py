@@ -686,12 +686,14 @@ class UploadLimitsView(APIView):
 
     @extend_schema(responses={200: UploadLimitsSerializer})
     def get(self, request):
+        from . import heic
         from .validators import ALLOWED_EXTENSIONS, FORMAT_DETAILS
 
+        extensions = sorted(ALLOWED_EXTENSIONS | (heic.HEIF_EXTENSIONS if heic.available() else set()))
         rates = settings.REST_FRAMEWORK.get("DEFAULT_THROTTLE_RATES", {})
         return Response(UploadLimitsSerializer({
-            "accepted_extensions": sorted(ALLOWED_EXTENSIONS),
-            "accepted_mime_types": sorted({mime for _extension, mime in FORMAT_DETAILS.values()}),
+            "accepted_extensions": extensions,
+            "accepted_mime_types": sorted({mime for _extension, mime in FORMAT_DETAILS.values()} | ({"image/heic", "image/heif"} if heic.available() else set())),
             "max_image_bytes": settings.MAX_IMAGE_UPLOAD_SIZE,
             "max_image_pixels": settings.MAX_IMAGE_PIXELS,
             "max_files_per_batch": settings.MAX_UPLOAD_BATCH_FILES,

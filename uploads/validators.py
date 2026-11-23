@@ -57,7 +57,9 @@ def validate_image_file(uploaded_file, original_name=None):
     try:
         uploaded_file.seek(0)
         with Image.open(uploaded_file) as image:
-            image_format = image.format
+            # A multi-picture JPEG (the MPO a phone writes for a portrait or a depth photograph: a normal JPEG with a second picture appended) is opened by Pillow as "MPO". It is a JPEG
+            # to every reader here (the first picture is the photograph), so it is one.
+            image_format = "JPEG" if image.format == "MPO" else image.format
             width, height = image.size
             frame_count = getattr(image, "n_frames", 1)
             image.verify()
@@ -103,6 +105,18 @@ def validate_image_file(uploaded_file, original_name=None):
     }
 
 
+ARCHIVE_JUNK_NAMES = {".ds_store", "thumbs.db", "desktop.ini"}
+
+
+def is_archive_junk(filename):
+    """A file an operating system adds to an archive that is not the person's: macOS's ``__MACOSX/`` folder and its ``._name`` resource-fork copies, ``.DS_Store``, ``Thumbs.db``, ``desktop.ini``.
+
+    They are not photographs, so they are left out of the batch (not counted, not shown as "rejected"). Every entry is still checked for an unsafe path, a password, a link and a size first.
+    """
+    parts = PurePosixPath(str(filename).replace("\\", "/")).parts
+    return bool(parts) and ("__MACOSX" in parts or parts[-1].startswith("._") or parts[-1].lower() in ARCHIVE_JUNK_NAMES)
+
+
 def validate_zip_archive(uploaded_file):
     name = safe_original_name(uploaded_file.name)
     if not name.lower().endswith(".zip"):
@@ -123,7 +137,10 @@ def validate_zip_archive(uploaded_file):
             members = [member for member in archive.infolist() if not member.is_dir()]
             if not members:
                 raise ValidationError("The ZIP archive contains no files.")
-            if len(members) > settings.MAX_UPLOAD_BATCH_FILES:
+            photos = [member for member in members if not is_archive_junk(member.filename)]
+            if not photos:
+                raise ValidationError("The ZIP archive contains no photos (only system files such as __MACOSX or .DS_Store).")
+            if len(photos) > settings.MAX_UPLOAD_BATCH_FILES:
                 raise ValidationError(f"A ZIP batch cannot contain more than {settings.MAX_UPLOAD_BATCH_FILES} files.")
             total_size = 0
             for member in members:
@@ -147,7 +164,7 @@ def validate_zip_archive(uploaded_file):
                 total_size += member.file_size
                 if total_size > settings.MAX_ZIP_UNCOMPRESSED_SIZE:
                     raise ValidationError("The ZIP archive exceeds the allowed uncompressed size.")
-            return members
+            return photos
     except zipfile.BadZipFile:
         raise ValidationError("The ZIP archive is corrupted.")
     finally:
