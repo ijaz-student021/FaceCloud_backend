@@ -292,6 +292,10 @@ DEEP_IMAGE_BASE_URL = env("DEEP_IMAGE_BASE_URL", default="https://deep-image.ai/
 DEEP_IMAGE_REQUEST_TIMEOUT_SECONDS = env.float("DEEP_IMAGE_REQUEST_TIMEOUT_SECONDS", default=30.0)
 DEEP_IMAGE_DEADLINE_SECONDS = env.int("DEEP_IMAGE_DEADLINE_SECONDS", default=150)
 DEEP_IMAGE_POLL_SECONDS = env.float("DEEP_IMAGE_POLL_SECONDS", default=2.0)
+# DEEP_IMAGE_DOWNLOAD_ATTEMPTS: how many times the finished image is fetched before the job is given up (the credit is already spent; connections to the result host are reset now and then).
+DEEP_IMAGE_DOWNLOAD_ATTEMPTS = env.int("DEEP_IMAGE_DOWNLOAD_ATTEMPTS", default=5)
+if DEEP_IMAGE_DOWNLOAD_ATTEMPTS < 1:
+    raise ImproperlyConfigured("DEEP_IMAGE_DOWNLOAD_ATTEMPTS must be at least 1.")
 DEEP_IMAGE_UPLOAD_JPEG_QUALITY = env.int("DEEP_IMAGE_UPLOAD_JPEG_QUALITY", default=95)
 DEEP_IMAGE_MAX_RESULT_BYTES = env.int("DEEP_IMAGE_MAX_RESULT_BYTES", default=64 * 1024 * 1024)
 DEEP_IMAGE_MAX_RESULT_PIXELS = env.int("DEEP_IMAGE_MAX_RESULT_PIXELS", default=40_000_000)

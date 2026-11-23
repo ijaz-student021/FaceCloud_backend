@@ -277,14 +277,24 @@ class DeepImageClient:
 
         When the address cannot be reached (a reset or a timeout) and it is a bucket's own S3 host, the same object is asked for through the regional endpoint (``path_style``).
         """
-        try:
-            return self._fetch(url)
-        except CloudDeclined as error:
-            fallback = path_style(url) if error.reason in ("connection_error", "timeout") else None
-            if fallback is None:
-                raise
-            logger.warning("The result's own host could not be reached (%s): asking the regional S3 endpoint for the same object.", error.reason)
-            return self._fetch(fallback)
+        # The credit is already spent when the job is complete, so the finished image is worth a few more tries (the address stays valid): on the owner's network the first
+        # request is often reset (measured 2026-11-23: 2 of 3 results lost with one fallback and no retry; each was fetched on the second path-style try).
+        fallback = path_style(url)
+        attempts = max(1, int(settings.DEEP_IMAGE_DOWNLOAD_ATTEMPTS))
+        error = None
+        for attempt in range(attempts):
+            address = url if attempt == 0 or fallback is None else fallback          # the bucket's own host once, then the regional endpoint (it answered where the other did not)
+            try:
+                return self._fetch(address)
+            except CloudDeclined as caught:
+                if caught.reason not in ("connection_error", "timeout"):
+                    raise
+                error = caught
+                logger.warning("The result could not be fetched (%s, try %d of %d)%s.", caught.reason, attempt + 1, attempts,
+                               ": trying the regional S3 endpoint for the same object" if fallback is not None and attempt + 1 < attempts else "")
+                if attempt + 1 < attempts:
+                    time.sleep(min(2.0, 0.5 * (attempt + 1)))
+        raise error
 
     def _fetch(self, url):
         check_result_url(url, self.base_url)
