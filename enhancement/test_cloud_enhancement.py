@@ -328,6 +328,9 @@ class ResultFallbackTests(SimpleTestCase):
         patcher = patch.object(client, "_call", side_effect=call)
         patcher.start()
         self.addCleanup(patcher.stop)
+        sleeper = patch("enhancement.cloud.time.sleep")          # the pause between tries is not under test
+        sleeper.start()
+        self.addCleanup(sleeper.stop)
         return client, seen
 
     def test_a_bucket_host_is_turned_into_the_regional_endpoints_address(self):
@@ -362,17 +365,39 @@ class ResultFallbackTests(SimpleTestCase):
                     client.download(self.S3)
                 self.assertEqual((caught.exception.reason, len(seen)), (reason, 1))
 
-    def test_an_address_that_is_not_a_bucket_host_is_not_tried_again(self):
+    @override_settings(DEEP_IMAGE_DOWNLOAD_ATTEMPTS=2)
+    def test_an_address_that_is_not_a_bucket_host_is_tried_again_at_the_same_address(self):
         client, seen = self.make_client(["connection_error", b"the image"])
-        with self.assertRaises(cloud.CloudDeclined) as caught:
-            client.download("https://cdn.example.net/a.jpg")
-        self.assertEqual((caught.exception.reason, len(seen)), ("connection_error", 1))
+        self.assertEqual(client.download("https://cdn.example.net/a.jpg"), b"the image")
+        self.assertEqual(seen, ["https://cdn.example.net/a.jpg"] * 2)
 
-    def test_when_both_addresses_fail_the_second_failure_is_the_answer(self):
+    @override_settings(DEEP_IMAGE_DOWNLOAD_ATTEMPTS=2)
+    def test_when_every_try_fails_the_last_failure_is_the_answer(self):
         client, seen = self.make_client(["connection_error", "timeout"])
         with self.assertRaises(cloud.CloudDeclined) as caught:
             client.download(self.S3)
         self.assertEqual((caught.exception.reason, len(seen)), ("timeout", 2))
+
+    def test_a_result_that_resets_twice_is_fetched_on_the_third_try(self):
+        # Measured on the owner's network (2026-11-23): the bucket's own host reset, the regional endpoint reset once and then answered. The credit was already spent.
+        client, seen = self.make_client(["connection_error", "connection_error", b"the image"])
+        self.assertEqual(client.download(self.S3), b"the image")
+        regional = "https://s3.eu-central-1.amazonaws.com/neuroapi-store/2026-11-09/a.jpg"
+        self.assertEqual(seen, [self.S3, regional, regional])
+
+    @override_settings(DEEP_IMAGE_DOWNLOAD_ATTEMPTS=3)
+    def test_the_number_of_tries_is_a_setting(self):
+        client, seen = self.make_client(["connection_error"])
+        with self.assertRaises(cloud.CloudDeclined):
+            client.download(self.S3)
+        self.assertEqual(len(seen), 3)
+
+    @override_settings(DEEP_IMAGE_DOWNLOAD_ATTEMPTS=1)
+    def test_one_try_is_the_old_single_attempt(self):
+        client, seen = self.make_client(["connection_error", b"the image"])
+        with self.assertRaises(cloud.CloudDeclined):
+            client.download(self.S3)
+        self.assertEqual(seen, [self.S3])
 
     def test_the_regional_address_is_checked_like_any_other(self):
         client, seen = self.make_client(["connection_error", b"the image"])

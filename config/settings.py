@@ -292,6 +292,10 @@ DEEP_IMAGE_BASE_URL = env("DEEP_IMAGE_BASE_URL", default="https://deep-image.ai/
 DEEP_IMAGE_REQUEST_TIMEOUT_SECONDS = env.float("DEEP_IMAGE_REQUEST_TIMEOUT_SECONDS", default=30.0)
 DEEP_IMAGE_DEADLINE_SECONDS = env.int("DEEP_IMAGE_DEADLINE_SECONDS", default=150)
 DEEP_IMAGE_POLL_SECONDS = env.float("DEEP_IMAGE_POLL_SECONDS", default=2.0)
+# DEEP_IMAGE_DOWNLOAD_ATTEMPTS: how many times the finished image is fetched before the job is given up (the credit is already spent; connections to the result host are reset now and then).
+DEEP_IMAGE_DOWNLOAD_ATTEMPTS = env.int("DEEP_IMAGE_DOWNLOAD_ATTEMPTS", default=5)
+if DEEP_IMAGE_DOWNLOAD_ATTEMPTS < 1:
+    raise ImproperlyConfigured("DEEP_IMAGE_DOWNLOAD_ATTEMPTS must be at least 1.")
 DEEP_IMAGE_UPLOAD_JPEG_QUALITY = env.int("DEEP_IMAGE_UPLOAD_JPEG_QUALITY", default=95)
 DEEP_IMAGE_MAX_RESULT_BYTES = env.int("DEEP_IMAGE_MAX_RESULT_BYTES", default=64 * 1024 * 1024)
 DEEP_IMAGE_MAX_RESULT_PIXELS = env.int("DEEP_IMAGE_MAX_RESULT_PIXELS", default=40_000_000)
@@ -436,6 +440,12 @@ ADAPTIVE_BASELINE_AFTER_LIGHTING = env.bool("ADAPTIVE_BASELINE_AFTER_LIGHTING", 
 #   photographs were all enlarged 4x (a 1.4 to 3 megapixel result in 15 to 38 s), but on 25.jpg the face restoration the 2x run accepts is refused at 4x (face_geometry_changed, 0.042 against the strict 0.04), the
 #   identity margin of the dark photographs is thinner (0.8085 against 0.80), and the pixels are the plain enlargement's plus REALESRGAN_OUTPUT_BLEND of the model's, so 4x is more pixels, not more detail per pixel.
 ADAPTIVE_UPSCALE_SCALE = env.int("ADAPTIVE_UPSCALE_SCALE", default=2)
+# ADAPTIVE_UPSCALE_MODEL: the network that makes the enlargement: "realesrgan" (x4plus, the default and what the engine always used) or "general" (the compact realesr-general-x4v3: tried first, x4plus
+# stays the fallback). Both are blended with the plain enlargement at REALESRGAN_OUTPUT_BLEND. Measured on 5 photographs (0.13 to 4.9 MP, Apple M1, CPU/MPS): 352 s with x4plus against 27 s with the
+# compact network (12.9 times faster), the two results 44.7 to 48.8 dB apart (PSNR), x4plus slightly sharper on three of them.
+ADAPTIVE_UPSCALE_MODEL = env("ADAPTIVE_UPSCALE_MODEL", default="realesrgan")
+if ADAPTIVE_UPSCALE_MODEL not in ("realesrgan", "general"):
+    raise ImproperlyConfigured("ADAPTIVE_UPSCALE_MODEL must be realesrgan or general.")
 NAFNET_MODEL_PATH = env(
     "NAFNET_MODEL_PATH",
     default=str(BASE_DIR / ".runtime" / "models" / "NAFNet-GoPro-width64.pth"),
