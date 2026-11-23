@@ -63,7 +63,10 @@ def _flags():
 
 def enabled_engines(operation):
     flags = _flags()
-    return [engine for engine in ENGINES[operation] if flags[engine]]
+    names = ENGINES[operation]
+    if operation == UPSCALE and settings.ADAPTIVE_UPSCALE_MODEL == "general":
+        names = ("general", "realesrgan")          # the compact network first (about 13 times faster), x4plus only if it is refused or unavailable
+    return [engine for engine in names if flags[engine]]
 
 
 def _record(name, metadata, seconds, **extra):
@@ -226,10 +229,11 @@ def run_colorize(image, engine, variant):
 
 
 def run_upscale(image, engine, scale):
-    from enhancement.hd_restoration import upscale_with_realesrgan
+    from enhancement import hd_restoration
 
     started = time.perf_counter()
-    raw, metadata = upscale_with_realesrgan(image, output_scale=scale)
+    upscale = hd_restoration.upscale_with_general if engine == "general" else hd_restoration.upscale_with_realesrgan
+    raw, metadata = upscale(image, output_scale=scale)
     blend = min(max(float(settings.REALESRGAN_OUTPUT_BLEND), 0.0), 1.0)
     reference = cv2.resize(image, (raw.shape[1], raw.shape[0]), interpolation=cv2.INTER_CUBIC)
     raw = cv2.addWeighted(raw, blend, reference, 1.0 - blend, 0)
