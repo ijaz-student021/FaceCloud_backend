@@ -209,6 +209,10 @@ MAX_IMAGE_UPLOAD_SIZE = int(os.environ.get("MAX_IMAGE_UPLOAD_SIZE", str(400 * 10
 MAX_ZIP_UPLOAD_SIZE = int(os.environ.get("MAX_ZIP_UPLOAD_SIZE", str(2 * 1024 * 1024 * 1024)))
 MAX_UPLOAD_BATCH_FILES = int(os.environ.get("MAX_UPLOAD_BATCH_FILES", "150"))
 MAX_IMAGE_PIXELS = int(os.environ.get("MAX_IMAGE_PIXELS", "100000000"))
+# HEIC_JPEG_QUALITY: the JPEG quality an iPhone (HEIC/HEIF) photograph is stored with (uploads/heic.py; 4:4:4 chroma, orientation applied).
+HEIC_JPEG_QUALITY = int(os.environ.get("HEIC_JPEG_QUALITY", "95"))
+if not 70 <= HEIC_JPEG_QUALITY <= 100:
+    raise ImproperlyConfigured("HEIC_JPEG_QUALITY must be between 70 and 100.")
 MAX_ZIP_COMPRESSION_RATIO = int(os.environ.get("MAX_ZIP_COMPRESSION_RATIO", "100"))
 MAX_ZIP_UNCOMPRESSED_SIZE = int(
     os.environ.get("MAX_ZIP_UNCOMPRESSED_SIZE", str(5 * 1024 * 1024 * 1024))

@@ -48,6 +48,11 @@ def _create_rejected(batch, owner, filename, reason, size=0):
 
 
 def _save_valid_image(batch, owner, uploaded_file, original_name=None):
+    from . import heic
+
+    name = original_name or uploaded_file.name
+    if heic.is_heif_name(name):
+        uploaded_file, original_name = heic.to_jpeg(uploaded_file, safe_original_name(name))        # an iPhone photograph: stored as a JPEG (uploads/heic.py)
     metadata = validate_image_file(uploaded_file, original_name)
     image = ImageUpload(owner=owner, batch=batch, status="uploaded", **metadata)
     try:
