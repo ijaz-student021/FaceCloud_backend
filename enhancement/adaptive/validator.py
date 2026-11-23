@@ -320,7 +320,7 @@ class FinalImageQualityValidator:
         self.lifted_input = False           # the service sets it once a lift is accepted: what the later steps are given is a lit photograph (ADAPTIVE_BASELINE_AFTER_LIGHTING)
         self._lifted_enlargement = None     # (the step's input, the size, the faces found on a plain enlargement of it): the last second opinion's, kept for the step's other variants
 
-    def evaluate(self, parent, candidate, operation, parent_report, expected_scale=1, candidate_report=None, refine=False, local=None):
+    def evaluate(self, parent, candidate, operation, parent_report, expected_scale=1, candidate_report=None, refine=False, local=None, edge_boost=False):
         """``{accepted, reasons, gates, metrics, improvement, change_cost}`` for one candidate. ``refine``: a detail-restoration candidate for a photograph with no defect (always-enhance). ``local``: ``"shadows"`` for a lift of the shadows only (a back-lit subject)."""
         limits = self.limits
         lowlight = operation == "low_light_enhancement"
@@ -428,7 +428,7 @@ class FinalImageQualityValidator:
             gate("noise", noise_after <= noise_limit, {"before": noise_before, "after": noise_after}, "noise_increased", metric="after", limit=round(noise_limit, 3))
 
         self._identity_gate(verdict, candidate, candidate_report, operation, parent, parent_report)
-        improvement = self._improvement(verdict, operation, parent, candidate, parent_report, candidate_report, expected_scale, refine=refine)
+        improvement = self._improvement(verdict, operation, parent, candidate, parent_report, candidate_report, expected_scale, refine=refine, edge_boost=edge_boost)
         verdict["improvement"] = round(float(improvement), 4)
         mean_change = float(np.mean(np.abs(_gray(_to_size(candidate, parent.shape)).astype(np.float32) - _gray(parent).astype(np.float32)))) / 255.0
         verdict["change_cost"] = round(mean_change, 4)
@@ -575,7 +575,7 @@ class FinalImageQualityValidator:
         verdict["gates"]["identity"] = status
 
     # -- does it fix what it was for ---------------------------------------------------------------------------
-    def _improvement(self, verdict, operation, parent, candidate, before, after, scale, refine=False):
+    def _improvement(self, verdict, operation, parent, candidate, before, after, scale, refine=False, edge_boost=False):
         limits = self.limits
 
         def gate(name, passed, detail, reason, metric=None, limit=None):
@@ -661,7 +661,13 @@ class FinalImageQualityValidator:
             # a local-contrast operation always raises that, so it would pass itself. A photograph that is already balanced and sharp
             # gains less than 5 percent on both, and stays as it is.
             gains = [value for value in (face_gain, global_gain) if value is not None]
-            if settings.ADAPTIVE_ALWAYS_ENHANCE:
+            if edge_boost:
+                # The Auto preset's edge boost (ADAPTIVE_EDGE_BOOST) changes only the pixels at edges, so the mean change of the whole photograph (what the finishing polish is judged on) stays small
+                # however visible the sharpening is. It is judged on what it is for: the frame's structure energy (its edges) must rise by ADAPTIVE_EDGE_BOOST_MIN_GAIN, and nothing may fall below the tolerance
+                # (contrast, local contrast, the structure). The face ceiling, the halo (overshoot) gate, highlights, colour and identity below and elsewhere still apply.
+                improves = frame_gain >= float(settings.ADAPTIVE_EDGE_BOOST_MIN_GAIN)
+                nothing_worse = min(local_gain, global_gain, frame_gain) >= float(settings.ADAPTIVE_FINISH_TOLERANCE)
+            elif settings.ADAPTIVE_ALWAYS_ENHANCE:
                 # The finishing polish: a photograph that is already balanced and sharp cannot show a 5 percent gain, so it is judged on being SAFE and VISIBLE: no measure falls
                 # below the tolerance of what it was (the other gates, the face ceiling below and the identity check still apply), and the photograph really changes.
                 tolerance = float(settings.ADAPTIVE_FINISH_TOLERANCE)

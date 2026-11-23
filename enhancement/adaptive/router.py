@@ -190,6 +190,20 @@ class AdaptiveEnhancementRouter:
         return None, ""
 
     @staticmethod
+    def edge_boost_step(report, profile=None):
+        """The Auto preset's extra edge sharpening (``ADAPTIVE_EDGE_BOOST``), asked for by the service after the final layer: a polish with no contrast change and no colour change whose unsharp
+        amount is the setting, then 0.65 and 0.4 of it (the validator keeps the strongest that passes every gate, a halo being the sharpening's own fault). ``None`` when it is off, for any other
+        preset (AI Enhance has its own stronger polish), or when no polish engine is switched on."""
+        profile = profile or DEFAULT_PROFILE
+        amount = float(settings.ADAPTIVE_EDGE_BOOST)
+        engines = ops.enabled_engines(ops.POLISH)
+        if amount <= 0 or not engines or profile.style != "natural" or profile.level != "auto":
+            return None
+        faces = [[*face.box, face.detail] for face in report.faces]
+        variants = [{"name": f"edge boost {share:g}", "blend": 1.0, "clahe": 0.1, "amount": round(amount * share, 4), "faces": faces, "vibrance": 0.0, "edge_boost": True} for share in (1.0, 0.65, 0.4)]
+        return Step(ops.POLISH, engines, variants, "Edge boost: the finished photograph's edges are sharpened once more.", optional=True)
+
+    @staticmethod
     def final_layer_step(report):
         """The LAST layer of every photograph (``ADAPTIVE_ALWAYS_ENHANCE``): the enhancement model for light photographs (the compact ``general`` network) applied to whatever the earlier steps
         left, whether anything needed correcting or not. The service asks for it once, after the router has nothing more to do. ``None`` when it cannot run: the setting or the detail model is
