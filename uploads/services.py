@@ -296,7 +296,7 @@ def preprocess_image(image_upload, requested_format="auto", requested_name="", f
         image_upload.original_file.open("rb")
         with Image.open(image_upload.original_file) as source:
             source.load()
-            original_format = source.format or image_upload.file_extension.lstrip(".").upper()
+            original_format = "JPEG" if source.format == "MPO" else (source.format or image_upload.file_extension.lstrip(".").upper())      # an MPO is a JPEG
             original_size = source.size
             had_transparency = _has_transparency(source)
             working, decoding = to_working_colour(source)

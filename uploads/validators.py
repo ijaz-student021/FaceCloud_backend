@@ -57,7 +57,9 @@ def validate_image_file(uploaded_file, original_name=None):
     try:
         uploaded_file.seek(0)
         with Image.open(uploaded_file) as image:
-            image_format = image.format
+            # A multi-picture JPEG (the MPO a phone writes for a portrait or a depth photograph: a normal JPEG with a second picture appended) is opened by Pillow as "MPO". It is a JPEG
+            # to every reader here (the first picture is the photograph), so it is one.
+            image_format = "JPEG" if image.format == "MPO" else image.format
             width, height = image.size
             frame_count = getattr(image, "n_frames", 1)
             image.verify()

@@ -40,7 +40,7 @@ def render_thumbnail(image_field, size):
         image_field.open("rb")
         try:
             with Image.open(image_field) as source:
-                if source.format == "JPEG":
+                if source.format in ("JPEG", "MPO"):
                     # Let the decoder skip most of the work for a big JPEG.
                     source.draft("RGB", (size * 2, size * 2))
                 source.load()
