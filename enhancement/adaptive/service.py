@@ -446,7 +446,7 @@ class AdaptiveImageEnhancementService:
             warnings.append(identity.reason)
 
         timed_out = False
-        final_tried = finish_tried = False
+        final_tried = finish_tried = boost_tried = False
         defect_report = report0
         if (settings.ADAPTIVE_LOWKEY_SKIP_LIFT and style != "ai_max" and requested_level != "high" and report0.exposure.get("status") == "dark_scene"
                 and is_black_backdrop_low_key(original)):
@@ -481,6 +481,9 @@ class AdaptiveImageEnhancementService:
                 if step is None and not finish_tried and not any(s["status"] == "accepted" for s in stages):
                     finish_tried = True
                     step = self.router.finish_step(report, profile)
+                if step is None and not boost_tried:
+                    boost_tried = True          # once, after the final layer (and the finishing polish if it was needed): the Auto preset's extra edge sharpening, judged like any other step
+                    step = self.router.edge_boost_step(report, profile)
             if step is None:
                 break
             if (step.operation == ops.FACE and not identity.available and allow_biometric_processing

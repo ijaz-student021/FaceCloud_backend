@@ -440,6 +440,13 @@ ADAPTIVE_BASELINE_AFTER_LIGHTING = env.bool("ADAPTIVE_BASELINE_AFTER_LIGHTING", 
 #   photographs were all enlarged 4x (a 1.4 to 3 megapixel result in 15 to 38 s), but on 25.jpg the face restoration the 2x run accepts is refused at 4x (face_geometry_changed, 0.042 against the strict 0.04), the
 #   identity margin of the dark photographs is thinner (0.8085 against 0.80), and the pixels are the plain enlargement's plus REALESRGAN_OUTPUT_BLEND of the model's, so 4x is more pixels, not more detail per pixel.
 ADAPTIVE_UPSCALE_SCALE = env.int("ADAPTIVE_UPSCALE_SCALE", default=2)
+# ADAPTIVE_EDGE_BOOST (0 = off, the default): after the final layer, the Auto preset (natural style, automatic strength) sharpens the edges of the finished photograph once more: an unsharp
+# amount (the laddered variants are this, 0.65 of it and 0.4 of it, strongest first; none touches the colour) that every gate of the validator (halo / overshoot, highlights, face detail, identity)
+# still judges. Measured on four portraits (1.6 MP, the engine's own halo measure, limit 0.04): amount 0.25 (today's polish) edge sharpness 0.50 -> 0.54; 0.8 -> 0.60, halo 0.002-0.018;
+# 1.1 -> 0.63, halo 0.004-0.029. A face is sharpened less (the polish's own face share).
+ADAPTIVE_EDGE_BOOST = env.float("ADAPTIVE_EDGE_BOOST", default=0.0)
+if not 0.0 <= ADAPTIVE_EDGE_BOOST <= 1.5:
+    raise ImproperlyConfigured("ADAPTIVE_EDGE_BOOST must be between 0 and 1.5.")
 # ADAPTIVE_UPSCALE_MODEL: the network that makes the enlargement: "realesrgan" (x4plus, the default and what the engine always used) or "general" (the compact realesr-general-x4v3: tried first, x4plus
 # stays the fallback). Both are blended with the plain enlargement at REALESRGAN_OUTPUT_BLEND. Measured on 5 photographs (0.13 to 4.9 MP, Apple M1, CPU/MPS): 352 s with x4plus against 27 s with the
 # compact network (12.9 times faster), the two results 44.7 to 48.8 dB apart (PSNR), x4plus slightly sharper on three of them.
