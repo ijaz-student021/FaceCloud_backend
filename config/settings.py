@@ -304,6 +304,14 @@ DEEP_IMAGE_DAILY_REQUEST_LIMIT = env.int("DEEP_IMAGE_DAILY_REQUEST_LIMIT", defau
 # The result must still be the same picture: structure similarity of its brightness-normalised luminance with the upload (validator.structure_ssim). A backstop against a
 # re-composed image, not a taste: the face checks (geometry and identity) are what protect a person's likeness.
 CLOUD_ENHANCEMENT_MIN_STRUCTURE_SSIM = env.float("CLOUD_ENHANCEMENT_MIN_STRUCTURE_SSIM", default=0.5)
+# The two face checks a cloud result must pass, each overridable (0 = the local engine's own limit, the default). CLOUD_ENHANCEMENT_LANDMARK_SHIFT_MAX: the largest landmark displacement
+# (share of the face width; the engine's limit for an enlargement is 0.06). CLOUD_ENHANCEMENT_MIN_IDENTITY: the lowest SFace similarity accepted (the engine's guard is 0.80; the
+# model's own same-person line is about 0.36). Measured 2026-11-23 on 5 Deep Image results: shifts 0.0095, 0.0175, 0.0246 and 0.0707 (a visibly faithful result of a backlit, sunglassed
+# portrait), similarities 0.905, 0.915, 0.815 and 0.577 for that last one.
+CLOUD_ENHANCEMENT_LANDMARK_SHIFT_MAX = env.float("CLOUD_ENHANCEMENT_LANDMARK_SHIFT_MAX", default=0.0)
+CLOUD_ENHANCEMENT_MIN_IDENTITY = env.float("CLOUD_ENHANCEMENT_MIN_IDENTITY", default=0.0)
+if not 0.0 <= CLOUD_ENHANCEMENT_LANDMARK_SHIFT_MAX <= 0.5 or not 0.0 <= CLOUD_ENHANCEMENT_MIN_IDENTITY <= 1.0:
+    raise ImproperlyConfigured("CLOUD_ENHANCEMENT_LANDMARK_SHIFT_MAX must be 0-0.5 and CLOUD_ENHANCEMENT_MIN_IDENTITY 0-1 (0 = the engine's own limit).")
 # CLOUD_ENHANCEMENT_WHEN: "always" (default: every enhancement the engine would do) or "ai_style" (only when the person chose the AI style: the Pro preset, style ai_max; Auto and Standard, and
 # the automatic enhancement after an upload, use the local models and spend no credit).
 CLOUD_ENHANCEMENT_WHEN = env("CLOUD_ENHANCEMENT_WHEN", default="always")

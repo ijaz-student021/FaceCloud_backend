@@ -502,8 +502,25 @@ class JudgeTests(SimpleTestCase):
         self.judge(enlarged(), analyzer=ShiftingAnalyzer(9))                  # 0.05 of the face width: over the 0.04 of a same-size step, under the 0.06 of an enlargement
         self.assertEqual(self.declined(enlarged(), analyzer=ShiftingAnalyzer(12)), "face_geometry_changed")        # 0.067
 
+    @override_settings(CLOUD_ENHANCEMENT_LANDMARK_SHIFT_MAX=0.10)
+    def test_the_landmark_limit_of_a_cloud_result_can_be_loosened(self):
+        self.judge(enlarged(), analyzer=ShiftingAnalyzer(12))                                                      # 0.067: declined under the default 0.06 (test above), kept under 0.10
+        self.assertEqual(self.declined(enlarged(), analyzer=ShiftingAnalyzer(20)), "face_geometry_changed")        # a face that really moved is still declined
+
     def test_a_face_that_is_not_the_same_person_is_declined(self):
         self.assertEqual(self.declined(enlarged(), identity=StubIdentity("failed", 0.41)), "identity_changed")
+
+    @override_settings(CLOUD_ENHANCEMENT_MIN_IDENTITY=0.5)
+    def test_the_identity_limit_of_a_cloud_result_can_be_loosened_but_not_removed(self):
+        (readings, _small, _after, checked), _identity = self.judge(enlarged(), identity=StubIdentity("failed", 0.577))
+        self.assertEqual(checked["status"], "verified")
+        self.assertEqual(readings["identity"], {"status": "verified", "similarity": 0.577, "threshold": 0.5})
+        self.assertTrue(checked["relaxed"])
+        self.assertEqual(self.declined(enlarged(), identity=StubIdentity("failed", 0.41)), "identity_changed")        # under the loosened line
+        self.assertEqual(self.declined(enlarged(), identity=StubIdentity("inconclusive", None)), "identity_unverifiable")
+
+    def test_by_default_a_similarity_under_the_engines_guard_is_declined(self):
+        self.assertEqual(self.declined(enlarged(), identity=StubIdentity("failed", 0.577)), "identity_changed")
 
     def test_a_face_that_cannot_be_verified_is_declined_not_taken_on_faith(self):
         self.assertEqual(self.declined(enlarged(), identity=StubIdentity("inconclusive", None)), "identity_unverifiable")
