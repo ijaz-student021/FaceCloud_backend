@@ -37,6 +37,9 @@ EVENT_POLICY = {
     UserNotification.EventType.IDENTITY_MERGE_SUGGESTED: ("person_group_created", False),
     # "N photos enhanced": once per batch, when its automatic enhancements are finished; in-app only, switched by the same preference as the batch result.
     UserNotification.EventType.BATCH_ENHANCED: ("batch_upload_finished", False),
+    # For the administrators only (contact form messages and early-access e-mails): in-app, always on.
+    UserNotification.EventType.CONTACT_MESSAGE_RECEIVED: (None, False),
+    UserNotification.EventType.EARLY_ACCESS_SIGNUP: (None, False),
 }
 
 
@@ -54,7 +57,7 @@ def _safe_metadata(metadata):
             "filename", "batch_id", "image_id", "report_id", "package_id",
             "status", "accepted", "rejected", "needs_review", "failed", "format",
             "review_id", "organization_id", "source", "due_at", "folder_count", "suggested_merge_count",
-            "enhanced", "kept", "skipped", "total",
+            "enhanced", "kept", "skipped", "total", "contact_id", "reason",
         } and isinstance(value, (str, int, float, bool, type(None))):
             safe[str(key)[:40]] = value
     return safe
