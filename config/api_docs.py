@@ -267,7 +267,15 @@ CATALOGUE = {
     "privacy_facial_data_retrieve": ("What facial data is stored", "A summary of the facial data stored for the user."),
     "privacy_facial_data_destroy": ("Erase my facial data", "Deletes face embeddings and identity groups. Cannot be undone."),
     "privacy_audit_retrieve": ("My privacy audit trail", "Consent changes and facial-data actions of the signed-in user."),
-    "contact_create": ("Send a contact message", "Public contact form. 202 means accepted for delivery, not yet delivered."),
+    "contact_create": ("Send a contact message", "Public contact form. 202 means accepted. The message is stored and shown to the administrators (admin inbox and a notification); it is also e-mailed to CONTACT_RECIPIENT_EMAILS when that is set."),
+    "contact_early_access_create": ("Leave an e-mail address for early access", "The landing page's early-access box. 201 `registered` the first time, 200 `already_registered` for the same address (case-insensitive). The administrators are notified of a new address. Throttled per client address."),
+    "contact_admin_summary_retrieve": ("Admin inbox counts", "`contact_unread`, `contact_total`, `early_access_unread`, `early_access_total`: what the admin inbox badge shows."),
+    "contact_admin_messages_list": ("List the contact form messages", "Newest first: everything the person filled in (name, e-mail, company, reason, message), the delivery state and whether it has been read. `unread=1`, `q` (searches name, e-mail, company, reason and message) and `limit` (default 100, at most 500)."),
+    "contact_admin_messages_retrieve": ("Get one contact message", "One message with the full text."),
+    "contact_admin_messages_partial_update": ("Mark a contact message read or unread", "`{\"read\": true}` (the default) or `false`. Answers with the message."),
+    "contact_admin_early_access_list": ("List the early-access e-mail addresses", "Newest first, with `is_read`. `unread=1`, `q` and `limit` as for the messages."),
+    "contact_admin_early_access_partial_update": ("Mark an early-access address read or unread", "`{\"read\": true}` (the default) or `false`."),
+    "contact_admin_mark_all_read_create": ("Mark the inbox read", "`{\"kind\": \"contact\" | \"early_access\" | \"all\"}` (default all). Answers with how many were marked."),
 
     # ---- organizations -------------------------------------------------------------------------------------------------
     "organizations_list": ("List my organizations", "Organizations the caller has an active membership in, each with the caller's role."),
