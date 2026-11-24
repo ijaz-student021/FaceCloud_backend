@@ -77,4 +77,4 @@ class TrashThumbnailView(ImageThumbnailView):
     """The thumbnail of one of your photographs **in the trash** (the ordinary thumbnail answers 404 for it), so the trash can show what it holds."""
 
     def images(self, request):
-        return ImageUpload.all_objects.in_trash().filter(owner=request.user, status="uploaded")
+        return ImageUpload.all_objects.in_trash().filter(owner=request.user, status__in=("uploaded", "rejected"))
