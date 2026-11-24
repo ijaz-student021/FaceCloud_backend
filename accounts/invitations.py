@@ -146,6 +146,7 @@ def accept(*, token, username, password):
     """Create the invited account (email verified, invited role). Raises on any problem."""
     from organizations.services import create_personal_organization
 
+    ready_organization = None
     with transaction.atomic():
         invitation = AccountInvitation.objects.select_for_update().filter(
             token_hash=_hash(token or ""), status=AccountInvitation.Status.PENDING,
@@ -176,8 +177,12 @@ def accept(*, token, username, password):
                 organization=organization, user=user, role=OrganizationMembership.Role.MODERATOR,
                 status=OrganizationMembership.Status.ACTIVE, invited_by=invitation.invited_by,
             )
+            ready_organization = organization
         invitation.status = AccountInvitation.Status.ACCEPTED
         invitation.accepted_user = user
         invitation.accepted_at = timezone.now()
         invitation.save(update_fields=["status", "accepted_user", "accepted_at", "updated_at"])
+        from .moderator_emails import send_account_ready
+
+        send_account_ready(user, ready_organization)           # after the commit; never contains the password
     return user, invitation
