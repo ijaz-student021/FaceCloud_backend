@@ -84,8 +84,12 @@ class TrashEmptyResultSerializer(serializers.Serializer):
     remaining = serializers.IntegerField(help_text=f"Photos still in the trash (at most {EMPTY_LIMIT} are deleted per call): call again while this is above 0.")
 
 
+# A photograph the checks rejected (status "rejected": too blurry, or a file refused at upload) can be thrown away like any other: it was refused by a check, not by the person.
+KEPT_STATUSES = ("uploaded", "rejected")
+
+
 def _in_trash(user):
-    return ImageUpload.all_objects.in_trash().filter(owner=user, status="uploaded")
+    return ImageUpload.all_objects.in_trash().filter(owner=user, status__in=KEPT_STATUSES)
 
 
 class TrashView(generics.ListAPIView):
@@ -115,7 +119,7 @@ class TrashView(generics.ListAPIView):
         payload = TrashIdsSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         wanted = list(dict.fromkeys(payload.validated_data["image_ids"]))
-        images = list(ImageUpload.objects.filter(owner=request.user, status="uploaded", pk__in=wanted))
+        images = list(ImageUpload.objects.filter(owner=request.user, status__in=KEPT_STATUSES, pk__in=wanted))
         outcome = trash.move_to_trash(images)
         moved = {image.pk for image in outcome["trashed"]}
         found = {image.pk for image in images}

@@ -96,17 +96,17 @@ class MoveAndRestoreTests(TrashBase):
         self.assertFalse(TrashEntry.objects.filter(image=image).exists())
         self.assertEqual(self.client.get(self.url).json()["results"], [])
 
-    def test_only_your_own_stored_photographs_that_are_not_already_in_the_trash(self):
+    def test_only_your_own_photographs_that_are_not_already_in_the_trash(self):
         mine, rejected = self.photo(), self.photo("rej.jpg")
-        ImageUpload.objects.filter(pk=rejected.pk).update(status="rejected")
+        ImageUpload.objects.filter(pk=rejected.pk).update(status="rejected")          # a rejected photograph is yours to throw away too (RejectedPhotographTests)
         theirs = self.photo("theirs.jpg", group=self.make_group(self.other, "Theirs"))
         self.move(mine)
         response = self.move(mine, rejected, theirs).json()
-        self.assertEqual(response["trashed_ids"], [])
-        self.assertEqual(response["not_found_ids"], [mine.pk, rejected.pk, theirs.pk])
+        self.assertEqual(response["trashed_ids"], [rejected.pk])                       # `mine` is already in the trash, `theirs` is not found
+        self.assertEqual(response["not_found_ids"], [mine.pk, theirs.pk])
         self.assertFalse(self.trashed(theirs))
-        restoring = self.client.post(reverse("image-trash-restore"), {"image_ids": [rejected.pk, theirs.pk, 999999]}, format="json").json()
-        self.assertEqual((restoring["restored_ids"], restoring["not_found_ids"]), ([], [rejected.pk, theirs.pk, 999999]))
+        restoring = self.client.post(reverse("image-trash-restore"), {"image_ids": [theirs.pk, 999999]}, format="json").json()
+        self.assertEqual((restoring["restored_ids"], restoring["not_found_ids"]), ([], [theirs.pk, 999999]))
 
     def test_the_request_is_validated_and_needs_a_sign_in(self):
         for body in ({}, {"image_ids": []}, {"image_ids": ["a"]}, {"image_ids": [0]}, {"image_ids": list(range(1, 202))}):
@@ -573,3 +573,40 @@ class RunningWorkTests(TrashBase):
         self.move(image)
         record.refresh_from_db()
         self.assertEqual(record.state, AutoEnhancement.State.SKIPPED)
+
+
+class RejectedPhotographTests(TrashBase):
+    """A photograph the checks rejected (a refused file, or a too-blurry one) can be moved to the trash, restored and deleted like any other."""
+
+    def rejected(self, name="refused.jpg", stored=False):
+        batch = UploadBatch.objects.create(owner=self.owner, upload_type="multiple")
+        image = ImageUpload.objects.create(owner=self.owner, batch=batch, original_name=name, status="rejected", rejection_reason="The file is not a valid or readable image.", file_size=1300)
+        if stored:
+            image.original_file.save(name, ContentFile(b"x" * 10))
+        return image
+
+    def test_a_rejected_photograph_moves_to_the_trash_and_is_listed_there(self):
+        image = self.rejected()
+        response = self.move(image)
+        self.assertEqual(response.json()["trashed_ids"], [image.pk], response.content)
+        self.assertFalse(ImageUpload.objects.filter(pk=image.pk).exists())              # out of My Images
+        self.assertEqual([row["id"] for row in self.client.get(self.url).json()["results"]], [image.pk])
+        self.assertIsNone(self.client.get(self.url).json()["results"][0]["thumbnail_url"])       # nothing was stored, so nothing to show
+
+    def test_it_can_be_restored_and_it_is_still_rejected(self):
+        image = self.rejected(stored=True)
+        self.move(image)
+        restored = self.client.post(reverse("image-trash-restore"), {"image_ids": [image.pk]}, format="json").json()
+        self.assertEqual(restored["restored_ids"], [image.pk])
+        self.assertEqual(ImageUpload.objects.get(pk=image.pk).status, "rejected")
+
+    def test_it_can_be_deleted_for_good_from_the_trash_and_by_the_bulk_delete(self):
+        first, second = self.rejected("a.jpg"), self.rejected("b.jpg")
+        self.move(first)
+        self.assertEqual(self.client.post(reverse("image-bulk-delete"), {"image_ids": [first.pk, second.pk]}, format="json").json()["deleted_ids"], [first.pk, second.pk])
+        self.assertFalse(ImageUpload.all_objects.filter(pk__in=[first.pk, second.pk]).exists())
+
+    def test_another_persons_rejected_photograph_is_not_found(self):
+        theirs = self.rejected()
+        ImageUpload.objects.filter(pk=theirs.pk).update(owner=self.other)
+        self.assertEqual(self.move(theirs).json()["not_found_ids"], [theirs.pk])
