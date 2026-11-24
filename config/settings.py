@@ -1510,6 +1510,7 @@ REST_FRAMEWORK = {
         "verification": "10/hour",
         "verification_status": "60/hour",
         "contact": "5/hour",
+        "early_access": "10/hour",
         "edit_preview": "1200/hour",
         "advisor": "60/hour",
         "invitation": "30/hour",

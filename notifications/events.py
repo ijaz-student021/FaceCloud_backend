@@ -536,3 +536,50 @@ def notify_identity_export_result(export):
         },
     )
     return notification
+
+
+def _administrators():
+    from django.contrib.auth import get_user_model
+    from django.db.models import Q
+
+    return list(get_user_model().objects.filter(is_active=True).filter(Q(is_superuser=True) | Q(role="admin")))
+
+
+def notify_admins_contact_message(message):
+    """Tell every administrator that someone filled the public contact form (the full text is in the admin inbox)."""
+    created = []
+    for admin in _administrators():
+        notification, _ = create_user_notification(
+            recipient=admin,
+            event_type=UserNotification.EventType.CONTACT_MESSAGE_RECEIVED,
+            idempotency_key=f"contact:{message.pk}:{admin.pk}",
+            title="New contact message",
+            message=f"{message.name} ({message.email}) wrote about: {message.reason}.",
+            resource_type="contact",
+            resource_id=message.pk,
+            action_path=f"/admin/inbox?kind=contact&id={message.pk}",
+            metadata={"contact_id": message.pk, "reason": message.reason[:60]},
+        )
+        if notification:
+            created.append(notification)
+    return created
+
+
+def notify_admins_early_access(signup):
+    """Tell every administrator that an address was left for early access."""
+    created = []
+    for admin in _administrators():
+        notification, _ = create_user_notification(
+            recipient=admin,
+            event_type=UserNotification.EventType.EARLY_ACCESS_SIGNUP,
+            idempotency_key=f"early-access:{signup.pk}:{admin.pk}",
+            title="New early-access e-mail",
+            message=f"{signup.email} asked for early access.",
+            resource_type="early_access",
+            resource_id=signup.pk,
+            action_path=f"/admin/inbox?kind=early_access&id={signup.pk}",
+            metadata={"contact_id": signup.pk},
+        )
+        if notification:
+            created.append(notification)
+    return created

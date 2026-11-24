@@ -49,6 +49,8 @@ class UserNotification(models.Model):
         PHOTO_REVIEW_REJECTED = "photo_review_rejected", "Photo not accepted by a moderator"
         IDENTITY_MERGE_SUGGESTED = "identity_merge_suggested", "Person folders may be the same person"
         BATCH_ENHANCED = "batch_enhanced", "Photos enhanced"
+        CONTACT_MESSAGE_RECEIVED = "contact_message_received", "New contact message"
+        EARLY_ACCESS_SIGNUP = "early_access_signup", "New early-access e-mail"
 
     class Severity(models.TextChoices):
         INFO = "info", "Information"
