@@ -470,6 +470,13 @@ def update_member(*, membership, actor_membership, role=None, status_value=None,
         OrganizationAuditEvent.Action.MEMBER_ROLE_CHANGED if role is not None
         else OrganizationAuditEvent.Action.MEMBER_STATUS_CHANGED
     )
+    if (
+        locked.role == OrganizationMembership.Role.MODERATOR and previous["role"] != locked.role
+        and locked.status == OrganizationMembership.Status.ACTIVE
+    ):
+        from accounts.moderator_emails import send_made_moderator
+
+        send_made_moderator(locked.user, locked.organization)
     record_audit_event(
         locked.organization, actor_membership.user, action,
         target_type="OrganizationMembership", target_id=locked.pk,

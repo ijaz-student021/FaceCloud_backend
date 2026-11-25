@@ -164,7 +164,12 @@ class NotifyTests(ModerationFixtureMixin, TestCase):
         self.assertEqual(mail.outbox[-1].to, [self.member.email])
         self.assertIn("Looks good, thank you.", mail.outbox[-1].body)
 
-    def test_no_email_copy_when_the_member_has_not_asked(self):
+    def test_no_email_copy_when_the_member_has_switched_the_copies_off(self):
+        from notifications.services import get_notification_preferences
+
+        preferences = get_notification_preferences(self.member)        # e-mail copies are ON by default (notifications 0010): this member turned them off
+        preferences.email_notifications = False
+        preferences.save(update_fields=["email_notifications", "updated_at"])
         self.decide(self.review(), "approve")
         self.assertEqual(self.told()[0].email_status, "skipped")
 

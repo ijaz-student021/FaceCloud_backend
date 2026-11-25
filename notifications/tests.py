@@ -53,15 +53,15 @@ class NotificationApiTests(APITestCase):
         response = self.client.get(reverse("notification-preferences"))
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.data["photo_rejected"])
-        self.assertFalse(response.data["email_notifications"])
+        self.assertTrue(response.data["email_notifications"])            # ON by default; anyone can switch it off
 
         response = self.client.patch(
             reverse("notification-preferences"),
-            {"email_notifications": True, "live_session_alerts": True},
+            {"email_notifications": False, "live_session_alerts": True},
             format="json",
         )
         self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.data["email_notifications"])
+        self.assertFalse(response.data["email_notifications"])
         self.assertTrue(response.data["live_session_alerts"])
 
     def test_the_moderator_review_switch_is_shown_defaults_on_and_can_be_changed(self):
@@ -192,6 +192,9 @@ class NotificationApiTests(APITestCase):
 
     @override_settings(NOTIFICATION_EMAILS_ENABLED=True)
     def test_email_is_skipped_when_global_user_preference_is_disabled(self):
+        preferences = get_notification_preferences(self.user)          # e-mail copies are ON by default: this person switched them off
+        preferences.email_notifications = False
+        preferences.save(update_fields=["email_notifications", "updated_at"])
         notification = self.create_notification(
             key="accepted-without-email",
             event_type=UserNotification.EventType.PHOTO_ACCEPTED,

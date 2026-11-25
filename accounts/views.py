@@ -996,6 +996,13 @@ class AdminUserUpdateView(generics.RetrieveUpdateAPIView):
                           "invited_by": self.request.user},
             )
         changed = [key for key, value in previous.items() if getattr(user, key) != value]
+        if "role" in changed and user.role == "moderator":
+            from organizations.models import OrganizationMembership
+            from .moderator_emails import send_made_moderator
+
+            membership = (OrganizationMembership.objects.select_related("organization")
+                          .filter(user=user, role=OrganizationMembership.Role.MODERATOR, status=OrganizationMembership.Status.ACTIVE).first())
+            send_made_moderator(user, moderator_organization or (membership.organization if membership else None))
         if changed:
             user.token_version += 1
             user.save(update_fields=["token_version"])
