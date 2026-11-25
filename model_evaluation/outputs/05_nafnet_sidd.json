@@ -1,0 +1,109 @@
+{
+  "synthetic": [
+    {
+      "photo": 93,
+      "sigma": 15,
+      "psnr_noisy": 26.52,
+      "psnr_nlm": 34.92,
+      "psnr_sidd": 33.07,
+      "ssim_noisy": 0.548,
+      "ssim_nlm": 0.985,
+      "ssim_sidd": 0.981,
+      "sidd_seconds": 7.4
+    },
+    {
+      "photo": 93,
+      "sigma": 30,
+      "psnr_noisy": 21.0,
+      "psnr_nlm": 28.09,
+      "psnr_sidd": 21.82,
+      "ssim_noisy": 0.288,
+      "ssim_nlm": 0.972,
+      "ssim_sidd": 0.395,
+      "sidd_seconds": 4.2
+    },
+    {
+      "photo": 76,
+      "sigma": 15,
+      "psnr_noisy": 25.86,
+      "psnr_nlm": 26.13,
+      "psnr_sidd": 34.34,
+      "ssim_noisy": 0.472,
+      "ssim_nlm": 0.481,
+      "ssim_sidd": 0.96,
+      "sidd_seconds": 2.9
+    },
+    {
+      "photo": 76,
+      "sigma": 30,
+      "psnr_noisy": 20.79,
+      "psnr_nlm": 21.11,
+      "psnr_sidd": 20.79,
+      "ssim_noisy": 0.228,
+      "ssim_nlm": 0.242,
+      "ssim_sidd": 0.228,
+      "sidd_seconds": 3.0
+    },
+    {
+      "photo": 81,
+      "sigma": 15,
+      "psnr_noisy": 24.83,
+      "psnr_nlm": 27.13,
+      "psnr_sidd": 30.27,
+      "ssim_noisy": 0.444,
+      "ssim_nlm": 0.632,
+      "ssim_sidd": 0.872,
+      "sidd_seconds": 2.9
+    },
+    {
+      "photo": 81,
+      "sigma": 30,
+      "psnr_noisy": 19.38,
+      "psnr_nlm": 21.86,
+      "psnr_sidd": 19.38,
+      "ssim_noisy": 0.198,
+      "ssim_nlm": 0.431,
+      "ssim_sidd": 0.198,
+      "sidd_seconds": 3.0
+    },
+    {
+      "photo": 83,
+      "sigma": 15,
+      "psnr_noisy": 25.36,
+      "psnr_nlm": 25.47,
+      "psnr_sidd": 31.07,
+      "ssim_noisy": 0.445,
+      "ssim_nlm": 0.449,
+      "ssim_sidd": 0.868,
+      "sidd_seconds": 2.9
+    },
+    {
+      "photo": 83,
+      "sigma": 30,
+      "psnr_noisy": 20.35,
+      "psnr_nlm": 20.43,
+      "psnr_sidd": 20.35,
+      "ssim_noisy": 0.21,
+      "ssim_nlm": 0.212,
+      "ssim_sidd": 0.21,
+      "sidd_seconds": 2.9
+    }
+  ],
+  "real_grain": [
+    {
+      "version": "input",
+      "noise_sigma": 14.83,
+      "sharpness": 247.4
+    },
+    {
+      "version": "OpenCV NLM",
+      "noise_sigma": 1.48,
+      "sharpness": 27.1
+    },
+    {
+      "version": "NAFNet SIDD",
+      "noise_sigma": 1.48,
+      "sharpness": 13.8
+    }
+  ]
+}

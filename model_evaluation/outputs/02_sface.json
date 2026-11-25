@@ -1,0 +1,14 @@
+{
+  "portraits": 14,
+  "same_pairs": 78,
+  "different_pairs": 91,
+  "roc_auc": 0.9971823048746126,
+  "eer": 0.023809523809523808,
+  "mean_same": 0.8179921765740101,
+  "mean_different": 0.1023238705532564,
+  "tmr_at_match_0.45": 0.9615384615384616,
+  "fmr_at_match_0.45": 0.0,
+  "enhanced_identity_results": 139,
+  "enhanced_identity_mean": 0.9281251798561149,
+  "enhanced_identity_share_above_0.80": 0.9784172661870504
+}

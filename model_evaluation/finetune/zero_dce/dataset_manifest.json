@@ -1,0 +1,247 @@
+[
+  {
+    "file": "000_e5edbf79.jpg",
+    "image_id": 15,
+    "sha256": "e5edbf790af2f9d26533cb0f40759025cbc5276ae466d3ccd38a091678b8024d",
+    "mean_luminance": 24.33,
+    "public_stock": false
+  },
+  {
+    "file": "001_625b6a3a.jpg",
+    "image_id": 23,
+    "sha256": "625b6a3a095403989374f14fb7cb07329b7450220a4278bc08384918d57edd7f",
+    "mean_luminance": 66.74,
+    "public_stock": false
+  },
+  {
+    "file": "002_a224624e.jpg",
+    "image_id": 24,
+    "sha256": "a224624e55517ea7c4adb3ad6dd0d34a179c4832d78f9bf3a208f6f7d86dcad6",
+    "mean_luminance": 65.11,
+    "public_stock": false
+  },
+  {
+    "file": "003_83d72c25.jpg",
+    "image_id": 58,
+    "sha256": "83d72c25e539b56bce886e1f1ee3b693a90cf9ae73182dab4421e5f55a8d02f4",
+    "mean_luminance": 31.4,
+    "public_stock": false
+  },
+  {
+    "file": "004_7f6f8639.jpg",
+    "image_id": 59,
+    "sha256": "7f6f8639b44b0d36a9ae95614cc6cea9deccaab8770b2e8295ce42ef14359b1c",
+    "mean_luminance": 29.47,
+    "public_stock": false
+  },
+  {
+    "file": "005_dfee7c2b.jpg",
+    "image_id": 63,
+    "sha256": "dfee7c2bc4e63ac4d9a6d44f542dbd70b38bcc549d5f0165f3e059b464fd6b38",
+    "mean_luminance": 40.13,
+    "public_stock": false
+  },
+  {
+    "file": "006_d24297a7.jpg",
+    "image_id": 69,
+    "sha256": "d24297a7473a9be1a2cddea2e699ad6a4f48db46b2296af0d3041d2c4d15533e",
+    "mean_luminance": 25.77,
+    "public_stock": false
+  },
+  {
+    "file": "007_d852db6c.jpg",
+    "image_id": 75,
+    "sha256": "d852db6c4eace5802944472fc15bb659db570a05faf4b4b6aa5f24740a1a0b07",
+    "mean_luminance": 50.21,
+    "public_stock": true
+  },
+  {
+    "file": "008_d4c88f18.jpg",
+    "image_id": 76,
+    "sha256": "d4c88f18d861e72da9a9b9f1efb146acf800e65a53c190087dfb52ec09d1fba4",
+    "mean_luminance": 20.7,
+    "public_stock": true
+  },
+  {
+    "file": "009_e51e651f.jpg",
+    "image_id": 79,
+    "sha256": "e51e651f749f6632bcf212bf87b7c3020eed50f091b21480c6e344d9c9da3cc9",
+    "mean_luminance": 69.33,
+    "public_stock": true
+  },
+  {
+    "file": "010_df5f2871.jpg",
+    "image_id": 81,
+    "sha256": "df5f2871b50c6ed87b0abdb69a93cdd6e91c8405aee626f734ee3503f3cb9a51",
+    "mean_luminance": 62.11,
+    "public_stock": true
+  },
+  {
+    "file": "011_72b9f69a.jpg",
+    "image_id": 82,
+    "sha256": "72b9f69a8a1503dcc85e43b148ae268d4cdf63a66ed75df06c5ff92b8dbfb2ef",
+    "mean_luminance": 55.21,
+    "public_stock": true
+  },
+  {
+    "file": "012_be6b534d.jpg",
+    "image_id": 83,
+    "sha256": "be6b534d7f05eb6c9327ae76bda05a86ae3b5180a2027568a2c629e75d1b1bf7",
+    "mean_luminance": 21.17,
+    "public_stock": true
+  },
+  {
+    "file": "013_6a89abc2.jpg",
+    "image_id": 84,
+    "sha256": "6a89abc2309d0387adbda5ae9e19ffe75cba65be2da9e136510927ca1a3f4b5c",
+    "mean_luminance": 34.14,
+    "public_stock": true
+  },
+  {
+    "file": "014_3c80badd.jpg",
+    "image_id": 85,
+    "sha256": "3c80baddc3af117dfb06f3d4fdf4b0f91548a71e63c8afee59a462f66daa0af6",
+    "mean_luminance": 64.58,
+    "public_stock": true
+  },
+  {
+    "file": "015_8fd765b6.jpg",
+    "image_id": 87,
+    "sha256": "8fd765b6afd0d5e4fb917a9eb5a337fbc2045c09c8260a8cdee4d739c1621ec3",
+    "mean_luminance": 38.9,
+    "public_stock": true
+  },
+  {
+    "file": "016_84c15fb5.jpg",
+    "image_id": 89,
+    "sha256": "84c15fb5bb3098c5e526b32023353a676bbf9aa8447b9b6bcf87a3bd9265d4a8",
+    "mean_luminance": 38.29,
+    "public_stock": true
+  },
+  {
+    "file": "017_bf394478.jpg",
+    "image_id": 91,
+    "sha256": "bf394478f2352c64ecb69bec45d49b702a44f59a63a18f935290add6165f8a9b",
+    "mean_luminance": 35.35,
+    "public_stock": true
+  },
+  {
+    "file": "018_f7f1b501.jpg",
+    "image_id": 129,
+    "sha256": "f7f1b501cac898c24011086c0cc8dc86052a5e8abb7896ca0fa0251b8644c219",
+    "mean_luminance": 49.13,
+    "public_stock": false
+  },
+  {
+    "file": "019_0970b086.jpg",
+    "image_id": 131,
+    "sha256": "0970b086747fb3b901a7b3be1a1819abc8368404d76d647d95aa6c0510558b12",
+    "mean_luminance": 27.09,
+    "public_stock": false
+  },
+  {
+    "file": "020_78c83678.jpg",
+    "image_id": 137,
+    "sha256": "78c83678d80ef8e1eed95fca9879c0603337bcd12533d7c1f54eda2f55c278c6",
+    "mean_luminance": 28.69,
+    "public_stock": false
+  },
+  {
+    "file": "021_9162c07a.jpg",
+    "image_id": 167,
+    "sha256": "9162c07a95d3f8c06dc42a004f6564db6bc42ff81a8199196324107ba5b00b6d",
+    "mean_luminance": 27.12,
+    "public_stock": false
+  },
+  {
+    "file": "022_7cf9d3f9.jpg",
+    "image_id": 226,
+    "sha256": "7cf9d3f9ac01336c6249afd2ea5389e6bf588df7f27eb3cf5124e6f0394e30b6",
+    "mean_luminance": 19.36,
+    "public_stock": false
+  },
+  {
+    "file": "023_8ff245da.jpg",
+    "image_id": 227,
+    "sha256": "8ff245da342ae525b32a98f948fc8f8a3b778b24fd761ea4f78d56168fa0b34d",
+    "mean_luminance": 17.77,
+    "public_stock": false
+  },
+  {
+    "file": "024_5a0f6557.jpg",
+    "image_id": 236,
+    "sha256": "5a0f6557b7a24a8974b848070c5cfec21ce8296863d30c8b4bf4a12200956dff",
+    "mean_luminance": 45.3,
+    "public_stock": false
+  },
+  {
+    "file": "025_6468c726.jpg",
+    "image_id": 237,
+    "sha256": "6468c7260358b26e7d3f2d9caa6957c3326663593df771fd042820ff1a4cbfad",
+    "mean_luminance": 29.99,
+    "public_stock": false
+  },
+  {
+    "file": "026_e093137b.jpg",
+    "image_id": 243,
+    "sha256": "e093137b6af8b87b34d0279104fb87779b66d86c6559a1c3ed8adee2b175b820",
+    "mean_luminance": 54.38,
+    "public_stock": false
+  },
+  {
+    "file": "027_5e0b86e9.jpg",
+    "image_id": 244,
+    "sha256": "5e0b86e9b3a065e577d032d4677e48a94838db6438fc2183fdbafaa8ed382be2",
+    "mean_luminance": 24.46,
+    "public_stock": false
+  },
+  {
+    "file": "028_516b527a.jpg",
+    "image_id": 248,
+    "sha256": "516b527a4a71c48ef6f63bcc6e210e55828ebb29ff16d694f6cbe6c631651860",
+    "mean_luminance": 53.76,
+    "public_stock": false
+  },
+  {
+    "file": "029_d93dec50.jpg",
+    "image_id": 249,
+    "sha256": "d93dec502704083c665b6aebd98d6b9bd5163c64184454e0b94a69758b9db42d",
+    "mean_luminance": 16.63,
+    "public_stock": false
+  },
+  {
+    "file": "030_d712903c.jpg",
+    "image_id": 250,
+    "sha256": "d712903c6c3fd45eb4f7442a91dd99468b854b1203b6f3105740ff94e8fdb1e5",
+    "mean_luminance": 12.73,
+    "public_stock": false
+  },
+  {
+    "file": "031_21b692e7.jpg",
+    "image_id": 254,
+    "sha256": "21b692e7cb00ec6c99afbecc5e12f0b081cc73cd2bd5cca57feac881ce3141fc",
+    "mean_luminance": 51.38,
+    "public_stock": false
+  },
+  {
+    "file": "032_1660e558.jpg",
+    "image_id": 265,
+    "sha256": "1660e5587e1b9550f030397bda06edbb1555e89d82c64c000d7bd8d2d9937712",
+    "mean_luminance": 33.96,
+    "public_stock": false
+  },
+  {
+    "file": "033_9af6e57e.jpg",
+    "image_id": 266,
+    "sha256": "9af6e57e07d943f97b6cf094592390d8e6c636f9a5699bf7b0c0f6ca8f835999",
+    "mean_luminance": 48.92,
+    "public_stock": false
+  },
+  {
+    "file": "034_76921fb9.jpg",
+    "image_id": 372,
+    "sha256": "76921fb9387b71a2d2f69ed2895425d401c418ed767dd533d590878caa92d53b",
+    "mean_luminance": 9.61,
+    "public_stock": false
+  }
+]
