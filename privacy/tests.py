@@ -564,9 +564,16 @@ class AuditReportTests(MediaIsolatedTestCase):
         self.assertEqual(consent["users_needing_reconsent"], 1)
         self.assertEqual(report["unverified_erasures_total"], 1)
         self.assertEqual(report["requests_last_30_days"]["facial_erasure"]["failed"], 1)
-        self.assertFalse(report["encryption"]["uploaded_images_encrypted_at_rest"])
+        self.assertEqual(report["encryption"]["uploaded_images_encrypted_at_rest"], bool(settings.IMAGE_ENCRYPTION_ENABLED))
         self.assertNotIn("@example.com", json.dumps(report, default=str))
 
+
+    def test_audit_reports_image_encryption_from_the_setting(self):
+        """The finding follows IMAGE_ENCRYPTION_ENABLED; it used to be a hard-coded False (a false alarm on a server that encrypts)."""
+        with override_settings(IMAGE_ENCRYPTION_ENABLED=False):
+            self.assertFalse(audit_report()["encryption"]["uploaded_images_encrypted_at_rest"])
+        with override_settings(IMAGE_ENCRYPTION_ENABLED=True):
+            self.assertTrue(audit_report()["encryption"]["uploaded_images_encrypted_at_rest"])
 
 class PrivacyApiTests(APITestCase):
     def setUp(self):

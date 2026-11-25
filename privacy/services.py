@@ -805,6 +805,8 @@ def audit_report(now=None):
             "previous_keys_configured": len(settings.IDENTITY_EMBEDDING_PREVIOUS_KEYS),
             "dedicated_embedding_key_configured": settings.IDENTITY_EMBEDDING_KEY != settings.SECRET_KEY,
             "stored_records": embedding_encryption_status(),
-            "uploaded_images_encrypted_at_rest": False,
+            # What the server is configured to do with new uploads: it was a hard-coded False, so the admin page showed a red "not encrypted" finding even on a
+            # deployment that has IMAGE_ENCRYPTION_ENABLED=True (the VPS). Settings validation refuses to start with the switch on and no usable key.
+            "uploaded_images_encrypted_at_rest": bool(settings.IMAGE_ENCRYPTION_ENABLED),
         },
     }
