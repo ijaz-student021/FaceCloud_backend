@@ -10,7 +10,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-from common import *  # noqa: E402,F403
+from common import cv2, np  # noqa: E402
 from quality_control.models import ImageQualityDecision  # noqa: E402
 
 DEST = HERE / "zero_dce" / "dataset" / "image"

@@ -7,7 +7,6 @@ reused, but the network starts from the official Epoch99 weights instead of rand
 import argparse
 import importlib.util
 import json
-import math
 import sys
 import time
 from dataclasses import asdict

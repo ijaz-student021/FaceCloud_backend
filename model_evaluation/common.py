@@ -24,13 +24,12 @@ import django  # noqa: E402
 django.setup()
 
 import cv2  # noqa: E402
-import matplotlib  # noqa: E402
 import numpy as np  # noqa: E402
 
 import matplotlib.pyplot as plt  # noqa: E402
 from skimage.metrics import structural_similarity  # noqa: E402
 
-from django.conf import settings  # noqa: E402
+from django.conf import settings  # noqa: E402,F401  (re-exported to the notebooks)
 from uploads.models import ImageUpload  # noqa: E402
 
 plt.rcParams.update({"figure.dpi": 110, "axes.grid": True, "grid.alpha": 0.25, "axes.spines.top": False, "axes.spines.right": False, "font.size": 10})
