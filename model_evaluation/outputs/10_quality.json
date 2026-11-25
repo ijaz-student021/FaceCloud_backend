@@ -1,0 +1,15 @@
+{
+  "decisions": {
+    "accepted": 168,
+    "needs_review": 133,
+    "rejected": 4,
+    "": 1
+  },
+  "photographs_scored": 306,
+  "rejected_for_blur": 2,
+  "edge_sharpness_median": 0.6109,
+  "coarse_measured": 56,
+  "coarse_line": 0.3,
+  "coarse_within_0.06_above_line": 1,
+  "mean_overall_score_accepted": 81.34684523809523
+}
