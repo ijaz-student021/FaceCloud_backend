@@ -8,7 +8,6 @@ from rest_framework.test import APIClient
 
 from accounts.models import User
 from enhancement.eligibility import rejection_of
-from moderation.models import ModeratorReview
 from moderation.services import create_review_for_quality_decision, decide_review
 from operations.image_decision import decide_image
 from organizations.models import OrganizationMembership

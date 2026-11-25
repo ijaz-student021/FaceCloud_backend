@@ -44,11 +44,11 @@ class ApplyQualityVerdictTests(Base):
         with patch("moderation.services.apply_quality_verdict") as verdict:
             decide_review(review=self.review, actor=self.moderator, action="reject", reason="blurry")
         verdict.assert_called_once()
-        self.assertEqual(verdict.call_args.kwargs, {"by": "a moderator"})
+        self.assertEqual(verdict.call_args.kwargs, {"by": "a moderator", "reason": "blurry"})
         second_review, _decision = self.make_quality_review(self.owner, self.organization)
         with patch("moderation.services.apply_quality_verdict") as verdict:
             decide_review(review=second_review, actor=self.moderator, action="reject", reason="blurry", rejected_by="an administrator")
-        self.assertEqual(verdict.call_args.kwargs, {"by": "an administrator"})
+        self.assertEqual(verdict.call_args.kwargs, {"by": "an administrator", "reason": "blurry"})
 
     def test_a_hold_or_a_correction_writes_nothing_back(self):
         with patch("moderation.services.apply_quality_verdict") as verdict:
