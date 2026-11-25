@@ -19,6 +19,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import cv2
+import httpx2
 import numpy as np
 import openai
 from django.conf import settings
@@ -51,7 +52,7 @@ ADVISOR = dict(
     OPENAI_ADVISOR_ENABLED=True, OPENAI_API_KEY="sk-test-NOT-A-REAL-KEY", OPENAI_ADVISOR_MODEL="mock-vision-model",
     OPENAI_ADVISOR_MAX_ATTEMPTS=3, OPENAI_ADVISOR_MAX_CONCURRENCY=2,
 )
-REQUEST = SimpleNamespace(method="POST", url="https://api.openai.com/v1/responses")  # stand-in for the SDK's request object
+REQUEST = httpx2.Request("POST", "https://api.openai.com/v1/responses")  # a real request object: newer openai releases read its headers when an error is built
 
 
 def zero(**values):
