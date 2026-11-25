@@ -74,7 +74,7 @@ def advice(action="apply", rationale="Highlights are slightly clipped.", flags=(
 
 
 def api_error(cls, status, body=None, headers=None):
-    response = SimpleNamespace(status_code=status, headers=headers or {}, request=REQUEST)
+    response = httpx2.Response(status, headers=headers or {}, request=REQUEST)       # a real response: newer openai releases read its history and next_request
     return cls("mock provider error", response=response, body=body)
 
 
