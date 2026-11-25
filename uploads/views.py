@@ -16,7 +16,7 @@ from enhancement.models import ImageEnhancementResult
 from identities.models import IdentityFace, IdentityMembership
 
 from .deletion import delete_images
-from quality_control.effective import effective_q
+from quality_control.effective import effective_q, rejected_for_owner_q
 
 from .display_status import with_status_relations
 from .models import ImagePreprocessingResult, ImageUpload, UploadBatch
@@ -396,9 +396,7 @@ class MyImageListView(generics.ListAPIView):
             if selected_status not in self.valid_statuses:
                 raise ValidationError({"status": "Unsupported image status filter."})
             if selected_status == "rejected":
-                queryset = queryset.filter(
-                    Q(status="rejected") | Q(quality_decision__decision="rejected")
-                )
+                queryset = queryset.filter(rejected_for_owner_q())
             elif selected_status in {"accepted", "needs_review"}:
                 # The effective verdict: "needs_review" only where a moderator can decide, and a personal photograph that was doubted counts as accepted.
                 queryset = queryset.filter(effective_q(selected_status))
@@ -423,6 +421,10 @@ class MyImageListView(generics.ListAPIView):
                 )
             else:
                 queryset = queryset.filter(latest_enhancement_status=selected_status)
+
+        if selected_status != "rejected":
+            # A rejected photograph (refused at upload, or rejected by the checks or by a moderator/administrator) is listed under Rejected only, not in All, Accepted or In review.
+            queryset = queryset.exclude(rejected_for_owner_q())
 
         for parameter, lookup in (
             ("min_score", "quality_decision__overall_score__gte"),

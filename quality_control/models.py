@@ -35,6 +35,10 @@ class ImageQualityDecision(models.Model):
     )
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.PENDING)
     decision = models.CharField(max_length=16, choices=Decision.choices, blank=True)
+    # True once a moderator or an administrator wrote the verdict (moderation.services.apply_quality_verdict). A person's "rejected" is final for the owner (the photograph
+    # leaves My Images' All/Accepted/In review and sits under Rejected, and is not enhanced) until someone approves it or puts it back under review; the checks' own
+    # "rejected" is still softened by QUALITY_CHECKS_REJECT (quality_control/effective.py).
+    decided_by_person = models.BooleanField(default=False)
     overall_score = models.FloatField(null=True, blank=True)
     brightness_score = models.FloatField(null=True, blank=True)
     sharpness_score = models.FloatField(null=True, blank=True)

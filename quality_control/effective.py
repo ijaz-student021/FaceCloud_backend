@@ -51,11 +51,19 @@ def moderator_can_decide(image):
     return organization is not None and not organization.is_personal
 
 
+def _person_rejected(image, decision):
+    """Whether ``decision`` is a "rejected" that a moderator or an administrator wrote: that one is never softened (quality_control.models: ``decided_by_person``)."""
+    quality = getattr(image, "quality_decision", None)
+    return decision == "rejected" and quality is not None and quality.decision == "rejected" and bool(getattr(quality, "decided_by_person", False))
+
+
 def effective_decision(image, decision=None):
     """What the stored verdict means for the person who owns ``image``. ``decision`` defaults to the photograph's saved quality decision (``""`` when there is none)."""
     if decision is None:
         quality = getattr(image, "quality_decision", None)
         decision = quality.decision if quality is not None else ""
+    if _person_rejected(image, decision):
+        return "rejected"
     if decision == "rejected" and not _rejection_applies() and getattr(image, "status", "") != "rejected":
         decision = "needs_review"                 # a row from before quality checks stopped refusing photographs (an upload marked rejected, e.g. too blurry, stays rejected)
     if decision == "needs_review" and not moderator_can_decide(image):
@@ -68,6 +76,8 @@ def review_required(image, decision=None):
     if decision is None:
         quality = getattr(image, "quality_decision", None)
         decision = quality.decision if quality is not None else ""
+    if _person_rejected(image, decision):
+        return False                                    # a person already decided it: nothing waits for a moderator
     if decision == "rejected" and not _rejection_applies() and getattr(image, "status", "") != "rejected":
         decision = "needs_review"
     return decision == "needs_review" and moderator_can_decide(image)
@@ -121,17 +131,34 @@ def moderated_q(batch_path="batch"):
     return Q(**{f"{batch_path}__organization__isnull": False}) & Q(**{f"{batch_path}__organization__is_personal": False})
 
 
+def _person_path(decision_path):
+    return decision_path[: -len("decision")] + "decided_by_person"
+
+
+def person_rejected_q(*, decision_path="quality_decision__decision"):
+    """The database condition for "a moderator or an administrator rejected it" (the same rule as ``_person_rejected``)."""
+    return Q(**{decision_path: "rejected", _person_path(decision_path): True})
+
+
+def rejected_for_owner_q(*, decision_path="quality_decision__decision", status_path="status"):
+    """"Rejected" as the owner sees it: refused at upload, or rejected by a person, or (only while QUALITY_CHECKS_REJECT is on) rejected by the checks."""
+    condition = Q(**{status_path: "rejected"}) | person_rejected_q(decision_path=decision_path)
+    if _rejection_applies():
+        condition |= Q(**{decision_path: "rejected"})
+    return condition
+
+
 def effective_q(wanted, *, decision_path="quality_decision__decision", batch_path="batch"):
     """The condition for "the effective verdict is ``wanted``" on a queryset of photographs (the defaults) or of anything that reaches them (change the paths).
 
-    ``accepted`` also matches a stored ``needs_review`` that no moderator can decide; ``needs_review`` matches only one a moderator can.
+    ``accepted`` also matches a stored ``needs_review`` that no moderator can decide; ``needs_review`` matches only one a moderator can. A "rejected" a person wrote is
+    never softened into either.
     """
-    stored = Q(**{decision_path: wanted})
-    review = Q(**{decision_path: "needs_review"}) if _rejection_applies() else Q(**{f"{decision_path}__in": ["needs_review", "rejected"]})
+    person = person_rejected_q(decision_path=decision_path)
+    stored = Q(**{decision_path: wanted}) if wanted != "rejected" else (Q(**{decision_path: "rejected"}) if _rejection_applies() else person)
+    review = Q(**{decision_path: "needs_review"}) if _rejection_applies() else Q(**{f"{decision_path}__in": ["needs_review", "rejected"]}) & ~person
     if wanted == "accepted":
         return stored | (review & ~moderated_q(batch_path))
     if wanted == "needs_review":
         return review & moderated_q(batch_path)
-    if wanted == "rejected" and not _rejection_applies():
-        return Q(**{f"{decision_path}__in": []})
     return stored

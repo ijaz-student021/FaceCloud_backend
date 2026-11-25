@@ -6,7 +6,7 @@ never end up in a package, an export or a share link as one. The checks, in the 
 | Check | Value | May be enhanced? |
 |---|---|---|
 | upload (``ImageUpload.status``) | ``rejected`` | no |
-| quality decision | ``rejected`` | no, only while QUALITY_CHECKS_REJECT is on (it is off: a quality check never refuses a photograph) |
+| quality decision | ``rejected`` | no when a moderator or an administrator wrote it (``decided_by_person``); the checks' own, only while QUALITY_CHECKS_REJECT is on (it is off: a quality check never refuses a photograph) |
 | face validation | ``rejected`` | no |
 | quality decision / face validation | ``needs_review`` | yes: a person asked for it, and a moderator may still decide |
 | no decision recorded | | yes |
@@ -22,7 +22,7 @@ REFUSAL = "This photo was rejected by the checks, so it is not enhanced."
 
 def not_rejected(queryset):
     """``queryset`` of ImageUpload without the photographs that were rejected at upload, by quality or by face validation."""
-    refused = Q(status=REJECTED) | Q(face_validation__decision=REJECTED)
+    refused = Q(status=REJECTED) | Q(face_validation__decision=REJECTED) | Q(quality_decision__decision=REJECTED, quality_decision__decided_by_person=True)
     if settings.QUALITY_CHECKS_REJECT:
         refused |= Q(quality_decision__decision=REJECTED)
     return queryset.exclude(refused)

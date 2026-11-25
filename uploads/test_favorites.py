@@ -81,8 +81,9 @@ class FavoriteTests(TestCase):
         self.client.post(reverse("image-bulk-favorite"), {"image_ids": [self.photos[1].pk, self.photos[2].pk], "favorite": True}, format="json")
         listing = lambda **params: {row["id"] for row in self.client.get(reverse("my-image-list"), params).json()["results"]}   # noqa: E731
         self.assertEqual(listing(favorite="true"), {self.photos[1].pk, self.photos[2].pk})
-        self.assertEqual(listing(favorite="false"), {self.photos[0].pk, self.photos[3].pk, self.refused.pk})
-        self.assertEqual(len(listing()), 5)
+        self.assertEqual(listing(favorite="false"), {self.photos[0].pk, self.photos[3].pk})              # a photograph refused at upload is listed under Rejected only
+        self.assertEqual(len(listing()), 4)
+        self.assertEqual(listing(status="rejected"), {self.refused.pk})
         self.assertEqual(self.client.get(reverse("my-image-list"), {"favorite": "maybe"}).status_code, 400)
         rows = {row["id"]: row for row in self.client.get(reverse("my-image-list")).json()["results"]}
         self.assertEqual([rows[p.pk]["is_favorite"] for p in self.photos], [False, True, True, False])
