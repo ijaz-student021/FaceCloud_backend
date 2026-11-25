@@ -31,7 +31,7 @@ from organizations.models import OrganizationAuditEvent, OrganizationMembership
 from organizations.scope import visible_audit_events
 from organizations.services import get_active_membership, record_audit_event
 from quality_control.models import ImageQualityDecision
-from uploads.models import UploadBatch
+from uploads.models import ImageUpload, UploadBatch
 from uploads.services import cancel_batch, retry_batch
 
 from .models import ModeratorReport, ModeratorReview
@@ -162,15 +162,23 @@ def create_review_for_identity_membership(membership):
     )
 
 
-def apply_quality_verdict(image, quality_decision_id, action, *, by="a moderator"):
+REVIEWER_REJECTION_PREFIX = "Rejected by "
+
+
+def apply_quality_verdict(image, quality_decision_id, action, *, by="a moderator", reason=""):
     """Write an approve or reject back into the photograph's quality decision and do what the pipeline does after that verdict.
 
     Shared by a moderator's decision on a review (``decide_review``) and an administrator's decision on a photograph that has no open review
     (``operations.image_decision``), so the two can never drift apart. ``by`` only words the reason written in the person folders' history.
     """
     ImageQualityDecision.objects.filter(pk=quality_decision_id).update(
-        decision=_QUALITY_WRITEBACK[action], updated_at=timezone.now(),
+        decision=_QUALITY_WRITEBACK[action], decided_by_person=True, updated_at=timezone.now(),
     )
+    # The owner sees why on the photograph's card (rejection_reason is display text only); an approval takes back what this wrote, never the checks' own sentence.
+    if action == "reject":
+        ImageUpload.objects.filter(pk=image.pk).update(rejection_reason=f"{REVIEWER_REJECTION_PREFIX}{by}" + (f": {reason}" if reason else "."), updated_at=timezone.now())
+    else:
+        clear_reviewer_rejection_text(image)
     # The write above is a queryset update, so it sends no save signal: do what the verdict now means for the person folders explicitly. An approved
     # photo is grouped now (identities/verdict.py: it was held back for exactly this); a rejected one is out of every folder.
     if action == "approve":
@@ -183,6 +191,11 @@ def apply_quality_verdict(image, quality_decision_id, action, *, by="a moderator
         from identities.services import remove_photo_from_folders
 
         remove_photo_from_folders(image, reason=f"The photo was rejected by {by}.")
+
+
+def clear_reviewer_rejection_text(image):
+    """Remove the "Rejected by ..." sentence a reviewer's rejection wrote, when the photograph is approved or put back under review."""
+    ImageUpload.objects.filter(pk=image.pk, rejection_reason__startswith=REVIEWER_REJECTION_PREFIX).update(rejection_reason="", updated_at=timezone.now())
 
 
 @transaction.atomic
@@ -212,7 +225,7 @@ def decide_review(*, review, actor, action, reason="", notes="", group_id=None, 
         locked.source == ModeratorReview.Source.QUALITY
         and action in _QUALITY_WRITEBACK and locked.quality_decision_id
     ):
-        apply_quality_verdict(locked.image, locked.quality_decision_id, action, by=rejected_by)
+        apply_quality_verdict(locked.image, locked.quality_decision_id, action, by=rejected_by, reason=reason)
     elif (
         locked.source == ModeratorReview.Source.DUPLICATE
         and action in _DUPLICATE_WRITEBACK and locked.duplicate_match_id

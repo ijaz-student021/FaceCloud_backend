@@ -41,7 +41,7 @@ def image_display_status(image):
     if quality:
         if quality.status in {"pending", "queued", "processing", "failed"}:
             return "quality_failed" if quality.status == "failed" else "quality_processing"
-        if quality.decision == "rejected" and settings.QUALITY_CHECKS_REJECT:
+        if quality.decision == "rejected" and (settings.QUALITY_CHECKS_REJECT or quality.decided_by_person):
             return "rejected"
         if quality.decision in ("needs_review", "rejected") and moderator_can_decide(image):
             return "needs_review"      # only where a moderator can decide it; in a personal workspace it shows as accepted (quality_control/effective.py)

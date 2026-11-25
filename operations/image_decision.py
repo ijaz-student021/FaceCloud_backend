@@ -108,7 +108,7 @@ def decide_image(*, image, actor, action, reason="", request=None):
                     review=open_review, actor=actor, action=action, reason=reason, message_to_member=message, request=request, rejected_by=BY,
                 )
             else:
-                apply_quality_verdict(image, quality.pk, action, by=BY)
+                apply_quality_verdict(image, quality.pk, action, by=BY, reason=reason)
     if not changed:
         return False
 
@@ -152,6 +152,9 @@ def _put_under_review(image, quality, review, open_review, in_a_team, actor, rea
             review_change = "reopened"
     if quality.decision != Decision.NEEDS_REVIEW:
         ImageQualityDecision.objects.filter(pk=quality.pk).update(decision=Decision.NEEDS_REVIEW, updated_at=timezone.now())
+        from moderation.services import clear_reviewer_rejection_text
+
+        clear_reviewer_rejection_text(image)
     return review_change, review
 
 
