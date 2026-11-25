@@ -1,0 +1,201 @@
+{
+  "Zero-DCE": {
+    "task": "low-light enhancement",
+    "metrics": {
+      "images": 8,
+      "mean_brightness_gain_x": 2.9963,
+      "gamma_baseline_gain_x": 2.1332,
+      "noise_amplification_x": 2.6275,
+      "mean_ssim_vs_input": 0.5249,
+      "mean_seconds": 0.1987
+    },
+    "note": "no ground truth: brightness gain, noise amplification, SSIM to input"
+  },
+  "NAFNet GoPro": {
+    "task": "motion deblur",
+    "metrics": {
+      "images": 6,
+      "psnr_blurred_db": 27.0633,
+      "ssim_blurred": 0.8108,
+      "mae_blurred": 6.1159,
+      "psnr_unsharp_db": 27.1083,
+      "ssim_unsharp": 0.8128,
+      "mae_unsharp": 6.1309,
+      "psnr_nafnet_db": 30.9283,
+      "ssim_nafnet": 0.8982,
+      "mae_nafnet": 4.0572,
+      "mean_seconds": 3.1333,
+      "psnr_gain_over_input_db": 3.865
+    },
+    "note": "synthetic motion blur with ground truth, 6 public photos"
+  },
+  "NAFNet SIDD": {
+    "task": "denoise",
+    "metrics": {
+      "images": 4,
+      "psnr_noisy_sigma15_db": 25.6425,
+      "ssim_noisy_sigma15": 0.4773,
+      "psnr_nlm_sigma15_db": 28.4125,
+      "ssim_nlm_sigma15": 0.6367,
+      "psnr_sidd_sigma15_db": 32.1875,
+      "ssim_sidd_sigma15": 0.9202,
+      "psnr_noisy_sigma30_db": 20.38,
+      "ssim_noisy_sigma30": 0.231,
+      "psnr_nlm_sigma30_db": 22.8725,
+      "ssim_nlm_sigma30": 0.4642,
+      "psnr_sidd_sigma30_db": 20.585,
+      "ssim_sidd_sigma30": 0.2577,
+      "mae_noisy_sigma30": 18.9124,
+      "mae_nlm_sigma30": 15.2285,
+      "mae_sidd_sigma30": 18.42,
+      "real_grain_noise_input": 14.83,
+      "real_grain_noise_sidd": 1.48,
+      "real_grain_noise_nlm": 1.48,
+      "mean_seconds": 3.65
+    },
+    "note": "Gaussian noise with ground truth + one real grainy photo; switch is OFF"
+  },
+  "Real-ESRGAN": {
+    "task": "x4 upscale / detail",
+    "metrics": {
+      "images": 5,
+      "psnr_bicubic": 28.284,
+      "ssim_bicubic": 0.8464,
+      "mae_bicubic": 5.092,
+      "sharp_bicubic": 0.012,
+      "psnr_compact": 25.346,
+      "ssim_compact": 0.8104,
+      "mae_compact": 7.562,
+      "sharp_compact": 0.208,
+      "psnr_x4plus": 25.946,
+      "ssim_x4plus": 0.8058,
+      "mae_x4plus": 7.254,
+      "sharp_x4plus": 0.352,
+      "psnr_app": 28.148,
+      "ssim_app": 0.8472,
+      "mae_app": 5.374,
+      "sharp_app": 0.038,
+      "seconds_compact": 0.542,
+      "seconds_x4plus": 1.292
+    },
+    "note": "downscale-then-restore with ground truth, 5 public photos; compact+blend is what the app uses"
+  },
+  "YuNet": {
+    "task": "face detection",
+    "metrics": {
+      "photographs": 300,
+      "with_face_share": 0.81,
+      "mean_confidence": 0.8796,
+      "share_conf_below_0.7": 0.0947,
+      "reference_portraits": 16,
+      "recall_blur_sigma2": 1.0,
+      "recall_blur_sigma6": 0.6875,
+      "recall_noise_sigma25": 0.5,
+      "recall_dark_x4": 0.8125,
+      "recall_dark_x16": 0.125,
+      "recall_jpeg_q15": 0.875,
+      "recall_small_x4": 1.0,
+      "ms_per_photo": 7.956
+    },
+    "note": "no labelled benchmark: confidence distribution + recall vs clean reference under degradation"
+  },
+  "SFace": {
+    "task": "face identity embedding",
+    "metrics": {
+      "portraits": 14,
+      "same_pairs": 78,
+      "different_pairs": 91,
+      "roc_auc": 0.9972,
+      "eer": 0.0238,
+      "mean_same": 0.818,
+      "mean_different": 0.1023,
+      "tmr_at_match_0.45": 0.9615,
+      "fmr_at_match_0.45": 0.0,
+      "enhanced_identity_results": 139,
+      "enhanced_identity_mean": 0.9281,
+      "enhanced_identity_share_above_0.80": 0.9784
+    },
+    "note": "same = degraded copies, different = different public portraits"
+  },
+  "CodeFormer": {
+    "task": "face restoration",
+    "metrics": {
+      "portraits": 6,
+      "mean_psnr_soft_db": 30.045,
+      "mean_psnr_restored_db": 30.0717,
+      "mean_ssim_soft": 0.8285,
+      "mean_ssim_restored": 0.8385,
+      "mean_identity_soft": 0.768,
+      "mean_identity_restored": 0.782,
+      "share_passing_identity_gate": 0.8333,
+      "mean_sharpness_gain_x": 0.87,
+      "mean_seconds": 1.4
+    },
+    "note": "softened portraits with ground truth; identity gate 0.65"
+  },
+  "DDColor": {
+    "task": "colorization",
+    "metrics": {
+      "images": 6,
+      "mean_ab_mae_gray": 6.635,
+      "mean_ab_mae_ddcolor": 7.035,
+      "mean_colorfulness_truth": 37.9333,
+      "mean_colorfulness_ddcolor": 26.3333,
+      "mean_seconds": 3.5833
+    },
+    "note": "colour photos made gray, then colorized; Lab chroma error vs original"
+  },
+  "SigLIP": {
+    "task": "semantic photo search",
+    "metrics": {
+      "indexed_photographs": 274,
+      "mean_roc_auc": 0.6727,
+      "mean_avg_precision": 0.5865,
+      "mean_precision_at_10": 0.65,
+      "min_score_floor": 0.06,
+      "mean_precision_at_floor": 0.6945,
+      "mean_recall_at_floor": 0.3735
+    },
+    "note": "labels derived from YuNet face counts and measured luminance"
+  },
+  "Quality control": {
+    "task": "blur / exposure / noise checks (classical CV)",
+    "metrics": {
+      "decisions": {
+        "accepted": 168,
+        "needs_review": 133,
+        "rejected": 4,
+        "": 1
+      },
+      "photographs_scored": 306,
+      "rejected_for_blur": 2,
+      "edge_sharpness_median": 0.6109,
+      "coarse_measured": 56,
+      "coarse_line": 0.3,
+      "coarse_within_0.06_above_line": 1,
+      "mean_overall_score_accepted": 81.3468
+    },
+    "note": "thresholds calibrated on the project's own photographs"
+  },
+  "Zero-DCE fine-tuned (candidate)": {
+    "task": "low-light fine-tuning on 35 project photographs",
+    "metrics": {
+      "images": 35,
+      "train": 30,
+      "validation": 5,
+      "epochs": 40,
+      "best_epoch": 18,
+      "val_loss_official": 0.7457,
+      "val_loss_best": 0.5095,
+      "val_loss_last": 0.518,
+      "bright_in": 37.868,
+      "bright_official": 102.162,
+      "bright_tuned": 141.417,
+      "noise_x_official": 3.774,
+      "noise_x_tuned": 4.757,
+      "ssim_official": 0.484,
+      "ssim_tuned": 0.374
+    },
+    "note": "real run; not installed in the application"
+  }
+}

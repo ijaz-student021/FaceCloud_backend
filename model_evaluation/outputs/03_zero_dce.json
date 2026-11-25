@@ -1,0 +1,96 @@
+{
+  "rows": [
+    {
+      "photo": 75,
+      "bright_in": 50.2,
+      "bright_zdce": 125.3,
+      "bright_gamma": 98.9,
+      "noise_in": 14.83,
+      "noise_zdce": 29.65,
+      "noise_gamma": 17.79,
+      "ssim_zdce": 0.542,
+      "seconds": 0.26
+    },
+    {
+      "photo": 76,
+      "bright_in": 20.7,
+      "bright_zdce": 94.6,
+      "bright_gamma": 58.8,
+      "noise_in": 1.48,
+      "noise_zdce": 7.41,
+      "noise_gamma": 2.97,
+      "ssim_zdce": 0.331,
+      "seconds": 0.18
+    },
+    {
+      "photo": 78,
+      "bright_in": 72.1,
+      "bright_zdce": 132.0,
+      "bright_gamma": 117.9,
+      "noise_in": 2.97,
+      "noise_zdce": 4.45,
+      "noise_gamma": 2.97,
+      "ssim_zdce": 0.653,
+      "seconds": 0.19
+    },
+    {
+      "photo": 79,
+      "bright_in": 69.3,
+      "bright_zdce": 143.4,
+      "bright_gamma": 120.5,
+      "noise_in": 2.97,
+      "noise_zdce": 4.45,
+      "noise_gamma": 2.97,
+      "ssim_zdce": 0.706,
+      "seconds": 0.24
+    },
+    {
+      "photo": 81,
+      "bright_in": 62.1,
+      "bright_zdce": 134.0,
+      "bright_gamma": 108.4,
+      "noise_in": 1.48,
+      "noise_zdce": 2.97,
+      "noise_gamma": 2.97,
+      "ssim_zdce": 0.605,
+      "seconds": 0.18
+    },
+    {
+      "photo": 82,
+      "bright_in": 55.2,
+      "bright_zdce": 134.5,
+      "bright_gamma": 100.5,
+      "noise_in": 2.97,
+      "noise_zdce": 5.93,
+      "noise_gamma": 2.97,
+      "ssim_zdce": 0.549,
+      "seconds": 0.17
+    },
+    {
+      "photo": 83,
+      "bright_in": 21.2,
+      "bright_zdce": 103.4,
+      "bright_gamma": 62.7,
+      "noise_in": 1.48,
+      "noise_zdce": 5.93,
+      "noise_gamma": 2.97,
+      "ssim_zdce": 0.359,
+      "seconds": 0.19
+    },
+    {
+      "photo": 84,
+      "bright_in": 34.2,
+      "bright_zdce": 120.8,
+      "bright_gamma": 80.6,
+      "noise_in": 1.48,
+      "noise_zdce": 4.45,
+      "noise_gamma": 1.48,
+      "ssim_zdce": 0.454,
+      "seconds": 0.18
+    }
+  ],
+  "used_in_pipeline": {
+    "low_light_enhancement/zero_dce": 75,
+    "low_light_enhancement/opencv_exposure": 26
+  }
+}

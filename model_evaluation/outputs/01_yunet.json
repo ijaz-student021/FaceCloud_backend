@@ -1,0 +1,15 @@
+{
+  "photographs": 300,
+  "with_face_share": 0.81,
+  "mean_confidence": 0.8796268600823046,
+  "share_conf_below_0.7": 0.09465020576131687,
+  "reference_portraits": 16,
+  "recall_blur_sigma2": 1.0,
+  "recall_blur_sigma6": 0.6875,
+  "recall_noise_sigma25": 0.5,
+  "recall_dark_x4": 0.8125,
+  "recall_dark_x16": 0.125,
+  "recall_jpeg_q15": 0.875,
+  "recall_small_x4": 1.0,
+  "ms_per_photo": 7.956020801793784
+}

@@ -1,0 +1,70 @@
+{
+  "rows": [
+    {
+      "photo": 74,
+      "psnr_blurred": 18.63,
+      "psnr_unsharp": 18.15,
+      "psnr_nafnet": 19.63,
+      "ssim_blurred": 0.78,
+      "ssim_unsharp": 0.766,
+      "ssim_nafnet": 0.868,
+      "seconds": 5.5
+    },
+    {
+      "photo": 88,
+      "psnr_blurred": 26.04,
+      "psnr_unsharp": 26.18,
+      "psnr_nafnet": 31.18,
+      "ssim_blurred": 0.794,
+      "ssim_unsharp": 0.796,
+      "ssim_nafnet": 0.895,
+      "seconds": 2.4
+    },
+    {
+      "photo": 97,
+      "psnr_blurred": 26.75,
+      "psnr_unsharp": 26.89,
+      "psnr_nafnet": 31.7,
+      "ssim_blurred": 0.836,
+      "ssim_unsharp": 0.849,
+      "ssim_nafnet": 0.924,
+      "seconds": 2.3
+    },
+    {
+      "photo": 75,
+      "psnr_blurred": 31.47,
+      "psnr_unsharp": 31.69,
+      "psnr_nafnet": 34.83,
+      "ssim_blurred": 0.795,
+      "ssim_unsharp": 0.798,
+      "ssim_nafnet": 0.855,
+      "seconds": 3.4
+    },
+    {
+      "photo": 101,
+      "psnr_blurred": 27.14,
+      "psnr_unsharp": 27.36,
+      "psnr_nafnet": 32.52,
+      "ssim_blurred": 0.794,
+      "ssim_unsharp": 0.798,
+      "ssim_nafnet": 0.918,
+      "seconds": 2.9
+    },
+    {
+      "photo": 79,
+      "psnr_blurred": 32.35,
+      "psnr_unsharp": 32.38,
+      "psnr_nafnet": 35.71,
+      "ssim_blurred": 0.866,
+      "ssim_unsharp": 0.87,
+      "ssim_nafnet": 0.929,
+      "seconds": 2.3
+    }
+  ],
+  "pipeline_runs": {
+    "nafnet_gopro": 65
+  },
+  "pipeline_accepted": {
+    "nafnet_gopro": 23
+  }
+}
