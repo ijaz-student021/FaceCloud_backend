@@ -13,7 +13,8 @@ class NotificationPreference(models.Model):
     photo_rejected = models.BooleanField(default=True)
     batch_upload_finished = models.BooleanField(default=True)
     person_group_created = models.BooleanField(default=True)
-    email_notifications = models.BooleanField(default=False)
+    # ON by default (changed from OFF): the e-mails are the service's own messages (a photograph was reviewed, a batch finished). Anyone can switch them off in Settings.
+    email_notifications = models.BooleanField(default=True)
     live_session_alerts = models.BooleanField(default=False)
     moderator_review_updates = models.BooleanField(default=True)
     # Not a notification: the one per-account setting there is. Whether new uploads are enhanced automatically once they pass the checks (a form field on an

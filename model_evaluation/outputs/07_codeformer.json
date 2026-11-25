@@ -1,0 +1,110 @@
+{
+  "rows": [
+    {
+      "photo": 74,
+      "psnr_soft": 19.17,
+      "psnr_restored": 19.21,
+      "ssim_soft": 0.739,
+      "ssim_restored": 0.745,
+      "id_soft": 0.705,
+      "id_restored": 0.653,
+      "sharp_x": 1.18,
+      "seconds": 3.7,
+      "passes_gate_0.65": true
+    },
+    {
+      "photo": 78,
+      "psnr_soft": 32.71,
+      "psnr_restored": 33.14,
+      "ssim_soft": 0.854,
+      "ssim_restored": 0.868,
+      "id_soft": 0.849,
+      "id_restored": 0.875,
+      "sharp_x": 0.83,
+      "seconds": 1.1,
+      "passes_gate_0.65": true
+    },
+    {
+      "photo": 81,
+      "psnr_soft": 33.65,
+      "psnr_restored": 33.0,
+      "ssim_soft": 0.879,
+      "ssim_restored": 0.891,
+      "id_soft": 0.778,
+      "id_restored": 0.685,
+      "sharp_x": 0.63,
+      "seconds": 0.9,
+      "passes_gate_0.65": true
+    },
+    {
+      "photo": 82,
+      "psnr_soft": 30.56,
+      "psnr_restored": 31.17,
+      "ssim_soft": 0.84,
+      "ssim_restored": 0.859,
+      "id_soft": 0.929,
+      "id_restored": 0.938,
+      "sharp_x": 0.82,
+      "seconds": 0.9,
+      "passes_gate_0.65": true
+    },
+    {
+      "photo": 83,
+      "psnr_soft": 34.14,
+      "psnr_restored": 34.17,
+      "ssim_soft": 0.876,
+      "ssim_restored": 0.879,
+      "id_soft": 0.376,
+      "id_restored": 0.61,
+      "sharp_x": 1.02,
+      "seconds": 0.9,
+      "passes_gate_0.65": false
+    },
+    {
+      "photo": 86,
+      "psnr_soft": 30.04,
+      "psnr_restored": 29.74,
+      "ssim_soft": 0.783,
+      "ssim_restored": 0.789,
+      "id_soft": 0.971,
+      "id_restored": 0.931,
+      "sharp_x": 0.74,
+      "seconds": 0.9,
+      "passes_gate_0.65": true
+    }
+  ],
+  "fidelity_sweep": [
+    {
+      "fidelity_w": 0.3,
+      "psnr_db": 27.72,
+      "identity": 0.644
+    },
+    {
+      "fidelity_w": 0.5,
+      "psnr_db": 28.14,
+      "identity": 0.771
+    },
+    {
+      "fidelity_w": 0.7,
+      "psnr_db": 28.45,
+      "identity": 0.738
+    },
+    {
+      "fidelity_w": 0.9,
+      "psnr_db": 28.69,
+      "identity": 0.824
+    }
+  ],
+  "scorecard": {
+    "portraits": 6,
+    "mean_psnr_soft_db": 30.045,
+    "mean_psnr_restored_db": 30.07166666666667,
+    "mean_ssim_soft": 0.8285,
+    "mean_ssim_restored": 0.8384999999999999,
+    "mean_identity_soft": 0.7679999999999999,
+    "mean_identity_restored": 0.782,
+    "share_passing_identity_gate": 0.8333333333333334,
+    "mean_sharpness_gain_x": 0.87,
+    "mean_seconds": 1.4000000000000004
+  }
+}

@@ -404,4 +404,7 @@ def create_account_as_admin(*, administrator, username, email, password, role, o
         {"administrator_id": administrator.pk, "administrator": administrator.get_username(), "role": role,
          "organization_id": organization.pk if organization is not None else None},
     )
+    from .moderator_emails import send_account_created_by_admin
+
+    send_account_created_by_admin(user, organization if role == "moderator" else None)      # after the commit: sign-in details and a link to choose a password
     return user

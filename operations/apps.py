@@ -7,3 +7,6 @@ class OperationsConfig(AppConfig):
 
     def ready(self):
         from . import checks  # noqa: F401
+        from .devserver import lengthen_listen_queue
+
+        lengthen_listen_queue()

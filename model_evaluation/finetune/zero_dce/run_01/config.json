@@ -1,0 +1,15 @@
+{
+  "dataset": "/Users/Ali/Projects/FaceCloud_backend/model_evaluation/finetune/zero_dce/dataset",
+  "output_dir": "/Users/Ali/Projects/FaceCloud_backend/model_evaluation/finetune/zero_dce/run_01",
+  "image_size": 256,
+  "batch_size": 4,
+  "epochs": 40,
+  "learning_rate": 5e-05,
+  "validation_fraction": 0.15,
+  "seed": 2026,
+  "workers": 0,
+  "exposure_target": 0.6,
+  "initial_weights": "official Zero-DCE Epoch99 (Li et al., TPAMI 2021)",
+  "device": "mps",
+  "dataset_name": "FaceCloud low-light photographs (project library)"
+}
