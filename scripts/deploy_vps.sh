@@ -36,7 +36,7 @@ PY=/srv/facecloud/venv/bin/python
 sudo -v                                  # asks for the sudo password once; it is remembered for the next minutes
 echo "== 1. backup of the current code (and of the database if the backup script exists)"
 sudo tar -czf "/var/backups/facecloud/app-before-$REL-$(date +%F-%H%M).tgz" -C /srv/facecloud --exclude=app/.runtime app
-if [ -x /usr/local/sbin/facecloud-backup ]; then sudo /usr/local/sbin/facecloud-backup; else echo "   (no database backup script installed yet)"; fi
+if sudo test -x /usr/local/sbin/facecloud-backup; then sudo /usr/local/sbin/facecloud-backup; else echo "   (no database backup script installed yet)"; fi
 
 echo "== 2. replace the code (keeps .runtime/models, .runtime/licenses and the media)"
 rm -rf "$HOME/release-new" && mkdir "$HOME/release-new"

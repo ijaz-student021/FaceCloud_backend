@@ -1,5 +1,8 @@
 # FaceCloud AI: project status on 2026-11-25 (defence week)
 
+> **Update 2026-11-26.** Since this status was written: (1) semantic photo search is **on** on the VPS (SigLIP, indexed, Search page `/dashboard/search`); gunicorn runs 2 workers x 2 threads to keep memory free. (2) Registration and the verification e-mail work on the live site (the first live bundle had been a demo-mode build). (3) The daily database and media backup is installed and has produced a dump. (4) The Privacy Audit no longer reports "uploaded photos are not encrypted at rest" when encryption is on (it was a hard-coded value; PR #173, deployed). (5) A Pro photograph that did not use the cloud engine was `no_consent`, not a Deep Image fault; the upload screens now ask for the face permission when Pro is chosen (frontend PR #10). (6) A merge into the frontend's `main` replaced the live site with a demo-mode build; see `deployment/VPS_DEPLOYED_STATE.md`. (7) The project report is in the repository: `report/FaceCloud_Documentation.pdf`. Sections 2, 4 and 5 below are the state of 2026-11-25 and are corrected where they changed.
+
+
 An honest statement of what is complete, what was verified on the live system, and what is still open. "Verified live" means somebody ran it on `www.facecloudai.com` / `api.facecloudai.com`; "tested" means an automated test covers it (4150 tests, CI green on PostgreSQL).
 
 ## 1. Complete and verified live
@@ -24,10 +27,10 @@ Registration with the verification e-mail, organizations and the moderator flow 
 ## 4. Known limits (to state plainly)
 * **No model was fine-tuned.** All neural models are public pretrained weights, evaluated in `model_evaluation/`; one small Zero-DCE fine-tuning experiment (35 photographs) lowered its training loss but did not beat the official weights, so it is not installed.
 * **CPU server:** heavy models are slow (Auto about 1 minute, Pro 1.5 to 4 minutes); a large ZIP takes long. There is no GPU.
-* **Semantic photo search is off on the VPS** (it needs about 1 GB more and is heavy on a CPU); it runs on the development machine.
+* **Semantic photo search** is on on the VPS since 2026-11-25 (it needs about 1.25 GB per gunicorn worker, so the server runs 2 workers); it only ranks a person's own indexed photographs.
 * **The Pro result depends on the provider:** its API key and credits, and our safety gates (a result that changes the picture's structure too much, or a face, is refused and the local result is kept). The preset `auto_enhance` enlarges the photograph to 4096 px, `auto_enhance_pro` keeps its size.
 * The mailbox plan (Hostinger Business Email) is paid until 2026-12-24; when it lapses the server cannot send e-mail.
 * One VPS: no redundancy or monitoring.
 
 ## 5. Open operational items
-Daily database backup (`VPS_RUNBOOK.md`, section 10) installed? Root SSH login closed? Server environment file and keys stored in a password manager? Deploy the merged `main` with `scripts/deploy_vps.sh`.
+Daily database backup (`VPS_RUNBOOK.md`, section 10): installed 2026-11-25; keep a dump off the server. Root SSH login closed? Server environment file and keys stored in a password manager? Deploy the merged `main` with `scripts/deploy_vps.sh`.
