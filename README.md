@@ -97,20 +97,42 @@ accounts/          users, JWT authentication, link-verified signup, roles, audit
 uploads/           ingestion, storage, preprocessing
 validation/        face detection and validation
 quality_control/   quality scoring and decisions
-enhancement/       enhancement pipeline, model adapters, identity guard
+enhancement/       enhancement pipeline, model adapters, identity guard, cloud (Pro) engine
 duplicates/        perceptual-hash duplicate detection
 identities/        face embeddings, identity groups, encrypted storage, search by photo
+search/            semantic photo search (SigLIP embeddings), search endpoints
+albums/            albums and their photos
+memories/          "memories" (best photos of a moment) worked out on request, nothing stored
+places/            retired Places feature: only the old table remains in the schema
 organizations/     multi-tenant workspaces, membership, invitations, audit trail
 moderation/        organization-scoped review queue, decisions, reports, batch actions
-privacy/           consent, erasure, retention, personal and organization export, cleanup
+privacy/           consent, erasure, retention, personal and organization export, privacy audit, cleanup
+security/          security events and alerts
 sharing/           expiring, revocable share links
 events/            automatic event/timeline grouping of a user's photos
 thumbnails/        cached, encrypted-at-rest JPEG previews of uploaded photos
+camera/            live camera sessions and snapshots
+contact/           contact-form messages and early-access sign-ups
 reports/  downloads/  notifications/  activity/  operations/
-scripts/           worker launcher, dataset audit, model training and export
+scripts/           deploy, demo, evaluation, model and worker scripts
+model_evaluation/  per-model evaluation notebooks and scorecard
 notebooks/         model training notebooks
-docs/              feature docs, architecture, decisions, testing guide
+loadtest/          Locust load-test file
+docs/              documentation: start at docs/README.md
+audit-output/  fix-validation/   dated evidence from audits and fixes (kept for the record)
 ```
+
+The Django apps hold the code. Everything else is scripts, evidence or documentation. [`docs/README.md`](docs/README.md) is the map of the documentation.
+
+## Live deployment
+
+| | |
+|---|---|
+| Frontend | https://www.facecloudai.com (a separate React/Vite repository, built in API mode) |
+| API | https://api.facecloudai.com (this repository: Gunicorn, PostgreSQL, Redis, Celery worker and beat behind Nginx on one VPS) |
+
+How it is deployed, which settings matter and how it was measured: [`docs/deployment/VPS_DEPLOYED_STATE.md`](docs/deployment/VPS_DEPLOYED_STATE.md).
+Deploy the backend with [`scripts/deploy_vps.sh`](scripts/deploy_vps.sh) and the frontend with [`scripts/deploy_frontend.sh`](scripts/deploy_frontend.sh) (both read host details from the environment, none are stored here).
 
 ## Getting started
 
@@ -410,12 +432,17 @@ Then run `python manage.py check --deploy` for Django's own checks.
 
 ## Documentation
 
+Start at [`docs/README.md`](docs/README.md): it groups every document by what you want to do. The most used ones:
+
+- [`docs/report/FaceCloud_Documentation.pdf`](docs/report/FaceCloud_Documentation.pdf): the final-year project report (115 pages, November 2026); [about it](docs/report/README.md)
+- [`docs/PROJECT_STATUS_2026-11-25.md`](docs/PROJECT_STATUS_2026-11-25.md): what is complete, verified live and still open
 - [`docs/FEATURES.md`](docs/FEATURES.md): feature catalogue and status
+- [`docs/deployment/VPS_DEPLOYED_STATE.md`](docs/deployment/VPS_DEPLOYED_STATE.md): what is deployed where
 - [`docs/SECURITY_AND_PERFORMANCE_REVIEW.md`](docs/SECURITY_AND_PERFORMANCE_REVIEW.md): dependency audit, static analysis and performance findings, and how to repeat them
 - [`docs/FRONTEND_API_GUIDE.md`](docs/FRONTEND_API_GUIDE.md): how a frontend uses the API (auth, upload and polling, thumbnails, enhancement, people, events, sharing, organizations, moderator area, notifications)
-- [`docs/DATASET_TERMS.md`](docs/DATASET_TERMS.md): the third-party face dataset we were granted, its conditions and how the project keeps to them
-- [`docs/GPU_SESSION_RUNBOOK.md`](docs/GPU_SESSION_RUNBOOK.md): preparing, running and deciding a GPU evaluation session (preflight, model manifest, stage comparison)
 - [`docs/API_ERRORS.md`](docs/API_ERRORS.md): error shapes the frontend can rely on
 - [`docs/features`](docs/features): per-feature design, verification and limits
 - [`docs/structured`](docs/structured): architecture, decisions, tasks
+- [`docs/DATASET_TERMS.md`](docs/DATASET_TERMS.md): the third-party face dataset we were granted, its conditions and how the project keeps to them
+- [`docs/GPU_SESSION_RUNBOOK.md`](docs/GPU_SESSION_RUNBOOK.md): preparing, running and deciding a GPU evaluation session
 - [`docs/12_DAY_COMPLETION_PLAN.md`](docs/12_DAY_COMPLETION_PLAN.md): delivery plan
