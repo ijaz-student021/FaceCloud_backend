@@ -44,6 +44,12 @@ class ImageUploadSerializer(serializers.ModelSerializer):
     download_url = serializers.SerializerMethodField()
     thumbnail_url = serializers.SerializerMethodField()
     preprocessing = serializers.SerializerMethodField()
+    organization_id = serializers.SerializerMethodField(help_text=(
+        "The workspace the photograph was uploaded into: the id of its batch's organization (your personal workspace, or an organization you uploaded to). "
+        "Never worked out from your memberships. `null` only for a photograph from before workspaces existed."))
+    download_approval_required = serializers.SerializerMethodField(help_text=(
+        "True when that workspace is an organization that requires a moderator's approval before its photographs can be downloaded "
+        "(see POST /api/downloads/requests/). Always false in a personal workspace and for `organization_id: null`."))
 
     class Meta:
         model = ImageUpload
@@ -51,7 +57,28 @@ class ImageUploadSerializer(serializers.ModelSerializer):
             "id", "batch", "original_name", "file_extension", "mime_type",
             "file_size", "width", "height", "checksum_sha256", "status",
             "rejection_reason", "download_url", "thumbnail_url", "preprocessing", "is_favorite", "taken_at", "created_at",
+            "organization_id", "download_approval_required",
         ]
+
+    def get_organization_id(self, obj) -> int | None:
+        return obj.batch.organization_id
+
+    def get_download_approval_required(self, obj) -> bool:
+        organization_id = obj.batch.organization_id
+        if organization_id is None:
+            return False
+        from downloads.approval import organization_requires_approval
+
+        flags = self.context.get("_download_approval_by_organization")      # one lookup per organization per request, not one per photograph
+        if flags is None:
+            flags = {}
+            try:
+                self.context["_download_approval_by_organization"] = flags
+            except TypeError:
+                pass
+        if organization_id not in flags:
+            flags[organization_id] = organization_requires_approval(obj.batch.organization)
+        return flags[organization_id]
 
     def get_download_url(self, obj) -> str | None:
         if obj.status != "uploaded" or not obj.original_file:
@@ -198,6 +225,7 @@ class BatchImageSerializer(ImageUploadSerializer):
 
 class UploadBatchSerializer(serializers.ModelSerializer):
     images = BatchImageSerializer(many=True, read_only=True)
+    organization_id = serializers.IntegerField(read_only=True, allow_null=True, help_text="The workspace (organization or personal workspace) this upload went into; `null` only for an upload from before workspaces existed.")
     auto_enhance_options = serializers.JSONField(read_only=True, help_text=(
         "What the automatic enhancement of this upload was asked to do: {level, style, lighting}, from the upload's `preset` / `level` / `style` / `lighting` form fields "
         "(`{}` when it sent none: automatic strength, natural, the lighting left to the engine). Only used when `auto_enhance` is true."))
@@ -209,7 +237,7 @@ class UploadBatchSerializer(serializers.ModelSerializer):
             "accepted_files", "rejected_files", "total_size", "processing_status",
             "processed_files", "processing_failed_files", "processing_task_id",
             "processing_error", "processing_started_at", "processing_finished_at",
-            "created_at", "updated_at", "images",
+            "created_at", "updated_at", "images", "organization_id",
         ]
         read_only_fields = [
             "upload_type", "original_archive_name", "status", "total_files", "auto_enhance", "auto_enhance_options", "accepted_files",

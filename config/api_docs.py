@@ -226,7 +226,7 @@ CATALOGUE = {
     # ---- reports / downloads / events / camera -------------------------------------------------------------
     "reports_list": ("List processing reports", ""),
     "reports_retrieve": ("Get a report", ""),
-    "reports_download_retrieve": ("Download a report", ""),
+    "reports_download_retrieve": ("Download a report", "Streams the stored report. For a PDF with pictures of photographs in an organization that requires download approval, which you hold no active approval for, the answer is a watermarked copy made from the stored report (header `X-Report-Restricted: approval-required`); the stored file is not changed."),
     "reports_regenerate_create": ("Regenerate a report", ""),
     "reports_images_create": ("Create a report for an image", "Queues a report file for one image."),
     "reports_batches_create": ("Create a report for a batch", "Queues a report file for an upload batch."),

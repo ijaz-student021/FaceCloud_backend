@@ -1,3 +1,4 @@
+import io
 import re
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from uploads.models import ImageUpload, UploadBatch
 
 from .models import ProcessingReport
 from .serializers import ProcessingReportRequestSerializer, ProcessingReportSerializer
-from .services import ReportNotReadyError, enqueue_processing_report
+from .services import ReportNotReadyError, enqueue_processing_report, restricted_pdf_copy
 
 
 def _visible_reports(user):
@@ -172,6 +173,8 @@ class ProcessingReportDownloadView(APIView):
             )
         from downloads.models import DownloadEvent
         from downloads.services import record_download
+
+        copy = restricted_pdf_copy(report)         # the stored PDF may show a picture the owner holds no approval for any more: serve a watermarked copy of it instead
         record_download(
             owner=request.user,
             resource_type=DownloadEvent.ResourceType.PROCESSING_REPORT,
@@ -179,9 +182,13 @@ class ProcessingReportDownloadView(APIView):
             batch_id=report.batch_id or report.image.batch_id,
             image_id=report.image_id,
             filename=_download_filename(report),
-            file_size=report.file_size,
+            file_size=len(copy) if copy is not None else report.file_size,
             content_type=report.content_type,
         )
+        if copy is not None:
+            response = FileResponse(io.BytesIO(copy), as_attachment=True, filename=_download_filename(report), content_type=report.content_type)
+            response["X-Report-Restricted"] = "approval-required"
+            return response
         return FileResponse(
             report.report_file.open("rb"),
             as_attachment=True,

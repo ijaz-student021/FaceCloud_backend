@@ -91,7 +91,7 @@ used), `Cache-Control: private, no-store`, header `X-Preview-Restricted: approva
 | `GET /api/enhancements/previews/{id}/image/` (live-edit preview) | yes |
 | `GET /api/organizations/{id}/moderator/images/{image}/preview/`, `.../reviews/{review}/image/` | yes, **only** when the moderator looks at their own image; the images of other members keep the normal review preview |
 | `GET /api/identities/groups/{id}/avatar/` (person-folder avatar, 96/192/384 px) | yes, when the face it is cut from is in such an image: the size asked for (never above 384), tiled watermark, `no-store`. The route is owner-only; there is no moderator avatar route |
-| the pictures inside a **processing report PDF** (160 px) | yes: the report is made for its owner (`ProcessingReport.owner`), and each picture of an image they hold no approval for, at the moment the report is generated, is watermarked. JSON and CSV reports have no pictures |
+| the pictures inside a **processing report PDF** (160 px) | yes: when the report is generated, and again when a stored one is downloaded (see *Stored report PDFs*). JSON and CSV reports have no pictures |
 
 With an active approval, with approval off, and in a personal workspace nothing changes. Once an approval expires or is revoked the preview is restricted again at once.
 
@@ -121,6 +121,64 @@ Denial reason codes: `privacy_or_consent`, `client_restriction`, `distribution_r
 `approve_selected` denies the other undecided images with `reason` (finalizing the request); `deny_selected` leaves the others undecided. An image that stopped being eligible
 since the request is denied as `no_longer_eligible` instead of approved. Errors: `409 request_closed`, `409 item_already_decided`, `409 request_changed` (stale `expected_version`),
 `403 cannot_decide_own_request`. A moderator sees only the requests of the members they may see (`moderator_data_scope`); the owner sees all; another organization's id is 404.
+
+## Stored report PDFs
+
+A report file is stored, and its pictures were decided when it was made. `GET /api/reports/{id}/download/` therefore checks the **current** approval every time. For a PDF whose pictures (the first 40 images of its stored payload)
+include an image of an organization that requires download approval, which the owner holds no active approval for at that moment, the answer is a **watermarked copy rendered from the stored payload**, with header
+`X-Report-Restricted: approval-required`; the stored file itself is never modified or deleted. This covers a PDF made before approval was switched on and one made while an approval was active, once that approval expired or was revoked.
+In every other case the stored file is served exactly as before: approval off, personal workspace, an active approval, a PDF with no pictures, JSON and CSV. A PDF made while the picture was already restricted is served as stored (it is watermarked).
+`POST /api/reports/{id}/regenerate/` makes a new file under the same rule. No frontend work is needed beyond saving the response as a file.
+
+## Which workspace a photograph is in
+
+The image and batch APIs say it, taken from the photograph's **batch** (`UploadBatch.organization`, which always existed), never from the owner's memberships: a member of organization A who uploaded into their personal workspace has `organization_id` = their
+personal workspace, not A. No column and no migration were needed.
+
+| Where | Fields |
+|---|---|
+| every image object: `GET /api/images/`, `/api/images/my/`, `/api/images/{id}/`, the images of a batch, albums, memories, search results, person-folder images | `organization_id` (integer or `null`), `download_approval_required` (boolean) |
+| every batch object: `GET /api/images/batches/`, `/api/images/batches/{id}/`, the upload answers | `organization_id` (integer or `null`) |
+
+`download_approval_required` is true only for a photograph in a **non-personal** organization whose setting is on. `organization_id: null` (and `download_approval_required: false`) appears only for a batch from before workspaces existed.
+An organization's own settings are read from `GET /api/organizations/` and `/api/organizations/{id}/` (`download_approval_required`, `download_grant_hours`, `is_personal`).
+
+## Contract for the frontend (real responses)
+
+Errors have `detail` and `code` (and `reason` / `items` where noted). The responses below are from the running API (ids and times are examples).
+
+**Check** `POST /api/downloads/requests/check/` body `{"organization_id": 1, "items": [{"image_id": 1}]}` ->
+`{"approval_required": true, "reviewer_available": true, "items": [{"image_id": 1, "artifact_type": "enhanced", "eligible": true, "reason": "", "detail": "", "access_state": "not_requested"}]}`.
+Reasons: `not_found`, `not_in_organization`, `not_yours`, `not_available`, `not_approved`, `not_processed`, `artifact_unavailable`, `already_requested`, `already_granted` (each has a sentence in `detail`).
+
+**Create** `POST /api/downloads/requests/` body `{"organization_id": 1, "items": [{"image_id": 1}, ...], "message": "For the album", "client_token": "c1"}` -> **201** (**200** with `"created": false` on a replay):
+```
+{"created": true, "request": {"id": 1, "organization": 1, "organization_name": "Event Planners",
+  "requester": {"id": 3, "username": "ap-member", "email": "ap-member@example.com"},
+  "status": "pending", "requester_message": "For the album", "version": 0,
+  "counts": {"total": 3, "pending": 3, "approved": 0, "denied": 0},
+  "created_at": "...", "updated_at": "...", "decided_at": null,
+  "items": [{"id": 1, "image_id": 1, "image_name": "p0.png", "artifact_type": "enhanced", "artifact_id": 1, "status": "pending",
+             "denial_reason_code": "", "denial_reason_text": "", "reviewed_at": null, "grant": null, "file_url": null}]}}
+```
+**400** `{"detail": "Some of the selected images cannot be requested.", "code": "items_not_eligible", "items": [{"image_id": 4, "artifact_type": "enhanced", "reason": "not_approved", "detail": "..."}]}` (nothing is saved).
+**409** codes: `approval_not_required`, `no_eligible_reviewer`, `client_token_reused`. **403** `organization_suspended`.
+
+**List** `GET /api/downloads/requests/` (member) and `GET /api/organizations/{org}/download-requests/` (moderator): an array of the request object above **without** `items` (a page object only when `?page=` is sent). **Detail** (`GET .../{id}/`) adds `items`.
+For an approved item `grant` is `{"id", "artifact_type", "artifact_id", "expires_at", "revoked_at", "revoke_reason", "max_uses", "use_count", "active", "expired", "created_at"}`; a denied item has `grant: null` and `denial_reason_code` (+ `denial_reason_text`).
+`file_url` (`/api/downloads/requests/{id}/items/{item}/file/`) is set only for the requester and only for an approved item; moderators always see `null`.
+
+**Decision** `POST /api/organizations/{org}/download-requests/{id}/decision/` body `{"action": "approve_selected", "item_ids": [1, 2], "reason": {"code": "client_restriction", "text": ""}, "item_reasons": {"3": {"code": "other", "text": "..."}}, "expected_version": 0}` ->
+**200** with the detail object (here `status: "partially_approved"`, `version: 1`, `counts: {"total": 3, "pending": 0, "approved": 2, "denied": 1}`, `decided_at` set).
+Errors: **409** `request_closed` (`"This request is already decided or was cancelled."`), `item_already_decided`, `request_changed`; **403** `cannot_decide_own_request` (a requester who is a moderator or owner; a plain member gets the role error `"Organization owner or moderator access is required."`); **400** a missing denial reason, or `other` without text; **404** a request the moderator may not see; **429** the review limit.
+
+**Download refusal** (any of the file routes, with approval on and no valid approval): **403** `{"detail": "This image has not been approved for download. Request approval first.", "code": "download_approval_required", "reason": "no_grant"}`;
+`reason` is one of `no_grant`, `expired`, `revoked`, `used_up`, `not_approved`, `not_a_member`, `organization_suspended`, or `bulk_not_allowed` (ZIP packages, person-folder ZIPs, share links).
+
+**Notifications** (`GET /api/notifications/`): `event_type` `download_request_submitted`, `download_request_received`, `download_request_decided`; `action_path` `/dashboard/download-requests/{id}` (requester) or `/moderator/download-requests/{id}?organization={org}` (reviewers);
+`metadata` `{"request_id", "organization_id", "total"}`, and on a decision `{"request_id", "status", "total", "approved", "denied"}`. Titles: "Download Request Submitted", "Download request to review", "Download Request Approved" / "Partially Approved" / "Denied".
+
+**Headers** the frontend may read: `X-Preview-Restricted: approval-required` (a reduced, watermarked preview), `X-Report-Restricted: approval-required` (a watermarked report copy).
 
 ## Concurrency and repeats
 
@@ -158,7 +216,7 @@ settings apply to the e-mails. Nothing is read from the storage layout: files st
 * A ZIP is built when it is asked for, in the request, for at most `DOWNLOAD_REQUEST_MAX_ITEMS` images; a very large request would be better as a background job.
 * Concurrency is tested on PostgreSQL with threads and separate connections (skipped on SQLite, which cannot lock rows); it was not load-tested.
 * While approval is on, a member sees the image at most 800 px and watermarked until approved; they can still look at it. A determined person can photograph a screen: approval controls files, not eyes.
-* A report PDF is a file: the restriction is decided when it is generated. A PDF made while an approval was active keeps its small (160 px) clean pictures after the approval ends, and a PDF made before approval was switched on keeps its old pictures. Avatars and previews are decided on every request.
+* A report PDF pictured an image clean while an approval was active; once it expires, a download answers with a watermarked copy (see *Stored report PDFs*). A PDF already saved on the person's own device cannot be recalled, like any downloaded file.
 * Statistics for the administrator and the owner dashboard (counts of requests by status) are not part of this change.
 * Before turning the setting on for any organization, the frontend must handle the 403 `download_approval_required` answer of the download routes and the new request screens, or members see failing download buttons.
 * The frontend screens (request button and selection, "My requests", the moderator queue and preview) are not built yet.

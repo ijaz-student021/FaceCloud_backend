@@ -245,7 +245,7 @@ class ImageUploadListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        queryset = ImageUpload.objects.filter(owner=self.request.user).select_related("batch", "preprocessing_result")
+        queryset = ImageUpload.objects.filter(owner=self.request.user).select_related("batch__organization", "preprocessing_result")
         batch = self.request.query_params.get("batch")
         if batch:
             if not batch.isdigit():

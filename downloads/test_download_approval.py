@@ -1097,3 +1097,204 @@ class AvatarAndReportPreviewTests(ApprovalFixture, TestCase):
         pictures = self.embedded_jpegs(report.report_file.read())
         self.assertEqual(len(pictures), 1)
         self.assertNotEqual(pictures[0], self.clean_picture(self.photo))                  # the file the member downloads carries the watermarked picture
+
+
+# ==============================================================================================================================================================
+# Image organization fields and stored report PDFs
+# ==============================================================================================================================================================
+
+
+class ImageOrganizationFieldTests(ApprovalFixture, TestCase):
+    """The image and batch APIs say which workspace a photograph is in, from its batch, never from the owner's memberships."""
+
+    def list_rows(self, client=None):
+        response = (client or self.member_client).get(reverse("my-image-list"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        rows = response.data["results"] if isinstance(response.data, dict) else response.data
+        return {row["id"]: row for row in rows}
+
+    def test_an_organization_photograph_reports_its_organization_and_whether_approval_is_required(self):
+        photo = self.make_photo(self.member)
+        row = self.list_rows()[photo.pk]
+        self.assertEqual((row["organization_id"], row["download_approval_required"]), (self.organization.pk, False))
+        self.require_approval()
+        row = self.list_rows()[photo.pk]
+        self.assertEqual((row["organization_id"], row["download_approval_required"]), (self.organization.pk, True))
+        detail = self.member_client.get(reverse("image-upload-detail", kwargs={"pk": photo.pk}))
+        self.assertEqual((detail.data["organization_id"], detail.data["download_approval_required"]), (self.organization.pk, True))
+        plain = self.member_client.get(reverse("image-upload-list"))
+        plain_rows = plain.data["results"] if isinstance(plain.data, dict) else plain.data
+        self.assertEqual([(r["organization_id"], r["download_approval_required"]) for r in plain_rows if r["id"] == photo.pk], [(self.organization.pk, True)])
+
+    def test_a_personal_workspace_photograph_never_requires_approval_even_if_the_flag_is_set_by_hand(self):
+        personal = create_personal_organization(self.member)
+        Organization.objects.filter(pk=personal.pk).update(download_approval_required=True)
+        mine = self.make_photo(self.member, "mine.png", organization=personal)
+        row = self.list_rows()[mine.pk]
+        self.assertEqual((row["organization_id"], row["download_approval_required"]), (personal.pk, False))
+
+    def test_the_organization_comes_from_the_batch_not_from_the_owners_memberships(self):
+        self.require_approval()
+        personal = create_personal_organization(self.member)
+        uploaded_to_personal = self.make_photo(self.member, "private.png", organization=personal)        # the member belongs to the organization, but uploaded into their own workspace
+        row = self.list_rows()[uploaded_to_personal.pk]
+        self.assertEqual((row["organization_id"], row["download_approval_required"]), (personal.pk, False))
+        self.assertNotEqual(row["organization_id"], self.organization.pk)
+
+    def test_a_photograph_without_a_workspace_reports_null_and_false(self):
+        photo = self.make_photo(self.member)
+        UploadBatch.objects.filter(pk=photo.batch_id).update(organization=None)                         # a row from before workspaces existed
+        row = self.list_rows()[photo.pk]
+        self.assertEqual((row["organization_id"], row["download_approval_required"]), (None, False))
+
+    def test_the_batch_reports_its_organization_and_its_photographs_carry_the_fields(self):
+        self.require_approval()
+        photo = self.make_photo(self.member)
+        response = self.member_client.get(reverse("upload-batch-detail", kwargs={"pk": photo.batch_id}))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["organization_id"], self.organization.pk)
+        self.assertEqual([(i["organization_id"], i["download_approval_required"]) for i in response.data["images"]], [(self.organization.pk, True)])
+
+    def test_nobody_sees_another_members_photograph_through_these_fields(self):
+        theirs = self.make_photo(self.other_member)
+        self.assertNotIn(theirs.pk, self.list_rows())
+
+    def test_listing_many_photographs_does_not_look_up_the_organization_for_each(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        self.require_approval()
+        self.photos(1)
+        with CaptureQueriesContext(connection) as one:
+            self.list_rows()
+        self.photos(8)
+        with CaptureQueriesContext(connection) as many:
+            self.list_rows()
+
+        def organization_selects(captured):
+            return [q for q in captured if q["sql"].lstrip().startswith("SELECT") and 'FROM "organizations_organization"' in q["sql"]]
+
+        self.assertLessEqual(len(organization_selects(many)), max(1, len(organization_selects(one))))
+
+
+def jpegs_in_pdf(pdf):
+    """The JPEG of every picture in a PDF, byte for byte (reportlab stores a JPEG as /ASCII85Decode + /DCTDecode)."""
+    import base64
+    import re
+
+    found = []
+    for match in re.finditer(rb"/Subtype /Image.*?stream\r?\n(.*?)endstream", pdf, re.S):
+        data = match.group(1).strip()
+        found.append(base64.a85decode(data[:-2] if data.endswith(b"~>") else data))
+    return found
+
+
+class StoredReportPdfTests(ApprovalFixture, TestCase):
+    """A report file is stored; its pictures were decided when it was made. Downloading it again must follow the CURRENT approval, so a stored PDF cannot outlive an approval."""
+
+    def setUp(self):
+        super().setUp()
+        self.photo = self.make_photo(self.member, "face.png", size=(200, 150))
+
+    def stored_report(self, *, viewer=None, image=None, report_format="pdf", content=None):
+        from reports.models import ProcessingReport
+        from reports.renderers import render_pdf
+        from reports.test_readable_reports import batch_payload, record
+
+        image = image or self.photo
+        payload = batch_payload([record(image.pk, image.original_name)])
+        content = content if content is not None else render_pdf(payload, viewer)
+        report = ProcessingReport.objects.create(
+            owner=self.member, report_type="batch", format=report_format, status="ready", batch=image.batch, payload=payload,
+            content_type="application/pdf" if report_format == "pdf" else "text/csv", file_size=len(content),
+        )
+        report.report_file.save(f"report.{report_format}", ContentFile(content), save=True)
+        return report, content
+
+    def download(self, report, client=None):
+        return (client or self.member_client).get(reverse("reports:download", kwargs={"pk": report.pk}))
+
+    def clean_picture(self, image):
+        from thumbnails.services import enhanced_result, render_thumbnail
+
+        return render_thumbnail(enhanced_result(image).enhanced_file, 160)[0]
+
+    def grant(self, hours=1):
+        request = DownloadRequest.objects.create(organization=self.organization, requester=self.member)
+        item = Item.objects.create(request=request, image=self.photo, artifact_type="enhanced", artifact_id=self.photo.result.pk)
+        return DownloadGrant.objects.create(
+            item=item, organization=self.organization, grantee=self.member, image=self.photo, artifact_type="enhanced", artifact_id=self.photo.result.pk,
+            expires_at=timezone.now() + timedelta(hours=hours),
+        )
+
+    def test_nothing_changes_when_approval_is_off(self):
+        report, content = self.stored_report()
+        response = self.download(report)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual((self.body(response), "X-Report-Restricted" in response), (content, False))
+
+    def test_a_pdf_made_before_approval_was_switched_on_is_served_as_a_watermarked_copy(self):
+        report, content = self.stored_report()
+        self.assertEqual(jpegs_in_pdf(content), [self.clean_picture(self.photo)])                 # the stored file shows the picture clean
+        self.require_approval()
+        response = self.download(report)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        body = self.body(response)
+        self.assertNotEqual(body, content)
+        pictures = jpegs_in_pdf(body)
+        self.assertEqual(len(pictures), 1)
+        self.assertNotEqual(pictures[0], self.clean_picture(self.photo))
+        self.assertLessEqual(max(Image.open(io.BytesIO(pictures[0])).size), 160)
+        self.assertEqual(response["X-Report-Restricted"], "approval-required")
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        report.refresh_from_db()
+        self.assertEqual(report.report_file.read(), content)                                      # the stored file itself is untouched
+        from downloads.models import DownloadEvent
+
+        self.assertEqual(DownloadEvent.objects.filter(owner=self.member, resource_type="processing_report").latest("pk").file_size, len(body))
+
+    def test_a_pdf_made_during_an_approval_cannot_be_downloaded_clean_after_it_expires_or_is_revoked(self):
+        self.require_approval()
+        grant = self.grant()
+        report, content = self.stored_report(viewer=self.member)                                  # made while the approval was active: the picture is clean
+        self.assertEqual(jpegs_in_pdf(content), [self.clean_picture(self.photo)])
+        active = self.download(report)
+        self.assertEqual((self.body(active), "X-Report-Restricted" in active), (content, False))   # the approval is active: the stored file as it is
+        DownloadGrant.objects.filter(pk=grant.pk).update(expires_at=timezone.now() - timedelta(seconds=1))
+        expired = self.download(report)
+        self.assertEqual(expired["X-Report-Restricted"], "approval-required")
+        self.assertNotEqual(jpegs_in_pdf(self.body(expired)), [self.clean_picture(self.photo)])
+        DownloadGrant.objects.filter(pk=grant.pk).update(expires_at=timezone.now() + timedelta(hours=1), revoked_at=timezone.now())
+        revoked = self.download(report)
+        self.assertEqual(revoked["X-Report-Restricted"], "approval-required")
+
+    def test_a_pdf_made_while_restricted_is_served_as_stored(self):
+        self.require_approval()
+        report, content = self.stored_report(viewer=self.member)                                  # no approval: its picture was watermarked when it was made
+        self.assertNotEqual(jpegs_in_pdf(content), [self.clean_picture(self.photo)])
+        self.grant()
+        response = self.download(report)
+        self.assertEqual(self.body(response), content)
+
+    def test_personal_workspace_and_other_formats_are_unchanged(self):
+        personal = create_personal_organization(self.member)
+        Organization.objects.filter(pk=personal.pk).update(download_approval_required=True)
+        mine = self.make_photo(self.member, "mine.png", organization=personal, size=(200, 150))
+        report, content = self.stored_report(image=mine)
+        self.assertEqual(self.body(self.download(report)), content)
+        self.require_approval()
+        csv_report, csv_content = self.stored_report(report_format="csv", content=b"id,name\n1,face.png\n")
+        csv_response = self.download(csv_report)
+        self.assertEqual((self.body(csv_response), "X-Report-Restricted" in csv_response), (csv_content, False))
+
+    def test_a_pdf_without_pictures_is_served_as_stored(self):
+        from reports.models import ProcessingReport
+
+        self.require_approval()
+        report, content = self.stored_report()
+        ProcessingReport.objects.filter(pk=report.pk).update(payload={"images": []})
+        self.assertEqual(self.body(self.download(report)), content)
+
+    def test_only_the_owner_can_download_a_report(self):
+        report, _ = self.stored_report()
+        self.assertEqual(self.download(report, client=self.authenticated_client(self.other_member)).status_code, status.HTTP_404_NOT_FOUND)
