@@ -961,3 +961,139 @@ class RestrictedPreviewTests(ApprovalFixture, TestCase):
     def test_another_member_still_cannot_see_the_image_at_all(self):
         self.require_approval()
         self.assertEqual(self.thumbnail(self.big, 256, client=self.authenticated_client(self.other_member)).status_code, status.HTTP_404_NOT_FOUND)
+
+
+class AvatarAndReportPreviewTests(ApprovalFixture, TestCase):
+    """Person-folder avatars (96-384 px) and the pictures inside a processing report PDF (160 px) are copies of the image too: while the owner holds no approval they are watermarked."""
+
+    def setUp(self):
+        super().setUp()
+        self.photo = self.make_photo(self.member, "face.png", size=(200, 150))
+
+    # ---- avatars
+    def make_group(self, image, owner=None, name="Person 001"):
+        owner = owner or self.member
+        pre = image.preprocessing_result
+        validation = FaceValidationResult.objects.create(owner=owner, image=image, preprocessing_result=pre, decision="accepted", face_count=1, faces=[])
+        analysis = IdentityAnalysis.objects.create(owner=owner, image=image, preprocessing_result=pre, face_validation=validation, status="completed", provider="test", policy_version="v1")
+        group = IdentityGroup.objects.create(owner=owner, display_name=name, member_count=1, protected_centroid=b"c", embedding_dimension=3, provider="test", policy_version="v1")
+        face = IdentityFace.objects.create(
+            owner=owner, image=image, analysis=analysis, face_index=0, protected_embedding=b"e", embedding_dimension=3, provider="test",
+            bounding_box={"x": 2, "y": 2, "width": 30, "height": 20}, quality={"confidence": 0.9, "brightness": 90},
+        )
+        IdentityMembership.objects.create(owner=owner, identity_face=face, identity_group=group, state=IdentityMembership.State.NEW_GROUP, decision_method="test")
+        return group, face
+
+    def avatar(self, group, size=384, client=None):
+        return (client or self.member_client).get(reverse("identities:group-avatar", kwargs={"pk": group.pk}) + f"?size={size}")
+
+    def clean_avatar(self, face, size):
+        from identities.avatars import render_avatar
+
+        return render_avatar(face, size)
+
+    def test_an_avatar_is_watermarked_while_no_approval_is_held(self):
+        group, face = self.make_group(self.photo)
+        self.require_approval()
+        for size in (384, 96):
+            response = self.avatar(group, size)
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            body = self.body(response)
+            self.assertEqual(Image.open(io.BytesIO(body)).size, (size, size))                 # still reduced: never larger than asked, and never above 384 for an avatar
+            self.assertEqual(response["X-Preview-Restricted"], "approval-required")
+            self.assertIn("no-store", response["Cache-Control"])
+            self.assertNotEqual(body, self.clean_avatar(face, size))                           # the tiled watermark is in the pixels
+
+    def test_an_avatar_is_unchanged_with_an_approval_with_approval_off_and_in_a_personal_workspace(self):
+        group, face = self.make_group(self.photo)
+        clean = self.clean_avatar(face, 384)
+        off = self.avatar(group)
+        self.assertEqual((self.body(off), "X-Preview-Restricted" in off), (clean, False))
+        self.require_approval()
+        DownloadGrant.objects.all().delete()
+        request = DownloadRequest.objects.create(organization=self.organization, requester=self.member)
+        item = Item.objects.create(request=request, image=self.photo, artifact_type="enhanced", artifact_id=self.photo.result.pk)
+        grant = DownloadGrant.objects.create(
+            item=item, organization=self.organization, grantee=self.member, image=self.photo, artifact_type="enhanced", artifact_id=self.photo.result.pk, expires_at=timezone.now() + timedelta(hours=1),
+        )
+        with_grant = self.avatar(group)
+        self.assertEqual((self.body(with_grant), "X-Preview-Restricted" in with_grant), (clean, False))
+        DownloadGrant.objects.filter(pk=grant.pk).update(revoked_at=timezone.now())
+        self.assertEqual(self.avatar(group)["X-Preview-Restricted"], "approval-required")          # the approval ended
+        personal = create_personal_organization(self.member)
+        Organization.objects.filter(pk=personal.pk).update(download_approval_required=True)
+        mine, mine_face = self.make_group(self.make_photo(self.member, "mine.png", organization=personal, size=(200, 150)), name="Person 002")
+        response = self.avatar(mine)
+        self.assertEqual((self.body(response), "X-Preview-Restricted" in response), (self.clean_avatar(mine_face, 384), False))
+
+    def test_a_moderator_is_restricted_only_for_their_own_faces_and_nobody_reads_another_members_folder(self):
+        self.require_approval()
+        own_group, own_face = self.make_group(self.make_photo(self.moderator, "mod.png", size=(200, 150)), owner=self.moderator)
+        self.assertEqual(self.avatar(own_group, client=self.moderator_client)["X-Preview-Restricted"], "approval-required")
+        theirs, _ = self.make_group(self.photo)
+        self.assertEqual(self.avatar(theirs, client=self.moderator_client).status_code, status.HTTP_404_NOT_FOUND)          # the avatar route is owner-only; moderators review through the review previews
+
+    # ---- report PDF pictures
+    def embedded_jpegs(self, pdf):
+        """The JPEG of every picture in the PDF, byte for byte (reportlab stores a JPEG as /ASCII85Decode + /DCTDecode)."""
+        import base64
+        import re
+
+        found = []
+        for match in re.finditer(rb"/Subtype /Image.*?stream\r?\n(.*?)endstream", pdf, re.S):
+            data = match.group(1).strip()
+            found.append(base64.a85decode(data[:-2] if data.endswith(b"~>") else data))
+        return found
+
+    def report_pdf(self, viewer, image=None):
+        from reports.renderers import render_pdf
+        from reports.test_readable_reports import batch_payload, record
+
+        image = image or self.photo
+        return render_pdf(batch_payload([record(image.pk, image.original_name)]), viewer)
+
+    def clean_picture(self, image):
+        from thumbnails.services import enhanced_result, render_thumbnail
+
+        return render_thumbnail(enhanced_result(image).enhanced_file, 160)[0]
+
+    def test_the_picture_in_a_report_is_watermarked_while_no_approval_is_held(self):
+        self.require_approval()
+        pictures = self.embedded_jpegs(self.report_pdf(self.member))
+        self.assertEqual(len(pictures), 1)
+        stamped = Image.open(io.BytesIO(pictures[0]))
+        self.assertLessEqual(max(stamped.size), 160)                                      # still the small picture
+        self.assertNotEqual(pictures[0], self.clean_picture(self.photo))
+
+    def test_the_picture_in_a_report_is_unchanged_in_every_other_case(self):
+        clean = self.clean_picture(self.photo)
+        self.assertEqual(self.embedded_jpegs(self.report_pdf(self.member)), [clean])      # approval off
+        self.assertEqual(self.embedded_jpegs(self.report_pdf(None)), [clean])             # no viewer given: as before
+        self.require_approval()
+        self.assertEqual(self.embedded_jpegs(self.report_pdf(self.moderator)), [clean])   # a moderator's report on a member's photo: authorized review, not restricted
+        personal = create_personal_organization(self.member)
+        Organization.objects.filter(pk=personal.pk).update(download_approval_required=True)
+        mine = self.make_photo(self.member, "mine.png", organization=personal, size=(200, 150))
+        self.assertEqual(self.embedded_jpegs(self.report_pdf(self.member, mine)), [self.clean_picture(mine)])
+        request = DownloadRequest.objects.create(organization=self.organization, requester=self.member)
+        item = Item.objects.create(request=request, image=self.photo, artifact_type="enhanced", artifact_id=self.photo.result.pk)
+        DownloadGrant.objects.create(
+            item=item, organization=self.organization, grantee=self.member, image=self.photo, artifact_type="enhanced", artifact_id=self.photo.result.pk, expires_at=timezone.now() + timedelta(hours=1),
+        )
+        self.assertEqual(self.embedded_jpegs(self.report_pdf(self.member)), [clean])      # an active approval: the picture is clean
+
+    def test_the_report_task_makes_the_report_for_its_owner(self):
+        from reports.models import ProcessingReport
+        from reports.tasks import process_processing_report
+        from reports.test_readable_reports import batch_payload, record
+
+        self.require_approval()
+        report = ProcessingReport.objects.create(owner=self.member, report_type="batch", format="pdf", status="queued", batch=self.photo.batch)
+        payload = batch_payload([record(self.photo.pk, self.photo.original_name)])
+        with mock.patch("reports.tasks.build_report_payload", return_value=payload):
+            process_processing_report(report.pk, "task-1")
+        report.refresh_from_db()
+        self.assertEqual(report.status, "ready", report.failure_reason)
+        pictures = self.embedded_jpegs(report.report_file.read())
+        self.assertEqual(len(pictures), 1)
+        self.assertNotEqual(pictures[0], self.clean_picture(self.photo))                  # the file the member downloads carries the watermarked picture

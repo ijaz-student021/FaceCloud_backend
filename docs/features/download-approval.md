@@ -4,7 +4,7 @@ An organization can require that its members download an image only after a mode
 administrator turns it on, and it never applies to a personal workspace. Where it is off, every download behaves exactly as before.
 
 Status: backend implemented and tested on SQLite and PostgreSQL; no frontend yet; not deployed. Code: `downloads/approval.py` (rules), `downloads/previews.py` (reduced previews),
-`downloads/approval_views.py` and `downloads/approval_serializers.py` (API), `downloads/models.py` (three models). Tests: `downloads/test_download_approval.py` (80) and
+`downloads/approval_views.py` and `downloads/approval_serializers.py` (API), `downloads/models.py` (three models). Tests: `downloads/test_download_approval.py` (86) and
 `downloads/test_download_approval_concurrency.py` (6, PostgreSQL only: separate connections and threads).
 
 ## The setting
@@ -74,8 +74,8 @@ the trash, the member no longer an active member, or the organization suspended.
 | person-folder ZIPs (create, download, share, regenerate) when any photo in the folder is in such an organization | 403 `bulk_not_allowed` |
 | public share links: creating one for such an image | 403 `bulk_not_allowed`; links made earlier answer 410 while approval is on |
 
-Every refusal is written to the organization's audit trail (`download_blocked`). **Not** gated, on purpose: the 160-pixel previews inside a processing report PDF, person-folder avatar crops
-(at most 384 px), the other members' images in the moderators' review previews, and the JSON organization export and CSV/PDF moderator reports (they contain no image bytes).
+Every refusal is written to the organization's audit trail (`download_blocked`). **Not** gated, on purpose: the other members' images in the moderators' review previews, and the JSON organization export and CSV/PDF
+moderator reports (they contain no image bytes; the moderator PDF has no pictures at all).
 
 ## Previews while no approval is held
 
@@ -90,6 +90,8 @@ used), `Cache-Control: private, no-store`, header `X-Preview-Restricted: approva
 | `GET /api/enhancements/comparisons/{id}/outputs/{profile}/preview/` | yes |
 | `GET /api/enhancements/previews/{id}/image/` (live-edit preview) | yes |
 | `GET /api/organizations/{id}/moderator/images/{image}/preview/`, `.../reviews/{review}/image/` | yes, **only** when the moderator looks at their own image; the images of other members keep the normal review preview |
+| `GET /api/identities/groups/{id}/avatar/` (person-folder avatar, 96/192/384 px) | yes, when the face it is cut from is in such an image: the size asked for (never above 384), tiled watermark, `no-store`. The route is owner-only; there is no moderator avatar route |
+| the pictures inside a **processing report PDF** (160 px) | yes: the report is made for its owner (`ProcessingReport.owner`), and each picture of an image they hold no approval for, at the moment the report is generated, is watermarked. JSON and CSV reports have no pictures |
 
 With an active approval, with approval off, and in a personal workspace nothing changes. Once an approval expires or is revoked the preview is restricted again at once.
 
@@ -156,6 +158,7 @@ settings apply to the e-mails. Nothing is read from the storage layout: files st
 * A ZIP is built when it is asked for, in the request, for at most `DOWNLOAD_REQUEST_MAX_ITEMS` images; a very large request would be better as a background job.
 * Concurrency is tested on PostgreSQL with threads and separate connections (skipped on SQLite, which cannot lock rows); it was not load-tested.
 * While approval is on, a member sees the image at most 800 px and watermarked until approved; they can still look at it. A determined person can photograph a screen: approval controls files, not eyes.
+* A report PDF is a file: the restriction is decided when it is generated. A PDF made while an approval was active keeps its small (160 px) clean pictures after the approval ends, and a PDF made before approval was switched on keeps its old pictures. Avatars and previews are decided on every request.
 * Statistics for the administrator and the owner dashboard (counts of requests by status) are not part of this change.
 * Before turning the setting on for any organization, the frontend must handle the 403 `download_approval_required` answer of the download routes and the new request screens, or members see failing download buttons.
 * The frontend screens (request button and selection, "My requests", the moderator queue and preview) are not built yet.

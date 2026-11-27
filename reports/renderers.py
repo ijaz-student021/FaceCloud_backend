@@ -192,18 +192,22 @@ def _rejection_text(image):
     return "; ".join(reasons) or "No reason was recorded."
 
 
-def _previews(images):
+def _previews(images, viewer=None):
     """``{image_id: jpeg bytes}`` of a small picture for the first PREVIEW_LIMIT photos: the enhanced picture when there is one (what the owner sees in the lists), else the photo itself
-    (a photograph the checks rejected is previewed too). A photo that is gone, has no file or cannot be read has none; this never fails the report."""
+    (a photograph the checks rejected is previewed too). A photo that is gone, has no file or cannot be read has none; this never fails the report.
+
+    ``viewer`` is the person the report is for. A picture of an image in an organization that requires download approval, which the viewer holds no approval for when the report is made, is watermarked
+    (it is already tiny: PREVIEW_EDGE); nothing else changes."""
     ids = [image["image_id"] for image in images[:PREVIEW_LIMIT] if isinstance(image.get("image_id"), int)]
     if not ids:
         return {}
+    from downloads.previews import preview_is_restricted, stamp_jpeg
     from thumbnails.services import enhanced_result, render_thumbnail
     from uploads.models import ImageUpload
 
     found = {}
     try:
-        photos = list(ImageUpload.objects.filter(pk__in=ids))
+        photos = list(ImageUpload.objects.select_related("batch__organization").filter(pk__in=ids))
     except Exception:
         return found                                    # no database to ask (or it failed): a report without pictures
     for photo in photos:
@@ -212,7 +216,10 @@ def _previews(images):
             source = result.enhanced_file if result is not None else photo.original_file
             if not source:
                 continue
-            found[photo.pk] = render_thumbnail(source, PREVIEW_EDGE)[0]
+            picture = render_thumbnail(source, PREVIEW_EDGE)[0]
+            if viewer is not None and preview_is_restricted(viewer, photo):
+                picture = stamp_jpeg(picture, viewer, PREVIEW_EDGE)
+            found[photo.pk] = picture
         except Exception:
             continue
     return found
@@ -300,7 +307,7 @@ def _footer_canvas(left_text):
     return NumberedCanvas
 
 
-def render_pdf(payload):
+def render_pdf(payload, viewer=None):
     output = io.BytesIO()
     document = SimpleDocTemplate(
         output,
@@ -338,7 +345,7 @@ def render_pdf(payload):
         story.append(Spacer(1, 4 * mm))
     story += [_summary_table(payload, styles), Spacer(1, 5 * mm)]
 
-    previews = _previews(images)
+    previews = _previews(images, viewer)
     rejected = _rejected_table(images, styles, previews)
     if rejected is not None:
         story += [Paragraph("Why photos were rejected", styles.heading), rejected, Spacer(1, 5 * mm)]
@@ -369,13 +376,13 @@ def table_style(font_size=8):
     ])
 
 
-def render_report(payload, report_format):
+def render_report(payload, report_format, viewer=None):
     if report_format == ProcessingReport.Format.JSON:
         content = render_json(payload)
     elif report_format == ProcessingReport.Format.CSV:
         content = render_csv(payload)
     elif report_format == ProcessingReport.Format.PDF:
-        content = render_pdf(payload)
+        content = render_pdf(payload, viewer)
     else:
         raise ValueError("Unsupported report format.")
     return content, CONTENT_TYPES[report_format], report_format

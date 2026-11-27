@@ -45,17 +45,27 @@ def max_edge(requested=None):
     return min(int(requested), cap) if requested else cap
 
 
-def restricted_preview(file_field, user, requested=None):
-    """JPEG bytes of ``file_field`` at most ``max_edge(requested)`` pixels on its longest side, stamped with the tiled watermark."""
+def stamp_jpeg(payload, user, requested=None):
+    """The JPEG ``payload`` (an avatar, a picture for a report), reduced to at most ``max_edge(requested)`` pixels if it is larger, with the tiled watermark."""
     from enhancement.watermark import apply_watermark
-    from thumbnails.services import render_thumbnail
 
-    jpeg, _width, _height = render_thumbnail(file_field, max_edge(requested))
-    with Image.open(io.BytesIO(jpeg)) as small:
-        stamped = apply_watermark(small.convert("RGB"), _spec(), user)
+    with Image.open(io.BytesIO(payload)) as source:
+        working = source.convert("RGB")
+    cap = max_edge(requested)
+    if max(working.size) > cap:
+        working.thumbnail((cap, cap), Image.Resampling.LANCZOS)
+    stamped = apply_watermark(working, _spec(), user)
     buffer = io.BytesIO()
     stamped.save(buffer, format="JPEG", quality=int(settings.THUMBNAIL_JPEG_QUALITY), optimize=True)
     return buffer.getvalue()
+
+
+def restricted_preview(file_field, user, requested=None):
+    """JPEG bytes of ``file_field`` at most ``max_edge(requested)`` pixels on its longest side, stamped with the tiled watermark."""
+    from thumbnails.services import render_thumbnail
+
+    jpeg, _width, _height = render_thumbnail(file_field, max_edge(requested))
+    return stamp_jpeg(jpeg, user, requested)
 
 
 def restricted_response(file_field, user, requested=None):

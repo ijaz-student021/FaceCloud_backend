@@ -176,8 +176,13 @@ class IdentityGroupAvatarView(APIView):
             payload = render_avatar(face, size)
         except AvatarUnavailable as error:
             raise Http404(str(error)) from error
-        response = HttpResponse(payload, content_type="image/jpeg")
-        response["Cache-Control"] = "private, max-age=3600"
+        from downloads.previews import preview_is_restricted, stamp_jpeg
+
+        restricted = preview_is_restricted(request.user, face.image)         # a face of an image in an organization that requires download approval, and no approval held
+        response = HttpResponse(stamp_jpeg(payload, request.user, size) if restricted else payload, content_type="image/jpeg")
+        response["Cache-Control"] = "private, no-store" if restricted else "private, max-age=3600"
+        if restricted:
+            response["X-Preview-Restricted"] = "approval-required"
         return response
 
 
