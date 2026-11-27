@@ -277,6 +277,9 @@ class EnhancementDownloadView(APIView):
         )
         if not result.enhanced_file:
             return Response({"detail": "The enhanced image is unavailable."}, status=status.HTTP_404_NOT_FOUND)
+        from downloads.approval import authorize_download
+
+        authorize_download(request.user, result.image, "enhanced", result.pk, http_request=request)   # only where the organization requires approval: 403 without a grant
         spec = _watermark_spec(request)
         content_type = "image/png" if result.output_format == "png" else "image/jpeg"
         filename, file_size, stream = result.output_name, result.output_file_size, None
@@ -577,6 +580,9 @@ class GalleryEditDownloadView(APIView):
                 {"detail": "The edited image is unavailable."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        from downloads.approval import authorize_download
+
+        authorize_download(request.user, edit.enhancement_result.image, "edited", edit.pk, http_request=request)   # a saved edit needs its own grant
         spec = _watermark_spec(request)
         content_type = "image/png" if edit.output_format == "png" else "image/jpeg"
         filename, file_size, stream = edit.output_name, edit.output_file_size, None

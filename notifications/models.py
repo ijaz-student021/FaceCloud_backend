@@ -52,6 +52,9 @@ class UserNotification(models.Model):
         BATCH_ENHANCED = "batch_enhanced", "Photos enhanced"
         CONTACT_MESSAGE_RECEIVED = "contact_message_received", "New contact message"
         EARLY_ACCESS_SIGNUP = "early_access_signup", "New early-access e-mail"
+        DOWNLOAD_REQUEST_SUBMITTED = "download_request_submitted", "Download request submitted"
+        DOWNLOAD_REQUEST_RECEIVED = "download_request_received", "Download request to review"
+        DOWNLOAD_REQUEST_DECIDED = "download_request_decided", "Download request decided"
 
     class Severity(models.TextChoices):
         INFO = "info", "Information"

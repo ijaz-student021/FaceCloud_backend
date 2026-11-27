@@ -40,6 +40,12 @@ EVENT_POLICY = {
     # For the administrators only (contact form messages and early-access e-mails): in-app, always on.
     UserNotification.EventType.CONTACT_MESSAGE_RECEIVED: (None, False),
     UserNotification.EventType.EARLY_ACCESS_SIGNUP: (None, False),
+    # Download approval: the requester is told that the request went in (in-app only) and what was decided (in-app and e-mail, once, when every image is decided);
+    # the moderators who may see the requester are told a request is waiting (in-app and e-mail). A decision is never needed to get past the e-mail switch: no
+    # preference field means these are on for everyone whose address is verified, like the other notices that carry something to act on.
+    UserNotification.EventType.DOWNLOAD_REQUEST_SUBMITTED: (None, False),
+    UserNotification.EventType.DOWNLOAD_REQUEST_RECEIVED: ("moderator_review_updates", True),
+    UserNotification.EventType.DOWNLOAD_REQUEST_DECIDED: (None, True),
 }
 
 
@@ -57,7 +63,7 @@ def _safe_metadata(metadata):
             "filename", "batch_id", "image_id", "report_id", "package_id",
             "status", "accepted", "rejected", "needs_review", "failed", "format",
             "review_id", "organization_id", "source", "due_at", "folder_count", "suggested_merge_count",
-            "enhanced", "kept", "skipped", "total", "contact_id", "reason",
+            "enhanced", "kept", "skipped", "total", "contact_id", "reason", "request_id", "approved", "denied",
         } and isinstance(value, (str, int, float, bool, type(None))):
             safe[str(key)[:40]] = value
     return safe

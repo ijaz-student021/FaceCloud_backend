@@ -10,6 +10,7 @@ from rest_framework.views import APIView
 
 from uploads.models import UploadBatch
 
+from .approval import batch_requires_approval, block_bulk_download
 from .enrichment import build_extras
 from .models import DownloadEvent, DownloadPackage
 from .serializers import (
@@ -85,8 +86,10 @@ class BatchPackageCreateView(APIView):
     )
     def post(self, request, batch_id):
         batch = get_object_or_404(
-            UploadBatch.objects.filter(owner=request.user), pk=batch_id
+            UploadBatch.objects.filter(owner=request.user).select_related("organization"), pk=batch_id
         )
+        if batch_requires_approval(batch):
+            block_bulk_download(request.user, batch.organization, "batch_package", request)
         payload = DownloadPackageRequestSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         return _enqueue_response(
@@ -177,9 +180,11 @@ class DownloadPackageFileView(APIView):
     )
     def get(self, request, pk):
         package = get_object_or_404(
-            DownloadPackage.objects.filter(owner=request.user).select_related("batch"),
+            DownloadPackage.objects.filter(owner=request.user).select_related("batch__organization"),
             pk=pk,
         )
+        if batch_requires_approval(package.batch):
+            block_bulk_download(request.user, package.batch.organization, "batch_package", request)
         if expire_package_if_needed(package):
             raise PackageExpired(
                 "This generated package has expired. Request regeneration to continue."
@@ -220,9 +225,11 @@ class DownloadPackageRegenerateView(APIView):
     )
     def post(self, request, pk):
         package = get_object_or_404(
-            DownloadPackage.objects.filter(owner=request.user).select_related("batch"),
+            DownloadPackage.objects.filter(owner=request.user).select_related("batch__organization"),
             pk=pk,
         )
+        if batch_requires_approval(package.batch):
+            block_bulk_download(request.user, package.batch.organization, "batch_package", request)
         expire_package_if_needed(package)
         package.refresh_from_db()
         if package.status not in {

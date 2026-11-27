@@ -191,6 +191,7 @@ def organizations_with_head_counts():
 @transaction.atomic
 def update_organization(
     *, organization, actor, name=None, plan=None, status=None, moderator_data_scope=None, brand_name=None, brand_accent=None, reason="", request=None,
+    download_approval_required=None, download_grant_hours=None, clear_download_grant_hours=False,
 ):
     """Rename an organization, change its plan or what its moderators see, suspend or reactivate it: one transaction, one audit event per kind of change.
 
@@ -214,6 +215,14 @@ def update_organization(
         details["brand_name"] = (locked.brand_name, brand_name)
     if brand_accent is not None and brand_accent != locked.brand_accent:
         details["brand_accent"] = (locked.brand_accent, brand_accent)
+    if download_approval_required is not None and download_approval_required != locked.download_approval_required:
+        if download_approval_required and locked.is_personal:
+            raise ValidationError({"download_approval_required": "A personal workspace has no moderator to approve downloads."})
+        details["download_approval_required"] = (locked.download_approval_required, download_approval_required)
+    if clear_download_grant_hours and locked.download_grant_hours is not None:
+        details["download_grant_hours"] = (locked.download_grant_hours, None)
+    elif download_grant_hours is not None and download_grant_hours != locked.download_grant_hours:
+        details["download_grant_hours"] = (locked.download_grant_hours, download_grant_hours)
     changed_status = status is not None and status != locked.status
     previous_status = locked.status
     for field, (_, new) in details.items():

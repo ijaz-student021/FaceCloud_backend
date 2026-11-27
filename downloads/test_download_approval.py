@@ -1,0 +1,671 @@
+"""Download approval: an organization member downloads an image only after a moderator approved it (``downloads/approval.py``).
+
+Every route that delivers a file is tried with approval OFF (nothing changes: this is the safe default for every existing organization, and personal workspaces
+are never subject to it) and ON (403 without a grant, working with one, refused again when the grant expires, is revoked or the image stops being accepted).
+"""
+import io
+import zipfile
+from datetime import timedelta
+from unittest import mock
+
+from django.core.files.base import ContentFile
+from django.test import TestCase
+from django.urls import reverse
+from django.utils import timezone
+from PIL import Image
+from rest_framework import status
+
+from downloads.approval import DownloadNotAuthorized, authorize_download
+from downloads.models import DownloadGrant, DownloadRequest, DownloadRequestItem
+from enhancement.models import ImageEditVersion, ImageEnhancementResult
+from identities.models import IdentityAnalysis, IdentityFace, IdentityGroup, IdentityGroupExport, IdentityMembership
+from validation.models import FaceValidationResult
+from moderation.tests import ModerationFixtureMixin
+from notifications.models import UserNotification
+from organizations.models import Organization, OrganizationAuditEvent, OrganizationMembership
+from organizations.services import create_organization, create_personal_organization
+from quality_control.models import ImageQualityDecision
+from sharing.models import ShareLink
+from uploads.models import ImagePreprocessingResult, ImageUpload, UploadBatch
+
+Role = OrganizationMembership.Role
+Item = DownloadRequestItem
+
+
+def png(color=(120, 80, 40)):
+    buffer = io.BytesIO()
+    Image.new("RGB", (40, 30), color).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+class ApprovalFixture(ModerationFixtureMixin):
+    def setUp(self):
+        self.owner = self.make_user("ap-owner")
+        self.organization = create_organization(name="Event Planners", owner=self.owner)
+        self.moderator = self.add_member("ap-moderator", Role.MODERATOR)
+        self.member = self.add_member("ap-member", Role.MEMBER)
+        self.other_member = self.add_member("ap-other", Role.MEMBER)
+        self.member_client = self.authenticated_client(self.member)
+        self.moderator_client = self.authenticated_client(self.moderator)
+        self.owner_client = self.authenticated_client(self.owner)
+
+    # ---- builders
+    def add_member(self, name, role, organization=None, **membership_extra):
+        user = self.make_user(name)
+        OrganizationMembership.objects.create(organization=organization or self.organization, user=user, role=role, **membership_extra)
+        return user
+
+    def require_approval(self, organization=None, hours=None):
+        organization = organization or self.organization
+        organization.download_approval_required = True
+        organization.download_grant_hours = hours
+        organization.save()
+
+    def make_photo(self, owner, name="p.png", organization=None, decision="accepted", enhanced=True, edited=False):
+        """An accepted photograph with a real original and (by default) a finished enhancement: what a member would list in their gallery."""
+        organization = organization or self.organization
+        batch = UploadBatch.objects.create(owner=owner, upload_type="single", organization=organization)
+        image = ImageUpload.objects.create(owner=owner, batch=batch, original_name=name, file_extension=".png", mime_type="image/png", status="uploaded", file_size=len(png()))
+        image.original_file.save(name, ContentFile(png((10, 20, 30))), save=True)
+        pre = ImagePreprocessingResult.objects.create(owner=owner, image=image, status="completed", output_format="png", output_name=f"std_{name}")
+        pre.processed_file.save(f"std_{name}", ContentFile(png((11, 21, 31))), save=True)
+        ImageQualityDecision.objects.create(owner=owner, image=image, preprocessing_result=pre, status="completed", decision=decision)
+        image.result = image.edit = None
+        if enhanced:
+            payload = png((200, 100, 50))
+            image.result = ImageEnhancementResult.objects.create(
+                owner=owner, image=image, preprocessing_result=pre, status="completed", output_name=f"enh_{name}", output_format="png", output_file_size=len(payload),
+                output_width=40, output_height=30,
+            )
+            image.result.enhanced_file.save(f"enh_{name}", ContentFile(payload), save=True)
+            if edited:
+                edit_payload = png((1, 2, 3))
+                image.edit = ImageEditVersion.objects.create(
+                    owner=owner, enhancement_result=image.result, mode="manual", status="completed", output_name=f"edit_{name}", output_format="png",
+                    output_file_size=len(edit_payload), output_width=40, output_height=30,
+                )
+                image.edit.edited_file.save(f"edit_{name}", ContentFile(edit_payload), save=True)
+        return image
+
+    def photos(self, count, owner=None, **extra):
+        return [self.make_photo(owner or self.member, name=f"p{index}.png", **extra) for index in range(count)]
+
+    # ---- calls
+    def submit(self, images, client=None, organization=None, **extra):
+        body = {"organization_id": (organization or self.organization).pk, "items": [{"image_id": image.pk} for image in images], **extra}
+        return (client or self.member_client).post(reverse("downloads:request-list-create"), body, format="json")
+
+    def make_request(self, images=None, **extra):
+        images = images or self.photos(3)
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.submit(images, **extra)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        return DownloadRequest.objects.get(pk=response.data["request"]["id"]), images
+
+    def decide(self, download_request, action, client=None, organization=None, **body):
+        url = reverse("org-download-request-decision", kwargs={"organization_id": (organization or self.organization).pk, "request_id": download_request.pk})
+        with self.captureOnCommitCallbacks(execute=True):
+            return (client or self.moderator_client).post(url, {"action": action, **body}, format="json")
+
+    def item_for(self, download_request, image):
+        return download_request.items.get(image=image)
+
+    def reasons(self, code="policy_restriction", text=""):
+        return {"code": code, "text": text}
+
+    def body(self, response):
+        return b"".join(response.streaming_content) if response.streaming else response.content
+
+    def enhanced_download(self, result, client=None):
+        return (client or self.member_client).get(reverse("enhancement:result-download", kwargs={"pk": result.pk}))
+
+    def original_download(self, image, client=None):
+        return (client or self.member_client).get(reverse("image-upload-download", kwargs={"pk": image.pk}))
+
+    def audit_actions(self, action):
+        return OrganizationAuditEvent.objects.filter(organization=self.organization, action=action)
+
+
+class ApprovalOffTests(ApprovalFixture, TestCase):
+    """The default: nothing about downloading changes."""
+
+    def test_an_organization_does_not_require_approval_by_default(self):
+        self.assertFalse(Organization.objects.get(pk=self.organization.pk).download_approval_required)
+
+    def test_downloads_work_directly_when_approval_is_off(self):
+        image = self.make_photo(self.member)
+        self.assertEqual(self.original_download(image).status_code, status.HTTP_200_OK)
+        self.assertEqual(self.enhanced_download(image.result).status_code, status.HTTP_200_OK)
+        self.assertFalse(self.audit_actions(OrganizationAuditEvent.Action.DOWNLOAD_BLOCKED).exists())
+
+    def test_a_request_is_refused_when_approval_is_off(self):
+        response = self.submit(self.photos(1))
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data["code"], "approval_not_required")
+
+    def test_a_personal_workspace_is_never_subject_to_approval(self):
+        personal = create_personal_organization(self.member)
+        Organization.objects.filter(pk=personal.pk).update(download_approval_required=True)       # even a flag set by hand is ignored there
+        image = self.make_photo(self.member, organization=personal)
+        self.assertEqual(self.original_download(image).status_code, status.HTTP_200_OK)
+        self.assertEqual(self.enhanced_download(image.result).status_code, status.HTTP_200_OK)
+
+    def test_batch_package_and_share_link_work_when_approval_is_off(self):
+        image = self.make_photo(self.member)
+        response = self.member_client.post(reverse("sharing:link-list-create"), {"result": image.result.pk}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+
+
+class AdministratorControlTests(ApprovalFixture, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.admin_client = self.authenticated_client(self.make_user("ap-admin", role="admin"))
+
+    def url(self):
+        return reverse("organizations:organization-admin-detail", kwargs={"organization_id": self.organization.pk})
+
+    def test_the_administrator_switches_approval_on_and_sets_the_hours(self):
+        response = self.admin_client.patch(self.url(), {"download_approval_required": True, "download_grant_hours": 6}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        self.assertTrue(response.data["download_approval_required"])
+        self.assertEqual(response.data["download_grant_hours"], 6)
+        organization = Organization.objects.get(pk=self.organization.pk)
+        self.assertTrue(organization.download_approval_required)
+        event = self.audit_actions(OrganizationAuditEvent.Action.ORGANIZATION_UPDATED).get()
+        self.assertEqual(event.new_value["download_approval_required"], True)
+
+    def test_the_owner_cannot_switch_it_on(self):
+        response = self.owner_client.patch(reverse("organizations:organization-detail", kwargs={"organization_id": self.organization.pk}), {"download_approval_required": True}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(Organization.objects.get(pk=self.organization.pk).download_approval_required)
+
+    def test_a_personal_workspace_cannot_turn_it_on(self):
+        personal = create_personal_organization(self.member)
+        response = self.admin_client.patch(reverse("organizations:organization-admin-detail", kwargs={"organization_id": personal.pk}), {"download_approval_required": True}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_members_can_read_the_setting(self):
+        self.require_approval()
+        response = self.member_client.get(reverse("organizations:organization-detail", kwargs={"organization_id": self.organization.pk}))
+        self.assertTrue(response.data["download_approval_required"])
+
+
+class DirectDownloadsAreBlockedTests(ApprovalFixture, TestCase):
+    """With approval ON, an approved-quality image still cannot be downloaded without a grant, on any route."""
+
+    def setUp(self):
+        super().setUp()
+        self.require_approval()
+        self.image = self.make_photo(self.member, edited=True)
+
+    def assert_blocked(self, response, reason="no_grant"):
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN, getattr(response, "content", b"")[:200])
+        self.assertEqual(response.data["code"], "download_approval_required")
+        self.assertEqual(response.data["reason"], reason)
+
+    def test_original_enhanced_standardized_and_edited_files_are_blocked(self):
+        self.assert_blocked(self.original_download(self.image))
+        self.assert_blocked(self.enhanced_download(self.image.result))
+        self.assert_blocked(self.member_client.get(reverse("image-preprocessing-download", kwargs={"pk": self.image.pk})))
+        self.assert_blocked(self.member_client.get(reverse("enhancement:edit-download", kwargs={"pk": self.image.edit.pk})))
+        self.assertEqual(self.audit_actions(OrganizationAuditEvent.Action.DOWNLOAD_BLOCKED).count(), 4)
+
+    def test_a_watermarked_enhanced_download_is_blocked_too(self):
+        self.assert_blocked(self.member_client.get(reverse("enhancement:result-download", kwargs={"pk": self.image.result.pk}) + "?watermark=username"))
+
+    def test_a_share_link_cannot_be_made_for_such_an_image(self):
+        response = self.member_client.post(reverse("sharing:link-list-create"), {"result": self.image.result.pk}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data["reason"], "bulk_not_allowed")
+        self.assertFalse(ShareLink.objects.exists())
+
+    def test_a_share_link_made_before_approval_was_switched_on_is_no_longer_served(self):
+        Organization.objects.filter(pk=self.organization.pk).update(download_approval_required=False)
+        created = self.member_client.post(reverse("sharing:link-list-create"), {"result": self.image.result.pk}, format="json")
+        self.assertEqual(created.status_code, status.HTTP_201_CREATED, created.content)
+        token = created.data["token"] if "token" in created.data else created.data["url"].rstrip("/").split("/")[-1]
+        anonymous = self.client
+        self.assertEqual(anonymous.get(reverse("sharing:public-view", kwargs={"token": token})).status_code, status.HTTP_200_OK)
+        self.require_approval()
+        self.assertEqual(anonymous.get(reverse("sharing:public-view", kwargs={"token": token})).status_code, status.HTTP_410_GONE)
+
+    def test_a_batch_package_is_refused(self):
+        response = self.member_client.post(reverse("downloads:package-create", kwargs={"batch_id": self.image.batch_id}), {"package_type": "accepted_results"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data["code"], "download_approval_required")
+
+    def test_nothing_changes_for_a_photograph_in_another_organization_without_approval(self):
+        other = create_organization(name="No Approval Co", owner=self.owner)
+        self.add_member("ap-member-of-other", Role.MEMBER, organization=other)
+        stranger = Organization.objects.get(pk=other.pk)
+        image = self.make_photo(self.member, organization=stranger)
+        self.assertEqual(self.original_download(image).status_code, status.HTTP_200_OK)
+
+
+class EligibilityAndSubmissionTests(ApprovalFixture, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.require_approval()
+
+    def check(self, images, client=None):
+        body = {"organization_id": self.organization.pk, "items": [{"image_id": image.pk} for image in images]}
+        return (client or self.member_client).post(reverse("downloads:request-check"), body, format="json")
+
+    def test_eligibility_explains_why_an_image_cannot_be_requested(self):
+        good = self.make_photo(self.member, "good.png")
+        in_review = self.make_photo(self.member, "review.png", decision="needs_review")
+        unprocessed = self.make_photo(self.member, "raw.png", enhanced=False)
+        someone_elses = self.make_photo(self.other_member, "theirs.png")
+        response = self.check([good, in_review, unprocessed, someone_elses])
+        rows = {row["image_id"]: row for row in response.data["items"]}
+        self.assertTrue(response.data["approval_required"])
+        self.assertTrue(rows[good.pk]["eligible"])
+        self.assertEqual(rows[in_review.pk]["reason"], "not_approved")
+        self.assertEqual(rows[unprocessed.pk]["reason"], "not_processed")
+        self.assertEqual(rows[someone_elses.pk]["reason"], "not_found")                      # another member's image is not even confirmed to exist
+        self.assertEqual(rows[good.pk]["access_state"], "not_requested")
+
+    def test_a_multi_image_request_keeps_the_exact_selection(self):
+        images = self.photos(12)
+        request, _ = self.make_request(images)
+        self.assertEqual(request.status, DownloadRequest.Status.PENDING)
+        self.assertEqual(sorted(request.items.values_list("image_id", flat=True)), sorted(image.pk for image in images))
+        self.assertTrue(all(item.artifact_type == "enhanced" and item.artifact_id == image.result.pk for item, image in zip(request.items.order_by("image_id"), sorted(images, key=lambda i: i.pk))))
+        self.assertEqual(self.audit_actions(OrganizationAuditEvent.Action.DOWNLOAD_REQUESTED).get().new_value["images"], 12)
+
+    def test_one_ineligible_image_refuses_the_whole_request_and_saves_nothing(self):
+        good = self.make_photo(self.member, "good.png")
+        bad = self.make_photo(self.member, "bad.png", decision="needs_review")
+        response = self.submit([good, bad])
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["code"], "items_not_eligible")
+        self.assertEqual([(row["image_id"], row["reason"]) for row in response.data["items"]], [(bad.pk, "not_approved")])
+        self.assertFalse(DownloadRequest.objects.exists())
+
+    def test_the_same_submission_sent_twice_makes_one_request(self):
+        images = self.photos(2)
+        first = self.submit(images, client_token="abc-123")
+        again = self.submit(images, client_token="abc-123")
+        self.assertEqual((first.status_code, again.status_code), (status.HTTP_201_CREATED, status.HTTP_200_OK))
+        self.assertFalse(again.data["created"])
+        self.assertEqual(first.data["request"]["id"], again.data["request"]["id"])
+        self.assertEqual(DownloadRequest.objects.count(), 1)
+
+    def test_an_image_in_an_undecided_request_cannot_be_requested_again(self):
+        images = self.photos(1)
+        self.make_request(images)
+        response = self.submit(images)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["items"][0]["reason"], "already_requested")
+
+    def test_the_organization_comes_from_the_membership_not_from_the_caller(self):
+        outsider = self.make_user("ap-outsider")
+        response = self.submit(self.photos(1), client=self.authenticated_client(outsider))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(DownloadRequest.objects.exists())
+
+    def test_the_requester_and_the_moderators_are_told_and_email_is_queued(self):
+        self.make_request(self.photos(2))
+        submitted = UserNotification.objects.get(recipient=self.member, event_type="download_request_submitted")
+        self.assertEqual(submitted.title, "Download Request Submitted")
+        self.assertEqual(submitted.message, "Your download request has been sent to your organization's moderator for review.")
+        for reviewer in (self.moderator, self.owner):
+            received = UserNotification.objects.get(recipient=reviewer, event_type="download_request_received")
+            self.assertIn("2 images", received.message)
+            self.assertIn(self.organization.name, received.message)
+            self.assertIn(received.email_status, ("queued", "sent"))                  # the e-mail carries a link to the authenticated page, never a photograph
+        self.assertFalse(UserNotification.objects.filter(recipient=self.other_member).exists())
+
+
+class ModeratorDecisionTests(ApprovalFixture, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.require_approval()
+
+    def test_approve_all_creates_one_time_limited_grant_per_image(self):
+        request, images = self.make_request()
+        response = self.decide(request, "approve_all")
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        request.refresh_from_db()
+        self.assertEqual(request.status, DownloadRequest.Status.APPROVED)
+        self.assertEqual(request.decided_by, self.moderator)
+        grants = list(DownloadGrant.objects.filter(item__request=request))
+        self.assertEqual(len(grants), 3)
+        for grant in grants:
+            self.assertEqual(grant.grantee, self.member)
+            self.assertLess(abs((grant.expires_at - (timezone.now() + timedelta(hours=24))).total_seconds()), 60)       # the default is 24 hours
+        title = UserNotification.objects.get(recipient=self.member, event_type="download_request_decided")
+        self.assertEqual(title.title, "Download Request Approved")
+        self.assertEqual(self.audit_actions(OrganizationAuditEvent.Action.DOWNLOAD_DECIDED).count(), 1)
+
+    def test_the_organization_may_set_its_own_number_of_hours(self):
+        self.require_approval(hours=2)
+        request, _ = self.make_request()
+        self.decide(request, "approve_all")
+        grant = DownloadGrant.objects.filter(item__request=request).first()
+        self.assertLess(abs((grant.expires_at - (timezone.now() + timedelta(hours=2))).total_seconds()), 60)
+
+    def test_approve_selected_denies_the_rest_and_the_status_is_partially_approved(self):
+        request, images = self.make_request(self.photos(12))
+        keep = [self.item_for(request, image).pk for image in images[:10]]
+        response = self.decide(request, "approve_selected", item_ids=keep, reason=self.reasons("client_restriction"),
+                               item_reasons={str(self.item_for(request, images[10]).pk): self.reasons("privacy_or_consent")})
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
+        request.refresh_from_db()
+        self.assertEqual(request.status, DownloadRequest.Status.PARTIALLY_APPROVED)
+        self.assertEqual(request.items.filter(status="approved").count(), 10)
+        denied = {item.image_id: item for item in request.items.filter(status="denied")}
+        self.assertEqual(denied[images[10].pk].denial_reason_code, "privacy_or_consent")
+        self.assertEqual(denied[images[11].pk].denial_reason_code, "client_restriction")
+        self.assertEqual(DownloadGrant.objects.filter(item__request=request).count(), 10)       # grants only for approved items
+        self.assertEqual(response.data["counts"], {"total": 12, "pending": 0, "approved": 10, "denied": 2})
+        note = UserNotification.objects.get(recipient=self.member, event_type="download_request_decided")
+        self.assertEqual(note.title, "Download Request Partially Approved")
+        self.assertIn("10 of 12", note.message)
+
+    def test_deny_selected_leaves_the_rest_in_review_and_the_request_is_not_final(self):
+        request, images = self.make_request()
+        first = self.item_for(request, images[0]).pk
+        response = self.decide(request, "deny_selected", item_ids=[first], reason=self.reasons("incorrect_selection"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        request.refresh_from_db()
+        self.assertEqual(request.status, DownloadRequest.Status.IN_REVIEW)
+        self.assertIsNone(request.decided_at)
+        self.assertFalse(UserNotification.objects.filter(recipient=self.member, event_type="download_request_decided").exists())     # told once, when everything is decided
+        self.decide(request, "approve_all")
+        request.refresh_from_db()
+        self.assertEqual(request.status, DownloadRequest.Status.PARTIALLY_APPROVED)
+
+    def test_deny_all_denies_every_image(self):
+        request, _ = self.make_request()
+        response = self.decide(request, "deny_all", reason=self.reasons("other", "Not for distribution"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        request.refresh_from_db()
+        self.assertEqual(request.status, DownloadRequest.Status.DENIED)
+        self.assertFalse(DownloadGrant.objects.exists())
+        self.assertEqual(set(request.items.values_list("denial_reason_text", flat=True)), {"Not for distribution"})
+        self.assertEqual(UserNotification.objects.get(recipient=self.member, event_type="download_request_decided").title, "Download Request Denied")
+
+    def test_a_denial_needs_a_reason_and_other_needs_an_explanation(self):
+        request, _ = self.make_request()
+        self.assertEqual(self.decide(request, "deny_all").status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(self.decide(request, "deny_all", reason=self.reasons("other")).status_code, status.HTTP_400_BAD_REQUEST)
+        request.refresh_from_db()
+        self.assertEqual(request.status, DownloadRequest.Status.PENDING)
+
+    def test_an_image_that_stopped_being_accepted_is_denied_instead_of_approved(self):
+        request, images = self.make_request(self.photos(2))
+        ImageQualityDecision.objects.filter(image=images[0]).update(decision="needs_review")
+        self.decide(request, "approve_all")
+        stale = self.item_for(request, images[0])
+        self.assertEqual((stale.status, stale.denial_reason_code), ("denied", "no_longer_eligible"))
+        self.assertFalse(DownloadGrant.objects.filter(image=images[0]).exists())
+        request.refresh_from_db()
+        self.assertEqual(request.status, DownloadRequest.Status.PARTIALLY_APPROVED)
+
+    def test_two_moderators_cannot_decide_the_same_image_twice(self):
+        request, images = self.make_request()
+        second = self.authenticated_client(self.add_member("ap-moderator-2", Role.MODERATOR))
+        ids = [self.item_for(request, images[0]).pk]
+        self.assertEqual(self.decide(request, "approve_selected", item_ids=ids, reason=self.reasons()).status_code, status.HTTP_200_OK)     # finalizes: the others were denied
+        late = self.decide(request, "deny_selected", client=second, item_ids=ids, reason=self.reasons())
+        self.assertEqual(late.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(late.data["code"], "request_closed")
+        self.assertEqual(DownloadGrant.objects.count(), 1)
+
+    def test_deciding_an_image_that_is_already_decided_conflicts(self):
+        request, images = self.make_request()
+        first, second = (self.item_for(request, image).pk for image in images[:2])
+        self.decide(request, "deny_selected", item_ids=[first], reason=self.reasons())
+        again = self.decide(request, "approve_selected", item_ids=[first, second], reason=self.reasons())
+        self.assertEqual((again.status_code, again.data["code"]), (status.HTTP_409_CONFLICT, "item_already_decided"))
+
+    def test_a_stale_version_is_refused(self):
+        request, _ = self.make_request()
+        response = self.decide(request, "approve_all", expected_version=request.version + 5)
+        self.assertEqual((response.status_code, response.data["code"]), (status.HTTP_409_CONFLICT, "request_changed"))
+        self.assertFalse(DownloadGrant.objects.exists())
+
+    def test_a_moderator_cannot_decide_their_own_request(self):
+        image = self.make_photo(self.moderator)
+        request, _ = self.make_request([image], client=self.moderator_client)
+        response = self.decide(request, "approve_all", client=self.moderator_client)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data["code"], "cannot_decide_own_request")
+        self.assertEqual(self.decide(request, "approve_all", client=self.owner_client).status_code, status.HTTP_200_OK)       # the owner can
+
+    def test_a_plain_member_cannot_decide(self):
+        request, _ = self.make_request()
+        response = self.decide(request, "approve_all", client=self.authenticated_client(self.other_member))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_the_requester_can_cancel_only_before_anyone_decided(self):
+        request, images = self.make_request()
+        response = self.member_client.post(reverse("downloads:request-cancel", kwargs={"pk": request.pk}))
+        self.assertEqual((response.status_code, response.data["status"]), (status.HTTP_200_OK, "cancelled"))
+        self.assertEqual(self.decide(request, "approve_all").status_code, status.HTTP_409_CONFLICT)
+        other, _ = self.make_request(self.photos(1))
+        self.decide(other, "approve_all")
+        self.assertEqual(self.member_client.post(reverse("downloads:request-cancel", kwargs={"pk": other.pk})).status_code, status.HTTP_409_CONFLICT)
+
+    def test_a_failing_notification_never_undoes_the_decision(self):
+        request, _ = self.make_request()
+        with mock.patch("notifications.tasks.send_notification_email_task.delay", side_effect=RuntimeError("queue is down")):
+            response = self.decide(request, "approve_all")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        request.refresh_from_db()
+        self.assertEqual(request.status, DownloadRequest.Status.APPROVED)
+        self.assertEqual(DownloadGrant.objects.count(), 3)
+        note = UserNotification.objects.get(recipient=self.member, event_type="download_request_decided")
+        self.assertEqual(note.email_status, "failed")                       # the failure is recorded on the notification; the approval stands
+        self.assertTrue(note.email_failure_reason)
+
+    def test_the_decision_notification_is_not_repeated(self):
+        request, _ = self.make_request()
+        self.decide(request, "approve_all")
+        from downloads.approval import _notify_decided
+
+        _notify_decided(request.pk)
+        self.assertEqual(UserNotification.objects.filter(recipient=self.member, event_type="download_request_decided").count(), 1)
+
+
+class ApprovedDownloadTests(ApprovalFixture, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.require_approval()
+        self.request, self.images = self.make_request(self.photos(3))
+        self.approved, self.denied, self.undecided = self.images
+        ids = [self.item_for(self.request, self.approved).pk, self.item_for(self.request, self.undecided).pk]
+        self.decide(self.request, "approve_selected", item_ids=ids, reason=self.reasons("policy_restriction"))
+        self.request.refresh_from_db()
+
+    def item_url(self, image):
+        return reverse("downloads:request-item-file", kwargs={"pk": self.request.pk, "item_id": self.item_for(self.request, image).pk})
+
+    def grant_of(self, image):
+        return DownloadGrant.objects.get(image=image)
+
+    def test_an_approved_image_downloads_by_the_request_and_by_the_ordinary_route(self):
+        self.assertEqual(self.member_client.get(self.item_url(self.approved)).status_code, status.HTTP_200_OK)
+        response = self.enhanced_download(self.approved.result)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(self.grant_of(self.approved).use_count, 2)
+        self.assertTrue(self.audit_actions(OrganizationAuditEvent.Action.DOWNLOAD_COMPLETED).exists())
+
+    def test_the_grant_covers_only_the_enhanced_file_it_names(self):
+        for blocked in (self.original_download(self.approved),
+                        self.member_client.get(reverse("image-preprocessing-download", kwargs={"pk": self.approved.pk}))):
+            self.assertEqual(blocked.status_code, status.HTTP_403_FORBIDDEN)
+            self.assertEqual(blocked.data["reason"], "no_grant")
+
+    def test_a_denied_image_cannot_be_downloaded_by_any_route(self):
+        self.assertEqual(self.member_client.get(self.item_url(self.denied)).status_code, status.HTTP_404_NOT_FOUND)         # not an approved item
+        response = self.enhanced_download(self.denied.result)
+        self.assertEqual((response.status_code, response.data["reason"]), (status.HTTP_403_FORBIDDEN, "no_grant"))
+        self.assertEqual(self.original_download(self.denied).status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_another_member_cannot_use_someone_elses_grant(self):
+        stranger = self.authenticated_client(self.other_member)
+        self.assertEqual(self.enhanced_download(self.approved.result, client=stranger).status_code, status.HTTP_404_NOT_FOUND)    # their own routes only find their own results
+        with self.assertRaises(DownloadNotAuthorized):
+            authorize_download(self.other_member, self.approved, "enhanced", self.approved.result.pk)
+
+    def test_the_zip_holds_only_approved_images(self):
+        response = self.member_client.get(reverse("downloads:request-zip", kwargs={"pk": self.request.pk}))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        names = zipfile.ZipFile(io.BytesIO(self.body(response))).namelist()
+        self.assertEqual(sorted(names), sorted([f"images/enh_{self.approved.original_name}", f"images/enh_{self.undecided.original_name}"]))
+        self.assertTrue(all("p1" not in name for name in names))                           # the denied image (p1) is not in it
+        self.assertEqual(self.grant_of(self.approved).use_count, 1)
+
+    def test_the_zip_leaves_out_an_image_whose_grant_expired_and_refuses_when_nothing_is_left(self):
+        DownloadGrant.objects.filter(image=self.undecided).update(expires_at=timezone.now() - timedelta(minutes=1))
+        names = zipfile.ZipFile(io.BytesIO(self.body(self.member_client.get(reverse("downloads:request-zip", kwargs={"pk": self.request.pk}))))).namelist()
+        self.assertEqual(names, [f"images/enh_{self.approved.original_name}"])
+        DownloadGrant.objects.all().update(expires_at=timezone.now() - timedelta(minutes=1))
+        response = self.member_client.get(reverse("downloads:request-zip", kwargs={"pk": self.request.pk}))
+        self.assertEqual((response.status_code, response.data["reason"]), (status.HTTP_403_FORBIDDEN, "expired"))
+
+    def test_an_expired_grant_stops_working(self):
+        DownloadGrant.objects.filter(image=self.approved).update(expires_at=timezone.now() - timedelta(seconds=1))
+        for response in (self.member_client.get(self.item_url(self.approved)), self.enhanced_download(self.approved.result)):
+            self.assertEqual((response.status_code, response.data["reason"]), (status.HTTP_403_FORBIDDEN, "expired"))
+
+    def test_a_revoked_grant_stops_working_at_once(self):
+        grant = self.grant_of(self.approved)
+        url = reverse("org-download-grant-revoke", kwargs={"organization_id": self.organization.pk, "grant_id": grant.pk})
+        self.assertEqual(self.moderator_client.post(url, {"reason": "client asked"}, format="json").status_code, status.HTTP_200_OK)
+        response = self.enhanced_download(self.approved.result)
+        self.assertEqual((response.status_code, response.data["reason"]), (status.HTTP_403_FORBIDDEN, "revoked"))
+        self.assertEqual(self.audit_actions(OrganizationAuditEvent.Action.DOWNLOAD_GRANT_REVOKED).count(), 1)
+        self.assertEqual(self.moderator_client.post(url, {}, format="json").status_code, status.HTTP_200_OK)          # revoking twice changes nothing
+        self.assertEqual(self.audit_actions(OrganizationAuditEvent.Action.DOWNLOAD_GRANT_REVOKED).count(), 1)
+
+    def test_rejecting_the_image_afterwards_withdraws_the_permission(self):
+        ImageQualityDecision.objects.filter(image=self.approved).update(decision="needs_review")
+        response = self.enhanced_download(self.approved.result)
+        self.assertEqual((response.status_code, response.data["reason"]), (status.HTTP_403_FORBIDDEN, "not_approved"))
+
+    def test_losing_membership_or_suspension_withdraws_the_permission(self):
+        OrganizationMembership.objects.filter(user=self.member, organization=self.organization).update(status="removed")
+        # a removed member no longer has an organization to download in; the grant must not work either
+        with self.assertRaises(DownloadNotAuthorized):
+            authorize_download(self.member, self.approved, "enhanced", self.approved.result.pk)
+        OrganizationMembership.objects.filter(user=self.member, organization=self.organization).update(status="active")
+        Organization.objects.filter(pk=self.organization.pk).update(status="suspended")
+        response = self.enhanced_download(self.approved.result)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    @mock.patch("downloads.approval.settings.DOWNLOAD_GRANT_MAX_USES", 1)
+    def test_a_grant_may_be_limited_to_a_number_of_uses(self):
+        request, images = self.make_request(self.photos(1))
+        self.decide(request, "approve_all")
+        result = images[0].result
+        self.assertEqual(self.enhanced_download(result).status_code, status.HTTP_200_OK)
+        response = self.enhanced_download(result)
+        self.assertEqual((response.status_code, response.data["reason"]), (status.HTTP_403_FORBIDDEN, "used_up"))
+
+    def test_the_access_state_of_each_image_is_reported(self):
+        body = {"organization_id": self.organization.pk, "items": [{"image_id": image.pk} for image in self.images]}
+        states = {row["image_id"]: row["access_state"] for row in self.member_client.post(reverse("downloads:request-check"), body, format="json").data["items"]}
+        self.assertEqual(states, {self.approved.pk: "granted", self.denied.pk: "denied", self.undecided.pk: "granted"})
+        DownloadGrant.objects.filter(image=self.approved).update(expires_at=timezone.now() - timedelta(seconds=1))
+        DownloadGrant.objects.filter(image=self.undecided).update(revoked_at=timezone.now())
+        states = {row["image_id"]: row["access_state"] for row in self.member_client.post(reverse("downloads:request-check"), body, format="json").data["items"]}
+        self.assertEqual((states[self.approved.pk], states[self.undecided.pk]), ("expired", "revoked"))
+
+
+class TenantAndScopeTests(ApprovalFixture, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.require_approval()
+
+    def test_an_outsider_and_another_organizations_moderator_see_nothing(self):
+        request, _ = self.make_request()
+        other_owner = self.make_user("ap-other-owner")
+        other = create_organization(name="Rival Co", owner=other_owner)
+        rival_moderator = self.authenticated_client(self.add_member("ap-rival-mod", Role.MODERATOR, organization=other))
+        url = reverse("org-download-request-detail", kwargs={"organization_id": self.organization.pk, "request_id": request.pk})
+        self.assertEqual(rival_moderator.get(url).status_code, status.HTTP_404_NOT_FOUND)                  # not a member here: the organization is not even confirmed
+        via_own = reverse("org-download-request-detail", kwargs={"organization_id": other.pk, "request_id": request.pk})
+        self.assertEqual(rival_moderator.get(via_own).status_code, status.HTTP_404_NOT_FOUND)            # this organization's id with another organization's request
+        decision = self.decide(request, "approve_all", client=rival_moderator, organization=other)
+        self.assertEqual(decision.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertFalse(DownloadGrant.objects.exists())
+
+    def test_another_member_cannot_read_or_cancel_a_request(self):
+        request, _ = self.make_request()
+        other = self.authenticated_client(self.other_member)
+        self.assertEqual(other.get(reverse("downloads:request-detail", kwargs={"pk": request.pk})).status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(other.post(reverse("downloads:request-cancel", kwargs={"pk": request.pk})).status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_a_moderator_who_only_sees_their_own_members_does_not_see_other_members_requests(self):
+        Organization.objects.filter(pk=self.organization.pk).update(moderator_data_scope="own_members")
+        second = self.add_member("ap-moderator-2", Role.MODERATOR)
+        OrganizationMembership.objects.filter(user=self.member).update(invited_by=second)          # this member belongs to the second moderator
+        request, _ = self.make_request()
+        listing = self.moderator_client.get(reverse("org-download-request-list", kwargs={"organization_id": self.organization.pk}))
+        self.assertEqual(len(listing.data), 0)
+        self.assertEqual(self.decide(request, "approve_all").status_code, status.HTTP_404_NOT_FOUND)
+        mine = self.authenticated_client(second).get(reverse("org-download-request-list", kwargs={"organization_id": self.organization.pk}))
+        self.assertEqual([row["id"] for row in mine.data], [request.pk])
+        self.assertEqual(self.decide(request, "approve_all", client=self.owner_client).status_code, status.HTTP_200_OK)          # the owner always sees everything
+
+    def test_the_moderator_list_filters_by_status_and_shows_counts(self):
+        request, _ = self.make_request()
+        listing = self.moderator_client.get(reverse("org-download-request-list", kwargs={"organization_id": self.organization.pk}) + "?status=pending")
+        self.assertEqual(listing.data[0]["counts"]["total"], 3)
+        self.assertEqual(listing.data[0]["requester"]["username"], "ap-member")
+        done = self.moderator_client.get(reverse("org-download-request-list", kwargs={"organization_id": self.organization.pk}) + "?status=approved")
+        self.assertEqual(len(done.data), 0)
+
+    def test_a_suspended_organization_accepts_no_request_and_no_decision(self):
+        request, _ = self.make_request()
+        Organization.objects.filter(pk=self.organization.pk).update(status="suspended")
+        self.assertIn(self.decide(request, "approve_all").status_code, (status.HTTP_403_FORBIDDEN,))
+        self.assertFalse(DownloadGrant.objects.exists())
+
+    def test_the_requests_listed_to_a_member_are_only_their_own(self):
+        mine, _ = self.make_request(self.photos(1))
+        theirs, _ = self.make_request(self.photos(1, owner=self.other_member), client=self.authenticated_client(self.other_member))
+        rows = self.member_client.get(reverse("downloads:request-list-create")).data
+        self.assertEqual([row["id"] for row in rows], [mine.pk])
+        self.assertNotEqual(mine.pk, theirs.pk)
+
+
+class PersonFolderExportTests(ApprovalFixture, TestCase):
+    """A person-folder ZIP bundles photographs, so it is refused while one of them is in an organization that requires approval."""
+
+    def make_group_with(self, image):
+        pre = image.preprocessing_result
+        validation = FaceValidationResult.objects.create(owner=self.member, image=image, preprocessing_result=pre, decision="accepted", face_count=1, faces=[])
+        analysis = IdentityAnalysis.objects.create(
+            owner=self.member, image=image, preprocessing_result=pre, face_validation=validation, status="completed", provider="test", policy_version="test-v1",
+        )
+        group = IdentityGroup.objects.create(owner=self.member, display_name="Person 001", member_count=1, protected_centroid=b"c", embedding_dimension=3, provider="test", policy_version="test-v1")
+        face = IdentityFace.objects.create(owner=self.member, image=image, analysis=analysis, face_index=0, protected_embedding=b"e", embedding_dimension=3, provider="test")
+        IdentityMembership.objects.create(owner=self.member, identity_face=face, identity_group=group, state=IdentityMembership.State.NEW_GROUP, decision_method="test")
+        return group
+
+    def test_an_export_of_a_folder_with_such_a_photograph_is_refused(self):
+        image = self.make_photo(self.member)
+        group = self.make_group_with(image)
+        url = reverse("identities:group-export-list-create", kwargs={"group_id": group.pk})
+        self.assertNotEqual(self.member_client.post(url, {}, format="json").status_code, status.HTTP_403_FORBIDDEN)       # approval off: the export route behaves as before
+        self.require_approval()
+        response = self.member_client.post(url, {}, format="json")
+        self.assertEqual((response.status_code, response.data["code"]), (status.HTTP_403_FORBIDDEN, "download_approval_required"))
+
+    def test_a_finished_export_cannot_be_downloaded_or_shared_afterwards(self):
+        image = self.make_photo(self.member)
+        group = self.make_group_with(image)
+        export = IdentityGroupExport.objects.create(
+            owner=self.member, identity_group=group, status=IdentityGroupExport.Status.READY, display_name="f.zip", file_size=4,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+        export.export_file.save("f.zip", ContentFile(b"PK\x05\x06" + b"\0" * 18), save=True)
+        self.assertEqual(self.member_client.get(reverse("identities:group-export-download", kwargs={"pk": export.pk})).status_code, status.HTTP_200_OK)
+        self.require_approval()
+        for name in ("identities:group-export-download", "identities:group-export-share", "identities:group-export-regenerate"):
+            call = self.member_client.get if name.endswith("download") else self.member_client.post
+            self.assertEqual(call(reverse(name, kwargs={"pk": export.pk})).status_code, status.HTTP_403_FORBIDDEN, name)

@@ -1439,6 +1439,14 @@ DOWNLOAD_PACKAGE_MAX_UNCOMPRESSED_SIZE = env.int(
 DOWNLOAD_PACKAGE_COMPRESSION_LEVEL = env.int(
     "DOWNLOAD_PACKAGE_COMPRESSION_LEVEL", default=6,
 )
+# Download approval (organizations whose ``download_approval_required`` is on): how long an approved image stays downloadable (an organization may set its own
+# number of hours), how many images one request may name, and how many times one grant may be used (0 = no limit).
+DOWNLOAD_GRANT_DEFAULT_HOURS = env.int("DOWNLOAD_GRANT_DEFAULT_HOURS", default=24)
+DOWNLOAD_GRANT_MAX_HOURS = 24 * 30
+DOWNLOAD_REQUEST_MAX_ITEMS = env.int("DOWNLOAD_REQUEST_MAX_ITEMS", default=100)
+DOWNLOAD_GRANT_MAX_USES = env.int("DOWNLOAD_GRANT_MAX_USES", default=0)
+if not 1 <= DOWNLOAD_GRANT_DEFAULT_HOURS <= DOWNLOAD_GRANT_MAX_HOURS or DOWNLOAD_REQUEST_MAX_ITEMS < 1 or DOWNLOAD_GRANT_MAX_USES < 0:
+    raise ImproperlyConfigured("DOWNLOAD_GRANT_DEFAULT_HOURS must be 1-720, DOWNLOAD_REQUEST_MAX_ITEMS at least 1 and DOWNLOAD_GRANT_MAX_USES at least 0.")
 NOTIFICATION_EMAILS_ENABLED = env.bool(
     "NOTIFICATION_EMAILS_ENABLED", default=True,
 )
@@ -1585,6 +1593,8 @@ SPECTACULAR_SETTINGS = {
         "EnhancementLightingEnum": "enhancement.models.EnhancementLighting",
         "LightingMethodEnum": "enhancement.models.LIGHTING_METHODS",
         "PackageStatusEnum": "downloads.models.DownloadPackage.Status",
+        "DownloadRequestStatusEnum": "downloads.models.DownloadRequest.Status",
+        "DownloadRequestItemStatusEnum": "downloads.models.DownloadRequestItem.Status",
         "ProcessingReportStatusEnum": "reports.models.ProcessingReport.Status",
         "IdentityAnalysisStatusEnum": "identities.models.IdentityAnalysis.Status",
         "ExportReportFormatEnum": "identities.models.IdentityGroupExport.ReportFormat",
