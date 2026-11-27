@@ -7,18 +7,15 @@
 """
 import io
 import re
-from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
 from django.contrib.auth import get_user_model
 from django.core import mail
-from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.test import TestCase
 from django.urls import reverse
-from django.utils import timezone
 from PIL import Image
 from rest_framework import status
 
@@ -26,7 +23,7 @@ from identities.models import IdentityAnalysis, IdentityFace, IdentityGroup, Ide
 from moderation.test_review_image import ReviewImageMixin
 from organizations.models import Organization, OrganizationInvitation, OrganizationMembership
 from organizations.services import (
-    create_organization, create_personal_organization, ensure_personal_organization, get_default_organization, hash_token, personal_organization_of, resolve_upload_organization,
+    create_organization, create_personal_organization, ensure_personal_organization, get_default_organization, personal_organization_of, resolve_upload_organization,
 )
 from uploads.models import ImagePreprocessingResult, ImageUpload, UploadBatch
 from validation.models import FaceValidationResult
