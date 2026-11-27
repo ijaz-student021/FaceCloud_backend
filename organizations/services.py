@@ -8,6 +8,7 @@ user's personal organization behaves exactly like today's user-only ownership
 until someone is actually invited in.
 """
 import hashlib
+import logging
 import secrets
 from datetime import timedelta
 
@@ -24,6 +25,8 @@ from rest_framework.exceptions import APIException, NotFound, PermissionDenied, 
 from accounts.services import get_client_ip
 
 from .models import Organization, OrganizationAuditEvent, OrganizationInvitation, OrganizationMembership
+
+logger = logging.getLogger(__name__)
 
 INVITABLE_ROLES = {OrganizationInvitation.Role.MODERATOR, OrganizationInvitation.Role.MEMBER}
 MANAGER_ROLES = {OrganizationMembership.Role.OWNER, OrganizationMembership.Role.MODERATOR}
@@ -46,9 +49,21 @@ class OrganizationSuspended(PermissionDenied):
         super().__init__(detail={"detail": self.message, "code": self.default_code})
 
 
+class OrganizationPendingOwner(PermissionDenied):
+    """403 for anything done in an organization whose owner has not accepted the administrator's invitation yet."""
+
+    default_code = "organization_pending_owner"
+    message = "This organization is waiting for its owner to accept the invitation."
+
+    def __init__(self):
+        super().__init__(detail={"detail": self.message, "code": self.default_code})
+
+
 def assert_organization_active(organization):
     if organization.status == Organization.Status.SUSPENDED:
         raise OrganizationSuspended()
+    if organization.status == Organization.Status.PENDING_OWNER:
+        raise OrganizationPendingOwner()
 
 
 class PlanLimitReached(PermissionDenied):
@@ -200,6 +215,14 @@ def update_organization(
     person is to suspend the account.
     """
     locked = Organization.objects.select_for_update().get(pk=organization.pk)
+    if status == Organization.Status.PENDING_OWNER:
+        raise ValidationError({"status": "An organization waits for its owner only when it is created with an owner e-mail address."})
+    if status == Organization.Status.ACTIVE and locked.status == Organization.Status.PENDING_OWNER:
+        raise ValidationError({"status": "This organization becomes active when its owner accepts the invitation; nobody can activate it without an owner."})
+    if status == Organization.Status.ACTIVE and locked.status == Organization.Status.SUSPENDED and not locked.is_personal and not OrganizationMembership.objects.filter(
+        organization=locked, role=OrganizationMembership.Role.OWNER, status=OrganizationMembership.Status.ACTIVE,
+    ).exists():
+        status = Organization.Status.PENDING_OWNER          # suspended before its owner ever accepted: it goes back to waiting for them, never to "active" without an owner
     if status == Organization.Status.SUSPENDED and locked.is_personal:
         raise ValidationError({"status": "A personal workspace cannot be suspended. Suspend the account instead."})
     Action = OrganizationAuditEvent.Action
@@ -337,7 +360,13 @@ def invite_member(*, organization, actor_membership, email, role, request=None):
     return invitation
 
 
+def _refuse_owner_invitation(invitation):
+    if invitation.role == OrganizationInvitation.Role.OWNER:
+        raise PermissionDenied("An owner invitation is managed by the FaceCloud administrator.")
+
+
 def resend_invitation(*, invitation, actor_membership, request=None):
+    _refuse_owner_invitation(invitation)
     if invitation.status != OrganizationInvitation.Status.PENDING:
         raise OrganizationConflict("Only a pending invitation can be resent.")
     token = secrets.token_urlsafe(32)
@@ -356,6 +385,7 @@ def resend_invitation(*, invitation, actor_membership, request=None):
 
 
 def cancel_invitation(*, invitation, actor_membership, request=None):
+    _refuse_owner_invitation(invitation)
     if invitation.status != OrganizationInvitation.Status.PENDING:
         raise OrganizationConflict("Only a pending invitation can be cancelled.")
     invitation.status = OrganizationInvitation.Status.CANCELLED
@@ -378,40 +408,84 @@ def preview_invitation(token):
         .filter(token_hash=hash_token(token or ""), status=OrganizationInvitation.Status.PENDING)
         .first()
     )
-    if invitation is None or invitation.is_expired() or invitation.organization.status != Organization.Status.ACTIVE:
+    if invitation is None or invitation.is_expired():
+        return None
+    allowed = {Organization.Status.ACTIVE}
+    if invitation.role == OrganizationInvitation.Role.OWNER:
+        allowed.add(Organization.Status.PENDING_OWNER)       # the owner invitation is what makes the organization active
+    if invitation.organization.status not in allowed:
         return None                                          # a suspended organization cannot take anyone in: the token is no good for now
     return invitation
 
 
 def accept_invitation(*, token, user, request=None):
-    invitation = (
-        OrganizationInvitation.objects.select_for_update()
-        .select_related("organization")
-        .filter(token_hash=hash_token(token or ""))
-        .first()
-    )
-    if invitation is None:
-        raise NotFound("This invitation does not exist.")
-    if invitation.status != OrganizationInvitation.Status.PENDING or invitation.is_expired():
+    """Accept an invitation as ``user`` (who must hold the invited e-mail address). One transaction: the row lock needs it, and an owner's acceptance also activates the organization."""
+    with transaction.atomic():
+        invitation = (
+            OrganizationInvitation.objects.select_for_update(of=("self",))
+            .select_related("organization")
+            .filter(token_hash=hash_token(token or ""))
+            .first()
+        )
+        if invitation is None:
+            raise NotFound("This invitation does not exist.")
+        if invitation.status != OrganizationInvitation.Status.PENDING or invitation.is_expired():
+            raise OrganizationConflict("This invitation is no longer valid.")
+        if invitation.email.lower() != (user.email or "").lower():
+            raise PermissionDenied("Sign in with the invited email address to accept this invitation.")
+        if invitation.role == OrganizationInvitation.Role.OWNER:
+            return _accept_owner_invitation(invitation, user, request)
+        assert_organization_active(invitation.organization)
+        assert_seat_available(invitation.organization, invitation.role, with_invitations=False, excluding_user=user)       # re-checked: the plan or the team may have changed
+        membership, _ = OrganizationMembership.objects.update_or_create(
+            organization=invitation.organization, user=user,
+            defaults={
+                "role": invitation.role, "status": OrganizationMembership.Status.ACTIVE,
+                "invited_by": invitation.invited_by,
+            },
+        )
+        invitation.status = OrganizationInvitation.Status.ACCEPTED
+        invitation.accepted_at = timezone.now()
+        invitation.save(update_fields=["status", "accepted_at", "updated_at"])
+        record_audit_event(
+            invitation.organization, user, OrganizationAuditEvent.Action.INVITATION_ACCEPTED,
+            target_type="OrganizationMembership", target_id=membership.pk,
+            new_value={"role": membership.role}, request=request,
+        )
+        return membership
+
+
+def _accept_owner_invitation(invitation, user, request):
+    """The invited person becomes the owner and the organization becomes active, in one step (the caller holds the invitation's row lock and a transaction)."""
+    organization = Organization.objects.select_for_update().get(pk=invitation.organization_id)
+    if organization.status == Organization.Status.SUSPENDED:
+        raise OrganizationSuspended()
+    if organization.status != Organization.Status.PENDING_OWNER:
         raise OrganizationConflict("This invitation is no longer valid.")
-    if invitation.email.lower() != (user.email or "").lower():
-        raise PermissionDenied("Sign in with the invited email address to accept this invitation.")
-    assert_organization_active(invitation.organization)
-    assert_seat_available(invitation.organization, invitation.role, with_invitations=False, excluding_user=user)       # re-checked: the plan or the team may have changed
+    # Knowing the link is not enough: the account must be active and its e-mail address verified, and it must be the address the invitation was sent to (checked by the caller).
+    if not user.is_active or getattr(user, "is_suspended", False):
+        raise PermissionDenied("This account cannot take ownership of an organization.")
+    if not user.is_email_verified:
+        raise PermissionDenied("Verify your email address before accepting this invitation.")
+    if OrganizationMembership.objects.filter(organization=organization, role=OrganizationMembership.Role.OWNER, status=OrganizationMembership.Status.ACTIVE).exists():
+        raise OrganizationConflict("This organization already has an owner.")
     membership, _ = OrganizationMembership.objects.update_or_create(
-        organization=invitation.organization, user=user,
-        defaults={
-            "role": invitation.role, "status": OrganizationMembership.Status.ACTIVE,
-            "invited_by": invitation.invited_by,
-        },
+        organization=organization, user=user,
+        defaults={"role": OrganizationMembership.Role.OWNER, "status": OrganizationMembership.Status.ACTIVE, "invited_by": invitation.invited_by},
     )
+    organization.status = Organization.Status.ACTIVE
+    organization.save(update_fields=["status", "updated_at"])
     invitation.status = OrganizationInvitation.Status.ACCEPTED
     invitation.accepted_at = timezone.now()
     invitation.save(update_fields=["status", "accepted_at", "updated_at"])
     record_audit_event(
-        invitation.organization, user, OrganizationAuditEvent.Action.INVITATION_ACCEPTED,
-        target_type="OrganizationMembership", target_id=membership.pk,
-        new_value={"role": membership.role}, request=request,
+        organization, user, OrganizationAuditEvent.Action.INVITATION_ACCEPTED,
+        target_type="OrganizationMembership", target_id=membership.pk, new_value={"role": membership.role}, request=request,
+    )
+    record_audit_event(
+        organization, user, OrganizationAuditEvent.Action.ORGANIZATION_ACTIVATED,
+        target_type="Organization", target_id=organization.pk, previous_value={"status": Organization.Status.PENDING_OWNER},
+        new_value={"status": Organization.Status.ACTIVE, "owner": user.pk}, request=request,
     )
     return membership
 
@@ -511,3 +585,169 @@ def remove_member(*, membership, actor_membership, reason="", request=None):
         reason=reason, request=request,
     )
     return locked
+
+
+# ---- The owner of a new organization (Platform Administrator -> owner invitation) -----------------------------------------------------------------------------------------------
+#
+# The administrator names the organization, the owner's e-mail address and the plan. Nothing requires the owner to have an account: the organization is created waiting for its
+# owner (``Organization.Status.PENDING_OWNER``, nobody belongs to it, nothing can be done in it) together with an ordinary ``OrganizationInvitation`` with the role ``owner``: the same
+# hashed single-use token, expiry, preview and acceptance as every other organization invitation. Accepting it (signing in as the invited address, or registering with it through
+# ``POST /api/auth/register/`` with ``invitation_token``) makes that account the owner and the organization active in one transaction.
+
+
+def owner_invitation_of(organization):
+    """The latest owner invitation of ``organization``, or ``None``."""
+    return organization.invitations.filter(role=OrganizationInvitation.Role.OWNER).order_by("-created_at", "-pk").first()
+
+
+def effective_invitation_status(invitation):
+    """``expired`` for a pending invitation whose time has run out (the stored status changes only when somebody acts on it)."""
+    if invitation.status == OrganizationInvitation.Status.PENDING and invitation.is_expired():
+        return OrganizationInvitation.Status.EXPIRED
+    return invitation.status
+
+
+def _owner_invitation_expiry():
+    return timezone.now() + timedelta(hours=settings.ORG_OWNER_INVITATION_TTL_HOURS)
+
+
+def _short_reason(error, token):
+    """What a person may read about a failed delivery: the kind of error and the start of its message, with the token (if the message held it) removed."""
+    text = f"{type(error).__name__}: {error}".replace(token, "[removed]") if token else f"{type(error).__name__}: {error}"
+    return text[:190]
+
+
+def _deliver_owner_invitation_email(invitation_id, token):
+    """Send the owner invitation e-mail (called after the transaction that made or renewed the invitation has committed) and record the outcome. Never raises.
+
+    The e-mail goes out in this process, not through the task queue: the link holds the raw token, which is stored nowhere (only its hash is), and a queue would hold it. A failure
+    leaves the organization and the invitation as they are with ``email_status: failed``; the administrator resends (a new link) from the same screen.
+    """
+    expected_hash = hash_token(token)
+    invitation = OrganizationInvitation.objects.select_related("organization").filter(pk=invitation_id, token_hash=expected_hash).first()
+    if invitation is None or invitation.status != OrganizationInvitation.Status.PENDING:
+        return                                                  # renewed or cancelled since: this link is no longer the one to send
+    link = f"{settings.FRONTEND_URL.rstrip('/')}/invitations/{token}"
+    hours = max(1, round((invitation.expires_at - timezone.now()).total_seconds() / 3600))
+    organization = invitation.organization
+    try:
+        send_mail(
+            subject=f"You have been invited to own {organization.name} on FaceCloud",
+            message=(
+                f"FaceCloud has set up the organization \"{organization.name}\" and invited {invitation.email} to be its owner.\n\n"
+                f"Accept the invitation: {link}\n\n"
+                "Sign in with this e-mail address, or create an account with it, and the invitation makes you the owner. "
+                f"The link works once and expires on {invitation.expires_at:%Y-%m-%d %H:%M} UTC (in about {hours} hours).\n\n"
+                "If you were not expecting this, ignore this e-mail: nothing happens until the link is used. FaceCloud never sends a password by e-mail."
+            ),
+            from_email=settings.DEFAULT_FROM_EMAIL, recipient_list=[invitation.email], fail_silently=False,
+        )
+    except Exception as error:
+        OrganizationInvitation.objects.filter(pk=invitation_id, token_hash=expected_hash).update(
+            email_status=OrganizationInvitation.EmailStatus.FAILED, email_failure_reason=_short_reason(error, token), updated_at=timezone.now(),
+        )
+        logger.warning("The owner invitation e-mail %s could not be sent (%s).", invitation_id, type(error).__name__)       # no address, no link, no token
+        return
+    OrganizationInvitation.objects.filter(pk=invitation_id, token_hash=expected_hash).update(
+        email_status=OrganizationInvitation.EmailStatus.SENT, email_sent_at=timezone.now(), email_failure_reason="", updated_at=timezone.now(),
+    )
+
+
+def _queue_owner_invitation_email(invitation, token):
+    transaction.on_commit(lambda: _deliver_owner_invitation_email(invitation.pk, token))
+
+
+def _lock_for(key):
+    """Serialize the requests that carry the same ``key`` (PostgreSQL advisory lock held to the end of the transaction); on SQLite writes are serialized anyway."""
+    connection = transaction.get_connection()
+    if connection.vendor == "postgresql":
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [key])
+
+
+def create_pending_organization(*, name, owner_email, plan=Organization.Plan.FREE, actor, request=None, moderator_data_scope=None):
+    """Create an organization for an owner who has not accepted yet, and queue the invitation e-mail. Returns ``(organization, invitation, created)``.
+
+    The person may or may not have an account: either way nothing is granted until they accept as the invited address. Sending the same request again (same name and owner e-mail while
+    that organization is still waiting) returns the organization and invitation that exist, with ``created`` false, and sends nothing.
+    """
+    email = owner_email.strip().lower()
+    name = " ".join(name.split())
+    token = secrets.token_urlsafe(32)
+    extra = {"moderator_data_scope": moderator_data_scope} if moderator_data_scope else {}
+    with transaction.atomic():
+        _lock_for(f"pending-organization:{name.casefold()}:{email}")
+        existing = (
+            OrganizationInvitation.objects.select_related("organization")
+            .filter(role=OrganizationInvitation.Role.OWNER, email=email, organization__status=Organization.Status.PENDING_OWNER,
+                    organization__is_personal=False, organization__name__iexact=name)
+            .order_by("-created_at", "-pk").first()
+        )
+        if existing is not None:
+            return existing.organization, existing, False
+        organization = Organization.objects.create(name=name, slug=_unique_slug(name), plan=plan, status=Organization.Status.PENDING_OWNER, **extra)
+        invitation = OrganizationInvitation.objects.create(
+            organization=organization, email=email, role=OrganizationInvitation.Role.OWNER, token_hash=hash_token(token),
+            status=OrganizationInvitation.Status.PENDING, invited_by=actor, expires_at=_owner_invitation_expiry(),
+            email_status=OrganizationInvitation.EmailStatus.QUEUED,
+        )
+        record_audit_event(
+            organization, actor, OrganizationAuditEvent.Action.ORGANIZATION_CREATED, target_type="Organization", target_id=organization.pk,
+            new_value={"name": name, "plan": plan, "status": Organization.Status.PENDING_OWNER, "pending_owner_email": email}, request=request,
+        )
+        record_audit_event(
+            organization, actor, OrganizationAuditEvent.Action.OWNER_INVITED, target_type="OrganizationInvitation", target_id=invitation.pk,
+            new_value={"email": email, "expires_at": invitation.expires_at.isoformat()}, request=request,
+        )
+        _queue_owner_invitation_email(invitation, token)
+    return organization, invitation, True
+
+
+def resend_owner_invitation(*, organization, actor, request=None):
+    """Send the owner a new link (the old one stops working). Allowed while the organization is waiting for its owner, for a pending, expired or cancelled invitation."""
+    token = secrets.token_urlsafe(32)
+    with transaction.atomic():
+        locked = Organization.objects.select_for_update().get(pk=organization.pk)
+        if locked.status == Organization.Status.SUSPENDED:
+            raise OrganizationSuspended()
+        invitation = (
+            OrganizationInvitation.objects.select_for_update(of=("self",))
+            .filter(organization=locked, role=OrganizationInvitation.Role.OWNER).order_by("-created_at", "-pk").first()
+        )
+        if invitation is None:
+            raise NotFound("This organization has no owner invitation.")
+        if locked.status != Organization.Status.PENDING_OWNER or invitation.status == OrganizationInvitation.Status.ACCEPTED:
+            raise OrganizationConflict("The owner has already accepted this invitation.")
+        invitation.token_hash = hash_token(token)
+        invitation.status = OrganizationInvitation.Status.PENDING
+        invitation.expires_at = _owner_invitation_expiry()
+        invitation.email_status = OrganizationInvitation.EmailStatus.QUEUED
+        invitation.email_sent_at = None
+        invitation.email_failure_reason = ""
+        invitation.save(update_fields=["token_hash", "status", "expires_at", "email_status", "email_sent_at", "email_failure_reason", "updated_at"])
+        record_audit_event(
+            locked, actor, OrganizationAuditEvent.Action.INVITATION_RESENT, target_type="OrganizationInvitation", target_id=invitation.pk,
+            new_value={"role": "owner", "expires_at": invitation.expires_at.isoformat()}, request=request,
+        )
+        _queue_owner_invitation_email(invitation, token)
+    return invitation
+
+
+def cancel_owner_invitation(*, organization, actor, request=None):
+    """Withdraw the pending owner invitation. The organization stays as it is (waiting for an owner); the administrator may send a new invitation with a resend."""
+    with transaction.atomic():
+        invitation = (
+            OrganizationInvitation.objects.select_for_update(of=("self",))
+            .filter(organization=organization, role=OrganizationInvitation.Role.OWNER).order_by("-created_at", "-pk").first()
+        )
+        if invitation is None:
+            raise NotFound("This organization has no owner invitation.")
+        if invitation.status != OrganizationInvitation.Status.PENDING:
+            raise OrganizationConflict("Only a pending invitation can be cancelled.")
+        invitation.status = OrganizationInvitation.Status.CANCELLED
+        invitation.save(update_fields=["status", "updated_at"])
+        record_audit_event(
+            organization, actor, OrganizationAuditEvent.Action.INVITATION_CANCELLED, target_type="OrganizationInvitation", target_id=invitation.pk,
+            new_value={"role": "owner"}, request=request,
+        )
+    return invitation

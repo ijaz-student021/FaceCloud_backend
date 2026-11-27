@@ -1316,6 +1316,10 @@ if not 30 <= THUMBNAIL_JPEG_QUALITY <= 95:
 # Feature 48: hours between two photos that starts a new event in the timeline.
 EVENT_GAP_HOURS = env.float("EVENT_GAP_HOURS", default=6.0)
 ORG_INVITATION_TTL_HOURS = env.int("ORG_INVITATION_TTL_HOURS", default=72)
+# The invitation the administrator sends to the future owner of a new organization lives longer: the person may need to create an account first.
+ORG_OWNER_INVITATION_TTL_HOURS = env.int("ORG_OWNER_INVITATION_TTL_HOURS", default=168)
+if not 1 <= ORG_OWNER_INVITATION_TTL_HOURS <= 24 * 30:
+    raise ImproperlyConfigured("ORG_OWNER_INVITATION_TTL_HOURS must be 1-720.")
 
 
 def _plan_limit(plan, kind, default):

@@ -10683,7 +10683,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AdminOrganization'
+                $ref: '#/components/schemas/AdminOrganizationCreated'
+          description: ''
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminOrganizationCreated'
           description: ''
         '400':
           content:
@@ -10872,6 +10878,208 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
       summary: Rename, change the plan, suspend or reactivate an organization (administrators)
+  /api/organizations/admin/{organization_id}/owner-invitation/:
+    get:
+      operationId: organizations_admin_owner_invitation_retrieve
+      description: 'The invitation that makes somebody the owner of an organization waiting for one: its status (pending,
+        accepted, cancelled, expired), whether the e-mail was queued, sent or failed, and who accepted it. Never the link
+        or the token.
+
+
+        **Access:** FaceCloud administrators only (403 otherwise).'
+      summary: Get the owner invitation of an organization
+      parameters:
+      - in: path
+        name: organization_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - organizations
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnerInvitation'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+  /api/organizations/admin/{organization_id}/owner-invitation/cancel/:
+    post:
+      operationId: organizations_admin_owner_invitation_cancel_create
+      description: 'Withdraws the pending owner invitation (its link stops working). The organization keeps waiting for an
+        owner; a resend sends a new invitation.
+
+
+        **Access:** FaceCloud administrators only (403 otherwise).'
+      summary: Cancel the owner invitation
+      parameters:
+      - in: path
+        name: organization_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - organizations
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnerInvitation'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+  /api/organizations/admin/{organization_id}/owner-invitation/resend/:
+    post:
+      operationId: organizations_admin_owner_invitation_resend_create
+      description: 'Sends the future owner a new invitation e-mail with a new link; the earlier link stops working. Works
+        while the organization waits for its owner, also after the invitation expired or was cancelled.
+
+
+        **Access:** FaceCloud administrators only (403 otherwise). **Rate limit:** `org_invite` scope, 30/hour (429 when exceeded).'
+      summary: Resend the owner invitation
+      parameters:
+      - in: path
+        name: organization_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - organizations
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnerInvitation'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
   /api/organizations/invitations/{token}/:
     get:
       operationId: organizations_invitations_retrieve
@@ -14695,6 +14903,13 @@ components:
           - $ref: '#/components/schemas/OrganizationOwner'
           nullable: true
           readOnly: true
+        owner_invitation:
+          allOf:
+          - $ref: '#/components/schemas/OwnerInvitation'
+          nullable: true
+          readOnly: true
+          description: 'While the organization waits for its owner (`status: pending_owner`): the invitation sent to them;
+            otherwise null.'
         member_count:
           type: integer
           readOnly: true
@@ -14719,11 +14934,110 @@ components:
       - moderator_data_scope
       - name
       - owner
+      - owner_invitation
       - plan
       - slug
       - status
       - updated_at
       - usage
+    AdminOrganizationCreated:
+      type: object
+      description: The organization as the administrator list shows it, plus whether this request created it.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        name:
+          type: string
+          readOnly: true
+        slug:
+          type: string
+          readOnly: true
+          pattern: ^[-a-zA-Z0-9_]+$
+        status:
+          allOf:
+          - $ref: '#/components/schemas/OrganizationStatusEnum'
+          readOnly: true
+        plan:
+          allOf:
+          - $ref: '#/components/schemas/OrganizationPlanEnum'
+          readOnly: true
+        is_personal:
+          type: boolean
+          readOnly: true
+        moderator_data_scope:
+          allOf:
+          - $ref: '#/components/schemas/ModeratorDataScopeEnum'
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+        owner:
+          allOf:
+          - $ref: '#/components/schemas/OrganizationOwner'
+          nullable: true
+          readOnly: true
+        owner_invitation:
+          allOf:
+          - $ref: '#/components/schemas/OwnerInvitation'
+          nullable: true
+          readOnly: true
+          description: 'While the organization waits for its owner (`status: pending_owner`): the invitation sent to them;
+            otherwise null.'
+        member_count:
+          type: integer
+          readOnly: true
+        moderator_count:
+          type: integer
+          readOnly: true
+        limits:
+          allOf:
+          - $ref: '#/components/schemas/PlanLimits'
+          readOnly: true
+        usage:
+          allOf:
+          - $ref: '#/components/schemas/PlanUsage'
+          readOnly: true
+        created:
+          type: boolean
+          description: 'False when the same request (same name and owner e-mail, still waiting for the owner) had already
+            been made: the existing organization is returned and no e-mail is sent.'
+        owner_account_exists:
+          type: boolean
+          nullable: true
+          description: 'For an owner_email request: whether an account with that address exists (it will be asked to sign
+            in) or not (it will register). null for an owner_id request.'
+      required:
+      - created
+      - created_at
+      - id
+      - is_personal
+      - limits
+      - member_count
+      - moderator_count
+      - moderator_data_scope
+      - name
+      - owner
+      - owner_account_exists
+      - owner_invitation
+      - plan
+      - slug
+      - status
+      - updated_at
+      - usage
+    AdminOrganizationUpdateStatusEnum:
+      enum:
+      - active
+      - suspended
+      type: string
+      description: '* `active` - Active
+
+        * `suspended` - Suspended'
     AdminUser:
       type: object
       properties:
@@ -20516,6 +20830,8 @@ components:
       - organization_reactivated
       - organization_logo_changed
       - organization_logo_removed
+      - owner_invited
+      - organization_activated
       type: string
       description: '* `organization_created` - Organization created
 
@@ -20567,7 +20883,11 @@ components:
 
         * `organization_logo_changed` - Organization logo changed
 
-        * `organization_logo_removed` - Organization logo removed'
+        * `organization_logo_removed` - Organization logo removed
+
+        * `owner_invited` - Owner invited
+
+        * `organization_activated` - Organization activated by its owner'
     OrganizationAuditEvent:
       type: object
       properties:
@@ -20640,18 +20960,27 @@ components:
       - to_status
     OrganizationCreate:
       type: object
+      description: The administrator creates an organization with ``owner_email`` (the owner needs no account yet and accepts
+        an invitation) or, as before, with ``owner_id`` (an existing account becomes the owner at once). Send exactly one.
       properties:
         name:
           type: string
           maxLength: 150
         plan:
-          $ref: '#/components/schemas/OrganizationPlanEnum'
+          allOf:
+          - $ref: '#/components/schemas/OrganizationPlanEnum'
+          default: free
+        owner_email:
+          type: string
+          format: email
+          description: The future owner's address. They receive an invitation; nothing is granted until they accept it as
+            this address. They may have an account or not.
         owner_id:
           type: integer
           writeOnly: true
+          description: 'Existing behaviour: this account becomes the owner immediately, without an invitation.'
       required:
       - name
-      - owner_id
     OrganizationDetail:
       type: object
       description: 'One organization as its own people see it. The owner and the moderators also get who owns it and how many
@@ -20874,10 +21203,18 @@ components:
           format: email
         role:
           allOf:
-          - $ref: '#/components/schemas/OrganizationInvitationRoleEnum'
+          - $ref: '#/components/schemas/OrganizationInvitationCreateRoleEnum'
           default: member
       required:
       - email
+    OrganizationInvitationCreateRoleEnum:
+      enum:
+      - moderator
+      - member
+      type: string
+      description: '* `moderator` - Moderator
+
+        * `member` - Member'
     OrganizationInvitationPreview:
       type: object
       description: What the person who received an invitation sees before accepting it.
@@ -20900,10 +21237,13 @@ components:
       - role
     OrganizationInvitationRoleEnum:
       enum:
+      - owner
       - moderator
       - member
       type: string
-      description: '* `moderator` - Moderator
+      description: '* `owner` - Owner (invited by the administrator)
+
+        * `moderator` - Moderator
 
         * `member` - Member'
     OrganizationInvitationStatusEnum:
@@ -21042,10 +21382,13 @@ components:
       enum:
       - active
       - suspended
+      - pending_owner
       type: string
       description: '* `active` - Active
 
-        * `suspended` - Suspended'
+        * `suspended` - Suspended
+
+        * `pending_owner` - Waiting for the owner'
     OrganizationWithMembership:
       type: object
       description: 'An organization plus the caller''s membership and capabilities in it.
@@ -21336,6 +21679,73 @@ components:
       - per_day_by_type
       - recent
       - total
+    OwnerInvitation:
+      type: object
+      description: The administrator's view of the invitation that makes somebody the owner of an organization that waits
+        for one. Never contains the link or the token.
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+          format: email
+          description: The address the invitation was sent to. Only an account holding this verified address can accept it.
+        status:
+          allOf:
+          - $ref: '#/components/schemas/OwnerInvitationStatusEnum'
+          description: pending, accepted, cancelled, expired (a pending invitation whose time has run out) or rejected.
+          readOnly: true
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        accepted_at:
+          type: string
+          format: date-time
+          nullable: true
+        email_status:
+          type: string
+          description: 'queued (will be sent once the invitation is saved), sent (the mail server accepted it) or failed (see
+            email_failure_reason). Delivery to the inbox is not known: SMTP gives no such feedback. Empty only for invitations
+            from before this field existed.'
+        email_sent_at:
+          type: string
+          format: date-time
+          nullable: true
+        email_failure_reason:
+          type: string
+        can_resend:
+          type: boolean
+          readOnly: true
+          description: 'True while the organization still waits for its owner: a resend sends a new link and the old one stops
+            working.'
+        accepted_by:
+          allOf:
+          - $ref: '#/components/schemas/OrganizationOwner'
+          nullable: true
+          readOnly: true
+      required:
+      - accepted_at
+      - accepted_by
+      - can_resend
+      - created_at
+      - email
+      - email_failure_reason
+      - email_sent_at
+      - email_status
+      - expires_at
+      - id
+      - status
+    OwnerInvitationStatusEnum:
+      enum:
+      - pending
+      - accepted
+      - cancelled
+      - expired
+      - rejected
+      type: string
     PackageStatusEnum:
       enum:
       - queued
@@ -22428,7 +22838,15 @@ components:
         plan:
           $ref: '#/components/schemas/OrganizationPlanEnum'
         status:
-          $ref: '#/components/schemas/OrganizationStatusEnum'
+          allOf:
+          - $ref: '#/components/schemas/AdminOrganizationUpdateStatusEnum'
+          description: 'active or suspended. An organization waiting for its owner (`pending_owner`) becomes active only when
+            the owner accepts the invitation.
+
+
+            * `active` - Active
+
+            * `suspended` - Suspended'
         moderator_data_scope:
           $ref: '#/components/schemas/ModeratorDataScopeEnum'
         reason:
