@@ -72,17 +72,24 @@ def _safe_metadata(metadata):
 def create_user_notification(
     *, recipient, event_type, idempotency_key, title, message,
     severity=UserNotification.Severity.INFO, resource_type="", resource_id=None,
-    action_path="", metadata=None,
+    action_path="", metadata=None, force_in_app=False,
 ):
+    """Create one in-app notification (once per recipient and ``idempotency_key``) and queue its e-mail where the person's settings allow.
+
+    A switched-off preference for the event type normally drops the notification. ``force_in_app=True`` is for a task someone must see (a request waiting for their
+    review): the in-app notification is still created, and the preference still keeps the e-mail from being sent.
+    """
     if event_type not in EVENT_POLICY:
         raise ValueError("Unsupported notification event type.")
     preferences = get_notification_preferences(recipient)
     preference_field, email_capable = EVENT_POLICY[event_type]
-    if preference_field and not getattr(preferences, preference_field):
+    muted = bool(preference_field and not getattr(preferences, preference_field))
+    if muted and not force_in_app:
         return None, False
 
     queue_email = bool(
         email_capable
+        and not muted
         and settings.NOTIFICATION_EMAILS_ENABLED
         and preferences.email_notifications
         and recipient.email

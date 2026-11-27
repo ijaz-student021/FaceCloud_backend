@@ -32,9 +32,9 @@ Role = OrganizationMembership.Role
 Item = DownloadRequestItem
 
 
-def png(color=(120, 80, 40)):
+def png(color=(120, 80, 40), size=(40, 30)):
     buffer = io.BytesIO()
-    Image.new("RGB", (40, 30), color).save(buffer, format="PNG")
+    Image.new("RGB", size, color).save(buffer, format="PNG")
     return buffer.getvalue()
 
 
@@ -61,18 +61,18 @@ class ApprovalFixture(ModerationFixtureMixin):
         organization.download_grant_hours = hours
         organization.save()
 
-    def make_photo(self, owner, name="p.png", organization=None, decision="accepted", enhanced=True, edited=False):
+    def make_photo(self, owner, name="p.png", organization=None, decision="accepted", enhanced=True, edited=False, size=(40, 30)):
         """An accepted photograph with a real original and (by default) a finished enhancement: what a member would list in their gallery."""
         organization = organization or self.organization
         batch = UploadBatch.objects.create(owner=owner, upload_type="single", organization=organization)
         image = ImageUpload.objects.create(owner=owner, batch=batch, original_name=name, file_extension=".png", mime_type="image/png", status="uploaded", file_size=len(png()))
-        image.original_file.save(name, ContentFile(png((10, 20, 30))), save=True)
+        image.original_file.save(name, ContentFile(png((10, 20, 30), size)), save=True)
         pre = ImagePreprocessingResult.objects.create(owner=owner, image=image, status="completed", output_format="png", output_name=f"std_{name}")
         pre.processed_file.save(f"std_{name}", ContentFile(png((11, 21, 31))), save=True)
         ImageQualityDecision.objects.create(owner=owner, image=image, preprocessing_result=pre, status="completed", decision=decision)
         image.result = image.edit = None
         if enhanced:
-            payload = png((200, 100, 50))
+            payload = png((200, 100, 50), size)
             image.result = ImageEnhancementResult.objects.create(
                 owner=owner, image=image, preprocessing_result=pre, status="completed", output_name=f"enh_{name}", output_format="png", output_file_size=len(payload),
                 output_width=40, output_height=30,
@@ -669,3 +669,295 @@ class PersonFolderExportTests(ApprovalFixture, TestCase):
         for name in ("identities:group-export-download", "identities:group-export-share", "identities:group-export-regenerate"):
             call = self.member_client.get if name.endswith("download") else self.member_client.post
             self.assertEqual(call(reverse(name, kwargs={"pk": export.pk})).status_code, status.HTTP_403_FORBIDDEN, name)
+
+
+# ==============================================================================================================================================================
+# Corrections after the first review (C2, C3, C4, P1, P3)
+# ==============================================================================================================================================================
+
+
+class ReviewerAvailabilityTests(ApprovalFixture, TestCase):
+    """Approval needs somebody to give it, and nobody approves their own request."""
+
+    def setUp(self):
+        super().setUp()
+        self.solo_owner = self.make_user("ap-solo-owner")
+        self.solo = create_organization(name="Solo Studio", owner=self.solo_owner)
+        self.solo_member = self.add_member("ap-solo-member", Role.MEMBER, organization=self.solo)
+        self.admin_client = self.authenticated_client(self.make_user("ap-admin-2", role="admin"))
+
+    def enable(self, organization):
+        return self.admin_client.patch(
+            reverse("organizations:organization-admin-detail", kwargs={"organization_id": organization.pk}), {"download_approval_required": True}, format="json",
+        )
+
+    def test_the_administrator_cannot_enable_approval_without_an_active_moderator(self):
+        response = self.enable(self.solo)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("moderator", str(response.data))
+        self.assertFalse(Organization.objects.get(pk=self.solo.pk).download_approval_required)
+        self.add_member("ap-solo-moderator", Role.MODERATOR, organization=self.solo)
+        self.assertEqual(self.enable(self.solo).status_code, status.HTTP_200_OK)
+        self.assertTrue(Organization.objects.get(pk=self.solo.pk).download_approval_required)
+
+    def test_a_suspended_or_deactivated_moderator_does_not_count(self):
+        moderator = self.add_member("ap-solo-moderator", Role.MODERATOR, organization=self.solo)
+        type(moderator).objects.filter(pk=moderator.pk).update(is_suspended=True)
+        self.assertEqual(self.enable(self.solo).status_code, status.HTTP_400_BAD_REQUEST)
+        type(moderator).objects.filter(pk=moderator.pk).update(is_suspended=False, is_active=False)
+        self.assertEqual(self.enable(self.solo).status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_the_owner_has_no_reviewer_when_the_only_moderator_is_gone_and_gets_a_clear_error(self):
+        self.require_approval(self.solo)
+        photo = self.make_photo(self.solo_owner, organization=self.solo)
+        owner_client = self.authenticated_client(self.solo_owner)
+        response = self.submit([photo], client=owner_client, organization=self.solo)
+        self.assertEqual((response.status_code, response.data["code"]), (status.HTTP_409_CONFLICT, "no_eligible_reviewer"))
+        self.assertIn("add a moderator", response.data["detail"])
+        self.assertFalse(DownloadRequest.objects.exists())
+        check = owner_client.post(reverse("downloads:request-check"), {"organization_id": self.solo.pk, "items": [{"image_id": photo.pk}]}, format="json")
+        self.assertFalse(check.data["reviewer_available"])
+
+    def test_a_member_of_the_same_organization_can_still_request_because_the_owner_reviews(self):
+        self.require_approval(self.solo)
+        photo = self.make_photo(self.solo_member, organization=self.solo)
+        client = self.authenticated_client(self.solo_member)
+        self.assertEqual(self.submit([photo], client=client, organization=self.solo).status_code, status.HTTP_201_CREATED)
+        check = client.post(reverse("downloads:request-check"), {"organization_id": self.solo.pk, "items": [{"image_id": photo.pk}]}, format="json")
+        self.assertTrue(check.data["reviewer_available"])
+
+    def test_nobody_gets_a_way_to_approve_their_own_request_and_the_administrator_cannot_decide(self):
+        self.require_approval(self.solo)
+        self.add_member("ap-solo-moderator", Role.MODERATOR, organization=self.solo)
+        photo = self.make_photo(self.solo_member, organization=self.solo)
+        with self.captureOnCommitCallbacks(execute=True):
+            made = self.submit([photo], client=self.authenticated_client(self.solo_member), organization=self.solo)
+        url = reverse("org-download-request-decision", kwargs={"organization_id": self.solo.pk, "request_id": made.data["request"]["id"]})
+        self.assertEqual(self.admin_client.post(url, {"action": "approve_all"}, format="json").status_code, status.HTTP_404_NOT_FOUND)       # not a member: no unrestricted admin access
+        self.assertEqual(self.authenticated_client(self.solo_member).post(url, {"action": "approve_all"}, format="json").status_code, status.HTTP_403_FORBIDDEN)
+
+
+class ReviewThrottleTests(ApprovalFixture, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.require_approval()
+        from django.core.cache import cache
+
+        cache.clear()
+        self.addCleanup(cache.clear)
+
+    def test_decisions_have_their_own_limit_of_120_an_hour(self):
+        from django.conf import settings
+
+        from downloads.approval_views import OrganizationDownloadGrantRevokeView, OrganizationDownloadRequestDecisionView
+
+        rates = settings.REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]
+        self.assertEqual(rates["download_review"], "120/hour")
+        self.assertEqual(OrganizationDownloadRequestDecisionView.throttle_scope, "download_review")
+        self.assertEqual(OrganizationDownloadGrantRevokeView.throttle_scope, "download_review")
+        self.assertNotEqual(OrganizationDownloadRequestDecisionView.throttle_scope, "org_invite")
+
+    def test_a_moderator_who_reaches_the_limit_is_throttled_and_the_invitation_limit_is_untouched(self):
+        from rest_framework.throttling import SimpleRateThrottle
+
+        request, images = self.make_request(self.photos(4))
+        ids = [self.item_for(request, image).pk for image in images]
+        rates = {**SimpleRateThrottle.THROTTLE_RATES, "download_review": "2/hour"}
+        with mock.patch.object(SimpleRateThrottle, "THROTTLE_RATES", rates):
+            codes = [self.decide(request, "deny_selected", item_ids=[item_id], reason=self.reasons()).status_code for item_id in ids[:3]]
+            invite = self.moderator_client.post(reverse("organizations:organization-invitation-list-create", kwargs={"organization_id": self.organization.pk}), {"email": "new@example.com", "role": "member"}, format="json")
+        self.assertEqual(codes, [status.HTTP_200_OK, status.HTTP_200_OK, status.HTTP_429_TOO_MANY_REQUESTS])
+        self.assertEqual(invite.status_code, status.HTTP_201_CREATED)                   # decisions did not use up the invitation allowance
+        self.assertEqual(request.items.filter(status="denied").count(), 2)
+
+
+class NotificationReliabilityTests(ApprovalFixture, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.require_approval()
+
+    def test_one_failing_reviewer_does_not_stop_the_others(self):
+        from notifications.services import create_user_notification as real
+
+        def flaky(**kwargs):
+            if kwargs["recipient"] == self.moderator and kwargs["event_type"] == "download_request_received":
+                raise RuntimeError("this moderator's notification fails")
+            return real(**kwargs)
+
+        with mock.patch("notifications.services.create_user_notification", side_effect=flaky):
+            request, _ = self.make_request()
+        self.assertTrue(UserNotification.objects.filter(recipient=self.owner, event_type="download_request_received").exists())
+        self.assertFalse(UserNotification.objects.filter(recipient=self.moderator, event_type="download_request_received").exists())
+        self.assertTrue(UserNotification.objects.filter(recipient=self.member, event_type="download_request_submitted").exists())
+        self.assertEqual(request.status, DownloadRequest.Status.PENDING)
+
+    def test_the_request_stays_in_the_moderator_queue_when_every_notification_fails(self):
+        with mock.patch("notifications.services.create_user_notification", side_effect=RuntimeError("down")):
+            request, _ = self.make_request()
+        listing = self.moderator_client.get(reverse("org-download-request-list", kwargs={"organization_id": self.organization.pk}) + "?status=pending,in_review")
+        self.assertEqual([row["id"] for row in listing.data], [request.pk])
+        self.assertEqual(self.decide(request, "approve_all").status_code, status.HTTP_200_OK)
+
+    def test_a_review_task_survives_muted_preferences_but_sends_no_e_mail(self):
+        from notifications.models import NotificationPreference
+
+        NotificationPreference.objects.update_or_create(user=self.moderator, defaults={"moderator_review_updates": False, "email_notifications": False})
+        self.make_request()
+        task = UserNotification.objects.get(recipient=self.moderator, event_type="download_request_received")
+        self.assertEqual(task.email_status, "skipped")
+        self.assertIsNone(task.read_at)
+
+    def test_a_muted_review_preference_alone_keeps_the_task_but_not_the_e_mail(self):
+        from notifications.models import NotificationPreference
+
+        NotificationPreference.objects.update_or_create(user=self.moderator, defaults={"moderator_review_updates": False, "email_notifications": True})
+        self.make_request()
+        self.assertEqual(UserNotification.objects.get(recipient=self.moderator, event_type="download_request_received").email_status, "skipped")
+        self.assertIn(UserNotification.objects.get(recipient=self.owner, event_type="download_request_received").email_status, ("queued", "sent"))
+
+
+class ClientTokenTests(ApprovalFixture, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.require_approval()
+
+    def test_the_same_token_with_a_different_selection_is_a_conflict(self):
+        first, second, third = self.photos(3)
+        made = self.submit([first, second], client_token="tok-1")
+        self.assertEqual(made.status_code, status.HTTP_201_CREATED)
+        clash = self.submit([first, third], client_token="tok-1")
+        self.assertEqual((clash.status_code, clash.data["code"]), (status.HTTP_409_CONFLICT, "client_token_reused"))
+        smaller = self.submit([first], client_token="tok-1")
+        self.assertEqual(smaller.data["code"], "client_token_reused")
+        self.assertEqual(DownloadRequest.objects.count(), 1)
+
+    def test_the_same_token_with_a_different_file_scope_is_a_conflict(self):
+        photo = self.make_photo(self.member, "p.png")
+        self.assertEqual(self.submit([photo], client_token="tok-2").status_code, status.HTTP_201_CREATED)
+        response = self.member_client.post(reverse("downloads:request-list-create"), {
+            "organization_id": self.organization.pk, "client_token": "tok-2", "items": [{"image_id": photo.pk, "artifact_type": "original"}],
+        }, format="json")
+        self.assertEqual((response.status_code, response.data["code"]), (status.HTTP_409_CONFLICT, "client_token_reused"))
+
+    def test_the_same_token_with_the_same_selection_still_returns_the_request(self):
+        photos = self.photos(2)
+        first = self.submit(photos, client_token="tok-3")
+        again = self.submit(list(reversed(photos)), client_token="tok-3")            # order does not matter
+        self.assertEqual((again.status_code, again.data["created"]), (status.HTTP_200_OK, False))
+        self.assertEqual(first.data["request"]["id"], again.data["request"]["id"])
+
+
+class RestrictedPreviewTests(ApprovalFixture, TestCase):
+    """Approval controls delivery, and a preview is a copy: while the owner holds no approval they see at most 800 px, watermarked."""
+
+    def setUp(self):
+        super().setUp()
+        self.big = self.make_photo(self.member, "big.png", size=(1600, 1200))
+
+    def thumbnail(self, image, size=1024, version="original", client=None):
+        return (client or self.member_client).get(reverse("image-thumbnail", kwargs={"pk": image.pk}) + f"?size={size}&version={version}")
+
+    def dims(self, response):
+        return Image.open(io.BytesIO(self.body(response))).size
+
+    def clean(self, field, size):
+        from thumbnails.services import render_thumbnail
+
+        return render_thumbnail(field, size)[0]
+
+    def grant(self, image):
+        DownloadGrant.objects.all().delete()
+        request = DownloadRequest.objects.create(organization=self.organization, requester=self.member)
+        item = Item.objects.create(request=request, image=image, artifact_type="enhanced", artifact_id=image.result.pk)
+        return DownloadGrant.objects.create(
+            item=item, organization=self.organization, grantee=self.member, image=image, artifact_type="enhanced", artifact_id=image.result.pk,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+    def test_without_an_approval_the_preview_is_at_most_800_px_and_watermarked(self):
+        self.require_approval()
+        for version, field in (("original", self.big.original_file), ("enhanced", self.big.result.enhanced_file)):
+            response = self.thumbnail(self.big, 1024, version)
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertLessEqual(max(self.dims(response)), 800)
+            self.assertEqual(response["X-Preview-Restricted"], "approval-required")
+            self.assertNotEqual(self.body(response), self.clean(field, 800))                     # the tiled watermark is in the pixels
+            self.assertIn("no-store", response["Cache-Control"])
+        self.assertLessEqual(max(self.dims(self.thumbnail(self.big, 256))), 256)                  # a small thumbnail is stamped too
+
+    def test_a_clean_cached_thumbnail_is_never_used_for_it(self):
+        self.thumbnail(self.big, 1024)                                                          # approval off: the clean 1024 px thumbnail is made and cached
+        self.require_approval()
+        response = self.thumbnail(self.big, 1024)
+        self.assertLessEqual(max(self.dims(response)), 800)
+
+    def test_with_an_active_approval_the_normal_preview_is_served(self):
+        self.require_approval()
+        self.grant(self.big)
+        response = self.thumbnail(self.big, 1024)
+        self.assertEqual(max(self.dims(response)), 1024)
+        self.assertNotIn("X-Preview-Restricted", response)
+        DownloadGrant.objects.all().update(expires_at=timezone.now() - timedelta(seconds=1))
+        self.assertLessEqual(max(self.dims(self.thumbnail(self.big, 1024))), 800)                # the approval ended: restricted again
+
+    def test_nothing_changes_when_approval_is_off_or_in_a_personal_workspace(self):
+        self.assertEqual(max(self.dims(self.thumbnail(self.big, 1024))), 1024)
+        personal = create_personal_organization(self.member)
+        Organization.objects.filter(pk=personal.pk).update(download_approval_required=True)
+        mine = self.make_photo(self.member, "mine.png", organization=personal, size=(1600, 1200))
+        response = self.thumbnail(mine, 1024)
+        self.assertEqual(max(self.dims(response)), 1024)
+        self.assertNotIn("X-Preview-Restricted", response)
+
+    def test_the_watermark_preview_route_is_restricted_too(self):
+        self.require_approval()
+        url = reverse("enhancement:result-watermark-preview", kwargs={"pk": self.big.result.pk}) + "?watermark=small"
+        response = self.member_client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content[:200])
+        self.assertLessEqual(max(self.dims(response)), 800)
+        self.assertEqual(response["X-Preview-Restricted"], "approval-required")
+
+    def test_comparison_and_edit_previews_are_restricted(self):
+        from enhancement.models import EditPreview, EditPreviewSource, ModelComparison, ModelComparisonOutput
+
+        comparison = ModelComparison.objects.create(owner=self.member, image=self.big, requested_level="auto", profiles=["natural"], status="completed")
+        output = ModelComparisonOutput.objects.create(comparison=comparison, profile="natural", outcome="completed")
+        output.preview_file.save("c.jpg", ContentFile(png((9, 9, 9), (1600, 1200))), save=True)
+        source = EditPreviewSource.objects.create(enhancement_result=self.big.result, source_version="x", width=1600, height=1200, full_width=1600, full_height=1200)
+        source.file.save("s.png", ContentFile(png((1, 1, 1), (1600, 1200))), save=True)
+        preview = EditPreview.objects.create(
+            owner=self.member, enhancement_result=self.big.result, source=source, revision=1, settings_hash="h" * 64, mode="manual", output_format="png", width=1600, height=1200,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+        preview.file.save("p.png", ContentFile(png((5, 5, 5), (1600, 1200))), save=True)
+        compare_url = reverse("enhancement:comparison-preview", kwargs={"pk": comparison.pk, "profile": "natural"})
+        edit_url = reverse("enhancement:preview-image", kwargs={"pk": preview.pk})
+        self.assertEqual(Image.open(io.BytesIO(self.body(self.member_client.get(compare_url)))).size, (1600, 1200))          # approval off: as before
+        self.assertEqual(Image.open(io.BytesIO(self.body(self.member_client.get(edit_url)))).size, (1600, 1200))
+        self.require_approval()
+        for url in (compare_url, edit_url):
+            response = self.member_client.get(url)
+            self.assertLessEqual(max(self.dims(response)), 800, url)
+            self.assertEqual(response["X-Preview-Restricted"], "approval-required")
+
+    def test_a_moderator_keeps_the_review_previews_of_other_members_images(self):
+        self.require_approval()
+        url = reverse("moderation:image-preview", kwargs={"organization_id": self.organization.pk, "image_id": self.big.pk}) + "?variant=original&size=1024"
+        response = self.moderator_client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(max(self.dims(response)), 1024)
+        self.assertNotIn("X-Preview-Restricted", response)
+
+    def test_a_moderator_looking_at_their_own_image_is_restricted_like_any_owner(self):
+        self.require_approval()
+        own = self.make_photo(self.moderator, "mod.png", size=(1600, 1200))
+        url = reverse("moderation:image-preview", kwargs={"organization_id": self.organization.pk, "image_id": own.pk}) + "?variant=original&size=1024"
+        response = self.moderator_client.get(url)
+        self.assertLessEqual(max(self.dims(response)), 800)
+        self.assertEqual(response["X-Preview-Restricted"], "approval-required")
+        enhanced = self.moderator_client.get(url.replace("original", "enhanced"))
+        self.assertLessEqual(max(self.dims(enhanced)), 800)
+
+    def test_another_member_still_cannot_see_the_image_at_all(self):
+        self.require_approval()
+        self.assertEqual(self.thumbnail(self.big, 256, client=self.authenticated_client(self.other_member)).status_code, status.HTTP_404_NOT_FOUND)

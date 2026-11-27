@@ -325,6 +325,10 @@ class EnhancementWatermarkPreviewView(APIView):
         spec = _watermark_spec(request)
         if not spec.active:
             raise ValidationError({"watermark": ["Choose a watermark mode to preview."]})
+        from downloads.previews import preview_is_restricted, restricted_response
+
+        if preview_is_restricted(request.user, result.image):
+            return restricted_response(result.enhanced_file, request.user)         # approval required and none held: 800 px, tiled watermark whatever was asked
         payload, content_type = _watermarked_file(
             result.enhanced_file, result.output_format, spec, request.user,
             max_edge=PREVIEW_MAX_EDGE,
@@ -697,6 +701,10 @@ class ModelComparisonPreviewView(APIView):
         )
         if not output.preview_file:
             return Response({"detail": "The preview is unavailable."}, status=status.HTTP_404_NOT_FOUND)
+        from downloads.previews import preview_is_restricted, restricted_response
+
+        if preview_is_restricted(request.user, output.comparison.image):
+            return restricted_response(output.preview_file, request.user)
         response = FileResponse(output.preview_file.open("rb"), content_type="image/jpeg")
         response["Cache-Control"] = "private, no-store"
         return response
@@ -798,6 +806,10 @@ class EditPreviewImageView(APIView):
                               404: OpenApiTypes.OBJECT})
     def get(self, request, pk):
         preview = get_object_or_404(EditPreview.objects.filter(owner=request.user, enhancement_result__image__trashed_at__isnull=True), pk=pk)
+        from downloads.previews import preview_is_restricted, restricted_response
+
+        if preview_is_restricted(request.user, preview.enhancement_result.image):
+            return restricted_response(preview.file, request.user)
         content_type = "image/png" if preview.output_format == "png" else "image/jpeg"
         response = FileResponse(preview.file.open("rb"), content_type=content_type)
         response["Cache-Control"] = "private, max-age=3600"

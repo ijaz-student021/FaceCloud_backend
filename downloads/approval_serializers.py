@@ -38,6 +38,7 @@ class EligibilityRowSerializer(serializers.Serializer):
 
 class EligibilityResponseSerializer(serializers.Serializer):
     approval_required = serializers.BooleanField()
+    reviewer_available = serializers.BooleanField(help_text="False when nobody in the organization could decide a request from you (a request is never approved by its requester): submitting it answers 409 no_eligible_reviewer.")
     items = EligibilityRowSerializer(many=True)
 
 

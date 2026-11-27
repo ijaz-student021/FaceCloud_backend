@@ -74,6 +74,7 @@ class DownloadEligibilityView(APIView):
             raise ValidationError({"items": [f"Check at most {settings.DOWNLOAD_REQUEST_MAX_ITEMS} images at a time."]})
         return Response({
             "approval_required": approval.organization_requires_approval(organization),
+            "reviewer_available": bool(approval.eligible_reviewers(organization, request.user.pk)),
             "items": approval.eligibility_report(request.user, organization, entries),
         })
 
@@ -285,7 +286,7 @@ class OrganizationDownloadRequestDetailView(OrganizationDownloadRequestMixin, AP
 class OrganizationDownloadRequestDecisionView(OrganizationDownloadRequestMixin, APIView):
     """Approve or deny the images of a request. The first decision on an image wins: a second moderator who decides the same image gets 409."""
 
-    throttle_scope = "org_invite"
+    throttle_scope = "download_review"                # its own limit (THROTTLE_RATE_DOWNLOAD_REVIEW, 120/hour per moderator), not the invitation limit
 
     @extend_schema(
         request=DownloadDecisionSerializer, responses={200: DownloadRequestDetailSerializer, **ERROR_RESPONSES}, summary="Decide a download request",
@@ -307,6 +308,8 @@ class OrganizationDownloadRequestDecisionView(OrganizationDownloadRequestMixin, 
 
 class OrganizationDownloadGrantRevokeView(OrganizationDownloadRequestMixin, APIView):
     """Withdraw an approval before it expires: nothing further is delivered. A file already downloaded cannot be recalled."""
+
+    throttle_scope = "download_review"
 
     @extend_schema(request=GrantRevokeSerializer, responses={200: DownloadGrantSerializer, **ERROR_RESPONSES})
     def post(self, request, organization_id, grant_id):

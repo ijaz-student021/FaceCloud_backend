@@ -3,14 +3,15 @@
 An organization can require that its members download an image only after a moderator has approved it. It is **off for every organization** until the FaceCloud
 administrator turns it on, and it never applies to a personal workspace. Where it is off, every download behaves exactly as before.
 
-Status: backend implemented and tested; no frontend yet; not deployed. Code: `downloads/approval.py` (rules), `downloads/approval_views.py` and
-`downloads/approval_serializers.py` (API), `downloads/models.py` (three models), `downloads/test_download_approval.py` (57 tests).
+Status: backend implemented and tested on SQLite and PostgreSQL; no frontend yet; not deployed. Code: `downloads/approval.py` (rules), `downloads/previews.py` (reduced previews),
+`downloads/approval_views.py` and `downloads/approval_serializers.py` (API), `downloads/models.py` (three models). Tests: `downloads/test_download_approval.py` (80) and
+`downloads/test_download_approval_concurrency.py` (6, PostgreSQL only: separate connections and threads).
 
 ## The setting
 
 | Field on `Organization` | Meaning |
 |---|---|
-| `download_approval_required` | `false` by default. Only the platform administrator changes it (`PATCH /api/organizations/admin/{id}/`); an owner gets 403 if they try. A personal workspace cannot turn it on. |
+| `download_approval_required` | `false` by default. Only the platform administrator changes it (`PATCH /api/organizations/admin/{id}/`); an owner gets 403 if they try. A personal workspace cannot turn it on. **Turning it on needs at least one active moderator** in the organization (not suspended or deactivated); otherwise 400, because nobody approves their own request and the owner's own requests would have no reviewer. |
 | `download_grant_hours` | How long an approval lasts for this organization. `null` = the platform default `DOWNLOAD_GRANT_DEFAULT_HOURS` (24). |
 
 Both are read-only in the organization endpoints members use, so a screen can decide whether to show "Request download access".
@@ -37,6 +38,13 @@ Changing them is written to the organization's audit trail (`organization_update
 | `cancelled` | the requester withdrew it before any decision (`POST .../cancel/`) |
 
 The status is always computed from the items' decisions, so it cannot disagree with them. 12 requested, 10 approved, 2 denied is `partially_approved`.
+
+### Who can decide
+
+The organization's owner and its moderators, but **never the person who made the request** (no self-approval for owners or moderators either), and a moderator only for the members they may see
+(`moderator_data_scope`). The platform administrator has no access to decide: they are not a member, so the decision endpoints answer 404. When nobody can decide a request, submitting it
+answers `409 no_eligible_reviewer` ("ask your organization owner or the FaceCloud administrator to add a moderator"), and `POST requests/check/` returns `reviewer_available: false` so a screen can
+say so before the member selects anything. This happens for example to an owner whose organization has no moderator any more.
 
 ### What can be requested
 
@@ -66,8 +74,24 @@ the trash, the member no longer an active member, or the organization suspended.
 | person-folder ZIPs (create, download, share, regenerate) when any photo in the folder is in such an organization | 403 `bulk_not_allowed` |
 | public share links: creating one for such an image | 403 `bulk_not_allowed`; links made earlier answer 410 while approval is on |
 
-Every refusal is written to the organization's audit trail (`download_blocked`). **Not** gated, on purpose: thumbnails and inline previews (the gallery), the 160-pixel
-previews inside a processing report PDF, the moderators' own previews, and the JSON organization export and CSV/PDF moderator reports (they contain no image bytes).
+Every refusal is written to the organization's audit trail (`download_blocked`). **Not** gated, on purpose: the 160-pixel previews inside a processing report PDF, person-folder avatar crops
+(at most 384 px), the other members' images in the moderators' review previews, and the JSON organization export and CSV/PDF moderator reports (they contain no image bytes).
+
+## Previews while no approval is held
+
+A preview on the screen is a copy too. For an image in an organization that requires approval, its owner (a member, or a moderator looking at their own image) who holds **no active approval** for it
+gets only a reduced, watermarked preview: **at most 800 px** (`DOWNLOAD_APPROVAL_PREVIEW_MAX_EDGE`, never above 800), with a tiled FaceCloud watermark, rendered on the fly (the clean cached thumbnail is never
+used), `Cache-Control: private, no-store`, header `X-Preview-Restricted: approval-required`. It applies to every route that shows the owner the image:
+
+| Route | Restricted |
+|---|---|
+| `GET /api/images/{id}/thumbnail/` (and the trash thumbnail), both versions, sizes 256 and 1024 | yes: at most the requested size, never above 800 |
+| `GET /api/enhancements/results/{id}/watermark-preview/` | yes: 800 px, tiled watermark whatever was asked |
+| `GET /api/enhancements/comparisons/{id}/outputs/{profile}/preview/` | yes |
+| `GET /api/enhancements/previews/{id}/image/` (live-edit preview) | yes |
+| `GET /api/organizations/{id}/moderator/images/{image}/preview/`, `.../reviews/{review}/image/` | yes, **only** when the moderator looks at their own image; the images of other members keep the normal review preview |
+
+With an active approval, with approval off, and in a personal workspace nothing changes. Once an approval expires or is revoked the preview is restricted again at once.
 
 ## API
 
@@ -75,7 +99,7 @@ Member (`/api/downloads/`):
 
 | Call | Purpose |
 |---|---|
-| `POST requests/check/` | eligibility and access state (`not_requested`, `pending`, `granted`, `denied`, `expired`, `revoked`) per image |
+| `POST requests/check/` | eligibility and access state (`not_requested`, `pending`, `granted`, `denied`, `expired`, `revoked`) per image, and `reviewer_available` |
 | `POST requests/` | submit one request; send `client_token` so a retry returns the same request (200 instead of 201) |
 | `GET requests/`, `GET requests/{id}/` | my requests (filters `status`, `organization`) and one request with its items |
 | `POST requests/{id}/cancel/` | withdraw a request nobody started to decide |
@@ -98,15 +122,16 @@ since the request is denied as `no_longer_eligible` instead of approved. Errors:
 
 ## Concurrency and repeats
 
-A decision takes a lock on the request row, so two moderators cannot decide the same image twice: the later one gets 409. A submission takes a lock on the requester, so the
-"already requested" check cannot race, and `client_token` (unique per requester) makes a retry return the existing request.
+A decision takes a lock on the request and its item rows (`select_for_update(of=("self",))`: PostgreSQL refuses `FOR UPDATE` on the nullable side of an outer join, so only the model's own rows are locked), so
+two moderators cannot decide the same image twice: the later one gets 409. A submission takes a lock on the requester, so the "already requested" check cannot race. `client_token` (unique per requester)
+makes a retry return the existing request, also when two identical submissions arrive at the same instant; reusing a token for a **different organization, selection or file scope is `409 client_token_reused`**.
+The PostgreSQL concurrency tests prove this with separate connections (and were checked to fail when the lock is removed).
 
 ## Notifications and e-mail
 
-New event types `download_request_submitted` (requester, in-app), `download_request_received` (owner and moderators who may see the requester; in-app and e-mail, controlled by
-the moderator-updates preference) and `download_request_decided` (requester; in-app and e-mail; one per finalized request, titles "Download Request Approved", "...Partially
-Approved", "...Denied"). They are created after the decision is committed and idempotent per request; a failure to create one or to queue its e-mail is logged and recorded on the
-notification (`email_status`), and never undoes the decision. E-mails carry a link to the authenticated page and never a photograph. Frontend routes used in links (to be built or
+New event types `download_request_submitted` (requester, in-app), `download_request_received` (owner and moderators who may see the requester; always an in-app task, even if their e-mail or review-update preferences are off; the e-mail follows the preferences) and `download_request_decided` (requester; in-app and e-mail; one per finalized request, titles "Download Request Approved", "...Partially
+Approved", "...Denied"). They are created after the decision is committed and idempotent per request; each person is handled on their own, so a failure for one moderator never stops the others, and a failure to create one or to queue
+its e-mail is logged and recorded on the notification (`email_status`) and never undoes the decision or removes the request from the moderator queue (the queue is read from the database, not from notifications). E-mails carry a link to the authenticated page and never a photograph. Frontend routes used in links (to be built or
 adjusted): `/dashboard/download-requests/{id}` and `/moderator/download-requests/{id}?organization={id}`.
 
 ## Audit trail
@@ -116,7 +141,8 @@ adjusted): `/dashboard/download-requests/{id}` and `/moderator/download-requests
 
 ## Settings (environment variables)
 
-`DOWNLOAD_GRANT_DEFAULT_HOURS` (24), `DOWNLOAD_REQUEST_MAX_ITEMS` (100), `DOWNLOAD_GRANT_MAX_USES` (0 = unlimited). Existing `NOTIFICATION_EMAILS_ENABLED` and the e-mail
+`DOWNLOAD_GRANT_DEFAULT_HOURS` (24), `DOWNLOAD_REQUEST_MAX_ITEMS` (100), `DOWNLOAD_GRANT_MAX_USES` (0 = unlimited), `DOWNLOAD_APPROVAL_PREVIEW_MAX_EDGE` (800, at most 800),
+`THROTTLE_RATE_DOWNLOAD_REVIEW` (120/hour per moderator for decisions and revocations; its own limit, separate from the invitation limit). Existing `NOTIFICATION_EMAILS_ENABLED` and the e-mail
 settings apply to the e-mails. Nothing is read from the storage layout: files stay under `users/{owner_id}/...` and none is moved.
 
 ## Migrations (additive only)
@@ -128,6 +154,8 @@ settings apply to the e-mails. Nothing is read from the storage layout: files st
 ## Known limits
 
 * A ZIP is built when it is asked for, in the request, for at most `DOWNLOAD_REQUEST_MAX_ITEMS` images; a very large request would be better as a background job.
-* Locking is tested sequentially here; the database locks (`select_for_update`) take effect on PostgreSQL, which is what CI and production use.
+* Concurrency is tested on PostgreSQL with threads and separate connections (skipped on SQLite, which cannot lock rows); it was not load-tested.
+* While approval is on, a member sees the image at most 800 px and watermarked until approved; they can still look at it. A determined person can photograph a screen: approval controls files, not eyes.
 * Statistics for the administrator and the owner dashboard (counts of requests by status) are not part of this change.
+* Before turning the setting on for any organization, the frontend must handle the 403 `download_approval_required` answer of the download routes and the new request screens, or members see failing download buttons.
 * The frontend screens (request button and selection, "My requests", the moderator queue and preview) are not built yet.

@@ -205,6 +205,28 @@ def eligibility_report(user, organization, entries):
 
 
 # --------------------------------------------------------------------------------------------------------------------------------------------------------------
+# Who can decide a request
+# --------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+def eligible_reviewers(organization, requester_id):
+    """The active owners and moderators who may decide ``requester_id``'s requests: not the requester (nobody approves their own), and, when moderators see only their own members,
+    those who may see this member. Suspended or deactivated accounts do not count."""
+    return [
+        membership for membership in moderators_who_see(organization, requester_id)
+        if membership.user_id != requester_id and membership.user.is_active and not getattr(membership.user, "is_suspended", False)
+    ]
+
+
+def assert_reviewer_available(organization, requester_id):
+    if not eligible_reviewers(organization, requester_id):
+        raise DownloadConflict(
+            "no_eligible_reviewer",
+            "Nobody in your organization can review this request yet: a request is never approved by the person who made it. Ask your organization owner or the FaceCloud administrator to add a moderator.",
+        )
+
+
+# --------------------------------------------------------------------------------------------------------------------------------------------------------------
 # Submitting a request
 # --------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -224,7 +246,9 @@ def create_request(*, user, organization_id, entries, message="", client_token="
     if client_token:
         existing = Request.objects.filter(requester=user, client_token=client_token).first()
         if existing is not None:
+            _assert_same_submission(existing, organization, entries)
             return existing, False
+    assert_reviewer_available(organization, user.pk)
     if not 1 <= len(entries) <= settings.DOWNLOAD_REQUEST_MAX_ITEMS:
         raise ValidationError({"items": [f"Select between 1 and {settings.DOWNLOAD_REQUEST_MAX_ITEMS} images."]})
     seen = set()
@@ -237,6 +261,11 @@ def create_request(*, user, organization_id, entries, message="", client_token="
     try:
         with transaction.atomic():
             get_user_model().objects.select_for_update().get(pk=user.pk)               # one submission at a time per person: the "already requested" check below cannot race
+            if client_token:                                                          # the same submission sent twice at once: the second one finds the first, now it is committed
+                existing = Request.objects.filter(requester=user, client_token=client_token).first()
+                if existing is not None:
+                    _assert_same_submission(existing, organization, entries)
+                    return existing, False
             images = {
                 image.pk: image for image in
                 ImageUpload.objects.select_related("batch__organization", "quality_decision").filter(pk__in=[entry["image_id"] for entry in entries], owner=user, batch__organization=organization)
@@ -267,8 +296,21 @@ def create_request(*, user, organization_id, entries, message="", client_token="
         existing = Request.objects.filter(requester=user, client_token=client_token).first() if client_token else None
         if existing is None:
             raise
+        _assert_same_submission(existing, organization, entries)
         return existing, False
     return download_request, True
+
+
+def _assert_same_submission(existing, organization, entries):
+    """A ``client_token`` stands for ONE submission: reusing it for a different organization, selection or file scope is a 409, never a silent return of the earlier request."""
+    saved = {(item.image_id, item.artifact_type): item.artifact_id for item in existing.items.all()}
+    sent = {(entry["image_id"], entry.get("artifact_type") or Artifact.ENHANCED): entry.get("artifact_id") for entry in entries}
+    same = (
+        existing.organization_id == organization.pk and saved.keys() == sent.keys()
+        and all(artifact_id is None or artifact_id == saved[key] for key, artifact_id in sent.items())
+    )
+    if not same:
+        raise DownloadConflict("client_token_reused", "This client_token was already used for a different selection of images. Use a new token for a new request.")
 
 
 # --------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -320,7 +362,7 @@ def decide(*, download_request_id, actor, organization, scope, action, item_ids=
     item_ids = [int(value) for value in (item_ids or [])]
     item_reasons = item_reasons or {}
     with transaction.atomic():
-        download_request = Request.objects.select_for_update().select_related("requester").filter(pk=download_request_id, organization=organization).first()
+        download_request = Request.objects.select_for_update(of=("self",)).select_related("requester").filter(pk=download_request_id, organization=organization).first()
         if download_request is None or not scope.sees(download_request.requester_id):
             from django.http import Http404
 
@@ -333,7 +375,7 @@ def decide(*, download_request_id, actor, organization, scope, action, item_ids=
             raise DownloadConflict("request_closed", "This request is already decided or was cancelled.")
         if expected_version is not None and expected_version != download_request.version:
             raise DownloadConflict("request_changed", "Someone else changed this request. Reload it and decide again.")
-        all_items = list(download_request.items.select_for_update().select_related("image__batch__organization", "image__quality_decision"))
+        all_items = list(download_request.items.select_for_update(of=("self",)).select_related("image__batch__organization", "image__quality_decision"))
         by_id = {item.pk: item for item in all_items}
         pending = [item for item in all_items if item.status == Item.Status.PENDING]
         if action in (APPROVE_SELECTED, DENY_SELECTED):
@@ -400,7 +442,7 @@ def decide(*, download_request_id, actor, organization, scope, action, item_ids=
 def cancel_request(*, download_request, user, http_request=None):
     """The requester withdraws a request nobody has started deciding."""
     with transaction.atomic():
-        locked = Request.objects.select_for_update().get(pk=download_request.pk, requester=user)
+        locked = Request.objects.select_for_update(of=("self",)).get(pk=download_request.pk, requester=user)
         if locked.status != Request.Status.PENDING:
             raise DownloadConflict("request_not_cancellable", "Only a request that nobody has started to decide can be cancelled.")
         locked.status = Request.Status.CANCELLED
@@ -504,6 +546,8 @@ MODERATOR_REQUESTS_PATH = "/moderator/download-requests"
 
 
 def _notify_submitted(request_id):
+    """The requester is told it went in; every reviewer who can decide it gets an in-app task (always, whatever their e-mail or review-update preferences) and an e-mail
+    where their settings allow. Each person is handled on their own: a failure for one never stops the others, and none of it touches the request, which stays in the queue."""
     from notifications.models import UserNotification
     from notifications.services import create_user_notification
 
@@ -511,28 +555,40 @@ def _notify_submitted(request_id):
         download_request = Request.objects.select_related("requester", "organization").get(pk=request_id)
         count = download_request.items.count()
         who = download_request.requester.get_username()
+        base = {"resource_type": "download_request", "resource_id": request_id, "metadata": {"request_id": request_id, "organization_id": download_request.organization_id, "total": count}}
+    except Exception:
+        logger.exception("Could not read download request %s to notify about it.", request_id)
+        return
+    try:
         create_user_notification(
             recipient=download_request.requester, event_type=UserNotification.EventType.DOWNLOAD_REQUEST_SUBMITTED,
             idempotency_key=f"download_request:{request_id}:submitted", title="Download Request Submitted",
-            message="Your download request has been sent to your organization's moderator for review.",
-            resource_type="download_request", resource_id=request_id, action_path=f"{REQUESTS_PATH}/{request_id}",
-            metadata={"request_id": request_id, "organization_id": download_request.organization_id, "total": count},
+            message="Your download request has been sent to your organization's moderator for review.", action_path=f"{REQUESTS_PATH}/{request_id}", **base,
         )
-        reviewers = [membership.user for membership in moderators_who_see(download_request.organization, download_request.requester_id) if membership.user_id != download_request.requester_id]
-        if not reviewers:                               # nobody in the organization can decide it: the platform administrators are told instead
-            reviewers = list(get_user_model().objects.filter(role="admin", is_active=True)[:20])
-            logger.warning("Download request %s has no moderator or owner who can decide it; the administrators were told.", request_id)
-        for reviewer in reviewers:
+    except Exception:
+        logger.exception("Could not notify the requester of download request %s.", request_id)
+    try:
+        reviewers = [membership.user for membership in eligible_reviewers(download_request.organization, download_request.requester_id)]
+    except Exception:
+        logger.exception("Could not work out who reviews download request %s.", request_id)
+        reviewers = []
+    if not reviewers:                                   # the reviewers left after the request was made: the platform administrators are told that the organization needs one
+        reviewers = list(get_user_model().objects.filter(role="admin", is_active=True)[:20])
+        logger.warning("Download request %s has no reviewer who can decide it; the administrators were told.", request_id)
+    failed = 0
+    for reviewer in reviewers:
+        try:
             create_user_notification(
                 recipient=reviewer, event_type=UserNotification.EventType.DOWNLOAD_REQUEST_RECEIVED,
                 idempotency_key=f"download_request:{request_id}:received", title="Download request to review",
                 message=f"{who} asked to download {count} image{'s' if count != 1 else ''} from {download_request.organization.name}.",
-                resource_type="download_request", resource_id=request_id,
-                action_path=f"{MODERATOR_REQUESTS_PATH}/{request_id}?organization={download_request.organization_id}",
-                metadata={"request_id": request_id, "organization_id": download_request.organization_id, "total": count},
+                action_path=f"{MODERATOR_REQUESTS_PATH}/{request_id}?organization={download_request.organization_id}", force_in_app=True, **base,
             )
-    except Exception:
-        logger.exception("Could not create the notifications of download request %s.", request_id)
+        except Exception:
+            failed += 1
+            logger.exception("Could not notify reviewer %s of download request %s.", reviewer.pk, request_id)
+    if failed:
+        logger.error("Download request %s: %s of %s reviewers could not be notified; it is still in the moderator queue.", request_id, failed, len(reviewers))
 
 
 def _notify_decided(request_id):

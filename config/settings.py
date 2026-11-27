@@ -1445,8 +1445,10 @@ DOWNLOAD_GRANT_DEFAULT_HOURS = env.int("DOWNLOAD_GRANT_DEFAULT_HOURS", default=2
 DOWNLOAD_GRANT_MAX_HOURS = 24 * 30
 DOWNLOAD_REQUEST_MAX_ITEMS = env.int("DOWNLOAD_REQUEST_MAX_ITEMS", default=100)
 DOWNLOAD_GRANT_MAX_USES = env.int("DOWNLOAD_GRANT_MAX_USES", default=0)
-if not 1 <= DOWNLOAD_GRANT_DEFAULT_HOURS <= DOWNLOAD_GRANT_MAX_HOURS or DOWNLOAD_REQUEST_MAX_ITEMS < 1 or DOWNLOAD_GRANT_MAX_USES < 0:
-    raise ImproperlyConfigured("DOWNLOAD_GRANT_DEFAULT_HOURS must be 1-720, DOWNLOAD_REQUEST_MAX_ITEMS at least 1 and DOWNLOAD_GRANT_MAX_USES at least 0.")
+# The largest side, in pixels, of a preview of an image in an organization that requires approval, for the person who owns it and holds no approval (it is watermarked too).
+DOWNLOAD_APPROVAL_PREVIEW_MAX_EDGE = env.int("DOWNLOAD_APPROVAL_PREVIEW_MAX_EDGE", default=800)
+if not 1 <= DOWNLOAD_GRANT_DEFAULT_HOURS <= DOWNLOAD_GRANT_MAX_HOURS or DOWNLOAD_REQUEST_MAX_ITEMS < 1 or DOWNLOAD_GRANT_MAX_USES < 0 or not 64 <= DOWNLOAD_APPROVAL_PREVIEW_MAX_EDGE <= 800:
+    raise ImproperlyConfigured("DOWNLOAD_GRANT_DEFAULT_HOURS must be 1-720, DOWNLOAD_REQUEST_MAX_ITEMS at least 1, DOWNLOAD_GRANT_MAX_USES at least 0 and DOWNLOAD_APPROVAL_PREVIEW_MAX_EDGE 64-800.")
 NOTIFICATION_EMAILS_ENABLED = env.bool(
     "NOTIFICATION_EMAILS_ENABLED", default=True,
 )
@@ -1549,6 +1551,8 @@ REST_FRAMEWORK = {
         "search": "600/hour",
         "share_public": "120/hour",
         "org_invite": "30/hour",
+        # Download review: approving, denying and revoking download approvals, per moderator (its own limit, not the invitation one).
+        "download_review": "120/hour",
         "org_export": "10/hour",
         "org_branding": "30/hour",
         "org_batch_action": "60/hour",
