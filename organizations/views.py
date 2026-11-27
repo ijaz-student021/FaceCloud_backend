@@ -85,6 +85,12 @@ class AdminOrganizationListCreateView(generics.ListCreateAPIView):
 
     permission_classes = [IsAdminRole]
 
+    @extend_schema(parameters=[OpenApiParameter("kind", str, enum=["organization", "personal", "all"], description=(
+        "`organization`: the shared organizations only; `personal`: every account's private workspace; `all` (the default): both. The Organizations screen should ask for `organization`: "
+        "private workspaces belong to the Personal Users screen."))])
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
     @property
     def throttle_scope(self):
         # The 30 an hour limit is for creating organizations. Reading the list is what the Organizations, Moderators, Invitations and "add account" screens do each
@@ -92,7 +98,14 @@ class AdminOrganizationListCreateView(generics.ListCreateAPIView):
         return "org_invite" if self.request.method == "POST" else None
 
     def get_queryset(self):
-        return organizations_with_head_counts()
+        queryset = organizations_with_head_counts()
+        kind = self.request.query_params.get("kind") if self.request.method == "GET" else None
+        if kind:
+            if kind not in ("organization", "personal", "all"):
+                raise ValidationError({"kind": ["Choose organization, personal or all."]})
+            if kind != "all":
+                queryset = queryset.filter(is_personal=(kind == "personal"))
+        return queryset
 
     def get_serializer_class(self):
         return OrganizationCreateSerializer if self.request.method == "POST" else AdminOrganizationSerializer

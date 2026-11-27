@@ -88,6 +88,7 @@ CATALOGUE = {
     "user_delete_account_destroy": ("Delete my account", "Deletes the account after the password is confirmed (send `password`). Permanent."),
     "user_admin_users_create": ("Create an account for someone (administrators)", "Creates an already-verified account at once, with no verification email: `email`, `password`, `role` (`user` or `moderator`; never `admin`) and optionally `username`, `full_name` and, for a moderator, `organization_id`. Answers 201 with the same representation as the list. The password is hashed and appears in no response, event or log."),
     "user_admin_users_list": ("List users (administrators)", ""),
+    "user_admin_users_password_reset_create": ("Send a password reset link to an account", "E-mails the account's own address a link to choose a new password. The administrator never sees or sets a password; the response has no token or link. An administrator account can only be reset by a superuser."),
     "user_admin_users_retrieve": ("Get a user (administrators)", "An account's detail for administrators."),
     "user_admin_users_partial_update": ("Change a user (administrators)", "Role, suspension and similar account fields."),
     "user_admin_invitations_list": ("List invitations (administrators)", ""),

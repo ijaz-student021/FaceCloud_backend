@@ -8,6 +8,7 @@ from django.db.models import Q
 from django.db.models.functions import Lower
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework.exceptions import Throttled
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
@@ -350,18 +351,30 @@ class DeleteAccountSerializer(serializers.Serializer):
 class AdminUserSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(read_only=True)
     uploads_count = serializers.SerializerMethodField(help_text="Photos this account has uploaded (the list computes it for every row at once).")
+    shared_organization_count = serializers.SerializerMethodField(help_text="In how many shared organizations (not their own private workspace) the account is an active member.")
+    account_type = serializers.SerializerMethodField(help_text="`personal`: only their own private workspace. `organization`: an active member of at least one shared organization (owner, moderator or member); they still have a private workspace too.")
 
     class Meta:
         model = User
         fields = [
             "id", "username", "email", "full_name", "role", "is_email_verified", "is_suspended",
-            "suspension_reason", "is_active", "date_joined", "last_login", "uploads_count",
+            "suspension_reason", "is_active", "date_joined", "last_login", "uploads_count", "account_type", "shared_organization_count",
         ]
-        read_only_fields = ["id", "username", "email", "full_name", "is_email_verified", "date_joined", "last_login", "uploads_count"]
+        read_only_fields = ["id", "username", "email", "full_name", "is_email_verified", "date_joined", "last_login", "uploads_count", "account_type", "shared_organization_count"]
 
     def get_uploads_count(self, user) -> int:
         annotated = getattr(user, "uploads_count", None)
         return annotated if annotated is not None else user.image_uploads.count()
+
+    def get_shared_organization_count(self, user) -> int:
+        annotated = getattr(user, "shared_organization_count", None)
+        if annotated is not None:
+            return annotated
+        return user.organization_memberships.filter(status="active", organization__is_personal=False).count()
+
+    @extend_schema_field(serializers.ChoiceField(choices=["personal", "organization"]))
+    def get_account_type(self, user):
+        return "organization" if self.get_shared_organization_count(user) else "personal"
 
     def validate(self, attrs):
         if attrs.get("is_suspended") is False:
@@ -403,16 +416,22 @@ class AdminUserDetailSerializer(AdminUserSerializer):
 
     def get_organizations(self, user) -> list[dict]:
         return [
-            {"id": membership.organization_id, "name": membership.organization.name,
+            {"id": membership.organization_id, "name": membership.organization.name, "is_personal": membership.organization.is_personal,
              "role": membership.role, "status": membership.status}
             for membership in user.organization_memberships.select_related("organization").order_by("organization__name")
         ]
 
     def get_usage(self, user) -> dict:
+        from django.db.models import Sum
+
+        from uploads.models import ImageUpload
+
         return {
             "upload_batches": user.upload_batches.count(),
             "images": user.image_uploads.count(),
             "enhancements": user.image_enhancement_results.count(),
+            # the size of the original uploads, the trash included until it is purged
+            "storage_bytes": ImageUpload.all_objects.filter(owner=user).aggregate(total=Sum("file_size"))["total"] or 0,
         }
 
 
@@ -421,7 +440,9 @@ class AdminUserCreateSerializer(serializers.Serializer):
 
     username = serializers.CharField(max_length=150, required=False, allow_blank=True)
     email = serializers.EmailField()
-    password = serializers.CharField(write_only=True, trim_whitespace=False)
+    password = serializers.CharField(write_only=True, trim_whitespace=False, required=False, help_text=(
+        "Optional, and better left out: without it the account has no password and the person is e-mailed a link to choose their own, so nobody else ever knows it. "
+        "If given, it is checked like a sign-up password and stored hashed; it is never e-mailed or returned."))
     role = serializers.ChoiceField(choices=["user", "moderator"], default="user",
                                    help_text="`user` or `moderator`. An administrator account cannot be created here.")
     organization_id = serializers.IntegerField(required=False, allow_null=True,
@@ -444,10 +465,11 @@ class AdminUserCreateSerializer(serializers.Serializer):
         username = attrs.get("username") or derive_username(attrs["email"])
         first_name, last_name = split_full_name(attrs.get("full_name", ""))
         candidate = User(username=username, email=attrs["email"], first_name=first_name, last_name=last_name)
-        try:
-            password_validation.validate_password(attrs["password"], user=candidate)
-        except DjangoValidationError as error:
-            raise serializers.ValidationError({"password": list(error.messages)}) from error
+        if attrs.get("password"):
+            try:
+                password_validation.validate_password(attrs["password"], user=candidate)
+            except DjangoValidationError as error:
+                raise serializers.ValidationError({"password": list(error.messages)}) from error
         attrs["username"] = username
         organization_id = attrs.get("organization_id")
         if attrs["role"] == "moderator":

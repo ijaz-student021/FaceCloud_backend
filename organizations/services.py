@@ -260,29 +260,40 @@ def update_organization(
     return locked
 
 
-def get_default_organization(user):
-    """The organization new content the user creates should be tagged with.
-
-    Prefers their personal organization (every user has exactly one, from
-    ``create_personal_organization``) so ownership keeps behaving the way it
-    always has; falls back to their oldest other active membership, and to
-    ``None`` only for a user with no organization at all (a test fixture
-    created directly rather than through registration). A suspended organization is never the default.
-    """
-    membership = (
-        OrganizationMembership.objects.select_related("organization")
-        .filter(user=user, status=OrganizationMembership.Status.ACTIVE, organization__status=Organization.Status.ACTIVE)
-        .order_by("-organization__is_personal", "created_at")
-        .first()
+def personal_organization_of(user):
+    """The user's personal workspace (the organization every account owns alone, ``is_personal``), or ``None`` when the account has none."""
+    return (
+        Organization.objects.filter(
+            is_personal=True, memberships__user=user, memberships__role=OrganizationMembership.Role.OWNER, memberships__status=OrganizationMembership.Status.ACTIVE,
+        ).order_by("pk").first()
     )
-    return membership.organization if membership else None
+
+
+def ensure_personal_organization(user):
+    """The user's personal workspace, created if the account has none (an account made by an administrator, or from before workspaces). Safe to call twice at once."""
+    existing = personal_organization_of(user)
+    if existing is not None:
+        return existing
+    with transaction.atomic():
+        type(user).objects.select_for_update().get(pk=user.pk)
+        return personal_organization_of(user) or create_personal_organization(user)
+
+
+def get_default_organization(user):
+    """The workspace new content is filed under when the person did not choose one: **their own personal workspace and nothing else**.
+
+    An organization is never inferred from the person's memberships: somebody who works for an organization and has no personal workspace (an account an administrator
+    made before workspaces were ensured) gets ``None``, "no organization", exactly like a private photograph, instead of having their own photographs filed under the
+    organization where its staff would see them. Filing something under an organization takes the person's explicit choice (``resolve_upload_organization``).
+    """
+    organization = personal_organization_of(user)
+    return organization if organization is not None and organization.status == Organization.Status.ACTIVE else None
 
 
 def resolve_upload_organization(user, organization_id=None):
     """The organization an upload is filed under.
 
-    Without ``organization_id`` the default (the person's own workspace, see ``get_default_organization``), so nothing changes for anyone who does not
-    choose. With one, the person must be an active member of it: submitting photographs to an organization is how its moderators come to see them, and it
+    Without ``organization_id`` the person's own personal workspace (see ``get_default_organization``): never an organization they merely belong to. With one, the person must be an active member of it: submitting photographs to an organization is how its moderators come to see them, and it
     is the uploader's explicit choice. Raises a field error on ``organization_id`` otherwise.
     """
     from rest_framework.exceptions import ValidationError
