@@ -1409,3 +1409,19 @@ class ExposedHeadersTests(ApprovalFixture, TestCase):
         self.assertIn("X-Preview-Restricted", preview["Access-Control-Expose-Headers"])
         self.assertIn("X-Report-Restricted", copy["Access-Control-Expose-Headers"])
         self.assertEqual(preview["Access-Control-Allow-Origin"], self.ORIGIN)
+
+
+class SwitchingApprovalOnIsAlwaysCheckedTests(ApprovalFixture, TestCase):
+    def test_a_personal_workspace_is_refused_even_when_the_flag_is_already_set_by_hand(self):
+        personal = create_personal_organization(self.member)
+        Organization.objects.filter(pk=personal.pk).update(download_approval_required=True)
+        admin = self.authenticated_client(self.make_user("sw-admin", role="admin"))
+        response = admin.patch(reverse("organizations:organization-admin-detail", kwargs={"organization_id": personal.pk}), {"download_approval_required": True}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_turning_it_off_is_always_allowed(self):
+        self.require_approval()
+        admin = self.authenticated_client(self.make_user("sw-admin2", role="admin"))
+        OrganizationMembership.objects.filter(organization=self.organization, role="moderator").update(status="removed")      # no moderator any more
+        off = admin.patch(reverse("organizations:organization-admin-detail", kwargs={"organization_id": self.organization.pk}), {"download_approval_required": False}, format="json")
+        self.assertEqual((off.status_code, off.data["download_approval_required"]), (status.HTTP_200_OK, False))
