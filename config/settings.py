@@ -1230,6 +1230,10 @@ CELERY_TASK_EAGER_PROPAGATES = env.bool("CELERY_TASK_EAGER_PROPAGATES", default=
 CELERY_TASK_SERIALIZER = "json"
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_RESULT_SERIALIZER = "json"
+# Nothing in FaceCloud reads a Celery task's return value: every task writes its own outcome to its own table, and screens poll those tables. Ignoring results means the
+# web process does not open a result-backend subscription for every task it sends. Without this, a Redis outage made each upload request wait about 58 seconds
+# (20 reconnect attempts of the result consumer) before the "queue is unavailable" failure was recorded; with it the publish itself fails within a second or two.
+CELERY_TASK_IGNORE_RESULT = env.bool("CELERY_TASK_IGNORE_RESULT", default=True)
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = env.int("CELERY_TASK_TIME_LIMIT", default=60 * 60)
 CELERY_TASK_SOFT_TIME_LIMIT = env.int("CELERY_TASK_SOFT_TIME_LIMIT", default=55 * 60)
