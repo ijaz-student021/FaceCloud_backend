@@ -224,7 +224,7 @@ class AdministratorPathsTests(Fixtures, TestCase):
     def create_moderator(self, name="pl-new-mod"):
         return self.client_for(self.admin).post(
             reverse("admin-user-list"),
-            {"username": name, "email": f"{name}@example.com", "password": PASSWORD, "role": "moderator", "organization_id": self.organization.pk},
+            {"username": name, "email": f"{name}@example.com", "password": PASSWORD, "role": "moderator", "organization_id": self.organization.pk, "reason": "Pilot organization needs a moderator before its owner can invite one"},
             format="json")
 
     def test_creating_a_moderator_account_for_a_full_organization_is_refused_and_creates_nothing(self):
@@ -242,7 +242,7 @@ class AdministratorPathsTests(Fixtures, TestCase):
         self.join(Role.MODERATOR)
         candidate = self.person("pl-candidate")
         response = self.client_for(self.admin).patch(
-            reverse("admin-user-update", args=[candidate.pk]), {"role": "moderator", "organization_id": self.organization.pk}, format="json")
+            reverse("admin-user-update", args=[candidate.pk]), {"role": "moderator", "organization_id": self.organization.pk, "reason": "Pilot organization needs a moderator before its owner can invite one"}, format="json")
         self.assert_limit(response, "moderators", 1, "Your plan allows 1 moderator.")
         candidate.refresh_from_db()
         self.assertEqual(candidate.role, "user")
@@ -250,7 +250,7 @@ class AdministratorPathsTests(Fixtures, TestCase):
 
     def test_an_administrators_account_invitation_for_a_moderator_holds_a_seat_and_is_limited(self):
         invite = lambda email: self.client_for(self.admin).post(                   # noqa: E731
-            "/api/user/admin/invitations/", {"email": email, "role": "moderator", "organization_id": self.organization.pk}, format="json")
+            "/api/user/admin/invitations/", {"email": email, "role": "moderator", "reason": "Pilot organization needs a moderator before its owner can invite one", "organization_id": self.organization.pk}, format="json")
         with self.captureOnCommitCallbacks(execute=True):
             self.assertEqual(invite("one@example.org").status_code, 201)
             self.assert_limit(invite("two@example.org"), "moderators", 1, "Your plan allows 1 moderator.")
@@ -260,7 +260,7 @@ class AdministratorPathsTests(Fixtures, TestCase):
     def test_accepting_an_account_invitation_is_checked_again(self):
         with self.captureOnCommitCallbacks(execute=True):
             self.client_for(self.admin).post(
-                "/api/user/admin/invitations/", {"email": "late@example.org", "role": "moderator", "organization_id": self.organization.pk}, format="json")
+                "/api/user/admin/invitations/", {"email": "late@example.org", "role": "moderator", "reason": "Pilot organization needs a moderator before its owner can invite one", "organization_id": self.organization.pk}, format="json")
         import re
 
         token = re.search(r"token=([\w-]+)", mail.outbox[-1].body).group(1)

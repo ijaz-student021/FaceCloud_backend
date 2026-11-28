@@ -4,7 +4,7 @@ from rest_framework import serializers
 
 from .capabilities import membership_capabilities, membership_summary
 from .models import Organization, OrganizationAuditEvent, OrganizationInvitation, OrganizationMembership
-from .services import plan_limits, seats_in_use
+from .services import effective_invitation_status, owner_invitation_of, plan_limits, seats_in_use
 
 User = get_user_model()
 
@@ -25,6 +25,42 @@ class OrganizationSerializer(serializers.ModelSerializer):
 class OrganizationOwnerSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     username = serializers.CharField()
+
+
+OWNER_INVITATION_STATUSES = ["pending", "accepted", "cancelled", "expired", "rejected"]
+
+
+class OwnerInvitationSerializer(serializers.Serializer):
+    """The administrator's view of the invitation that makes somebody the owner of an organization that waits for one. Never contains the link or the token."""
+
+    id = serializers.IntegerField()
+    email = serializers.EmailField(help_text="The address the invitation was sent to. Only an account holding this verified address can accept it.")
+    status = serializers.SerializerMethodField(help_text="pending, accepted, cancelled, expired (a pending invitation whose time has run out) or rejected.")
+    expires_at = serializers.DateTimeField()
+    created_at = serializers.DateTimeField()
+    accepted_at = serializers.DateTimeField(allow_null=True)
+    email_status = serializers.CharField(allow_blank=True, help_text=(
+        "queued (will be sent once the invitation is saved), sent (the mail server accepted it) or failed (see email_failure_reason). Delivery to the inbox is not known: "
+        "SMTP gives no such feedback. Empty only for invitations from before this field existed."))
+    email_sent_at = serializers.DateTimeField(allow_null=True)
+    email_failure_reason = serializers.CharField(allow_blank=True)
+    can_resend = serializers.SerializerMethodField(help_text="True while the organization still waits for its owner: a resend sends a new link and the old one stops working.")
+    accepted_by = serializers.SerializerMethodField()
+
+    @extend_schema_field(serializers.ChoiceField(choices=OWNER_INVITATION_STATUSES))
+    def get_status(self, invitation):
+        return effective_invitation_status(invitation)
+
+    def get_can_resend(self, invitation) -> bool:
+        return invitation.organization.status == Organization.Status.PENDING_OWNER and invitation.status != OrganizationInvitation.Status.ACCEPTED
+
+    @extend_schema_field(OrganizationOwnerSerializer(allow_null=True))
+    def get_accepted_by(self, invitation):
+        if invitation.status != OrganizationInvitation.Status.ACCEPTED:
+            return None
+        owner = (OrganizationMembership.objects.select_related("user")
+                 .filter(organization=invitation.organization, role=OrganizationMembership.Role.OWNER, status=OrganizationMembership.Status.ACTIVE).order_by("created_at", "pk").first())
+        return {"id": owner.user_id, "username": owner.user.username} if owner else None
 
 
 class PlanLimitsSerializer(serializers.Serializer):
@@ -67,10 +103,18 @@ class AdminOrganizationSerializer(PlanFiguresMixin, OrganizationSerializer):
     member_count = serializers.IntegerField(read_only=True)
     moderator_count = serializers.IntegerField(read_only=True)
     owner = serializers.SerializerMethodField()
+    owner_invitation = serializers.SerializerMethodField(help_text="While the organization waits for its owner (`status: pending_owner`): the invitation sent to them; otherwise null.")
 
     class Meta(OrganizationSerializer.Meta):
-        fields = OrganizationSerializer.Meta.fields + ["owner", "member_count", "moderator_count", "limits", "usage"]
+        fields = OrganizationSerializer.Meta.fields + ["owner", "owner_invitation", "member_count", "moderator_count", "limits", "usage"]
         read_only_fields = fields
+
+    @extend_schema_field(OwnerInvitationSerializer(allow_null=True))
+    def get_owner_invitation(self, organization):
+        if organization.status != Organization.Status.PENDING_OWNER:
+            return None
+        invitation = owner_invitation_of(organization)
+        return OwnerInvitationSerializer(invitation).data if invitation is not None else None
 
     @extend_schema_field(OrganizationOwnerSerializer(allow_null=True))
     def get_owner(self, organization):
@@ -85,7 +129,10 @@ class AdminOrganizationUpdateSerializer(serializers.Serializer):
 
     name = serializers.CharField(max_length=150, required=False)
     plan = serializers.ChoiceField(choices=Organization.Plan.choices, required=False)
-    status = serializers.ChoiceField(choices=Organization.Status.choices, required=False)
+    status = serializers.ChoiceField(
+        choices=[(Organization.Status.ACTIVE, "Active"), (Organization.Status.SUSPENDED, "Suspended")], required=False,
+        help_text="active or suspended. An organization waiting for its owner (`pending_owner`) becomes active only when the owner accepts the invitation.",
+    )
     moderator_data_scope = serializers.ChoiceField(choices=Organization.ModeratorDataScope.choices, required=False)
     # Download approval is the administrator's to switch on (and the owner's to read): see downloads/approval.py. ``null`` for the hours = use the platform default.
     download_approval_required = serializers.BooleanField(required=False)
@@ -224,14 +271,36 @@ class OrganizationDetailSerializer(PlanFiguresMixin, OrganizationWithMembershipS
         return data
 
 
-class OrganizationCreateSerializer(serializers.ModelSerializer):
-    owner_id = serializers.PrimaryKeyRelatedField(
-        queryset=User.objects.all(), source="owner", write_only=True,
-    )
+class OrganizationCreateSerializer(serializers.Serializer):
+    """The administrator creates an organization with ``owner_email`` (the owner needs no account yet and accepts an invitation) or, as before, with ``owner_id`` (an existing account becomes the owner at once). Send exactly one."""
 
-    class Meta:
-        model = Organization
-        fields = ["name", "plan", "owner_id"]
+    name = serializers.CharField(max_length=150)
+    plan = serializers.ChoiceField(choices=Organization.Plan.choices, required=False, default=Organization.Plan.FREE)
+    owner_email = serializers.EmailField(required=False, help_text="The future owner's address. They receive an invitation; nothing is granted until they accept it as this address. They may have an account or not.")
+    owner_id = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), source="owner", write_only=True, required=False, help_text="Existing behaviour: this account becomes the owner immediately, without an invitation.")
+
+    def validate_name(self, value):
+        value = " ".join(value.split())
+        if not value:
+            raise serializers.ValidationError("The name cannot be empty.")
+        return value
+
+    def validate(self, attrs):
+        has_email, has_owner = bool(attrs.get("owner_email")), attrs.get("owner") is not None
+        if has_email == has_owner:
+            raise serializers.ValidationError({"owner_email": "Send the owner's email address (owner_email). An existing account's id (owner_id) is accepted instead, but not both."})
+        return attrs
+
+
+class AdminOrganizationCreatedSerializer(AdminOrganizationSerializer):
+    """The organization as the administrator list shows it, plus whether this request created it."""
+
+    created = serializers.BooleanField(help_text="False when the same request (same name and owner e-mail, still waiting for the owner) had already been made: the existing organization is returned and no e-mail is sent.")
+    owner_account_exists = serializers.BooleanField(allow_null=True, help_text="For an owner_email request: whether an account with that address exists (it will be asked to sign in) or not (it will register). null for an owner_id request.")
+
+    class Meta(AdminOrganizationSerializer.Meta):
+        fields = AdminOrganizationSerializer.Meta.fields + ["created", "owner_account_exists"]
+        read_only_fields = fields
 
 
 class OrganizationMembershipSerializer(serializers.ModelSerializer):
@@ -274,7 +343,7 @@ class OrganizationInvitationSerializer(serializers.ModelSerializer):
 class OrganizationInvitationCreateSerializer(serializers.Serializer):
     email = serializers.EmailField()
     role = serializers.ChoiceField(
-        choices=OrganizationInvitation.Role.choices, default=OrganizationInvitation.Role.MEMBER,
+        choices=[(OrganizationInvitation.Role.MODERATOR, "Moderator"), (OrganizationInvitation.Role.MEMBER, "Member")], default=OrganizationInvitation.Role.MEMBER,
     )
 
 
