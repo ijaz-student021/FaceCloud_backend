@@ -383,7 +383,9 @@ def preview_invitation(token):
     return invitation
 
 
+@transaction.atomic
 def accept_invitation(*, token, user, request=None):
+    """Accept an invitation as ``user``. One transaction: the row lock below needs one (without it PostgreSQL refuses with TransactionManagementError and the request answers 500)."""
     invitation = (
         OrganizationInvitation.objects.select_for_update()
         .select_related("organization")
