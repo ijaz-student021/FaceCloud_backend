@@ -337,7 +337,7 @@ class OrganizationInvitationSerializer(serializers.ModelSerializer):
         model = OrganizationInvitation
         fields = [
             "id", "organization", "email", "role", "status",
-            "invited_by", "expires_at", "accepted_at", "created_at",
+            "invited_by", "expires_at", "accepted_at", "created_at", "email_status", "email_failure_reason",
         ]
         read_only_fields = fields
 

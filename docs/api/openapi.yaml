@@ -19137,20 +19137,6 @@ components:
       - eligible
       - image_id
       - reason
-    EmailStatusEnum:
-      enum:
-      - queued
-      - sent
-      - failed
-      - skipped
-      type: string
-      description: '* `queued` - Queued
-
-        * `sent` - Sent
-
-        * `failed` - Failed
-
-        * `skipped` - Skipped'
     EnhancementBatchJob:
       type: object
       properties:
@@ -23389,10 +23375,19 @@ components:
           type: string
           format: date-time
           readOnly: true
+        email_status:
+          allOf:
+          - $ref: '#/components/schemas/OrganizationInvitationEmailStatusEnum'
+          readOnly: true
+        email_failure_reason:
+          type: string
+          readOnly: true
       required:
       - accepted_at
       - created_at
       - email
+      - email_failure_reason
+      - email_status
       - expires_at
       - id
       - invited_by
@@ -23427,6 +23422,17 @@ components:
       description: '* `moderator` - Moderator
 
         * `member` - Member'
+    OrganizationInvitationEmailStatusEnum:
+      enum:
+      - queued
+      - sent
+      - failed
+      type: string
+      description: '* `queued` - Queued
+
+        * `sent` - Sent
+
+        * `failed` - Failed'
     OrganizationInvitationPreview:
       type: object
       description: What the person who received an invitation sees before accepting it.
@@ -27481,7 +27487,7 @@ components:
           nullable: true
         email_status:
           allOf:
-          - $ref: '#/components/schemas/EmailStatusEnum'
+          - $ref: '#/components/schemas/UserNotificationEmailStatusEnum'
           readOnly: true
         email_sent_at:
           type: string
@@ -27507,6 +27513,20 @@ components:
       - resource_type
       - severity
       - title
+    UserNotificationEmailStatusEnum:
+      enum:
+      - queued
+      - sent
+      - failed
+      - skipped
+      type: string
+      description: '* `queued` - Queued
+
+        * `sent` - Sent
+
+        * `failed` - Failed
+
+        * `skipped` - Skipped'
     UserNotificationSeverityEnum:
       enum:
       - info

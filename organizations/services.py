@@ -9,6 +9,7 @@ until someone is actually invited in.
 """
 import hashlib
 import logging
+import re
 import secrets
 from datetime import timedelta
 
@@ -382,18 +383,33 @@ def get_active_membership(user, organization_id):
 
 
 def _send_invitation_email(invitation, token):
+    """Send the moderator/member invitation and record the outcome on the invitation (``email_status``). A mail server that refuses or cannot be reached no longer turns the
+    request into a 500 with an invitation left behind: the invitation exists, says ``failed`` (with a short reason that never contains the link), and can be resent."""
     link = f"{settings.FRONTEND_URL.rstrip('/')}/invitations/{token}"
-    send_mail(
-        subject=f"You've been invited to join {invitation.organization.name} on FaceCloud",
-        message=(
-            f"You've been invited to join {invitation.organization.name} as a "
-            f"{invitation.get_role_display().lower()}.\n\n"
-            f"Accept the invitation: {link}\n\n"
-            f"This invitation expires in {settings.ORG_INVITATION_TTL_HOURS} hours. "
-            "If you weren't expecting this, you can ignore this email."
-        ),
-        from_email=settings.DEFAULT_FROM_EMAIL, recipient_list=[invitation.email], fail_silently=False,
+    try:
+        send_mail(
+            subject=f"You've been invited to join {invitation.organization.name} on FaceCloud",
+            message=(
+                f"You've been invited to join {invitation.organization.name} as a "
+                f"{invitation.get_role_display().lower()}.\n\n"
+                f"Accept the invitation: {link}\n\n"
+                f"This invitation expires in {settings.ORG_INVITATION_TTL_HOURS} hours. "
+                "If you weren't expecting this, you can ignore this email."
+            ),
+            from_email=settings.DEFAULT_FROM_EMAIL, recipient_list=[invitation.email], fail_silently=False,
+        )
+    except Exception as error:  # noqa: BLE001 - recorded, never raised
+        OrganizationInvitation.objects.filter(pk=invitation.pk).update(
+            email_status=OrganizationInvitation.EmailStatus.FAILED, email_failure_reason=_short_reason(error, token), updated_at=timezone.now(),
+        )
+        invitation.email_status, invitation.email_failure_reason = OrganizationInvitation.EmailStatus.FAILED, _short_reason(error, token)
+        logger.warning("The invitation e-mail %s could not be sent (%s).", invitation.pk, type(error).__name__)          # no address, no link, no token
+        return False
+    OrganizationInvitation.objects.filter(pk=invitation.pk).update(
+        email_status=OrganizationInvitation.EmailStatus.SENT, email_sent_at=timezone.now(), email_failure_reason="", updated_at=timezone.now(),
     )
+    invitation.email_status, invitation.email_failure_reason = OrganizationInvitation.EmailStatus.SENT, ""
+    return True
 
 
 def invite_member(*, organization, actor_membership, email, role, request=None):
@@ -686,6 +702,7 @@ def _owner_invitation_expiry():
 def _short_reason(error, token):
     """What a person may read about a failed delivery: the kind of error and the start of its message, with the token (if the message held it) removed."""
     text = f"{type(error).__name__}: {error}".replace(token, "[removed]") if token else f"{type(error).__name__}: {error}"
+    text = re.sub(r"https?://\S+", "[link removed]", text)           # a mail library may quote the whole message: no link, whole or partial, is ever stored or shown
     return text[:190]
 
 

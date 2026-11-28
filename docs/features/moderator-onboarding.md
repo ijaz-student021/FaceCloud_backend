@@ -36,3 +36,7 @@ A full plan stops new people being added; it never stops an already-active moder
 ## Credential hygiene
 
 If a password was ever shown in a screenshot or message, treat it as exposed: change it through *Forgot password* (or the administrator's resend) and never reuse it.
+
+## Organization invitations (moderator / member): e-mail outcome
+
+`POST /api/organizations/{id}/invitations/` and the resend call no longer answer 500 when the mail server refuses: the invitation is created (it holds its seat) and the answer carries `email_status` (`sent` | `failed`) and `email_failure_reason` (error kind and the start of its message; never the link or token). Show "E-mail not sent: resend" for `failed`, then use the existing resend/cancel actions. `sent` means the mail server accepted the message.
