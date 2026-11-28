@@ -69,8 +69,37 @@ def record_rotation(new_refresh_token):
         return
     now = timezone.now()
     UserSession.objects.filter(pk=session.pk).update(
+        previous_refresh_jti=session.refresh_jti, rotated_at=now,
         refresh_jti=new_refresh_token["jti"], last_seen_at=now, expires_at=now + _refresh_lifetime(),
     )
+
+
+def grace_reissue(token, user):
+    """A refresh token that a rotation replaced a moment ago (the browser reloaded before it stored the new one): a fresh pair for the SAME session, or ``None``.
+
+    Only the token the last rotation replaced, only within ``REFRESH_ROTATION_GRACE_SECONDS`` of that rotation, only for an active session of this user. The token the
+    lost answer carried is blacklisted, so one chain stays valid. Anything else (an older token, after the window, a revoked session) is refused as before.
+    """
+    from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
+    from rest_framework_simplejwt.tokens import RefreshToken
+
+    grace = getattr(settings, "REFRESH_ROTATION_GRACE_SECONDS", 0)
+    session = session_for_token(token)
+    if (
+        not grace or session is None or session.user_id != user.pk or not session.previous_refresh_jti
+        or session.previous_refresh_jti != token.get("jti") or session.rotated_at is None
+        or timezone.now() - session.rotated_at > timedelta(seconds=grace) or not session.is_active_for(user, timezone.now())
+    ):
+        return None
+    for outstanding in OutstandingToken.objects.filter(jti=session.refresh_jti):
+        BlacklistedToken.objects.get_or_create(token=outstanding)
+    fresh = RefreshToken.for_user(user)
+    fresh["role"] = user.role
+    fresh["token_version"] = user.token_version
+    fresh[SID_CLAIM] = str(session.pk)
+    now = timezone.now()
+    UserSession.objects.filter(pk=session.pk).update(refresh_jti=fresh["jti"], last_seen_at=now, expires_at=now + _refresh_lifetime())
+    return fresh
 
 
 def revoke(session, reason):

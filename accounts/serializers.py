@@ -178,8 +178,32 @@ class FaceCloudTokenObtainPairSerializer(serializers.Serializer):
 
 class FaceCloudTokenRefreshSerializer(TokenRefreshSerializer):
     def validate(self, attrs):
-        token = RefreshToken(attrs["refresh"])
+        from rest_framework_simplejwt.exceptions import TokenError
+        from rest_framework_simplejwt.tokens import UntypedToken
+
+        rotated_away = False
+        try:
+            token = RefreshToken(attrs["refresh"])
+        except TokenError:
+            # Signature and expiry still checked (UntypedToken); only "already rotated" may be forgiven, and only by sessions.grace_reissue below.
+            token = UntypedToken(attrs["refresh"])
+            if token.get("token_type") != "refresh":
+                raise
+            rotated_away = True
         user = User.objects.filter(pk=token.get("user_id")).first()
+        if rotated_away:
+            # A token that was already rotated (or blacklisted by a logout): forgiven only by the short reload grace; otherwise the same 401 as always.
+            from rest_framework_simplejwt.exceptions import InvalidToken
+
+            from .sessions import grace_reissue
+
+            usable = user is not None and user.is_active and user.is_email_verified and not user.is_suspended and token.get("token_version", 0) == user.token_version
+            if user is not None and user.role == "moderator" and not has_moderator_organization(user):
+                usable = False
+            fresh = grace_reissue(token, user) if usable else None
+            if fresh is None:
+                raise InvalidToken("Token is blacklisted")
+            return {"access": str(fresh.access_token), "refresh": str(fresh)}
         if not user or not user.is_active:
             raise serializers.ValidationError({"detail": "Account is inactive."})
         if not user.is_email_verified:
