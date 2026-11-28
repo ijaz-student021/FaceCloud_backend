@@ -24789,6 +24789,10 @@ components:
     PlanLimits:
       type: object
       properties:
+        users:
+          type: integer
+          nullable: true
+          description: The total (owner, moderators and members, with invitations still waiting). null means unlimited.
         moderators:
           type: integer
           nullable: true
@@ -24800,9 +24804,13 @@ components:
       required:
       - members
       - moderators
+      - users
     PlanUsage:
       type: object
       properties:
+        users:
+          type: integer
+          description: 'Seats taken in total: active people plus invitations still waiting.'
         moderators:
           type: integer
         members:
@@ -24810,6 +24818,7 @@ components:
       required:
       - members
       - moderators
+      - users
     PreprocessImageRequest:
       type: object
       properties:
