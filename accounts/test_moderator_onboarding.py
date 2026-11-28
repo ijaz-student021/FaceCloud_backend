@@ -122,6 +122,21 @@ class ModeratorOnboardingTests(TestCase):
         self.assertIn("email_unverified", self.row()["login_blockers"])
         self.assertEqual(self.sign_in().json()["detail"], ["Email verification is required."])
 
+    def test_an_invited_moderator_is_listed_as_a_moderator_and_says_when_the_portal_will_refuse(self):
+        person = User.objects.create_user(username="mo-invited", email="mo-invited@example.com", password=PASSWORD, is_email_verified=True)      # role stays "user"
+        membership = OrganizationMembership.objects.create(organization=self.organization, user=person, role="moderator")
+        rows = self.client_admin.get(reverse("admin-user-list") + "?role=moderator").json()
+        rows = rows["results"] if isinstance(rows, dict) else rows
+        self.assertIn("mo-invited", [row["username"] for row in rows])
+        self.assertNotIn("mo-owner", [row["username"] for row in rows])
+        self.assertEqual((self.row("mo-invited")["moderator_portal_ready"], self.row("mo-owner")["moderator_portal_ready"]), (True, None))
+        membership.status = "suspended"
+        membership.save()
+        row = self.row("mo-invited")
+        self.assertEqual((row["login_ready"], row["moderator_portal_ready"]), (True, False))          # can sign in as a user, the portal refuses
+        refused = self.sign_in("mo-invited@example.com")
+        self.assertEqual(refused.status_code, 200)
+
     # ---- resend, honestly
     def test_resend_sends_a_new_link_and_the_list_shows_it(self):
         self.create_moderator()

@@ -357,7 +357,8 @@ class AdminUserSerializer(serializers.ModelSerializer):
 
     password_setup_pending = serializers.SerializerMethodField(help_text="True when the account has no usable password yet (created without one): the person must use the e-mailed setup link, or the administrator can resend it.")
     login_ready = serializers.SerializerMethodField(help_text="True only when nothing stops this person signing in right now (see `login_blockers`). An 'Active' account can still be not ready.")
-    login_blockers = serializers.SerializerMethodField(help_text="Why the person cannot sign in yet: `inactive`, `suspended`, `email_unverified`, `password_setup_pending`, `no_active_moderator_membership` (a moderator without an active moderator membership in an active organization).")
+    login_blockers = serializers.SerializerMethodField(help_text="Why the person cannot sign in yet: `inactive`, `suspended`, `email_unverified`, `password_setup_pending`, `no_active_moderator_membership` (a moderator account without an active moderator membership in an active organization).")
+    moderator_portal_ready = serializers.SerializerMethodField(help_text="null when the person moderates no organization; otherwise whether the moderator portal will let them in now (sign-in possible AND an active moderator membership in an active organization). An invited moderator keeps the account role `user`, so `login_ready` alone does not answer this.")
     moderator_memberships = serializers.SerializerMethodField(help_text="The person's moderator memberships in shared organizations, whatever their state: `{organization_id, organization_name, status, organization_status}`.")
     setup_email = serializers.SerializerMethodField(help_text="The last account/setup e-mail attempt: `{status: sent|failed|none, at, kind}`. `sent` means the mail server accepted it, not that it reached an inbox. Never carries a link or token.")
 
@@ -366,7 +367,7 @@ class AdminUserSerializer(serializers.ModelSerializer):
         fields = [
             "id", "username", "email", "full_name", "role", "is_email_verified", "is_suspended",
             "suspension_reason", "is_active", "date_joined", "last_login", "uploads_count", "account_type", "shared_organization_count",
-            "password_setup_pending", "login_ready", "login_blockers", "moderator_memberships", "setup_email",
+            "password_setup_pending", "login_ready", "login_blockers", "moderator_memberships", "setup_email", "moderator_portal_ready",
         ]
         read_only_fields = ["id", "username", "email", "full_name", "is_email_verified", "date_joined", "last_login", "uploads_count", "account_type", "shared_organization_count"]
 
@@ -396,6 +397,13 @@ class AdminUserSerializer(serializers.ModelSerializer):
         if user.role == "moderator" and not any(m.status == "active" and m.organization.status == "active" for m in self._moderator_memberships(user)):
             blockers.append("no_active_moderator_membership")
         return blockers
+
+    @extend_schema_field(serializers.BooleanField(allow_null=True))
+    def get_moderator_portal_ready(self, user):
+        memberships = self._moderator_memberships(user)
+        if user.role != "moderator" and not memberships:
+            return None
+        return not self.get_login_blockers(user) and any(m.status == "active" and m.organization.status == "active" for m in memberships)
 
     @extend_schema_field(serializers.BooleanField())
     def get_login_ready(self, user):

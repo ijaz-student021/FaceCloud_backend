@@ -16455,7 +16455,7 @@ components:
             type: string
           readOnly: true
           description: 'Why the person cannot sign in yet: `inactive`, `suspended`, `email_unverified`, `password_setup_pending`,
-            `no_active_moderator_membership` (a moderator without an active moderator membership in an active organization).'
+            `no_active_moderator_membership` (a moderator account without an active moderator membership in an active organization).'
         moderator_memberships:
           type: array
           items:
@@ -16470,6 +16470,13 @@ components:
           readOnly: true
           description: 'The last account/setup e-mail attempt: `{status: sent|failed|none, at, kind}`. `sent` means the mail
             server accepted it, not that it reached an inbox. Never carries a link or token.'
+        moderator_portal_ready:
+          type: boolean
+          nullable: true
+          readOnly: true
+          description: null when the person moderates no organization; otherwise whether the moderator portal will let them
+            in now (sign-in possible AND an active moderator membership in an active organization). An invited moderator keeps
+            the account role `user`, so `login_ready` alone does not answer this.
       required:
       - account_type
       - date_joined
@@ -16481,6 +16488,7 @@ components:
       - login_blockers
       - login_ready
       - moderator_memberships
+      - moderator_portal_ready
       - password_setup_pending
       - setup_email
       - shared_organization_count
@@ -16610,7 +16618,7 @@ components:
             type: string
           readOnly: true
           description: 'Why the person cannot sign in yet: `inactive`, `suspended`, `email_unverified`, `password_setup_pending`,
-            `no_active_moderator_membership` (a moderator without an active moderator membership in an active organization).'
+            `no_active_moderator_membership` (a moderator account without an active moderator membership in an active organization).'
         moderator_memberships:
           type: array
           items:
@@ -16625,6 +16633,13 @@ components:
           readOnly: true
           description: 'The last account/setup e-mail attempt: `{status: sent|failed|none, at, kind}`. `sent` means the mail
             server accepted it, not that it reached an inbox. Never carries a link or token.'
+        moderator_portal_ready:
+          type: boolean
+          nullable: true
+          readOnly: true
+          description: null when the person moderates no organization; otherwise whether the moderator portal will let them
+            in now (sign-in possible AND an active moderator membership in an active organization). An invited moderator keeps
+            the account role `user`, so `login_ready` alone does not answer this.
         display_name:
           type: string
           readOnly: true
@@ -16667,6 +16682,7 @@ components:
       - login_blockers
       - login_ready
       - moderator_memberships
+      - moderator_portal_ready
       - organization_name
       - organizations
       - password_setup_pending
@@ -16748,7 +16764,7 @@ components:
             type: string
           readOnly: true
           description: 'Why the person cannot sign in yet: `inactive`, `suspended`, `email_unverified`, `password_setup_pending`,
-            `no_active_moderator_membership` (a moderator without an active moderator membership in an active organization).'
+            `no_active_moderator_membership` (a moderator account without an active moderator membership in an active organization).'
         moderator_memberships:
           type: array
           items:
@@ -16763,6 +16779,13 @@ components:
           readOnly: true
           description: 'The last account/setup e-mail attempt: `{status: sent|failed|none, at, kind}`. `sent` means the mail
             server accepted it, not that it reached an inbox. Never carries a link or token.'
+        moderator_portal_ready:
+          type: boolean
+          nullable: true
+          readOnly: true
+          description: null when the person moderates no organization; otherwise whether the moderator portal will let them
+            in now (sign-in possible AND an active moderator membership in an active organization). An invited moderator keeps
+            the account role `user`, so `login_ready` alone does not answer this.
         organization_id:
           type: integer
           writeOnly: true
@@ -16786,6 +16809,7 @@ components:
       - login_blockers
       - login_ready
       - moderator_memberships
+      - moderator_portal_ready
       - password_setup_pending
       - setup_email
       - shared_organization_count
@@ -25215,7 +25239,7 @@ components:
             type: string
           readOnly: true
           description: 'Why the person cannot sign in yet: `inactive`, `suspended`, `email_unverified`, `password_setup_pending`,
-            `no_active_moderator_membership` (a moderator without an active moderator membership in an active organization).'
+            `no_active_moderator_membership` (a moderator account without an active moderator membership in an active organization).'
         moderator_memberships:
           type: array
           items:
@@ -25230,6 +25254,13 @@ components:
           readOnly: true
           description: 'The last account/setup e-mail attempt: `{status: sent|failed|none, at, kind}`. `sent` means the mail
             server accepted it, not that it reached an inbox. Never carries a link or token.'
+        moderator_portal_ready:
+          type: boolean
+          nullable: true
+          readOnly: true
+          description: null when the person moderates no organization; otherwise whether the moderator portal will let them
+            in now (sign-in possible AND an active moderator membership in an active organization). An invited moderator keeps
+            the account role `user`, so `login_ready` alone does not answer this.
         organization_id:
           type: integer
           writeOnly: true

@@ -953,7 +953,10 @@ class AdminUserListView(generics.ListCreateAPIView):
             roles = [value for value, _label in User.ROLE_CHOICES]
             if role not in roles:
                 raise serializers.ValidationError({"role": [f"Choose one of: {', '.join(roles)}."]})
-            queryset = queryset.filter(role=role)
+            if role == "moderator":       # also the people who moderate an organization by invitation (their account role stays "user")
+                queryset = queryset.filter(Q(role="moderator") | Q(organization_memberships__role="moderator", organization_memberships__organization__is_personal=False)).distinct()
+            else:
+                queryset = queryset.filter(role=role)
         state = params.get("status")
         if state:
             filters = {"active": Q(is_active=True, is_suspended=False), "suspended": Q(is_suspended=True), "inactive": Q(is_active=False)}
