@@ -46,6 +46,11 @@ EVENT_POLICY = {
     UserNotification.EventType.DOWNLOAD_REQUEST_SUBMITTED: (None, False),
     UserNotification.EventType.DOWNLOAD_REQUEST_RECEIVED: ("moderator_review_updates", True),
     UserNotification.EventType.DOWNLOAD_REQUEST_DECIDED: (None, True),
+    UserNotification.EventType.LEAVE_REQUEST_SUBMITTED: ("moderator_review_updates", True),
+    UserNotification.EventType.LEAVE_REQUEST_RECEIVED: (None, False),
+    UserNotification.EventType.LEAVE_REQUEST_APPROVED: (None, True),
+    UserNotification.EventType.LEAVE_REQUEST_DENIED: (None, True),
+    UserNotification.EventType.LEAVE_REQUEST_CANCELLED: (None, False),
 }
 
 

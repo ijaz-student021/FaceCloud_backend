@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views
+from . import leave_views, views
 
 app_name = "organizations"
 
@@ -11,6 +11,11 @@ urlpatterns = [
     path("admin/<int:organization_id>/owner-invitation/", views.AdminOwnerInvitationView.as_view(), name="organization-admin-owner-invitation"),
     path("admin/<int:organization_id>/owner-invitation/resend/", views.AdminOwnerInvitationResendView.as_view(), name="organization-admin-owner-invitation-resend"),
     path("admin/<int:organization_id>/owner-invitation/cancel/", views.AdminOwnerInvitationCancelView.as_view(), name="organization-admin-owner-invitation-cancel"),
+    path("admin/<int:organization_id>/leave-requests/<int:leave_id>/decision/", leave_views.AdminLeaveRequestDecisionView.as_view(), name="organization-admin-leave-decision"),
+    path("<int:organization_id>/leave-request/", leave_views.MyLeaveRequestView.as_view(), name="organization-leave-request"),
+    path("<int:organization_id>/leave-request/cancel/", leave_views.MyLeaveRequestCancelView.as_view(), name="organization-leave-request-cancel"),
+    path("<int:organization_id>/moderator/leave-requests/", leave_views.ModeratorLeaveRequestListView.as_view(), name="organization-leave-requests"),
+    path("<int:organization_id>/moderator/leave-requests/<int:leave_id>/decision/", leave_views.ModeratorLeaveRequestDecisionView.as_view(), name="organization-leave-request-decision"),
     path("invitations/accept/", views.OrganizationInvitationAcceptView.as_view(), name="organization-invitation-accept"),
     path("invitations/<str:token>/", views.OrganizationInvitationPreviewView.as_view(), name="organization-invitation-preview"),
     path("<int:organization_id>/", views.OrganizationDetailView.as_view(), name="organization-detail"),
