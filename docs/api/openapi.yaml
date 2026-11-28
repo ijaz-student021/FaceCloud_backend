@@ -9052,6 +9052,216 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
+  /api/organizations/{organization_id}/leave-request/:
+    get:
+      operationId: organizations_leave_request_retrieve
+      description: 'The caller''s pending request to leave this organization, else the latest one, else `request: null`. See
+        docs/features/organization-leave-request.md.
+
+
+        **Access:** signed-in members of the organization; the role required is enforced per endpoint (403 otherwise).'
+      parameters:
+      - in: path
+        name: organization_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - organizations
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyLeaveRequestEnvelope'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      summary: Get my leave request
+    post:
+      operationId: organizations_leave_request_create
+      description: 'A member asks to leave (optional `reason`). A moderator decides; nothing changes until then. 409 `leave_request_pending`,
+        409 `no_eligible_reviewer`, 403 `leave_not_available`.
+
+
+        **Access:** signed-in members of the organization; the role required is enforced per endpoint (403 otherwise).'
+      parameters:
+      - in: path
+        name: organization_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - organizations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LeaveRequestCreate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/LeaveRequestCreate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/LeaveRequestCreate'
+      security:
+      - jwtAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaveRequest'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      summary: Ask to leave the organization
+  /api/organizations/{organization_id}/leave-request/cancel/:
+    post:
+      operationId: organizations_leave_request_cancel_create
+      description: 'Cancels the pending request. 409 `leave_request_not_pending` when it was already decided.
+
+
+        **Access:** signed-in members of the organization; the role required is enforced per endpoint (403 otherwise).'
+      parameters:
+      - in: path
+        name: organization_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - organizations
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaveRequest'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      summary: Cancel my leave request
   /api/organizations/{organization_id}/logo/:
     get:
       operationId: organizations_logo_retrieve
@@ -10277,6 +10487,145 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
       summary: Preview a submitted image
+  /api/organizations/{organization_id}/moderator/leave-requests/:
+    get:
+      operationId: organizations_moderator_leave_requests_list
+      description: 'Owner or moderator. `?status=pending` (default), `approved`, `denied`, `cancelled` (comma separated) or
+        `all`.
+
+
+        **Access:** signed-in members of the organization; the role required is enforced per endpoint (403 otherwise).'
+      parameters:
+      - in: path
+        name: organization_id
+        schema:
+          type: integer
+        required: true
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - in: query
+        name: status
+        schema:
+          type: string
+        description: 'pending, approved, denied, cancelled (comma separated) or all. Default: pending.'
+      tags:
+      - organizations
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedLeaveRequestList'
+          description: ''
+        '401':
+          description: Missing, expired, revoked or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      summary: List membership leave requests
+  /api/organizations/{organization_id}/moderator/leave-requests/{leave_id}/decision/:
+    post:
+      operationId: organizations_moderator_leave_requests_decision_create
+      description: 'Moderator only: `approve` suspends that one membership (the account and other memberships are untouched),
+        `deny` needs a `reason`. 409 `leave_request_not_pending` when already decided or cancelled.
+
+
+        **Access:** signed-in members of the organization; the role required is enforced per endpoint (403 otherwise).'
+      parameters:
+      - in: path
+        name: leave_id
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: organization_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - organizations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LeaveDecision'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/LeaveDecision'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/LeaveDecision'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaveRequest'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      summary: Decide a leave request
   /api/organizations/{organization_id}/moderator/metrics/:
     get:
       operationId: organizations_moderator_metrics_retrieve
@@ -11672,6 +12021,90 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
       summary: Rename, change the plan, suspend or reactivate an organization (administrators)
+  /api/organizations/admin/{organization_id}/leave-requests/{leave_id}/decision/:
+    post:
+      operationId: organizations_admin_leave_requests_decision_create
+      description: 'Emergency path when no moderator can decide: needs a `reason` of at least 8 characters, is marked `admin_override`
+        and audited.
+
+
+        **Access:** FaceCloud administrators only (403 otherwise).'
+      parameters:
+      - in: path
+        name: leave_id
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: organization_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - organizations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LeaveDecision'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/LeaveDecision'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/LeaveDecision'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaveRequest'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      summary: Decide a leave request (administrator override)
   /api/organizations/admin/{organization_id}/owner-invitation/:
     get:
       operationId: organizations_admin_owner_invitation_retrieve
@@ -18893,6 +19326,11 @@ components:
       - download_request_submitted
       - download_request_received
       - download_request_decided
+      - leave_request_submitted
+      - leave_request_received
+      - leave_request_approved
+      - leave_request_denied
+      - leave_request_cancelled
       type: string
       description: '* `upload_received` - Upload received
 
@@ -18944,7 +19382,17 @@ components:
 
         * `download_request_received` - Download request to review
 
-        * `download_request_decided` - Download request decided'
+        * `download_request_decided` - Download request decided
+
+        * `leave_request_submitted` - Leave request to review
+
+        * `leave_request_received` - Leave request received
+
+        * `leave_request_approved` - Leave request approved
+
+        * `leave_request_denied` - Leave request denied
+
+        * `leave_request_cancelled` - Leave request cancelled'
     ExportReportFormatEnum:
       enum:
       - json
@@ -20543,6 +20991,103 @@ components:
           maxLength: 128
       required:
       - token
+    LeaveDecision:
+      type: object
+      properties:
+        action:
+          $ref: '#/components/schemas/LeaveDecisionActionEnum'
+        reason:
+          type: string
+          maxLength: 500
+      required:
+      - action
+    LeaveDecisionActionEnum:
+      enum:
+      - approve
+      - deny
+      type: string
+      description: '* `approve` - approve
+
+        * `deny` - deny'
+    LeaveRequest:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        organization_id:
+          type: integer
+          readOnly: true
+        organization_name:
+          type: string
+          readOnly: true
+        member:
+          type: object
+          additionalProperties: {}
+          readOnly: true
+        status:
+          allOf:
+          - $ref: '#/components/schemas/LeaveRequestStatusEnum'
+          readOnly: true
+        reason:
+          type: string
+          readOnly: true
+        submitted_at:
+          type: string
+          format: date-time
+          readOnly: true
+        reviewed_by:
+          type: object
+          additionalProperties: {}
+          nullable: true
+          readOnly: true
+        decided_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        decision_reason:
+          type: string
+          readOnly: true
+        admin_override:
+          type: boolean
+          readOnly: true
+        membership_status:
+          type: string
+          readOnly: true
+      required:
+      - admin_override
+      - decided_at
+      - decision_reason
+      - id
+      - member
+      - membership_status
+      - organization_id
+      - organization_name
+      - reason
+      - reviewed_by
+      - status
+      - submitted_at
+    LeaveRequestCreate:
+      type: object
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+    LeaveRequestStatusEnum:
+      enum:
+      - pending
+      - approved
+      - denied
+      - cancelled
+      type: string
+      description: '* `pending` - Pending
+
+        * `approved` - Approved
+
+        * `denied` - Denied
+
+        * `cancelled` - Cancelled'
     Lighting:
       type: object
       properties:
@@ -22284,6 +22829,15 @@ components:
       - thumbnail_url
       - updated_at
       - upload_type
+    MyLeaveRequestEnvelope:
+      type: object
+      properties:
+        request:
+          allOf:
+          - $ref: '#/components/schemas/LeaveRequest'
+          nullable: true
+      required:
+      - request
     NotificationPreference:
       type: object
       properties:
@@ -22344,6 +22898,10 @@ components:
       - download_completed
       - download_blocked
       - owner_invited
+      - leave_requested
+      - leave_request_approved
+      - leave_request_denied
+      - leave_request_cancelled
       - organization_activated
       - admin_moderator_override
       type: string
@@ -22412,6 +22970,14 @@ components:
         * `download_blocked` - Download blocked
 
         * `owner_invited` - Owner invited
+
+        * `leave_requested` - Leave requested
+
+        * `leave_request_approved` - Leave request approved
+
+        * `leave_request_denied` - Leave request denied
+
+        * `leave_request_cancelled` - Leave request cancelled
 
         * `organization_activated` - Organization activated by its owner
 
@@ -23883,6 +24449,35 @@ components:
       - type: array
         items:
           $ref: '#/components/schemas/ImageUpload'
+        description: Returned when neither page nor page_size is given (legacy, unbounded).
+    PaginatedLeaveRequestList:
+      oneOf:
+      - type: object
+        required:
+        - count
+        - results
+        properties:
+          count:
+            type: integer
+            example: 123
+          next:
+            type: string
+            nullable: true
+            format: uri
+            example: http://api.example.org/accounts/?page=4
+          previous:
+            type: string
+            nullable: true
+            format: uri
+            example: http://api.example.org/accounts/?page=2
+          results:
+            type: array
+            items:
+              $ref: '#/components/schemas/LeaveRequest'
+        description: Returned when page or page_size is given.
+      - type: array
+        items:
+          $ref: '#/components/schemas/LeaveRequest'
         description: Returned when neither page nor page_size is given (legacy, unbounded).
     PaginatedModelComparisonSummaryList:
       oneOf:
