@@ -6,7 +6,7 @@
 
 Backend branch `release/backend-rc` (CI-only Draft PR #182) = `main` + #177 (PostgreSQL invitation hotfix) + #175 (download approval, OFF by default) + #176 (owner invitation, personal/organization isolation) + #179 (total-user plan limits 5 / 25 / 100) + #180 (member leave request) + #181 (suspended-member content lock) + #183 (Celery results ignored). Frontend branch `release/frontend-rc` (Draft PR #14) = `main` + frontend #13 + #12 (production builds can never be demo builds) + #11 + seat UI + leave-request UI.
 
-Real merge order into `main` (each retargeted to `main` as the one below lands): backend **#177, #175, #176 (rebase: delete its 0014, regenerate as 0015), #179, #180, #181, #183**; frontend **#14** (or #13, #12, #11 in that order if the combined PR is not used). Deploy only from a tag or commit on `main`.
+Real merge order into `main` (each retargeted to `main` as the one below lands): backend **#177, #175, #176 (rebase: delete its 0014, regenerate as 0015), #179, #180, #181, #183**; frontend **#14** (or #13, #12, #11 in that order if the combined PR is not used). Deploy only from a tag or commit on `main`. **Before tagging, `git diff <main after the merges> release/backend-rc` must be empty** (apart from the CI-only PR's own nothing): merging seven PRs one by one, with the #176 migration renumber, otherwise produces a tree no test has run on. If it is not empty, deploy the tested `release/backend-rc` commit itself.
 
 ## Migrations (all additive; applied to a populated copy of the real local database with no existing row changed)
 
@@ -55,11 +55,11 @@ FRONTEND_REF=origin/main bash ~/FaceCloud_ops/deploy_frontend.sh      # dry run
 FRONTEND_REF=origin/main bash ~/FaceCloud_ops/deploy_frontend.sh --go # uploads; the old site is backed up to ~/FaceCloud_ops/frontend_backups/<time>
 curl -s https://www.facecloudai.com/ | grep -o 'assets/index-[^"]*\.js'   # must show the new bundle name
 ```
-Because Hostinger rebuilds the site when the frontend repo's `main` changes, merging frontend `main` replaces the live bundle by itself within a minute: with frontend PR #12 merged that build fails instead of shipping a demo bundle (it needs `VITE_USE_API=true` and `VITE_API_URL=https://api.facecloudai.com`, which the guard checks).
+**Merge the frontend `main` only AFTER the backend deploy and the Step 6 smoke test have passed**: because Hostinger rebuilds the site when the frontend repo's `main` changes, merging frontend `main` replaces the live bundle by itself within a minute: with frontend PR #12 merged that build fails instead of shipping a demo bundle (it needs `VITE_USE_API=true` and `VITE_API_URL=https://api.facecloudai.com`, which the guard checks).
 
 ## Step 6: smoke test (after 3 to 5)
 
-Owner enters their own credentials privately: sign in, open the personal dashboard, My Images, Person Folders, Admin console (real counts), create an organization by owner e-mail to a **test mailbox the owner names** (this is the first real e-mail: **[APPROVAL]**), accept it, invite a moderator and a member, request/approve/deny a leave request. Download approval stays OFF; enable it only for a pilot organization with an active moderator after all of this passes.
+Owner enters their own credentials privately: sign in, open the personal dashboard, My Images, Person Folders, Admin console (real counts), create an organization by owner e-mail to a **test mailbox the owner names** (this is the first real e-mail: **[APPROVAL]**; first confirm the Hostinger mailbox plan behind `smtp.hostinger.com:587` is active, since a lapsed plan answers 553 and every invitation would show `failed`), accept it, invite a moderator and a member, request/approve/deny a leave request. Download approval stays OFF; enable it only for a pilot organization with an active moderator after all of this passes.
 
 ## Rollback
 
