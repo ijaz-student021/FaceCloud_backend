@@ -2,6 +2,7 @@ from django.conf import settings
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
+from organizations.access import locked_org_ids
 from uploads.models import ImageUpload
 
 from .models import (IdentityAnalysis, IdentityChange, IdentityGroup,
@@ -67,6 +68,7 @@ class IdentityGroupSerializer(serializers.ModelSerializer):
     preview_image = serializers.SerializerMethodField()
     cover_images = serializers.SerializerMethodField()
     matching_confidence = serializers.SerializerMethodField()
+    member_count = serializers.SerializerMethodField(help_text="Faces placed in this folder. For a person locked out of an organization it counts only what they can still reach.")
     confirmed_count = serializers.SerializerMethodField(help_text=(
         "Faces placed in this folder (the same count as member_count): matched automatically, a new folder's first face, or confirmed by the owner."))
     suggested_count = serializers.SerializerMethodField(help_text=(
@@ -85,6 +87,11 @@ class IdentityGroupSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         path = avatar_path(obj.pk)
         return request.build_absolute_uri(path) if request else path
+
+    def get_member_count(self, obj) -> int:
+        if locked_org_ids():               # photographs filed under an organization the person is suspended from are hidden: the stored total would count them
+            return len(active_memberships_of(obj))
+        return obj.member_count
 
     def get_confirmed_count(self, obj) -> int:
         return sum(1 for member in active_memberships_of(obj) if member.state in CONFIRMED_STATES)
