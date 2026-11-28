@@ -116,6 +116,11 @@ def resolve_public_link(token):
     if link.enhancement_result_id and link.enhancement_result.image.trashed_at is not None:
         raise LinkGone()                                       # the photograph is in the trash: the link is dormant, and works again if it is restored
     shared_image = link.enhancement_result.image if link.enhancement_result_id else (link.edit_version.enhancement_result.image if link.edit_version_id else None)
+    from organizations.access import owner_is_locked_for
+
+    filed_under = shared_image.batch.organization_id if shared_image is not None else (link.identity_export.identity_group.organization_id if link.identity_export_id else None)
+    if owner_is_locked_for(owner, filed_under):
+        raise LinkGone()                                       # the owner's membership of that organization is no longer active: the link goes dormant, and works again when it is
     if shared_image is not None:
         from downloads.approval import approval_organization
 

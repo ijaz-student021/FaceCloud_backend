@@ -2,6 +2,7 @@ from django.conf import settings
 from django.db import models
 
 from uploads.models import ImagePreprocessingResult, ImageUpload
+from organizations.access import locked_manager
 
 
 class FaceValidationResult(models.Model):
@@ -43,6 +44,8 @@ class FaceValidationResult(models.Model):
     processing_duration_ms = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = locked_manager("image__batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
 
     class Meta:
         ordering = ["-updated_at"]

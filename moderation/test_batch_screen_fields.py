@@ -63,7 +63,7 @@ class BatchScreenFieldsTests(ModerationFixtureMixin, TestCase):
     def test_a_list_of_batches_costs_a_fixed_number_of_queries(self):
         for _ in range(6):
             self.batch([("accepted", 100, 1), ("rejected", 100, 1)])
-        with self.assertNumQueries(3):                      # the signed-in user, the membership, and one query for every batch with its counts
+        with self.assertNumQueries(4):                      # the signed-in user, the membership, the look-up of organizations the person is locked out of (organizations/access.py), and one query for every batch with its counts
             self.listed()
 
     def test_detail_images_have_a_size_an_outcome_and_a_preview(self):

@@ -8,6 +8,7 @@ from django.db.models.signals import post_delete
 from django.dispatch import receiver
 
 from uploads.models import ImageUpload, UploadBatch
+from organizations.access import locked_manager
 
 
 def report_upload_path(instance, filename):
@@ -68,6 +69,8 @@ class ProcessingReport(models.Model):
     generated_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = locked_manager("image__batch__organization_id", "batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
 
     class Meta:
         ordering = ["-created_at"]
