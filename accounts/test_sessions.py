@@ -77,8 +77,8 @@ class SessionTests(TestCase):
         session.refresh_from_db()
         self.assertEqual(session.refresh_jti, RefreshToken(new_refresh)["jti"])
         self.assertEqual(RefreshToken(new_refresh)["sid"], str(session.pk))
-        self.assertEqual(self.refresh(tokens["refresh"]).status_code, 401)  # the old one is blacklisted
-        self.assertEqual(self.refresh(new_refresh).status_code, 200)
+        self.assertEqual(self.refresh(new_refresh).status_code, 200)       # a normal second rotation
+        self.assertEqual(self.refresh(tokens["refresh"]).status_code, 401)  # the first one is blacklisted (two rotations old: no grace, see test_refresh_grace)
         self.assertEqual(UserSession.objects.filter(user=self.user).count(), 1)
 
     def test_revoking_after_rotation_blacklists_the_current_refresh_token(self):

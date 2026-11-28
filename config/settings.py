@@ -1656,6 +1656,10 @@ CAMERA_SESSION_RETENTION_DAYS = env.int("CAMERA_SESSION_RETENTION_DAYS", default
 # kept for the user's own session list before they are deleted.
 SESSION_RECORD_RETENTION_DAYS = env.int("SESSION_RECORD_RETENTION_DAYS", default=30)
 
+# A browser that reloads while a refresh is on its way never stores the rotated token and presents the replaced one again: within this many seconds of the rotation
+# it gets a fresh pair for the same session instead of being signed out (accounts/sessions.grace_reissue). 0 turns the grace off.
+REFRESH_ROTATION_GRACE_SECONDS = env.int("REFRESH_ROTATION_GRACE_SECONDS", default=20)
+
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),

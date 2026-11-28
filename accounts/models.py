@@ -193,6 +193,10 @@ class UserSession(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="sessions")
     token_version = models.PositiveIntegerField()
     refresh_jti = models.CharField(max_length=255, blank=True)
+    # The refresh token the last rotation replaced, and when: a browser that reloaded while the rotation's answer was on its way never stored the new token
+    # and presents this one again; within REFRESH_ROTATION_GRACE_SECONDS it gets a fresh pair instead of being signed out (accounts/sessions.py).
+    previous_refresh_jti = models.CharField(max_length=255, blank=True, default="")
+    rotated_at = models.DateTimeField(null=True, blank=True)
     user_agent = models.CharField(max_length=256, blank=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
