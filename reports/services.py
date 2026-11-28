@@ -394,3 +394,27 @@ def enqueue_processing_report(*, owner, report_format, image=None, batch=None):
         raise
     report.refresh_from_db()
     return report, True
+
+
+def restricted_pdf_copy(report):
+    """PDF bytes made NOW for the report's owner, or ``None`` when the stored file can be served as it is.
+
+    A stored PDF is a file, and its pictures were decided when it was made. If any picture it shows (the first PREVIEW_LIMIT images of its stored payload) belongs to an image in an
+    organization that requires download approval, which the owner holds no active approval for at this moment, the stored file may show it clean after an approval expired or was
+    revoked, or because the report was made before approval was switched on. Then a copy is rendered from the same stored payload with the watermark, and the stored file is left
+    untouched. In every other case (approval off, personal workspace, an active approval, no pictures, JSON and CSV) this returns ``None`` and nothing changes.
+    """
+    if report.format != ProcessingReport.Format.PDF:
+        return None
+    from downloads.previews import preview_is_restricted
+
+    from .renderers import PREVIEW_LIMIT, render_pdf
+
+    payload = report.payload or {}
+    ids = [item["image_id"] for item in (payload.get("images") or [])[:PREVIEW_LIMIT] if isinstance(item.get("image_id"), int)]
+    if not ids:
+        return None
+    photos = ImageUpload.objects.select_related("batch__organization").filter(pk__in=ids)
+    if not any(preview_is_restricted(report.owner, photo) for photo in photos):
+        return None
+    return render_pdf(payload, report.owner)

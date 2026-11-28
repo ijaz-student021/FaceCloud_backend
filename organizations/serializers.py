@@ -18,7 +18,7 @@ class MemberUserSerializer(serializers.ModelSerializer):
 class OrganizationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Organization
-        fields = ["id", "name", "slug", "status", "plan", "is_personal", "moderator_data_scope", "created_at", "updated_at"]
+        fields = ["id", "name", "slug", "status", "plan", "is_personal", "moderator_data_scope", "download_approval_required", "download_grant_hours", "created_at", "updated_at"]
         read_only_fields = fields
 
 
@@ -87,8 +87,11 @@ class AdminOrganizationUpdateSerializer(serializers.Serializer):
     plan = serializers.ChoiceField(choices=Organization.Plan.choices, required=False)
     status = serializers.ChoiceField(choices=Organization.Status.choices, required=False)
     moderator_data_scope = serializers.ChoiceField(choices=Organization.ModeratorDataScope.choices, required=False)
+    # Download approval is the administrator's to switch on (and the owner's to read): see downloads/approval.py. ``null`` for the hours = use the platform default.
+    download_approval_required = serializers.BooleanField(required=False)
+    download_grant_hours = serializers.IntegerField(min_value=1, max_value=24 * 30, required=False, allow_null=True)
     reason = serializers.CharField(max_length=500, required=False, allow_blank=True)
-    CHANGES = ("name", "plan", "status", "moderator_data_scope")
+    CHANGES = ("name", "plan", "status", "moderator_data_scope", "download_approval_required", "download_grant_hours")
 
     def validate_name(self, value):
         value = value.strip()
@@ -98,7 +101,7 @@ class AdminOrganizationUpdateSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         if not any(key in attrs for key in self.CHANGES):
-            raise serializers.ValidationError({"detail": "Send at least one of name, plan, status or moderator_data_scope."})
+            raise serializers.ValidationError({"detail": "Send at least one of name, plan, status, moderator_data_scope, download_approval_required or download_grant_hours."})
         return attrs
 
 

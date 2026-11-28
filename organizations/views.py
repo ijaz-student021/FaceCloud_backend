@@ -122,6 +122,8 @@ class AdminOrganizationDetailView(APIView):
         update_organization(
             organization=organization, actor=request.user, name=data.get("name"), plan=data.get("plan"), status=data.get("status"),
             moderator_data_scope=data.get("moderator_data_scope"), reason=data.get("reason", ""), request=request,
+            download_approval_required=data.get("download_approval_required"), download_grant_hours=data.get("download_grant_hours"),
+            clear_download_grant_hours="download_grant_hours" in data and data["download_grant_hours"] is None,
         )
         return Response(AdminOrganizationSerializer(organizations_with_head_counts().get(pk=organization.pk)).data)
 
@@ -151,8 +153,8 @@ class OrganizationDetailView(OrganizationScopedMixin, APIView):
     @extend_schema(request=OwnerOrganizationUpdateSerializer, responses={200: OrganizationDetailSerializer, **ERROR_RESPONSES})
     def patch(self, request, organization_id):
         require_owner_of_shared_organization(self)
-        if any(key in request.data for key in ("plan", "status")):
-            raise PermissionDenied("The plan and the status are changed by the FaceCloud administrator.")
+        if any(key in request.data for key in ("plan", "status", "download_approval_required", "download_grant_hours")):
+            raise PermissionDenied("The plan, the status and download approval are changed by the FaceCloud administrator.")
         serializer = OwnerOrganizationUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data

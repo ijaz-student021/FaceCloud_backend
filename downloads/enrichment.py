@@ -17,6 +17,7 @@ KIND_BY_RESOURCE = {
     Type.EDITED_IMAGE: "single",
     Type.BATCH_PACKAGE: "batch",
     Type.IDENTITY_GROUP_PACKAGE: "batch",
+    Type.APPROVED_REQUEST_ZIP: "batch",
     Type.PROCESSING_REPORT: "report",
 }
 
