@@ -275,10 +275,10 @@ class SuspendedOrganizationTests(Fixtures, TestCase):
         self.assertTrue(UploadBatch.objects.get().organization.is_personal)
         self.assertEqual(self.client_for(self.member).get(reverse("organizations:organization-list")).status_code, 200)
 
-    def test_a_suspended_organization_is_never_the_default_for_someone_without_a_personal_one(self):
+    def test_an_organization_is_never_the_default_for_someone_without_a_personal_one_suspended_or_not(self):
         lone = self.person("am-lone")
         self.join(lone, Role.MEMBER)
-        self.assertEqual(get_default_organization(lone), self.organization)
+        self.assertIsNone(get_default_organization(lone))          # not inferred from the membership
         self.suspend()
         self.assertIsNone(get_default_organization(lone))
 

@@ -117,6 +117,7 @@ class ImageDetailMatchesListTests(TestCase):
         # The detail view now carries enhancement, identity and quality data, so
         # the point of sharing the gallery's queryset is that it still loads in
         # a fixed number of queries rather than one per relation: the user, one
-        # joined row, and one prefetch each for enhancements and identity faces.
-        with self.assertNumQueries(4):
+        # joined row, and one prefetch each for enhancements and identity faces, plus the one look-up of the
+        # organizations the person is locked out of (organizations/access.py), made once per request.
+        with self.assertNumQueries(5):
             self.client.get(reverse("image-upload-detail", args=[self.image.pk]))

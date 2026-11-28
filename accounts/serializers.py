@@ -8,6 +8,7 @@ from django.db.models import Q
 from django.db.models.functions import Lower
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework.exceptions import Throttled
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
@@ -15,6 +16,7 @@ from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from . import lockout
+from .overrides import clean_override_reason
 from .services import (ModeratorWithoutOrganization, dashboard_for_user, derive_username, has_moderator_organization,
                        issue_login_tokens, record_auth_event,
                        resolve_moderator_organization, split_full_name)
@@ -350,18 +352,98 @@ class DeleteAccountSerializer(serializers.Serializer):
 class AdminUserSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(read_only=True)
     uploads_count = serializers.SerializerMethodField(help_text="Photos this account has uploaded (the list computes it for every row at once).")
+    shared_organization_count = serializers.SerializerMethodField(help_text="In how many shared organizations (not their own private workspace) the account is an active member.")
+    account_type = serializers.SerializerMethodField(help_text="`personal`: only their own private workspace. `organization`: an active member of at least one shared organization (owner, moderator or member); they still have a private workspace too.")
+
+    password_setup_pending = serializers.SerializerMethodField(help_text="True when the account has no usable password yet (created without one): the person must use the e-mailed setup link, or the administrator can resend it.")
+    login_ready = serializers.SerializerMethodField(help_text="True only when nothing stops this person signing in right now (see `login_blockers`). An 'Active' account can still be not ready.")
+    login_blockers = serializers.SerializerMethodField(help_text="Why the person cannot sign in yet: `inactive`, `suspended`, `email_unverified`, `password_setup_pending`, `no_active_moderator_membership` (a moderator account without an active moderator membership in an active organization).")
+    moderator_portal_ready = serializers.SerializerMethodField(help_text="null when the person moderates no organization; otherwise whether the moderator portal will let them in now (sign-in possible AND an active moderator membership in an active organization). An invited moderator keeps the account role `user`, so `login_ready` alone does not answer this.")
+    moderator_memberships = serializers.SerializerMethodField(help_text="The person's moderator memberships in shared organizations, whatever their state: `{organization_id, organization_name, status, organization_status}`.")
+    setup_email = serializers.SerializerMethodField(help_text="The last account/setup e-mail attempt: `{status: sent|failed|none, at, kind}`. `sent` means the mail server accepted it, not that it reached an inbox. Never carries a link or token.")
 
     class Meta:
         model = User
         fields = [
             "id", "username", "email", "full_name", "role", "is_email_verified", "is_suspended",
-            "suspension_reason", "is_active", "date_joined", "last_login", "uploads_count",
+            "suspension_reason", "is_active", "date_joined", "last_login", "uploads_count", "account_type", "shared_organization_count",
+            "password_setup_pending", "login_ready", "login_blockers", "moderator_memberships", "setup_email", "moderator_portal_ready",
         ]
-        read_only_fields = ["id", "username", "email", "full_name", "is_email_verified", "date_joined", "last_login", "uploads_count"]
+        read_only_fields = ["id", "username", "email", "full_name", "is_email_verified", "date_joined", "last_login", "uploads_count", "account_type", "shared_organization_count"]
+
+    def _moderator_memberships(self, user):
+        cached = getattr(user, "mod_memberships", None)
+        if cached is not None:
+            return cached
+        from organizations.models import OrganizationMembership
+
+        return list(OrganizationMembership.objects.select_related("organization").filter(user=user, role="moderator", organization__is_personal=False))
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_password_setup_pending(self, user):
+        return not user.has_usable_password()
+
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
+    def get_login_blockers(self, user):
+        blockers = []
+        if not user.is_active:
+            blockers.append("inactive")
+        if user.is_suspended:
+            blockers.append("suspended")
+        if not user.is_email_verified:
+            blockers.append("email_unverified")
+        if not user.has_usable_password():
+            blockers.append("password_setup_pending")
+        if user.role == "moderator" and not any(m.status == "active" and m.organization.status == "active" for m in self._moderator_memberships(user)):
+            blockers.append("no_active_moderator_membership")
+        return blockers
+
+    @extend_schema_field(serializers.BooleanField(allow_null=True))
+    def get_moderator_portal_ready(self, user):
+        memberships = self._moderator_memberships(user)
+        if user.role != "moderator" and not memberships:
+            return None
+        return not self.get_login_blockers(user) and any(m.status == "active" and m.organization.status == "active" for m in memberships)
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_login_ready(self, user):
+        return not self.get_login_blockers(user)
+
+    @extend_schema_field(serializers.ListField(child=serializers.DictField()))
+    def get_moderator_memberships(self, user):
+        return [
+            {"organization_id": m.organization_id, "organization_name": m.organization.name, "status": m.status, "organization_status": m.organization.status}
+            for m in self._moderator_memberships(user)
+        ]
+
+    @extend_schema_field(serializers.DictField())
+    def get_setup_email(self, user):
+        from .models import AuthEvent
+
+        event = getattr(user, "setup_email_event", None)
+        if event is None and not hasattr(user, "setup_email_event"):
+            latest = (AuthEvent.objects.filter(user=user, event__in=("account_email_sent", "account_email_failed"), details__kind__in=("account_created", "password_reset"))
+                      .order_by("-id").values("event", "created_at", "details").first())
+            event, at, kind = (latest["event"], latest["created_at"], latest["details"].get("kind")) if latest else (None, None, None)
+        else:
+            at, kind = getattr(user, "setup_email_at", None), getattr(user, "setup_email_kind", None)
+        if not event:
+            return {"status": "none", "at": None, "kind": None}
+        return {"status": "sent" if event == "account_email_sent" else "failed", "at": at.isoformat() if at else None, "kind": kind}
 
     def get_uploads_count(self, user) -> int:
         annotated = getattr(user, "uploads_count", None)
         return annotated if annotated is not None else user.image_uploads.count()
+
+    def get_shared_organization_count(self, user) -> int:
+        annotated = getattr(user, "shared_organization_count", None)
+        if annotated is not None:
+            return annotated
+        return user.organization_memberships.filter(status="active", organization__is_personal=False).count()
+
+    @extend_schema_field(serializers.ChoiceField(choices=["personal", "organization"]))
+    def get_account_type(self, user):
+        return "organization" if self.get_shared_organization_count(user) else "personal"
 
     def validate(self, attrs):
         if attrs.get("is_suspended") is False:
@@ -378,8 +460,13 @@ class AdminUserUpdateSerializer(AdminUserSerializer):
                   "has no moderator membership yet). Ignored otherwise.",
     )
 
+    reason = serializers.CharField(
+        write_only=True, required=False, allow_blank=True, max_length=500,
+        help_text="Required (at least 8 characters) when the role changes to moderator: why an administrator does this instead of the organization's owner inviting them. Kept in the organization's audit log.",
+    )
+
     class Meta(AdminUserSerializer.Meta):
-        fields = AdminUserSerializer.Meta.fields + ["organization_id"]
+        fields = AdminUserSerializer.Meta.fields + ["organization_id", "reason"]
 
 
 class AdminUserDetailSerializer(AdminUserSerializer):
@@ -403,16 +490,22 @@ class AdminUserDetailSerializer(AdminUserSerializer):
 
     def get_organizations(self, user) -> list[dict]:
         return [
-            {"id": membership.organization_id, "name": membership.organization.name,
+            {"id": membership.organization_id, "name": membership.organization.name, "is_personal": membership.organization.is_personal,
              "role": membership.role, "status": membership.status}
             for membership in user.organization_memberships.select_related("organization").order_by("organization__name")
         ]
 
     def get_usage(self, user) -> dict:
+        from django.db.models import Sum
+
+        from uploads.models import ImageUpload
+
         return {
             "upload_batches": user.upload_batches.count(),
             "images": user.image_uploads.count(),
             "enhancements": user.image_enhancement_results.count(),
+            # the size of the original uploads, the trash included until it is purged
+            "storage_bytes": ImageUpload.all_objects.filter(owner=user).aggregate(total=Sum("file_size"))["total"] or 0,
         }
 
 
@@ -421,12 +514,16 @@ class AdminUserCreateSerializer(serializers.Serializer):
 
     username = serializers.CharField(max_length=150, required=False, allow_blank=True)
     email = serializers.EmailField()
-    password = serializers.CharField(write_only=True, trim_whitespace=False)
+    password = serializers.CharField(write_only=True, trim_whitespace=False, required=False, help_text=(
+        "Optional, and better left out: without it the account has no password and the person is e-mailed a link to choose their own, so nobody else ever knows it. "
+        "If given, it is checked like a sign-up password and stored hashed; it is never e-mailed or returned."))
     role = serializers.ChoiceField(choices=["user", "moderator"], default="user",
                                    help_text="`user` or `moderator`. An administrator account cannot be created here.")
     organization_id = serializers.IntegerField(required=False, allow_null=True,
                                                help_text="Moderators only. Needed when there is more than one organization.")
     full_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=500, help_text=(
+        "Required (at least 8 characters) when role is moderator: why an administrator adds this moderator instead of the organization's owner inviting them. Kept in the organization's audit log."))
 
     def validate_username(self, value):
         value = User.normalize_username(value).strip()
@@ -444,13 +541,15 @@ class AdminUserCreateSerializer(serializers.Serializer):
         username = attrs.get("username") or derive_username(attrs["email"])
         first_name, last_name = split_full_name(attrs.get("full_name", ""))
         candidate = User(username=username, email=attrs["email"], first_name=first_name, last_name=last_name)
-        try:
-            password_validation.validate_password(attrs["password"], user=candidate)
-        except DjangoValidationError as error:
-            raise serializers.ValidationError({"password": list(error.messages)}) from error
+        if attrs.get("password"):
+            try:
+                password_validation.validate_password(attrs["password"], user=candidate)
+            except DjangoValidationError as error:
+                raise serializers.ValidationError({"password": list(error.messages)}) from error
         attrs["username"] = username
         organization_id = attrs.get("organization_id")
         if attrs["role"] == "moderator":
+            attrs["reason"] = clean_override_reason(attrs.get("reason"))
             attrs["organization"] = resolve_moderator_organization(organization_id)
         elif organization_id is not None:
             raise serializers.ValidationError({"organization_id": ["Only a moderator is placed in an organization."]})

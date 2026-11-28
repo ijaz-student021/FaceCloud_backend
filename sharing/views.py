@@ -70,6 +70,12 @@ class ShareLinkListCreateView(generics.ListCreateAPIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         spec = data["spec"]
+        from downloads.approval import approval_organization, block_bulk_download
+
+        shared_result = data["result_object"] or data["edit_object"].enhancement_result
+        organization = approval_organization(shared_result.image)
+        if organization is not None:                     # a public link cannot be recalled when an approval ends: not offered while the organization requires approval
+            block_bulk_download(request.user, organization, "share_link", request)
         link, token = create_share_link(
             owner=request.user, result=data["result_object"], edit=data["edit_object"],
             ttl_hours=data.get("ttl_hours"), label=data.get("label", ""),

@@ -43,6 +43,13 @@ class ImageThumbnailView(APIView):
             raise ValidationError({"version": f"Choose one of: {', '.join(VERSIONS)}."})
         image = get_object_or_404(self.images(request), pk=pk)
         result = enhanced_result(image) if version == "enhanced" else None
+        from downloads.previews import preview_is_restricted, restricted_response
+
+        if preview_is_restricted(request.user, image):
+            # The owner of an image in an organization that requires download approval, without an approval: at most 800 px, watermarked, never the cached clean copy.
+            response = restricted_response(result.enhanced_file if result is not None else image.original_file, request.user, size)
+            response["X-Thumbnail-Version"] = "enhanced" if result is not None else "original"
+            return response
         if result is not None:
             return self.enhanced_response(request, result, size)
         try:

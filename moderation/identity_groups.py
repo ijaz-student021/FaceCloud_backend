@@ -73,7 +73,8 @@ def describe_folders(folders, organization, request=None):
     return [{
         "id": folder.pk, "display_name": folder.display_name,
         "owner": {"id": folder.owner_id, "username": folder.owner.username},
-        "member_count": folder.member_count, "photos_in_organization": folder.photos_in_organization,
+        # What staff may know is how many photographs of this folder were submitted to THEIR organization: the folder's own total would also count the member's private photographs.
+        "member_count": folder.photos_in_organization, "photos_in_organization": folder.photos_in_organization,
         "matching_confidence": round(100 * sum(scores[folder.pk]) / len(scores[folder.pk]), 1) if scores.get(folder.pk) else None,
         "cover_images": covers.get(folder.pk, []), "updated_at": folder.updated_at,
     } for folder in folders]

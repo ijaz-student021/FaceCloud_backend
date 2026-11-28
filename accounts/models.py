@@ -74,6 +74,8 @@ class AuthEvent(models.Model):
         ("reactivated", "Reactivated"),
         ("account_deleted", "Account deleted"),
         ("admin_created_account", "Account created by an administrator"),
+        ("account_email_sent", "Account e-mail accepted by the mail server"),
+        ("account_email_failed", "Account e-mail could not be sent"),
         # Two-factor authentication was removed; these three stay so audit rows written earlier remain readable.
         ("two_factor_enabled", "Two-factor authentication enabled"),
         ("two_factor_disabled", "Two-factor authentication disabled"),

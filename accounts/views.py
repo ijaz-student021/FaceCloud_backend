@@ -906,14 +906,43 @@ class AdminUserListView(generics.ListCreateAPIView):
             OpenApiParameter("q", OpenApiTypes.STR, description="Part of the username, email or full name."),
             OpenApiParameter("role", OpenApiTypes.STR, description="user, moderator or admin."),
             OpenApiParameter("status", OpenApiTypes.STR, description="active, suspended or inactive."),
+            OpenApiParameter("account_type", OpenApiTypes.STR, description=(
+                "personal: accounts that belong to no shared organization (only their own private workspace). "
+                "organization: accounts that are an active owner, moderator or member of at least one shared organization.")),
         ],
     )
     def get(self, request, *args, **kwargs):
         return super().get(request, *args, **kwargs)
 
     def get_queryset(self):
-        queryset = User.objects.annotate(uploads_count=Count("image_uploads", distinct=True)).order_by("-date_joined", "-id")
+        from django.db.models import OuterRef, Prefetch, Subquery
+
+        from organizations.models import OrganizationMembership
+
+        from .models import AuthEvent
+
+        last_setup_email = AuthEvent.objects.filter(
+            user=OuterRef("pk"), event__in=("account_email_sent", "account_email_failed"), details__kind__in=("account_created", "password_reset"),
+        ).order_by("-id")
+        queryset = User.objects.prefetch_related(Prefetch(
+            "organization_memberships",
+            queryset=OrganizationMembership.objects.filter(role="moderator", organization__is_personal=False).select_related("organization"), to_attr="mod_memberships",
+        )).annotate(
+            setup_email_event=Subquery(last_setup_email.values("event")[:1]),
+            setup_email_at=Subquery(last_setup_email.values("created_at")[:1]),
+            setup_email_kind=Subquery(last_setup_email.values("details__kind")[:1]),
+            uploads_count=Count("image_uploads", distinct=True),
+            shared_organization_count=Count(
+                "organization_memberships", distinct=True,
+                filter=Q(organization_memberships__status="active", organization_memberships__organization__is_personal=False),
+            ),
+        ).order_by("-date_joined", "-id")
         params = self.request.query_params
+        account_type = params.get("account_type")
+        if account_type:
+            if account_type not in ("personal", "organization"):
+                raise serializers.ValidationError({"account_type": ["Choose personal or organization."]})
+            queryset = queryset.filter(shared_organization_count=0) if account_type == "personal" else queryset.filter(shared_organization_count__gt=0)
         search = (params.get("q") or "").strip()
         if search:
             queryset = queryset.filter(
@@ -924,7 +953,10 @@ class AdminUserListView(generics.ListCreateAPIView):
             roles = [value for value, _label in User.ROLE_CHOICES]
             if role not in roles:
                 raise serializers.ValidationError({"role": [f"Choose one of: {', '.join(roles)}."]})
-            queryset = queryset.filter(role=role)
+            if role == "moderator":       # also the people who moderate an organization by invitation (their account role stays "user")
+                queryset = queryset.filter(Q(role="moderator") | Q(organization_memberships__role="moderator", organization_memberships__organization__is_personal=False)).distinct()
+            else:
+                queryset = queryset.filter(role=role)
         state = params.get("status")
         if state:
             filters = {"active": Q(is_active=True, is_suspended=False), "suspended": Q(is_suspended=True), "inactive": Q(is_active=False)}
@@ -939,8 +971,8 @@ class AdminUserListView(generics.ListCreateAPIView):
         data = serializer.validated_data
         try:
             user = create_account_as_admin(
-                administrator=request.user, username=data["username"], email=data["email"], password=data["password"],
-                role=data["role"], organization=data.get("organization"), full_name=data.get("full_name", ""), request=request,
+                administrator=request.user, username=data["username"], email=data["email"], password=data.get("password") or None,
+                role=data["role"], organization=data.get("organization"), full_name=data.get("full_name", ""), reason=data.get("reason", ""), request=request,
             )
         except IntegrityError:
             # A concurrent request took the username or email between the validation and the insert.
@@ -976,6 +1008,12 @@ class AdminUserUpdateView(generics.RetrieveUpdateAPIView):
 
             assert_can_grant(self.request.user, new_role)
         organization_id = serializer.validated_data.pop("organization_id", None)
+        reason = serializer.validated_data.pop("reason", "")
+        promoting = new_role == "moderator" and new_role != target.role
+        if promoting:
+            from .overrides import clean_override_reason
+
+            reason = clean_override_reason(reason)              # an exceptional operation: it must say why, before anything is changed
         moderator_organization = None
         if new_role == "moderator" and new_role != target.role and not has_moderator_organization(target):
             # A moderator works for an organization: name it (or the only one), with the same messages as when creating a moderator account.
@@ -1002,7 +1040,15 @@ class AdminUserUpdateView(generics.RetrieveUpdateAPIView):
 
             membership = (OrganizationMembership.objects.select_related("organization")
                           .filter(user=user, role=OrganizationMembership.Role.MODERATOR, status=OrganizationMembership.Status.ACTIVE).first())
-            send_made_moderator(user, moderator_organization or (membership.organization if membership else None))
+            promoted_into = moderator_organization or (membership.organization if membership else None)
+            send_made_moderator(user, promoted_into)
+            if promoting and promoted_into is not None:
+                from .overrides import record_moderator_override
+
+                record_moderator_override(
+                    actor=self.request.user, organization=promoted_into, operation="promotion", target_type="User", target_id=user.pk, subject=user.get_username(),
+                    reason=reason, request=self.request,
+                )
         if changed:
             user.token_version += 1
             user.save(update_fields=["token_version"])
@@ -1011,6 +1057,37 @@ class AdminUserUpdateView(generics.RetrieveUpdateAPIView):
         if "is_suspended" in changed:
             event = "suspended" if user.is_suspended else "reactivated"
             record_auth_event(event, self.request, user, user.email, {"reason": user.suspension_reason})
+
+
+class AdminUserPasswordResetView(APIView):
+    """Send the person a link to choose a new password. The administrator never sees or sets a password and the response carries no token or link."""
+
+    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
+    throttle_scope = "password_reset"
+
+    @extend_schema(request=None, responses={200: OpenApiTypes.OBJECT, 403: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT, 409: OpenApiTypes.OBJECT}, summary="Send a password reset link to an account")
+    def post(self, request, pk):
+        from .invitations import assert_can_grant
+
+        from django.shortcuts import get_object_or_404
+
+        target = get_object_or_404(User, pk=pk)
+        assert_can_grant(request.user, target.role)             # an administrator account is reset by a superuser, like every change to its role
+        if not target.is_active or target.is_suspended or not target.email:
+            return Response({"detail": "Only an active, not suspended account with an e-mail address can be sent a reset link.", "code": "account_not_resettable"}, status=status.HTTP_409_CONFLICT)
+        from .moderator_emails import record_email_outcome
+
+        try:
+            send_password_reset_email(target)
+        except Exception:  # noqa: BLE001 - say so instead of answering 500 or pretending
+            import logging
+
+            logging.getLogger(__name__).exception("Could not send the password-setup e-mail to user %s.", target.pk)
+            record_email_outcome(target, "password_reset", False, request)
+            return Response({"detail": "The e-mail could not be sent (the mail server refused or could not be reached). Nothing was delivered; try again or check the e-mail settings.", "code": "email_failed"}, status=status.HTTP_502_BAD_GATEWAY)
+        record_email_outcome(target, "password_reset", True, request)
+        record_auth_event("admin_password_reset_sent", request, target, target.email, {"administrator_id": request.user.pk})
+        return Response({"detail": "A password reset link was sent to the account's e-mail address. The mail server accepted it; that is not proof it reached the inbox.", "email": target.email, "email_status": "sent"})
 
 
 class AvatarUploadSerializer(serializers.Serializer):
@@ -1115,6 +1192,8 @@ class AccountInvitationSerializer(serializers.Serializer):
         required=False, allow_null=True, write_only=True,
         help_text="Required for a moderator invitation: the organization the moderator will work for. Refused for any other role.",
     )
+    reason = serializers.CharField(required=False, allow_blank=True, write_only=True, max_length=500, help_text=(
+        "Required (at least 8 characters) for a moderator invitation: why an administrator invites this moderator instead of the organization's owner. Kept in the organization's audit log."))
     organization = serializers.SerializerMethodField(help_text="{id, name} of the organization a moderator invitation is for; null otherwise.")
     status = serializers.CharField(read_only=True)
     invited_by = serializers.CharField(source="invited_by.username", read_only=True, allow_null=True)
@@ -1151,12 +1230,20 @@ class AccountInvitationListCreateView(generics.ListAPIView):
     def post(self, request):
         from .invitations import invite
 
+        from .overrides import clean_override_reason, record_moderator_override
+
         payload = AccountInvitationSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
+        reason = clean_override_reason(payload.validated_data.get("reason")) if payload.validated_data["role"] == "moderator" else ""
         invitation = invite(actor=request.user, email=payload.validated_data["email"],
                             role=payload.validated_data["role"], organization_id=payload.validated_data.get("organization_id"))
+        if invitation.role == "moderator" and invitation.organization_id:
+            record_moderator_override(
+                actor=request.user, organization=invitation.organization, operation="account_invitation", target_type="AccountInvitation", target_id=invitation.pk,
+                subject=invitation.email, reason=reason, request=request,
+            )
         record_auth_event("account_invited", request, request.user, invitation.email,
-                          {"role": invitation.role, "organization_id": invitation.organization_id})
+                          {"role": invitation.role, "organization_id": invitation.organization_id, **({"reason": reason} if reason else {})})
         return Response(AccountInvitationSerializer(invitation).data, status=status.HTTP_201_CREATED)
 
 

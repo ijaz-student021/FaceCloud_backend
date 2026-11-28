@@ -107,8 +107,25 @@ def resolve_public_link(token):
         raise LinkGone()
     if link.identity_export_id and not export_is_servable(link.identity_export):
         raise LinkGone()
+    if link.identity_export_id:
+        from downloads.approval import approval_organization_of
+        from uploads.models import ImageUpload
+
+        if approval_organization_of(ImageUpload.objects.filter(identity_faces__memberships__identity_group_id=link.identity_export.identity_group_id)) is not None:
+            raise LinkGone()                                   # a folder ZIP shared before the organization required download approval is never served afterwards
     if link.enhancement_result_id and link.enhancement_result.image.trashed_at is not None:
         raise LinkGone()                                       # the photograph is in the trash: the link is dormant, and works again if it is restored
+    shared_image = link.enhancement_result.image if link.enhancement_result_id else (link.edit_version.enhancement_result.image if link.edit_version_id else None)
+    from organizations.access import owner_is_locked_for
+
+    filed_under = shared_image.batch.organization_id if shared_image is not None else (link.identity_export.identity_group.organization_id if link.identity_export_id else None)
+    if owner_is_locked_for(owner, filed_under):
+        raise LinkGone()                                       # the owner's membership of that organization is no longer active: the link goes dormant, and works again when it is
+    if shared_image is not None:
+        from downloads.approval import approval_organization
+
+        if approval_organization(shared_image) is not None:
+            raise LinkGone()                                   # the organization now requires download approval: links made before stay dormant, they are never served
     return link
 
 

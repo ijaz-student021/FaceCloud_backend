@@ -71,9 +71,9 @@ class Fixtures:
 class SettingsTests(TestCase):
     def test_the_defaults_are_the_ones_the_product_is_sold_by(self):
         limits = project_settings.ORGANIZATION_PLAN_LIMITS
-        self.assertEqual(limits["free"], {"moderators": 1, "members": 10})
-        self.assertEqual(limits["team"], {"moderators": 5, "members": 100})
-        self.assertEqual(limits["enterprise"], {"moderators": None, "members": None})
+        self.assertEqual(limits["free"], {"users": 5, "moderators": 1, "members": 10})
+        self.assertEqual(limits["team"], {"users": 25, "moderators": 5, "members": 100})
+        self.assertEqual(limits["enterprise"], {"users": 100, "moderators": None, "members": None})
 
     def test_a_limit_can_be_changed_from_the_environment(self):
         with mock.patch.dict(os.environ, {"ORG_PLAN_FREE_MODERATORS": "3", "ORG_PLAN_TEAM_MEMBERS": "unlimited", "ORG_PLAN_FREE_MEMBERS": ""}):
@@ -224,7 +224,7 @@ class AdministratorPathsTests(Fixtures, TestCase):
     def create_moderator(self, name="pl-new-mod"):
         return self.client_for(self.admin).post(
             reverse("admin-user-list"),
-            {"username": name, "email": f"{name}@example.com", "password": PASSWORD, "role": "moderator", "organization_id": self.organization.pk},
+            {"username": name, "email": f"{name}@example.com", "password": PASSWORD, "role": "moderator", "organization_id": self.organization.pk, "reason": "Pilot organization needs a moderator before its owner can invite one"},
             format="json")
 
     def test_creating_a_moderator_account_for_a_full_organization_is_refused_and_creates_nothing(self):
@@ -242,7 +242,7 @@ class AdministratorPathsTests(Fixtures, TestCase):
         self.join(Role.MODERATOR)
         candidate = self.person("pl-candidate")
         response = self.client_for(self.admin).patch(
-            reverse("admin-user-update", args=[candidate.pk]), {"role": "moderator", "organization_id": self.organization.pk}, format="json")
+            reverse("admin-user-update", args=[candidate.pk]), {"role": "moderator", "organization_id": self.organization.pk, "reason": "Pilot organization needs a moderator before its owner can invite one"}, format="json")
         self.assert_limit(response, "moderators", 1, "Your plan allows 1 moderator.")
         candidate.refresh_from_db()
         self.assertEqual(candidate.role, "user")
@@ -250,7 +250,7 @@ class AdministratorPathsTests(Fixtures, TestCase):
 
     def test_an_administrators_account_invitation_for_a_moderator_holds_a_seat_and_is_limited(self):
         invite = lambda email: self.client_for(self.admin).post(                   # noqa: E731
-            "/api/user/admin/invitations/", {"email": email, "role": "moderator", "organization_id": self.organization.pk}, format="json")
+            "/api/user/admin/invitations/", {"email": email, "role": "moderator", "reason": "Pilot organization needs a moderator before its owner can invite one", "organization_id": self.organization.pk}, format="json")
         with self.captureOnCommitCallbacks(execute=True):
             self.assertEqual(invite("one@example.org").status_code, 201)
             self.assert_limit(invite("two@example.org"), "moderators", 1, "Your plan allows 1 moderator.")
@@ -260,7 +260,7 @@ class AdministratorPathsTests(Fixtures, TestCase):
     def test_accepting_an_account_invitation_is_checked_again(self):
         with self.captureOnCommitCallbacks(execute=True):
             self.client_for(self.admin).post(
-                "/api/user/admin/invitations/", {"email": "late@example.org", "role": "moderator", "organization_id": self.organization.pk}, format="json")
+                "/api/user/admin/invitations/", {"email": "late@example.org", "role": "moderator", "reason": "Pilot organization needs a moderator before its owner can invite one", "organization_id": self.organization.pk}, format="json")
         import re
 
         token = re.search(r"token=([\w-]+)", mail.outbox[-1].body).group(1)
@@ -292,8 +292,8 @@ class LimitsAndUsageTests(Fixtures, TestCase):
     def test_the_owner_and_the_moderators_see_limits_and_usage_and_a_member_does_not(self):
         for user in (self.owner, self.moderator):
             body = self.client_for(user).get(self.url).json()
-            self.assertEqual(body["limits"], {"moderators": 1, "members": 2}, user.username)
-            self.assertEqual(body["usage"], {"moderators": 1, "members": 1}, user.username)
+            self.assertEqual(body["limits"], {"users": None, "moderators": 1, "members": 2}, user.username)
+            self.assertEqual(body["usage"], {"users": 3, "moderators": 1, "members": 1}, user.username)
         body = self.client_for(self.member_user).get(self.url).json()
         self.assertNotIn("limits", body)
         self.assertNotIn("usage", body)
@@ -308,17 +308,17 @@ class LimitsAndUsageTests(Fixtures, TestCase):
             organization=self.organization, email="e@example.com", role="member", token_hash=hash_token("e"), invited_by=self.owner,
             expires_at=timezone.now() - timedelta(hours=5))
         body = self.client_for(self.owner).get(self.url).json()
-        self.assertEqual(body["usage"], {"moderators": 1, "members": 2})
+        self.assertEqual(body["usage"], {"users": 4, "moderators": 1, "members": 2})
         self.assertEqual((body["member_count"], body["moderator_count"]), (3, 1))        # head counts stay "active people"
 
     def test_unlimited_is_null(self):
         self.set_plan("enterprise")
-        self.assertEqual(self.client_for(self.owner).get(self.url).json()["limits"], {"moderators": None, "members": None})
+        self.assertEqual(self.client_for(self.owner).get(self.url).json()["limits"], {"users": None, "moderators": None, "members": None})
 
     def test_the_figures_shown_are_the_figures_enforced(self):
         client = self.client_for(self.owner)
         body = client.get(self.url).json()
-        for kind in ("moderators", "members"):
+        for kind in ("users", "moderators", "members"):
             self.assertEqual(body["usage"][kind], seats_in_use(self.organization, kind))
 
     def test_the_administrators_list_has_them_for_every_organization_in_a_fixed_number_of_queries(self):
@@ -329,7 +329,7 @@ class LimitsAndUsageTests(Fixtures, TestCase):
         rows = client.get(self.admin_url).json()
         rows = rows["results"] if isinstance(rows, dict) else rows
         row = next(item for item in rows if item["id"] == self.organization.pk)
-        self.assertEqual((row["limits"], row["usage"]), ({"moderators": 1, "members": 2}, {"moderators": 1, "members": 1}))
+        self.assertEqual((row["limits"], row["usage"]), ({"users": None, "moderators": 1, "members": 2}, {"users": 3, "moderators": 1, "members": 1}))
 
         def cost():
             with CaptureQueriesContext(connection) as captured:
@@ -345,9 +345,9 @@ class LimitsAndUsageTests(Fixtures, TestCase):
         url = reverse("organizations:organization-admin-detail", args=[self.organization.pk])
         self.assertEqual(self.client_for(self.admin).get(url).json()["limits"]["members"], 2)
         body = self.client_for(self.admin).patch(url, {"plan": "team"}, format="json").json()
-        self.assertEqual(body["limits"], {"moderators": 2, "members": 3})
+        self.assertEqual(body["limits"], {"users": None, "moderators": 2, "members": 3})
 
     def test_a_personal_workspace_is_not_exempt_but_nobody_joins_one(self):
         personal = create_personal_organization(self.person("pl-solo"))
         body = self.client_for(self.admin).get(reverse("organizations:organization-admin-detail", args=[personal.pk])).json()
-        self.assertEqual(body["usage"], {"moderators": 0, "members": 0})
+        self.assertEqual(body["usage"], {"users": 1, "moderators": 0, "members": 0})

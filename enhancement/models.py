@@ -8,6 +8,7 @@ from django.db.models.signals import post_delete
 from django.dispatch import receiver
 
 from uploads.models import ImagePreprocessingResult, ImageUpload, UploadBatch
+from organizations.access import locked_manager
 
 
 def enhanced_upload_path(instance, filename):
@@ -104,6 +105,8 @@ class EnhancementBatchJob(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = locked_manager("source_batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
+
     class Meta:
         ordering = ["-created_at"]
         indexes = [
@@ -196,6 +199,8 @@ class ImageEnhancementResult(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = locked_manager("image__batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
+
     class Meta:
         ordering = ["-created_at"]
         indexes = [
@@ -234,6 +239,8 @@ class EnhancedImageBlob(models.Model):
     data = models.BinaryField(editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    objects = locked_manager("result__image__batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
+
     def __str__(self):
         return f"enhanced image of result {self.result_id} ({self.byte_size} bytes)"
 
@@ -262,6 +269,8 @@ class AutoEnhancement(models.Model):
     result = models.OneToOneField(ImageEnhancementResult, null=True, blank=True, on_delete=models.SET_NULL, related_name="auto_request")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = locked_manager("image__batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
 
     class Meta:
         ordering = ["created_at", "pk"]
@@ -330,6 +339,8 @@ class ImageEditVersion(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = locked_manager("enhancement_result__image__batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
+
     class Meta:
         ordering = ["-created_at"]
         indexes = [
@@ -374,6 +385,8 @@ class EditPreviewSource(models.Model):
     full_height = models.PositiveIntegerField()
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
+    objects = locked_manager("enhancement_result__image__batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
+
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["enhancement_result", "source_version"],
@@ -409,6 +422,8 @@ class EditPreview(models.Model):
     file_size = models.PositiveBigIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField(db_index=True)
+
+    objects = locked_manager("enhancement_result__image__batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
 
     class Meta:
         ordering = ["-revision", "-pk"]
@@ -522,6 +537,8 @@ class AdvisorRecommendation(models.Model):
     finished_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = locked_manager("enhancement_result__image__batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
+
     class Meta:
         ordering = ["-created_at", "-id"]
         indexes = [
@@ -598,6 +615,8 @@ class ModelComparison(models.Model):
     finished_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = locked_manager("image__batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
 
     class Meta:
         ordering = ["-created_at"]

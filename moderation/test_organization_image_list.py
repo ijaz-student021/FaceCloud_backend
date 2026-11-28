@@ -83,7 +83,7 @@ class OrganizationImageListTests(ModerationFixtureMixin, TestCase):
     def test_a_list_costs_a_fixed_number_of_queries(self):
         for index in range(6):
             self.photo(f"q{index}.jpg", "needs_review")
-        with self.assertNumQueries(4):                         # user, membership, the photos, their reviews
+        with self.assertNumQueries(5):                         # user, membership, the organizations the person is locked out of (organizations/access.py), the photos, their reviews
             self.listed()
 
     def test_other_organizations_and_personal_workspaces_never_appear(self):

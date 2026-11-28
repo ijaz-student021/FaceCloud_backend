@@ -14,6 +14,9 @@ class Organization(models.Model):
     class Status(models.TextChoices):
         ACTIVE = "active", "Active"
         SUSPENDED = "suspended", "Suspended"
+        # Created by the administrator for an owner who has not accepted yet (``organizations.services.create_pending_organization``). Nobody belongs to it and nothing can be done in it:
+        # it becomes ``active`` in the same transaction in which the invited person accepts and becomes its owner.
+        PENDING_OWNER = "pending_owner", "Waiting for the owner"
 
     class Plan(models.TextChoices):
         FREE = "free", "Free"
@@ -42,6 +45,11 @@ class Organization(models.Model):
     logo = models.FileField(upload_to=organization_logo_upload_path, blank=True)
     logo_updated_at = models.DateTimeField(null=True, blank=True)
     logo_uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    # Download approval (downloads/approval.py). Off for every organization until the FaceCloud administrator turns it on: a member then downloads an
+    # image only after a moderator approved it in a download request. ``download_grant_hours`` is how long such an approval lasts (null = the setting
+    # DOWNLOAD_GRANT_DEFAULT_HOURS). A personal workspace is never subject to it.
+    download_approval_required = models.BooleanField(default=False)
+    download_grant_hours = models.PositiveSmallIntegerField(null=True, blank=True)
     storage_quota_bytes = models.BigIntegerField(null=True, blank=True)
     upload_quota_per_day = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -97,6 +105,8 @@ class OrganizationMembership(models.Model):
 
 class OrganizationInvitation(models.Model):
     class Role(models.TextChoices):
+        # OWNER is only ever created by the administrator for a pending organization (the member and moderator invitation routes refuse it).
+        OWNER = "owner", "Owner (invited by the administrator)"      # a label of its own: the choice set must differ from OrganizationMembership.Role for the API schema
         MODERATOR = "moderator", "Moderator"
         MEMBER = "member", "Member"
 
@@ -106,6 +116,14 @@ class OrganizationInvitation(models.Model):
         EXPIRED = "expired", "Expired"
         CANCELLED = "cancelled", "Cancelled"
         REJECTED = "rejected", "Rejected"
+
+    class EmailStatus(models.TextChoices):
+        """What this system knows about the e-mail: ``queued`` (to be sent once the invitation is committed), ``sent`` (the mail server accepted it) or ``failed``.
+        Whether it reached the inbox is not known: SMTP gives no such feedback. Empty for invitations from before this field existed."""
+
+        QUEUED = "queued", "Queued"
+        SENT = "sent", "Sent"
+        FAILED = "failed", "Failed"
 
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="invitations",
@@ -120,6 +138,9 @@ class OrganizationInvitation(models.Model):
     )
     expires_at = models.DateTimeField()
     accepted_at = models.DateTimeField(null=True, blank=True)
+    email_status = models.CharField(max_length=10, choices=EmailStatus.choices, blank=True, default="")
+    email_sent_at = models.DateTimeField(null=True, blank=True)
+    email_failure_reason = models.CharField(max_length=200, blank=True)          # a short reason (never the link or the token)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -170,6 +191,19 @@ class OrganizationAuditEvent(models.Model):
         ORGANIZATION_REACTIVATED = "organization_reactivated", "Organization reactivated"
         ORGANIZATION_LOGO_CHANGED = "organization_logo_changed", "Organization logo changed"
         ORGANIZATION_LOGO_REMOVED = "organization_logo_removed", "Organization logo removed"
+        DOWNLOAD_REQUESTED = "download_requested", "Download requested"
+        DOWNLOAD_DECIDED = "download_decided", "Download request decided"
+        DOWNLOAD_REQUEST_CANCELLED = "download_request_cancelled", "Download request cancelled"
+        DOWNLOAD_GRANT_REVOKED = "download_grant_revoked", "Download grant revoked"
+        DOWNLOAD_COMPLETED = "download_completed", "Approved download completed"
+        DOWNLOAD_BLOCKED = "download_blocked", "Download blocked"
+        OWNER_INVITED = "owner_invited", "Owner invited"
+        LEAVE_REQUESTED = "leave_requested", "Leave requested"
+        LEAVE_REQUEST_APPROVED = "leave_request_approved", "Leave request approved"
+        LEAVE_REQUEST_DENIED = "leave_request_denied", "Leave request denied"
+        LEAVE_REQUEST_CANCELLED = "leave_request_cancelled", "Leave request cancelled"
+        ORGANIZATION_ACTIVATED = "organization_activated", "Organization activated by its owner"
+        ADMIN_MODERATOR_OVERRIDE = "admin_moderator_override", "Moderator added by the administrator"
 
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="audit_events",
@@ -193,3 +227,38 @@ class OrganizationAuditEvent(models.Model):
 
     def __str__(self):
         return f"{self.action} in org {self.organization_id}"
+
+
+class OrganizationLeaveRequest(models.Model):
+    """A member's request to leave one organization. The member never suspends themselves: a moderator decides (approve = the membership is suspended).
+
+    One pending request per membership (a partial unique index); decided requests stay as history. Nothing here touches the person's account or other memberships.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        APPROVED = "approved", "Approved"
+        DENIED = "denied", "Denied"
+        CANCELLED = "cancelled", "Cancelled"
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="leave_requests")
+    membership = models.ForeignKey(OrganizationMembership, on_delete=models.CASCADE, related_name="leave_requests")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="organization_leave_requests")
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+    reason = models.CharField(max_length=500, blank=True, default="")
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    decided_at = models.DateTimeField(null=True, blank=True)          # also the moment of a cancellation
+    decision_reason = models.CharField(max_length=500, blank=True, default="")
+    admin_override = models.BooleanField(default=False)               # decided by a FaceCloud administrator instead of a moderator (audited with a reason)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-submitted_at", "-pk"]
+        constraints = [
+            models.UniqueConstraint(fields=["membership"], condition=models.Q(status="pending"), name="organizations_one_pending_leave_request"),
+        ]
+        indexes = [models.Index(fields=["organization", "status", "-submitted_at"])]
+
+    def __str__(self):
+        return f"leave request {self.pk} ({self.status}) of user {self.user_id} in org {self.organization_id}"

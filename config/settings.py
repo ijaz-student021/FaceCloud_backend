@@ -113,7 +113,7 @@ CORS_ALLOWED_ORIGINS = [origin.strip() for origin in os.environ.get("CORS_ALLOWE
 # cross-origin JavaScript unless it is exposed here. The frontend needs
 # Content-Disposition (the real download filename) and Retry-After (how long a
 # 429 says to wait).
-CORS_EXPOSE_HEADERS = ["Content-Disposition", "Retry-After"]
+CORS_EXPOSE_HEADERS = ["Content-Disposition", "Retry-After", "X-Preview-Restricted", "X-Report-Restricted"]      # the browser may read them: a restricted preview / report copy says so
 
 ROOT_URLCONF = 'config.urls'
 
@@ -1230,6 +1230,10 @@ CELERY_TASK_EAGER_PROPAGATES = env.bool("CELERY_TASK_EAGER_PROPAGATES", default=
 CELERY_TASK_SERIALIZER = "json"
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_RESULT_SERIALIZER = "json"
+# Nothing in FaceCloud reads a Celery task's return value: every task writes its own outcome to its own table, and screens poll those tables. Ignoring results means the
+# web process does not open a result-backend subscription for every task it sends. Without this, a Redis outage made each upload request wait about 58 seconds
+# (20 reconnect attempts of the result consumer) before the "queue is unavailable" failure was recorded; with it the publish itself fails within a second or two.
+CELERY_TASK_IGNORE_RESULT = env.bool("CELERY_TASK_IGNORE_RESULT", default=True)
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = env.int("CELERY_TASK_TIME_LIMIT", default=60 * 60)
 CELERY_TASK_SOFT_TIME_LIMIT = env.int("CELERY_TASK_SOFT_TIME_LIMIT", default=55 * 60)
@@ -1316,10 +1320,14 @@ if not 30 <= THUMBNAIL_JPEG_QUALITY <= 95:
 # Feature 48: hours between two photos that starts a new event in the timeline.
 EVENT_GAP_HOURS = env.float("EVENT_GAP_HOURS", default=6.0)
 ORG_INVITATION_TTL_HOURS = env.int("ORG_INVITATION_TTL_HOURS", default=72)
+# The invitation the administrator sends to the future owner of a new organization lives longer: the person may need to create an account first.
+ORG_OWNER_INVITATION_TTL_HOURS = env.int("ORG_OWNER_INVITATION_TTL_HOURS", default=168)
+if not 1 <= ORG_OWNER_INVITATION_TTL_HOURS <= 24 * 30:
+    raise ImproperlyConfigured("ORG_OWNER_INVITATION_TTL_HOURS must be 1-720.")
 
 
 def _plan_limit(plan, kind, default):
-    """What ``plan`` allows of ``kind`` (``moderators`` or ``members``); ``None`` is unlimited. Override from the environment, for example
+    """What ``plan`` allows of ``kind`` (``moderators``, ``members`` or ``users``, the total); ``None`` is unlimited. Override from the environment, for example
     ``ORG_PLAN_FREE_MODERATORS=2`` or ``ORG_PLAN_TEAM_MEMBERS=unlimited``."""
     name = f"ORG_PLAN_{plan.upper()}_{kind.upper()}"
     raw = os.environ.get(name, "").strip().lower()
@@ -1332,12 +1340,14 @@ def _plan_limit(plan, kind, default):
     return int(raw)
 
 
-# How many moderators and plain members an organization may have, by plan (organizations/services.py enforces it wherever people are added; the owner is
-# not counted). No billing: the plan is a label the administrator sets. Organizations already above a limit keep everyone and simply cannot add more.
+# How many people an organization may have, by plan. ``users`` is the TOTAL (the owner, the moderators and the members, plus every invitation still waiting, which
+# holds its seat); ``moderators`` and ``members`` cap each role on its own, the owner is not counted in those two. organizations/services.py enforces all three
+# wherever people are added. No billing: the plan is a label the administrator sets. A plan cannot be lowered below what the organization already uses (nobody
+# is removed automatically). Product defaults: Free 5, Team 25, Enterprise 100 users; override with ORG_PLAN_<PLAN>_USERS (a number or "unlimited").
 ORGANIZATION_PLAN_LIMITS = {
-    "free": {"moderators": _plan_limit("free", "moderators", 1), "members": _plan_limit("free", "members", 10)},
-    "team": {"moderators": _plan_limit("team", "moderators", 5), "members": _plan_limit("team", "members", 100)},
-    "enterprise": {"moderators": _plan_limit("enterprise", "moderators", None), "members": _plan_limit("enterprise", "members", None)},
+    "free": {"users": _plan_limit("free", "users", 5), "moderators": _plan_limit("free", "moderators", 1), "members": _plan_limit("free", "members", 10)},
+    "team": {"users": _plan_limit("team", "users", 25), "moderators": _plan_limit("team", "moderators", 5), "members": _plan_limit("team", "members", 100)},
+    "enterprise": {"users": _plan_limit("enterprise", "users", 100), "moderators": _plan_limit("enterprise", "moderators", None), "members": _plan_limit("enterprise", "members", None)},
 }
 # Administrator invitations to create an account (accounts/invitations.py).
 ACCOUNT_INVITATION_TTL_HOURS = env.int("ACCOUNT_INVITATION_TTL_HOURS", default=72)
@@ -1439,6 +1449,16 @@ DOWNLOAD_PACKAGE_MAX_UNCOMPRESSED_SIZE = env.int(
 DOWNLOAD_PACKAGE_COMPRESSION_LEVEL = env.int(
     "DOWNLOAD_PACKAGE_COMPRESSION_LEVEL", default=6,
 )
+# Download approval (organizations whose ``download_approval_required`` is on): how long an approved image stays downloadable (an organization may set its own
+# number of hours), how many images one request may name, and how many times one grant may be used (0 = no limit).
+DOWNLOAD_GRANT_DEFAULT_HOURS = env.int("DOWNLOAD_GRANT_DEFAULT_HOURS", default=24)
+DOWNLOAD_GRANT_MAX_HOURS = 24 * 30
+DOWNLOAD_REQUEST_MAX_ITEMS = env.int("DOWNLOAD_REQUEST_MAX_ITEMS", default=100)
+DOWNLOAD_GRANT_MAX_USES = env.int("DOWNLOAD_GRANT_MAX_USES", default=0)
+# The largest side, in pixels, of a preview of an image in an organization that requires approval, for the person who owns it and holds no approval (it is watermarked too).
+DOWNLOAD_APPROVAL_PREVIEW_MAX_EDGE = env.int("DOWNLOAD_APPROVAL_PREVIEW_MAX_EDGE", default=800)
+if not 1 <= DOWNLOAD_GRANT_DEFAULT_HOURS <= DOWNLOAD_GRANT_MAX_HOURS or DOWNLOAD_REQUEST_MAX_ITEMS < 1 or DOWNLOAD_GRANT_MAX_USES < 0 or not 64 <= DOWNLOAD_APPROVAL_PREVIEW_MAX_EDGE <= 800:
+    raise ImproperlyConfigured("DOWNLOAD_GRANT_DEFAULT_HOURS must be 1-720, DOWNLOAD_REQUEST_MAX_ITEMS at least 1, DOWNLOAD_GRANT_MAX_USES at least 0 and DOWNLOAD_APPROVAL_PREVIEW_MAX_EDGE 64-800.")
 NOTIFICATION_EMAILS_ENABLED = env.bool(
     "NOTIFICATION_EMAILS_ENABLED", default=True,
 )
@@ -1541,6 +1561,8 @@ REST_FRAMEWORK = {
         "search": "600/hour",
         "share_public": "120/hour",
         "org_invite": "30/hour",
+        # Download review: approving, denying and revoking download approvals, per moderator (its own limit, not the invitation one).
+        "download_review": "120/hour",
         "org_export": "10/hour",
         "org_branding": "30/hour",
         "org_batch_action": "60/hour",
@@ -1585,6 +1607,8 @@ SPECTACULAR_SETTINGS = {
         "EnhancementLightingEnum": "enhancement.models.EnhancementLighting",
         "LightingMethodEnum": "enhancement.models.LIGHTING_METHODS",
         "PackageStatusEnum": "downloads.models.DownloadPackage.Status",
+        "DownloadRequestStatusEnum": "downloads.models.DownloadRequest.Status",
+        "DownloadRequestItemStatusEnum": "downloads.models.DownloadRequestItem.Status",
         "ProcessingReportStatusEnum": "reports.models.ProcessingReport.Status",
         "IdentityAnalysisStatusEnum": "identities.models.IdentityAnalysis.Status",
         "ExportReportFormatEnum": "identities.models.IdentityGroupExport.ReportFormat",

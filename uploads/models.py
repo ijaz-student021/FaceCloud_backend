@@ -5,6 +5,7 @@ from django.conf import settings
 from django.db import models
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
+from organizations.access import OrgLockedManager, exclude_locked, locked_manager
 
 
 def original_upload_path(instance, filename):
@@ -89,6 +90,8 @@ class UploadBatch(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = locked_manager("organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
+
     class Meta:
         ordering = ["-created_at"]
 
@@ -101,6 +104,15 @@ class ImageUploadQuerySet(models.QuerySet):
         return self.filter(trashed_at__isnull=True)
 
 
+IMAGE_LOCK_PATHS = ("batch__organization_id",)        # see organizations/access.py: hidden from a person locked out of that organization
+
+
+class AllImagesManager(OrgLockedManager, models.Manager.from_queryset(ImageUploadQuerySet)):
+    """Every photograph, the trash included, except what is filed under an organization the current person is locked out of."""
+
+    lock_paths = IMAGE_LOCK_PATHS
+
+
 class VisibleImageManager(models.Manager.from_queryset(ImageUploadQuerySet)):
     """The default manager: photographs that are **not** in the trash.
 
@@ -111,7 +123,7 @@ class VisibleImageManager(models.Manager.from_queryset(ImageUploadQuerySet)):
     """
 
     def get_queryset(self):
-        return super().get_queryset().filter(trashed_at__isnull=True)
+        return exclude_locked(super().get_queryset().filter(trashed_at__isnull=True), IMAGE_LOCK_PATHS)
 
 
 class ImageUpload(models.Model):
@@ -146,7 +158,7 @@ class ImageUpload(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     objects = VisibleImageManager()
-    all_objects = ImageUploadQuerySet.as_manager()
+    all_objects = AllImagesManager()
 
     class Meta:
         ordering = ["-created_at"]
@@ -176,6 +188,8 @@ class TrashEntry(models.Model):
     memberships = models.JSONField(default=dict, blank=True)
     archived_groups = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = locked_manager("image__batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
 
     class Meta:
         ordering = ["-created_at"]
@@ -222,6 +236,8 @@ class ImagePreprocessingResult(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = locked_manager("image__batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
+
     class Meta:
         ordering = ["-created_at"]
 
@@ -247,6 +263,8 @@ class BatchImageProgress(models.Model):
     finished_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = locked_manager("batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
 
     class Meta:
         ordering = ["image_id"]

@@ -41,6 +41,8 @@ class AdminCreateBase(APITestCase):
 
     def create(self, **fields):
         payload = {"username": "sara", "email": "sara@example.com", "password": PASSWORD, "role": "user", **fields}
+        if payload["role"] == "moderator":
+            payload.setdefault("reason", "Pilot organization needs a moderator before its owner can invite one")          # an administrator's moderator operation must say why
         self.as_user(self.admin)
         return self.client.post(reverse(URL_NAME), {k: v for k, v in payload.items() if v is not None}, format="json")
 
@@ -66,12 +68,14 @@ class AdminCreateUserTests(AdminCreateBase):
         self.assertEqual(response.data["role"], "user")
         self.assertEqual(response.data["username"], "sara")
         self.assertEqual(set(response.data), {"id", "username", "email", "full_name", "role", "is_email_verified", "is_suspended",
-                                              "suspension_reason", "is_active", "date_joined", "last_login", "uploads_count"})
+                                              "suspension_reason", "is_active", "date_joined", "last_login", "uploads_count", "account_type", "shared_organization_count",
+                                              "password_setup_pending", "login_ready", "login_blockers", "moderator_memberships", "setup_email", "moderator_portal_ready"})
         user = User.objects.get(username="sara")
         self.assertTrue(user.is_email_verified and user.is_active and not user.is_suspended)
         self.assertEqual(user.role, "user")
         self.assertFalse(user.is_staff or user.is_superuser)
-        self.assertFalse(OrganizationMembership.objects.filter(user=user).exists())
+        self.assertFalse(OrganizationMembership.objects.filter(user=user, organization__is_personal=False).exists())        # no shared organization
+        self.assertEqual(list(OrganizationMembership.objects.filter(user=user).values_list("organization__is_personal", "role")), [(True, "owner")])     # only their own private workspace
         self.assertTrue(user.check_password(PASSWORD))
         self.assertNotEqual(user.password, PASSWORD)
         self.assertEqual(len(mail.outbox), 0)                       # nothing is emailed, least of all a password
@@ -105,7 +109,7 @@ class AdminCreateUserTests(AdminCreateBase):
         self.assertEqual(response.data["role"], "moderator")
         user = User.objects.get(username="omar")
         self.assertEqual(user.role, "moderator")
-        membership = OrganizationMembership.objects.get(user=user)
+        membership = OrganizationMembership.objects.get(user=user, organization__is_personal=False)         # (their personal workspace is the other membership)
         self.assertEqual((membership.organization_id, membership.role, membership.status),
                          (organization.pk, OrganizationMembership.Role.MODERATOR, OrganizationMembership.Status.ACTIVE))
         self.assertEqual(membership.invited_by_id, self.admin.pk)
@@ -140,7 +144,7 @@ class AdminCreateUserTests(AdminCreateBase):
         self.assertFalse(User.objects.filter(username="omar").exists())
         chosen = self.create(username="omar", email="omar@example.com", role="moderator", organization_id=second.pk)
         self.assertEqual(chosen.status_code, status.HTTP_201_CREATED, chosen.data)
-        self.assertEqual(OrganizationMembership.objects.get(user__username="omar").organization_id, second.pk)
+        self.assertEqual(OrganizationMembership.objects.get(user__username="omar", organization__is_personal=False).organization_id, second.pk)
         self.assertNotEqual(first.pk, second.pk)
 
     def test_a_bad_organization_is_refused(self):
@@ -190,7 +194,9 @@ class AdminCreateUserTests(AdminCreateBase):
                 self.assertIn("password", response.data)
                 self.assertNotIn(weak, json.dumps(list(response.data.values())))   # the message never repeats the password
         self.assertFalse(User.objects.filter(username="sara").exists())
-        self.assertEqual(self.create(password=None).status_code, status.HTTP_400_BAD_REQUEST)
+        self.as_user(self.admin)
+        explicit_null = self.client.post(reverse(URL_NAME), {"username": "sara", "email": "sara@example.com", "password": None, "role": "user"}, format="json")
+        self.assertEqual(explicit_null.status_code, status.HTTP_400_BAD_REQUEST)         # a password may be left out, but not sent as null
 
     # -- secrets and audit -----------------------------------------------------------------------------------------------
     def test_the_password_never_appears_in_a_response_the_log_or_the_audit_event(self):
@@ -215,7 +221,8 @@ class AdminCreateUserTests(AdminCreateBase):
         self.assertIsInstance(listed.data, list)
         self.assertEqual({row["username"] for row in listed.data}, {"boss", "founder", "sara"})
         self.assertEqual(set(listed.data[0]), {"id", "username", "email", "full_name", "role", "is_email_verified", "is_suspended",
-                                               "suspension_reason", "is_active", "date_joined", "last_login", "uploads_count"})
+                                               "suspension_reason", "is_active", "date_joined", "last_login", "uploads_count", "account_type", "shared_organization_count",
+                                              "password_setup_pending", "login_ready", "login_blockers", "moderator_memberships", "setup_email", "moderator_portal_ready"})
 
     def test_get_and_patch_on_other_urls_are_unchanged(self):
         self.create()
@@ -243,19 +250,23 @@ class AdminCreatedAccountsWorkLikeSignedUpOnesTests(AdminCreateBase):
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
         return self.client.post("/api/images/upload/single/", {"file": SimpleUploadedFile("a.png", self.png(), "image/png")}, format="multipart")
 
-    def test_an_admin_created_user_can_use_the_app_and_their_uploads_belong_to_no_organization(self):
+    def test_an_admin_created_user_can_use_the_app_and_their_uploads_go_to_their_personal_workspace(self):
         from uploads.models import UploadBatch
 
         self.create(username="sara", email="sara@example.com")
         response = self.upload_as("sara")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
-        self.assertIsNone(UploadBatch.objects.get(owner__username="sara").organization)
+        organization = UploadBatch.objects.get(owner__username="sara").organization
+        self.assertTrue(organization.is_personal)                                                       # like a signed-up account: a private workspace, never a shared organization
 
-    def test_an_admin_created_moderators_own_uploads_are_tagged_to_the_organization_they_moderate(self):
+    def test_an_admin_created_moderators_own_uploads_stay_private_and_are_not_filed_under_the_organization_they_moderate(self):
+        """An organization is never inferred from a membership: the moderator's own photographs go to their personal workspace, where the organization's staff cannot see them."""
         from uploads.models import UploadBatch
 
         organization = self.organization()
         self.create(username="omar", email="omar@example.com", role="moderator")
         response = self.upload_as("omar")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
-        self.assertEqual(UploadBatch.objects.get(owner__username="omar").organization_id, organization.pk)
+        filed_under = UploadBatch.objects.get(owner__username="omar").organization
+        self.assertTrue(filed_under.is_personal)
+        self.assertNotEqual(filed_under.pk, organization.pk)

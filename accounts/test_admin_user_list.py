@@ -39,7 +39,7 @@ class AdminUserListTests(APITestCase):
     def test_the_count_costs_one_query_for_the_whole_list(self):
         for owner in (self.sara, self.omar):
             self.upload(owner, 2)
-        with self.assertNumQueries(1):         # one query for the whole page, counts included
+        with self.assertNumQueries(2):         # a fixed number for the whole page, whatever its size: the rows (counts and the last setup e-mail included) and one prefetch of the moderator memberships
             self.client.get(self.url)
 
     def test_the_count_is_also_right_on_the_response_to_a_change(self):

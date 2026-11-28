@@ -6,6 +6,7 @@ from django.db.models.signals import post_delete
 from django.dispatch import receiver
 
 from uploads.models import ImageUpload
+from organizations.access import locked_manager
 
 
 def thumbnail_upload_path(instance, filename):
@@ -29,6 +30,8 @@ class ImageThumbnail(models.Model):
     height = models.PositiveIntegerField()
     file_size = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = locked_manager("image__batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
 
     class Meta:
         ordering = ["image_id", "size"]

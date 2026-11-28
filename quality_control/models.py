@@ -3,6 +3,7 @@ from django.db import models
 
 from uploads.models import ImagePreprocessingResult, ImageUpload
 from validation.models import FaceValidationResult
+from organizations.access import locked_manager
 
 
 class ImageQualityDecision(models.Model):
@@ -58,6 +59,8 @@ class ImageQualityDecision(models.Model):
     finished_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = locked_manager("image__batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
 
     class Meta:
         ordering = ["-updated_at"]
