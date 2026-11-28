@@ -175,6 +175,10 @@ class ModeratorReviewImageView(OrganizationScopedMixin, APIView):
             organization_reviews(self.organization, self.data_scope).select_related("image"),
             pk=review_id,
         )
+        from downloads.previews import preview_is_restricted, restricted_response
+
+        if preview_is_restricted(request.user, review.image):                  # a moderator looking at their own image is treated like any owner
+            return restricted_response(review.image.original_file, request.user, size)
         try:
             thumbnail = get_or_create_thumbnail(review.image, size)
         except ThumbnailUnavailable as error:
@@ -844,6 +848,13 @@ class ModeratorImagePreviewView(OrganizationScopedMixin, APIView):
             raise ValidationError({"size": f"Choose one of: {', '.join(str(size) for size in allowed_sizes())}."})
         size = int(raw_size) if raw_size else default_size()
         image = get_object_or_404(organization_images(self.organization, self.data_scope).filter(status="uploaded"), pk=image_id)
+        from downloads.previews import preview_is_restricted, restricted_response
+
+        if preview_is_restricted(request.user, image):                          # a moderator looking at their own image is treated like any owner
+            result = None if variant == "original" else (image.enhancement_results.filter(status=EnhancementStatus.COMPLETED).exclude(enhanced_file="").order_by("-finished_at", "-pk").first())
+            if variant == "enhanced" and result is None:
+                raise NotFound("This image has no completed enhancement.")
+            return restricted_response(result.enhanced_file if result is not None else image.original_file, request.user, size)
         try:
             if variant == "original":
                 thumbnail = get_or_create_thumbnail(image, size)

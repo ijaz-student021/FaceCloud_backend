@@ -42,6 +42,11 @@ class Organization(models.Model):
     logo = models.FileField(upload_to=organization_logo_upload_path, blank=True)
     logo_updated_at = models.DateTimeField(null=True, blank=True)
     logo_uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    # Download approval (downloads/approval.py). Off for every organization until the FaceCloud administrator turns it on: a member then downloads an
+    # image only after a moderator approved it in a download request. ``download_grant_hours`` is how long such an approval lasts (null = the setting
+    # DOWNLOAD_GRANT_DEFAULT_HOURS). A personal workspace is never subject to it.
+    download_approval_required = models.BooleanField(default=False)
+    download_grant_hours = models.PositiveSmallIntegerField(null=True, blank=True)
     storage_quota_bytes = models.BigIntegerField(null=True, blank=True)
     upload_quota_per_day = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -170,6 +175,12 @@ class OrganizationAuditEvent(models.Model):
         ORGANIZATION_REACTIVATED = "organization_reactivated", "Organization reactivated"
         ORGANIZATION_LOGO_CHANGED = "organization_logo_changed", "Organization logo changed"
         ORGANIZATION_LOGO_REMOVED = "organization_logo_removed", "Organization logo removed"
+        DOWNLOAD_REQUESTED = "download_requested", "Download requested"
+        DOWNLOAD_DECIDED = "download_decided", "Download request decided"
+        DOWNLOAD_REQUEST_CANCELLED = "download_request_cancelled", "Download request cancelled"
+        DOWNLOAD_GRANT_REVOKED = "download_grant_revoked", "Download grant revoked"
+        DOWNLOAD_COMPLETED = "download_completed", "Approved download completed"
+        DOWNLOAD_BLOCKED = "download_blocked", "Download blocked"
 
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="audit_events",

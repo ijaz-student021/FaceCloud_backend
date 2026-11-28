@@ -40,6 +40,12 @@ EVENT_POLICY = {
     # For the administrators only (contact form messages and early-access e-mails): in-app, always on.
     UserNotification.EventType.CONTACT_MESSAGE_RECEIVED: (None, False),
     UserNotification.EventType.EARLY_ACCESS_SIGNUP: (None, False),
+    # Download approval: the requester is told that the request went in (in-app only) and what was decided (in-app and e-mail, once, when every image is decided);
+    # the moderators who may see the requester are told a request is waiting (in-app and e-mail). A decision is never needed to get past the e-mail switch: no
+    # preference field means these are on for everyone whose address is verified, like the other notices that carry something to act on.
+    UserNotification.EventType.DOWNLOAD_REQUEST_SUBMITTED: (None, False),
+    UserNotification.EventType.DOWNLOAD_REQUEST_RECEIVED: ("moderator_review_updates", True),
+    UserNotification.EventType.DOWNLOAD_REQUEST_DECIDED: (None, True),
 }
 
 
@@ -57,7 +63,7 @@ def _safe_metadata(metadata):
             "filename", "batch_id", "image_id", "report_id", "package_id",
             "status", "accepted", "rejected", "needs_review", "failed", "format",
             "review_id", "organization_id", "source", "due_at", "folder_count", "suggested_merge_count",
-            "enhanced", "kept", "skipped", "total", "contact_id", "reason",
+            "enhanced", "kept", "skipped", "total", "contact_id", "reason", "request_id", "approved", "denied",
         } and isinstance(value, (str, int, float, bool, type(None))):
             safe[str(key)[:40]] = value
     return safe
@@ -66,17 +72,24 @@ def _safe_metadata(metadata):
 def create_user_notification(
     *, recipient, event_type, idempotency_key, title, message,
     severity=UserNotification.Severity.INFO, resource_type="", resource_id=None,
-    action_path="", metadata=None,
+    action_path="", metadata=None, force_in_app=False,
 ):
+    """Create one in-app notification (once per recipient and ``idempotency_key``) and queue its e-mail where the person's settings allow.
+
+    A switched-off preference for the event type normally drops the notification. ``force_in_app=True`` is for a task someone must see (a request waiting for their
+    review): the in-app notification is still created, and the preference still keeps the e-mail from being sent.
+    """
     if event_type not in EVENT_POLICY:
         raise ValueError("Unsupported notification event type.")
     preferences = get_notification_preferences(recipient)
     preference_field, email_capable = EVENT_POLICY[event_type]
-    if preference_field and not getattr(preferences, preference_field):
+    muted = bool(preference_field and not getattr(preferences, preference_field))
+    if muted and not force_in_app:
         return None, False
 
     queue_email = bool(
         email_capable
+        and not muted
         and settings.NOTIFICATION_EMAILS_ENABLED
         and preferences.email_notifications
         and recipient.email
