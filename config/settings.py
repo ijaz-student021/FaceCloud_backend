@@ -113,7 +113,7 @@ CORS_ALLOWED_ORIGINS = [origin.strip() for origin in os.environ.get("CORS_ALLOWE
 # cross-origin JavaScript unless it is exposed here. The frontend needs
 # Content-Disposition (the real download filename) and Retry-After (how long a
 # 429 says to wait).
-CORS_EXPOSE_HEADERS = ["Content-Disposition", "Retry-After"]
+CORS_EXPOSE_HEADERS = ["Content-Disposition", "Retry-After", "X-Preview-Restricted", "X-Report-Restricted"]      # the browser may read them: a restricted preview / report copy says so
 
 ROOT_URLCONF = 'config.urls'
 

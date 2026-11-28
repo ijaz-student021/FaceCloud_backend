@@ -21,7 +21,7 @@ Changing them is written to the organization's audit trail (`organization_update
 
 1. A member lists their images and (optionally) asks `POST /api/downloads/requests/check/` which can be requested and why not.
 2. The member submits **one** request for several images: `POST /api/downloads/requests/`. The list is saved exactly and cannot be edited afterwards.
-3. The organization's owner and the moderators who may see that member are told (in-app and e-mail). If nobody in the organization can decide, the platform administrators are told.
+3. The moderators who may see that member (not the owner, who oversees) are told (in-app and e-mail). If nobody in the organization can decide, the platform administrators are told.
 4. A moderator opens the request, previews each image, and decides: approve all, approve selected, deny selected or deny all, with a reason for every denial.
 5. Each approved image gets a grant for that one file, valid for the organization's number of hours.
 6. When every image is decided, the member gets one summary notification. They download the approved images one by one or as a ZIP.
@@ -41,10 +41,9 @@ The status is always computed from the items' decisions, so it cannot disagree w
 
 ### Who can decide
 
-The organization's owner and its moderators, but **never the person who made the request** (no self-approval for owners or moderators either), and a moderator only for the members they may see
-(`moderator_data_scope`). The platform administrator has no access to decide: they are not a member, so the decision endpoints answer 404. When nobody can decide a request, submitting it
-answers `409 no_eligible_reviewer` ("ask your organization owner or the FaceCloud administrator to add a moderator"), and `POST requests/check/` returns `reviewer_available: false` so a screen can
-say so before the member selects anything. This happens for example to an owner whose organization has no moderator any more.
+**The organization's moderators, and only they.** The owner oversees: they read every request and its history (`GET download-requests/` and `.../{id}/`) but cannot decide or revoke (`403 moderator_required`), and are not sent the review task. A member, the platform administrator (not a member: `404`) and anybody else cannot either. This is enforced twice, by the route (`OrganizationModeratorOnlyMixin`) and by the service (`decide` and `revoke_grant` check the actor's active moderator membership), so no frontend route restriction is relied on.
+Never the person who made the request, and, when moderators see only their own members (`moderator_data_scope`), only a moderator who may see that member. **A moderator's own request needs another moderator**: with one moderator they cannot approve their own images.
+When no moderator can decide a request (an organization with an owner and members but no other moderator), submitting it answers `409 no_eligible_reviewer` ("ask your organization owner or the FaceCloud administrator to add a moderator") and `POST requests/check/` returns `reviewer_available: false`. Turning approval on needs at least one active moderator (a moderator's own and a member's requests are then decided by the moderators).
 
 ### What can be requested
 
@@ -108,7 +107,7 @@ Member (`/api/downloads/`):
 | `GET requests/{id}/items/{item}/file/` | download one approved image |
 | `GET requests/{id}/zip/` | ZIP of the approved images that are still authorized now (denied, expired and revoked ones are left out) |
 
-Owner and moderators (`/api/organizations/{id}/`):
+The organization's side (`/api/organizations/{id}/`). Reading (the first two calls) is for the owner and the moderators; **deciding and revoking are the moderators' only** (`403 moderator_required` for the owner):
 
 | Call | Purpose |
 |---|---|
@@ -170,7 +169,7 @@ For an approved item `grant` is `{"id", "artifact_type", "artifact_id", "expires
 
 **Decision** `POST /api/organizations/{org}/download-requests/{id}/decision/` body `{"action": "approve_selected", "item_ids": [1, 2], "reason": {"code": "client_restriction", "text": ""}, "item_reasons": {"3": {"code": "other", "text": "..."}}, "expected_version": 0}` ->
 **200** with the detail object (here `status: "partially_approved"`, `version: 1`, `counts: {"total": 3, "pending": 0, "approved": 2, "denied": 1}`, `decided_at` set).
-Errors: **409** `request_closed` (`"This request is already decided or was cancelled."`), `item_already_decided`, `request_changed`; **403** `cannot_decide_own_request` (a requester who is a moderator or owner; a plain member gets the role error `"Organization owner or moderator access is required."`); **400** a missing denial reason, or `other` without text; **404** a request the moderator may not see; **429** the review limit.
+Errors: **409** `request_closed` (`"This request is already decided or was cancelled."`), `item_already_decided`, `request_changed`; **403** `cannot_decide_own_request` (a requester who is a moderator), **403** `moderator_required` (the owner, or a member who is not a moderator; a non-member gets `404`); **400** a missing denial reason, or `other` without text; **404** a request the moderator may not see; **429** the review limit.
 
 **Download refusal** (any of the file routes, with approval on and no valid approval): **403** `{"detail": "This image has not been approved for download. Request approval first.", "code": "download_approval_required", "reason": "no_grant"}`;
 `reason` is one of `no_grant`, `expired`, `revoked`, `used_up`, `not_approved`, `not_a_member`, `organization_suspended`, or `bulk_not_allowed` (ZIP packages, person-folder ZIPs, share links).
@@ -178,7 +177,7 @@ Errors: **409** `request_closed` (`"This request is already decided or was cance
 **Notifications** (`GET /api/notifications/`): `event_type` `download_request_submitted`, `download_request_received`, `download_request_decided`; `action_path` `/dashboard/download-requests/{id}` (requester) or `/moderator/download-requests/{id}?organization={org}` (reviewers);
 `metadata` `{"request_id", "organization_id", "total"}`, and on a decision `{"request_id", "status", "total", "approved", "denied"}`. Titles: "Download Request Submitted", "Download request to review", "Download Request Approved" / "Partially Approved" / "Denied".
 
-**Headers** the frontend may read: `X-Preview-Restricted: approval-required` (a reduced, watermarked preview), `X-Report-Restricted: approval-required` (a watermarked report copy).
+**Headers** the frontend may read (both restriction headers are in `CORS_EXPOSE_HEADERS`, so a browser on another origin can see them): `X-Preview-Restricted: approval-required` (a reduced, watermarked preview), `X-Report-Restricted: approval-required` (a watermarked report copy).
 
 ## Concurrency and repeats
 
@@ -189,7 +188,7 @@ The PostgreSQL concurrency tests prove this with separate connections (and were 
 
 ## Notifications and e-mail
 
-New event types `download_request_submitted` (requester, in-app), `download_request_received` (owner and moderators who may see the requester; always an in-app task, even if their e-mail or review-update preferences are off; the e-mail follows the preferences) and `download_request_decided` (requester; in-app and e-mail; one per finalized request, titles "Download Request Approved", "...Partially
+New event types `download_request_submitted` (requester, in-app), `download_request_received` (the moderators who may see the requester, not the owner; always an in-app task, even if their e-mail or review-update preferences are off; the e-mail follows the preferences) and `download_request_decided` (requester; in-app and e-mail; one per finalized request, titles "Download Request Approved", "...Partially
 Approved", "...Denied"). They are created after the decision is committed and idempotent per request; each person is handled on their own, so a failure for one moderator never stops the others, and a failure to create one or to queue
 its e-mail is logged and recorded on the notification (`email_status`) and never undoes the decision or removes the request from the moderator queue (the queue is read from the database, not from notifications). E-mails carry a link to the authenticated page and never a photograph. Frontend routes used in links (to be built or
 adjusted): `/dashboard/download-requests/{id}` and `/moderator/download-requests/{id}?organization={id}`.

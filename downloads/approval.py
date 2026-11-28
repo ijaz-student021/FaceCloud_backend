@@ -209,12 +209,22 @@ def eligibility_report(user, organization, entries):
 # --------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 
+MODERATOR_REQUIRED = {"detail": "Only the organization's moderators decide download requests.", "code": "moderator_required"}
+
+
+def assert_moderator(membership):
+    """The approval role is the organization's **moderator**: not the owner (who oversees: reads every request and its history), not a member, not the administrator."""
+    if membership is None or membership.status != OrganizationMembership.Status.ACTIVE or membership.role != OrganizationMembership.Role.MODERATOR:
+        raise PermissionDenied(detail=MODERATOR_REQUIRED)
+
+
 def eligible_reviewers(organization, requester_id):
-    """The active owners and moderators who may decide ``requester_id``'s requests: not the requester (nobody approves their own), and, when moderators see only their own members,
-    those who may see this member. Suspended or deactivated accounts do not count."""
+    """The active **moderators** who may decide ``requester_id``'s requests: not the requester (nobody approves their own request, a moderator's included), not the owner, and, when
+    moderators see only their own members, only those who may see this member. Suspended or deactivated accounts do not count."""
     return [
         membership for membership in moderators_who_see(organization, requester_id)
-        if membership.user_id != requester_id and membership.user.is_active and not getattr(membership.user, "is_suspended", False)
+        if membership.role == OrganizationMembership.Role.MODERATOR and membership.user_id != requester_id
+        and membership.user.is_active and not getattr(membership.user, "is_suspended", False)
     ]
 
 
@@ -357,6 +367,7 @@ def decide(*, download_request_id, actor, organization, scope, action, item_ids=
 
     Everything happens under a lock on the request, so two moderators cannot decide the same image twice: the later one gets 409.
     """
+    assert_moderator(scope.membership)               # checked here as well as by the view: the service is the rule, the route only the way in
     if action not in ACTIONS:
         raise ValidationError({"action": [f"Choose one of: {', '.join(ACTIONS)}."]})
     item_ids = [int(value) for value in (item_ids or [])]
@@ -452,8 +463,9 @@ def cancel_request(*, download_request, user, http_request=None):
     return locked
 
 
-def revoke_grant(*, grant, actor, reason="", http_request=None):
-    """Withdraw an approval before it expires. Files already downloaded cannot be recalled; nothing further is delivered."""
+def revoke_grant(*, grant, actor, membership=None, reason="", http_request=None):
+    """Withdraw an approval before it expires. Files already downloaded cannot be recalled; nothing further is delivered. A moderator's act, like a decision."""
+    assert_moderator(membership)
     with transaction.atomic():
         locked = Grant.objects.select_for_update().get(pk=grant.pk)
         if locked.revoked_at is None:

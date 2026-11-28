@@ -309,11 +309,11 @@ class EligibilityAndSubmissionTests(ApprovalFixture, TestCase):
         submitted = UserNotification.objects.get(recipient=self.member, event_type="download_request_submitted")
         self.assertEqual(submitted.title, "Download Request Submitted")
         self.assertEqual(submitted.message, "Your download request has been sent to your organization's moderator for review.")
-        for reviewer in (self.moderator, self.owner):
-            received = UserNotification.objects.get(recipient=reviewer, event_type="download_request_received")
-            self.assertIn("2 images", received.message)
-            self.assertIn(self.organization.name, received.message)
-            self.assertIn(received.email_status, ("queued", "sent"))                  # the e-mail carries a link to the authenticated page, never a photograph
+        received = UserNotification.objects.get(recipient=self.moderator, event_type="download_request_received")
+        self.assertIn("2 images", received.message)
+        self.assertIn(self.organization.name, received.message)
+        self.assertIn(received.email_status, ("queued", "sent"))                      # the e-mail carries a link to the authenticated page, never a photograph
+        self.assertFalse(UserNotification.objects.filter(recipient=self.owner, event_type="download_request_received").exists())      # the approval role is the moderator's, not the owner's
         self.assertFalse(UserNotification.objects.filter(recipient=self.other_member).exists())
 
 
@@ -427,12 +427,15 @@ class ModeratorDecisionTests(ApprovalFixture, TestCase):
         self.assertFalse(DownloadGrant.objects.exists())
 
     def test_a_moderator_cannot_decide_their_own_request(self):
+        other = self.authenticated_client(self.add_member("ap-moderator-other", Role.MODERATOR))          # a moderator's own request needs ANOTHER moderator
         image = self.make_photo(self.moderator)
         request, _ = self.make_request([image], client=self.moderator_client)
         response = self.decide(request, "approve_all", client=self.moderator_client)
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(response.data["code"], "cannot_decide_own_request")
-        self.assertEqual(self.decide(request, "approve_all", client=self.owner_client).status_code, status.HTTP_200_OK)       # the owner can
+        owner = self.decide(request, "approve_all", client=self.owner_client)
+        self.assertEqual((owner.status_code, owner.data["code"]), (status.HTTP_403_FORBIDDEN, "moderator_required"))          # the owner oversees; he does not approve
+        self.assertEqual(self.decide(request, "approve_all", client=other).status_code, status.HTTP_200_OK)                  # another moderator does
 
     def test_a_plain_member_cannot_decide(self):
         request, _ = self.make_request()
@@ -609,7 +612,9 @@ class TenantAndScopeTests(ApprovalFixture, TestCase):
         self.assertEqual(self.decide(request, "approve_all").status_code, status.HTTP_404_NOT_FOUND)
         mine = self.authenticated_client(second).get(reverse("org-download-request-list", kwargs={"organization_id": self.organization.pk}))
         self.assertEqual([row["id"] for row in mine.data], [request.pk])
-        self.assertEqual(self.decide(request, "approve_all", client=self.owner_client).status_code, status.HTTP_200_OK)          # the owner always sees everything
+        seen = self.owner_client.get(reverse("org-download-request-list", kwargs={"organization_id": self.organization.pk}))
+        self.assertEqual([row["id"] for row in seen.data], [request.pk])                                                        # the owner always sees everything ...
+        self.assertEqual(self.decide(request, "approve_all", client=self.owner_client).status_code, status.HTTP_403_FORBIDDEN)  # ... but only a moderator decides
 
     def test_the_moderator_list_filters_by_status_and_shows_counts(self):
         request, _ = self.make_request()
@@ -718,13 +723,17 @@ class ReviewerAvailabilityTests(ApprovalFixture, TestCase):
         check = owner_client.post(reverse("downloads:request-check"), {"organization_id": self.solo.pk, "items": [{"image_id": photo.pk}]}, format="json")
         self.assertFalse(check.data["reviewer_available"])
 
-    def test_a_member_of_the_same_organization_can_still_request_because_the_owner_reviews(self):
+    def test_a_member_can_request_only_when_the_organization_has_a_moderator_the_owner_does_not_count(self):
         self.require_approval(self.solo)
         photo = self.make_photo(self.solo_member, organization=self.solo)
         client = self.authenticated_client(self.solo_member)
+        check_body = {"organization_id": self.solo.pk, "items": [{"image_id": photo.pk}]}
+        self.assertFalse(client.post(reverse("downloads:request-check"), check_body, format="json").data["reviewer_available"])      # an owner and a member: nobody may approve
+        refused = self.submit([photo], client=client, organization=self.solo)
+        self.assertEqual((refused.status_code, refused.data["code"]), (status.HTTP_409_CONFLICT, "no_eligible_reviewer"))
+        self.add_member("ap-solo-moderator-2", Role.MODERATOR, organization=self.solo)
+        self.assertTrue(client.post(reverse("downloads:request-check"), check_body, format="json").data["reviewer_available"])
         self.assertEqual(self.submit([photo], client=client, organization=self.solo).status_code, status.HTTP_201_CREATED)
-        check = client.post(reverse("downloads:request-check"), {"organization_id": self.solo.pk, "items": [{"image_id": photo.pk}]}, format="json")
-        self.assertTrue(check.data["reviewer_available"])
 
     def test_nobody_gets_a_way_to_approve_their_own_request_and_the_administrator_cannot_decide(self):
         self.require_approval(self.solo)
@@ -784,9 +793,10 @@ class NotificationReliabilityTests(ApprovalFixture, TestCase):
                 raise RuntimeError("this moderator's notification fails")
             return real(**kwargs)
 
+        other_moderator = self.add_member("ap-moderator-flaky", Role.MODERATOR)
         with mock.patch("notifications.services.create_user_notification", side_effect=flaky):
             request, _ = self.make_request()
-        self.assertTrue(UserNotification.objects.filter(recipient=self.owner, event_type="download_request_received").exists())
+        self.assertTrue(UserNotification.objects.filter(recipient=other_moderator, event_type="download_request_received").exists())
         self.assertFalse(UserNotification.objects.filter(recipient=self.moderator, event_type="download_request_received").exists())
         self.assertTrue(UserNotification.objects.filter(recipient=self.member, event_type="download_request_submitted").exists())
         self.assertEqual(request.status, DownloadRequest.Status.PENDING)
@@ -810,10 +820,11 @@ class NotificationReliabilityTests(ApprovalFixture, TestCase):
     def test_a_muted_review_preference_alone_keeps_the_task_but_not_the_e_mail(self):
         from notifications.models import NotificationPreference
 
+        other_moderator = self.add_member("ap-moderator-mail", Role.MODERATOR)
         NotificationPreference.objects.update_or_create(user=self.moderator, defaults={"moderator_review_updates": False, "email_notifications": True})
         self.make_request()
         self.assertEqual(UserNotification.objects.get(recipient=self.moderator, event_type="download_request_received").email_status, "skipped")
-        self.assertIn(UserNotification.objects.get(recipient=self.owner, event_type="download_request_received").email_status, ("queued", "sent"))
+        self.assertIn(UserNotification.objects.get(recipient=other_moderator, event_type="download_request_received").email_status, ("queued", "sent"))
 
 
 class ClientTokenTests(ApprovalFixture, TestCase):
@@ -1298,3 +1309,103 @@ class StoredReportPdfTests(ApprovalFixture, TestCase):
     def test_only_the_owner_can_download_a_report(self):
         report, _ = self.stored_report()
         self.assertEqual(self.download(report, client=self.authenticated_client(self.other_member)).status_code, status.HTTP_404_NOT_FOUND)
+
+
+class ModeratorIsTheApprovalRoleTests(ApprovalFixture, TestCase):
+    """The approval role is the moderator's. The owner oversees (reads every request and its history) and does not decide, revoke or get the review task; a route restriction in the
+    frontend is not what enforces this."""
+
+    def setUp(self):
+        super().setUp()
+        self.require_approval()
+
+    def test_the_owner_cannot_decide_in_any_way_and_nothing_changes(self):
+        request, images = self.make_request()
+        ids = [self.item_for(request, image).pk for image in images]
+        for action, extra in (("approve_all", {}), ("approve_selected", {"item_ids": ids[:1], "reason": self.reasons()}), ("deny_selected", {"item_ids": ids[:1], "reason": self.reasons()}), ("deny_all", {"reason": self.reasons()})):
+            response = self.decide(request, action, client=self.owner_client, **extra)
+            self.assertEqual((response.status_code, response.data["code"]), (status.HTTP_403_FORBIDDEN, "moderator_required"), action)
+        request.refresh_from_db()
+        self.assertEqual((request.status, request.version, DownloadGrant.objects.count()), (DownloadRequest.Status.PENDING, 0, 0))
+
+    def test_the_owner_cannot_revoke_a_grant_either(self):
+        request, images = self.make_request(self.photos(1))
+        self.decide(request, "approve_all")
+        grant = DownloadGrant.objects.get()
+        url = reverse("org-download-grant-revoke", kwargs={"organization_id": self.organization.pk, "grant_id": grant.pk})
+        denied = self.owner_client.post(url, {"reason": "no"}, format="json")
+        self.assertEqual((denied.status_code, denied.data["code"]), (status.HTTP_403_FORBIDDEN, "moderator_required"))
+        grant.refresh_from_db()
+        self.assertIsNone(grant.revoked_at)
+        self.assertEqual(self.moderator_client.post(url, {"reason": "client asked"}, format="json").status_code, status.HTTP_200_OK)
+
+    def test_the_owner_still_reads_every_request_and_its_history(self):
+        request, _ = self.make_request()
+        listing = self.owner_client.get(reverse("org-download-request-list", kwargs={"organization_id": self.organization.pk}))
+        detail = self.owner_client.get(reverse("org-download-request-detail", kwargs={"organization_id": self.organization.pk, "request_id": request.pk}))
+        self.assertEqual((listing.status_code, [row["id"] for row in listing.data], detail.status_code), (status.HTTP_200_OK, [request.pk], status.HTTP_200_OK))
+        self.decide(request, "approve_all")
+        done = self.owner_client.get(reverse("org-download-request-detail", kwargs={"organization_id": self.organization.pk, "request_id": request.pk}))
+        self.assertEqual(done.data["status"], "approved")                                       # the history is the owner's to read
+
+    def test_the_service_itself_refuses_anybody_but_a_moderator(self):
+        from downloads.approval import decide
+        from organizations.scope import data_scope
+        from rest_framework.exceptions import PermissionDenied
+
+        request, _ = self.make_request()
+        for person in (self.owner, self.member, self.admin_user()):
+            with self.assertRaises(PermissionDenied):
+                decide(download_request_id=request.pk, actor=person, organization=self.organization, scope=data_scope(self.organization, person), action="approve_all")
+        request.refresh_from_db()
+        self.assertEqual(request.status, DownloadRequest.Status.PENDING)
+
+    def admin_user(self):
+        return self.make_user("ap-platform-admin", role="admin")
+
+    def test_the_owner_is_not_a_reviewer_so_an_organization_with_only_an_owner_has_none(self):
+        from downloads.approval import eligible_reviewers
+
+        self.assertEqual([m.user_id for m in eligible_reviewers(self.organization, self.member.pk)], [self.moderator.pk])
+        OrganizationMembership.objects.filter(user=self.moderator, organization=self.organization).update(role="member")
+        self.assertEqual(eligible_reviewers(self.organization, self.member.pk), [])
+        refused = self.submit(self.photos(1))
+        self.assertEqual((refused.status_code, refused.data["code"]), (status.HTTP_409_CONFLICT, "no_eligible_reviewer"))
+
+    def test_the_platform_administrator_cannot_decide_either(self):
+        request, _ = self.make_request()
+        response = self.decide(request, "approve_all", client=self.authenticated_client(self.admin_user()))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)                       # not a member: the organization is not even confirmed
+
+
+class ExposedHeadersTests(ApprovalFixture, TestCase):
+    """The browser may only read a custom response header when the server exposes it (CORS)."""
+
+    ORIGIN = "https://www.facecloudai.com"
+
+    def test_the_two_restriction_headers_are_exposed(self):
+        from django.conf import settings
+
+        for name in ("X-Preview-Restricted", "X-Report-Restricted", "Content-Disposition", "Retry-After"):
+            self.assertIn(name, settings.CORS_EXPOSE_HEADERS)
+
+    def test_a_restricted_preview_and_a_restricted_report_reach_the_browser_with_them_exposed(self):
+        from django.test import override_settings
+        from reports.models import ProcessingReport
+        from reports.renderers import render_pdf
+        from reports.test_readable_reports import batch_payload, record
+
+        photo = self.make_photo(self.member, "x.png", size=(300, 200))
+        self.require_approval()
+        payload = batch_payload([record(photo.pk, photo.original_name)])
+        pdf = render_pdf(payload)
+        report = ProcessingReport.objects.create(owner=self.member, report_type="batch", format="pdf", status="ready", batch=photo.batch, payload=payload, content_type="application/pdf", file_size=len(pdf))
+        report.report_file.save("r.pdf", ContentFile(pdf), save=True)
+        with override_settings(CORS_ALLOW_ALL_ORIGINS=False, CORS_ALLOWED_ORIGINS=[self.ORIGIN]):
+            preview = self.member_client.get(reverse("image-thumbnail", kwargs={"pk": photo.pk}) + "?size=256", HTTP_ORIGIN=self.ORIGIN)
+            copy = self.member_client.get(reverse("reports:download", kwargs={"pk": report.pk}), HTTP_ORIGIN=self.ORIGIN)
+        self.assertEqual(preview["X-Preview-Restricted"], "approval-required")
+        self.assertEqual(copy["X-Report-Restricted"], "approval-required")
+        self.assertIn("X-Preview-Restricted", preview["Access-Control-Expose-Headers"])
+        self.assertIn("X-Report-Restricted", copy["Access-Control-Expose-Headers"])
+        self.assertEqual(preview["Access-Control-Allow-Origin"], self.ORIGIN)

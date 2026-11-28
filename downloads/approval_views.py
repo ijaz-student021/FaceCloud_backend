@@ -251,6 +251,14 @@ class OrganizationDownloadRequestMixin(OrganizationScopedMixin):
         return self.data_scope.exclude(queryset, owner_field="requester_id")
 
 
+class OrganizationModeratorOnlyMixin(OrganizationDownloadRequestMixin):
+    """Deciding and revoking are the moderators' (`moderator_required`); the owner may read every request and its history (the list and detail views) but not decide."""
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        approval.assert_moderator(self.active_membership)
+
+
 class OrganizationDownloadRequestListView(OrganizationDownloadRequestMixin, generics.ListAPIView):
     """The download requests of this organization (owner or moderator), newest first. Not the requests of members another moderator invited, when the organization limits moderators to their own."""
 
@@ -283,7 +291,7 @@ class OrganizationDownloadRequestDetailView(OrganizationDownloadRequestMixin, AP
         return Response(DownloadRequestDetailSerializer(download_request).data)
 
 
-class OrganizationDownloadRequestDecisionView(OrganizationDownloadRequestMixin, APIView):
+class OrganizationDownloadRequestDecisionView(OrganizationModeratorOnlyMixin, APIView):
     """Approve or deny the images of a request. The first decision on an image wins: a second moderator who decides the same image gets 409."""
 
     throttle_scope = "download_review"                # its own limit (THROTTLE_RATE_DOWNLOAD_REVIEW, 120/hour per moderator), not the invitation limit
@@ -306,7 +314,7 @@ class OrganizationDownloadRequestDecisionView(OrganizationDownloadRequestMixin, 
         return Response(DownloadRequestDetailSerializer(_with_items(DownloadRequest.objects.filter(pk=request_id)).get()).data)
 
 
-class OrganizationDownloadGrantRevokeView(OrganizationDownloadRequestMixin, APIView):
+class OrganizationDownloadGrantRevokeView(OrganizationModeratorOnlyMixin, APIView):
     """Withdraw an approval before it expires: nothing further is delivered. A file already downloaded cannot be recalled."""
 
     throttle_scope = "download_review"
@@ -320,5 +328,5 @@ class OrganizationDownloadGrantRevokeView(OrganizationDownloadRequestMixin, APIV
             from django.http import Http404
 
             raise Http404("Grant not found.")
-        grant = approval.revoke_grant(grant=grant, actor=request.user, reason=payload.validated_data["reason"], http_request=request)
+        grant = approval.revoke_grant(grant=grant, actor=request.user, membership=self.active_membership, reason=payload.validated_data["reason"], http_request=request)
         return Response(DownloadGrantSerializer(grant).data)
