@@ -237,8 +237,24 @@ class AfterApprovalTests(LeaveFixture, TestCase):
         self.assertFalse(DownloadGrant.objects.filter(grantee=self.member, revoked_at__isnull=True).exists())
         pending.refresh_from_db()
         self.assertEqual(pending.status, DownloadRequest.Status.CANCELLED)
-        self.assertEqual(self.enhanced_download(images[0].result).status_code, status.HTTP_403_FORBIDDEN)  # no grant, no membership
+        self.assertIn(self.enhanced_download(images[0].result).status_code, (403, 404))        # no grant, no membership (the content lock answers 404)
         self.assertTrue(images[0].__class__.all_objects.filter(pk=images[0].pk).exists())                # nothing was deleted
+
+    def test_the_members_organization_photographs_are_closed_to_them_but_not_to_the_organization(self):
+        """With the content lock: approval closes the owner-scoped routes to organization-filed photographs, the personal ones stay."""
+        filed = self.make_photo(self.member, "filed.png")
+        before = self.member_client.get(reverse("image-upload-download", kwargs={"pk": filed.pk})).status_code
+        self.assertEqual(before, 200)
+        self.approve()
+        for name in ("image-upload-download",):
+            self.assertEqual(self.member_client.get(reverse(name, kwargs={"pk": filed.pk})).status_code, 404, name)
+        self.assertEqual(self.enhanced_download(filed.result).status_code, 404)
+        mine = {row["id"] for row in rows(self.member_client.get(reverse("my-image-list")))}
+        self.assertNotIn(filed.pk, mine)
+        self.assertIn(self.private.pk, mine)
+        staff = {row["id"] for row in rows(self.moderator_client.get(reverse("moderation:image-list", kwargs={"organization_id": self.organization.pk})))}
+        self.assertIn(filed.pk, staff)                                                                  # the organization keeps its records
+        self.assertTrue(filed.__class__.all_objects.filter(pk=filed.pk).exists())
 
     def test_the_personal_workspace_the_account_and_other_memberships_are_untouched(self):
         self.approve()
