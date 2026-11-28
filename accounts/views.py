@@ -954,7 +954,7 @@ class AdminUserListView(generics.ListCreateAPIView):
         try:
             user = create_account_as_admin(
                 administrator=request.user, username=data["username"], email=data["email"], password=data.get("password") or None,
-                role=data["role"], organization=data.get("organization"), full_name=data.get("full_name", ""), request=request,
+                role=data["role"], organization=data.get("organization"), full_name=data.get("full_name", ""), reason=data.get("reason", ""), request=request,
             )
         except IntegrityError:
             # A concurrent request took the username or email between the validation and the insert.
@@ -990,6 +990,12 @@ class AdminUserUpdateView(generics.RetrieveUpdateAPIView):
 
             assert_can_grant(self.request.user, new_role)
         organization_id = serializer.validated_data.pop("organization_id", None)
+        reason = serializer.validated_data.pop("reason", "")
+        promoting = new_role == "moderator" and new_role != target.role
+        if promoting:
+            from .overrides import clean_override_reason
+
+            reason = clean_override_reason(reason)              # an exceptional operation: it must say why, before anything is changed
         moderator_organization = None
         if new_role == "moderator" and new_role != target.role and not has_moderator_organization(target):
             # A moderator works for an organization: name it (or the only one), with the same messages as when creating a moderator account.
@@ -1016,7 +1022,15 @@ class AdminUserUpdateView(generics.RetrieveUpdateAPIView):
 
             membership = (OrganizationMembership.objects.select_related("organization")
                           .filter(user=user, role=OrganizationMembership.Role.MODERATOR, status=OrganizationMembership.Status.ACTIVE).first())
-            send_made_moderator(user, moderator_organization or (membership.organization if membership else None))
+            promoted_into = moderator_organization or (membership.organization if membership else None)
+            send_made_moderator(user, promoted_into)
+            if promoting and promoted_into is not None:
+                from .overrides import record_moderator_override
+
+                record_moderator_override(
+                    actor=self.request.user, organization=promoted_into, operation="promotion", target_type="User", target_id=user.pk, subject=user.get_username(),
+                    reason=reason, request=self.request,
+                )
         if changed:
             user.token_version += 1
             user.save(update_fields=["token_version"])
@@ -1150,6 +1164,8 @@ class AccountInvitationSerializer(serializers.Serializer):
         required=False, allow_null=True, write_only=True,
         help_text="Required for a moderator invitation: the organization the moderator will work for. Refused for any other role.",
     )
+    reason = serializers.CharField(required=False, allow_blank=True, write_only=True, max_length=500, help_text=(
+        "Required (at least 8 characters) for a moderator invitation: why an administrator invites this moderator instead of the organization's owner. Kept in the organization's audit log."))
     organization = serializers.SerializerMethodField(help_text="{id, name} of the organization a moderator invitation is for; null otherwise.")
     status = serializers.CharField(read_only=True)
     invited_by = serializers.CharField(source="invited_by.username", read_only=True, allow_null=True)
@@ -1186,12 +1202,20 @@ class AccountInvitationListCreateView(generics.ListAPIView):
     def post(self, request):
         from .invitations import invite
 
+        from .overrides import clean_override_reason, record_moderator_override
+
         payload = AccountInvitationSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
+        reason = clean_override_reason(payload.validated_data.get("reason")) if payload.validated_data["role"] == "moderator" else ""
         invitation = invite(actor=request.user, email=payload.validated_data["email"],
                             role=payload.validated_data["role"], organization_id=payload.validated_data.get("organization_id"))
+        if invitation.role == "moderator" and invitation.organization_id:
+            record_moderator_override(
+                actor=request.user, organization=invitation.organization, operation="account_invitation", target_type="AccountInvitation", target_id=invitation.pk,
+                subject=invitation.email, reason=reason, request=request,
+            )
         record_auth_event("account_invited", request, request.user, invitation.email,
-                          {"role": invitation.role, "organization_id": invitation.organization_id})
+                          {"role": invitation.role, "organization_id": invitation.organization_id, **({"reason": reason} if reason else {})})
         return Response(AccountInvitationSerializer(invitation).data, status=status.HTTP_201_CREATED)
 
 

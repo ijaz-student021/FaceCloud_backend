@@ -416,13 +416,13 @@ The signed-in user's profile, avatar, sessions, dashboard and account deletion; 
 |---|---|---|---|---|
 | GET | `/api/user/activity/` | My recent activity | - | 200 |
 | GET | `/api/user/admin/invitations/` | List invitations (administrators) | - | 200 |
-| POST | `/api/user/admin/invitations/` | Invite a person (administrators) | `email`*, `role`*, `organization_id` | 201 |
+| POST | `/api/user/admin/invitations/` | Invite a person (administrators) | `email`*, `role`*, `organization_id`, `reason` | 201 |
 | DELETE | `/api/user/admin/invitations/{id}/` | Cancel an invitation (administrators) | - | 204 |
 | POST | `/api/user/admin/invitations/{id}/resend/` | Resend an invitation (administrators) | - | 200 |
 | GET | `/api/user/admin/users/` | List users (administrators) | - | 200 |
-| POST | `/api/user/admin/users/` | Create an account for someone (administrators) | `username`, `email`*, `password`, `role`, `organization_id`, `full_name` | 201 |
+| POST | `/api/user/admin/users/` | Create an account for someone (administrators) | `username`, `email`*, `password`, `role`, `organization_id`, `full_name`, `reason` | 201 |
 | GET | `/api/user/admin/users/{id}/` | Get a user (administrators) | - | 200 |
-| PATCH | `/api/user/admin/users/{id}/` | Change a user (administrators) | `role`, `is_suspended`, `suspension_reason`, `is_active`, `organization_id` | 200 |
+| PATCH | `/api/user/admin/users/{id}/` | Change a user (administrators) | `role`, `is_suspended`, `suspension_reason`, `is_active`, `organization_id`, `reason` | 200 |
 | POST | `/api/user/admin/users/{id}/password-reset/` | Send a password reset link to an account | - | 200 |
 | GET | `/api/user/avatar/` | Get my avatar | - | 200 |
 | PUT | `/api/user/avatar/` | Replace my avatar | `avatar`* | 200 |

@@ -59,6 +59,21 @@ class OrganizationPendingOwner(PermissionDenied):
         super().__init__(detail={"detail": self.message, "code": self.default_code})
 
 
+class PersonalWorkspaceIsPrivate(PermissionDenied):
+    """403 for anything that would let other people into somebody's personal workspace: it is private, never a shared organization."""
+
+    default_code = "personal_workspace_is_private"
+    message = "A personal workspace is private: other people cannot be invited into it or managed in it."
+
+    def __init__(self):
+        super().__init__(detail={"detail": self.message, "code": self.default_code})
+
+
+def assert_shared_organization(organization):
+    if organization.is_personal:
+        raise PersonalWorkspaceIsPrivate()
+
+
 def assert_organization_active(organization):
     if organization.status == Organization.Status.SUSPENDED:
         raise OrganizationSuspended()
@@ -340,6 +355,7 @@ def _send_invitation_email(invitation, token):
 
 
 def invite_member(*, organization, actor_membership, email, role, request=None):
+    assert_shared_organization(organization)
     if role not in INVITABLE_ROLES:
         raise ValidationError({"role": "Invitations may only grant the moderator or member role."})
     if actor_membership.role == OrganizationMembership.Role.MODERATOR and role == OrganizationInvitation.Role.MODERATOR:
@@ -377,6 +393,7 @@ def _refuse_owner_invitation(invitation):
 
 
 def resend_invitation(*, invitation, actor_membership, request=None):
+    assert_shared_organization(invitation.organization)
     _refuse_owner_invitation(invitation)
     if invitation.status != OrganizationInvitation.Status.PENDING:
         raise OrganizationConflict("Only a pending invitation can be resent.")
@@ -446,6 +463,7 @@ def accept_invitation(*, token, user, request=None):
             raise PermissionDenied("Sign in with the invited email address to accept this invitation.")
         if invitation.role == OrganizationInvitation.Role.OWNER:
             return _accept_owner_invitation(invitation, user, request)
+        assert_shared_organization(invitation.organization)                      # nobody joins a personal workspace, whatever token they hold
         assert_organization_active(invitation.organization)
         assert_seat_available(invitation.organization, invitation.role, with_invitations=False, excluding_user=user)       # re-checked: the plan or the team may have changed
         membership, _ = OrganizationMembership.objects.update_or_create(
@@ -515,6 +533,7 @@ def _assert_can_manage(actor_membership, target):
 
 @transaction.atomic
 def update_member(*, membership, actor_membership, role=None, status_value=None, reason="", request=None):
+    assert_shared_organization(membership.organization)
     locked = OrganizationMembership.objects.select_for_update().get(pk=membership.pk)
     _assert_can_manage(actor_membership, locked)
     if role == OrganizationMembership.Role.OWNER and actor_membership.role != OrganizationMembership.Role.OWNER:

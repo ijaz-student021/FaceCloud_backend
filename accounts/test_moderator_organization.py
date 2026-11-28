@@ -108,6 +108,8 @@ class SignInTests(Fixtures, TestCase):
 class InvitationTests(Fixtures, TestCase):
     def invite(self, **body):
         body = {"email": "new.moderator@example.org", "role": "moderator", **body}
+        if body["role"] == "moderator":
+            body.setdefault("reason", "Pilot organization needs a moderator before its owner can invite one")
         with self.captureOnCommitCallbacks(execute=True):
             return self.client_for(self.admin).post("/api/user/admin/invitations/", body, format="json")
 
@@ -179,6 +181,8 @@ class InvitationTests(Fixtures, TestCase):
 
 class AdminRoleChangeTests(Fixtures, TestCase):
     def patch(self, target, **body):
+        if body.get("role") == "moderator":
+            body.setdefault("reason", "Pilot organization needs a moderator before its owner can invite one")
         return self.client_for(self.admin).patch(f"/api/user/admin/users/{target.pk}/", body, format="json")
 
     def test_making_someone_a_moderator_needs_an_organization_when_there_is_a_choice(self):

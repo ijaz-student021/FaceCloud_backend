@@ -41,6 +41,8 @@ class AdminCreateBase(APITestCase):
 
     def create(self, **fields):
         payload = {"username": "sara", "email": "sara@example.com", "password": PASSWORD, "role": "user", **fields}
+        if payload["role"] == "moderator":
+            payload.setdefault("reason", "Pilot organization needs a moderator before its owner can invite one")          # an administrator's moderator operation must say why
         self.as_user(self.admin)
         return self.client.post(reverse(URL_NAME), {k: v for k, v in payload.items() if v is not None}, format="json")
 

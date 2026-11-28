@@ -14200,6 +14200,12 @@ components:
           nullable: true
           description: 'Required for a moderator invitation: the organization the moderator will work for. Refused for any
             other role.'
+        reason:
+          type: string
+          writeOnly: true
+          description: 'Required (at least 8 characters) for a moderator invitation: why an administrator invites this moderator
+            instead of the organization''s owner. Kept in the organization''s audit log.'
+          maxLength: 500
         organization:
           type: object
           additionalProperties: {}
@@ -15219,6 +15225,11 @@ components:
         full_name:
           type: string
           maxLength: 150
+        reason:
+          type: string
+          description: 'Required (at least 8 characters) when role is moderator: why an administrator adds this moderator
+            instead of the organization''s owner inviting them. Kept in the organization''s audit log.'
+          maxLength: 500
       required:
       - email
     AdminUserCreateRoleEnum:
@@ -15396,6 +15407,12 @@ components:
           nullable: true
           description: 'With role=moderator: the organization the moderator will work for (needed when there is more than
             one, and when the account has no moderator membership yet). Ignored otherwise.'
+        reason:
+          type: string
+          writeOnly: true
+          description: 'Required (at least 8 characters) when the role changes to moderator: why an administrator does this
+            instead of the organization''s owner inviting them. Kept in the organization''s audit log.'
+          maxLength: 500
       required:
       - account_type
       - date_joined
@@ -20953,6 +20970,7 @@ components:
       - organization_logo_removed
       - owner_invited
       - organization_activated
+      - admin_moderator_override
       type: string
       description: '* `organization_created` - Organization created
 
@@ -21008,7 +21026,9 @@ components:
 
         * `owner_invited` - Owner invited
 
-        * `organization_activated` - Organization activated by its owner'
+        * `organization_activated` - Organization activated by its owner
+
+        * `admin_moderator_override` - Moderator added by the administrator'
     OrganizationAuditEvent:
       type: object
       properties:
@@ -23034,6 +23054,12 @@ components:
           nullable: true
           description: 'With role=moderator: the organization the moderator will work for (needed when there is more than
             one, and when the account has no moderator membership yet). Ignored otherwise.'
+        reason:
+          type: string
+          writeOnly: true
+          description: 'Required (at least 8 characters) when the role changes to moderator: why an administrator does this
+            instead of the organization''s owner inviting them. Kept in the organization''s audit log.'
+          maxLength: 500
     PatchedAlbumPatch:
       type: object
       properties:

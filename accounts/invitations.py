@@ -173,9 +173,16 @@ def accept(*, token, username, password):
 
             organization = organization_for_invitation("moderator", invitation.organization_id)       # still active, still not personal
             assert_seat_available(organization, "moderator", with_invitations=False)               # and still has room: nothing is created otherwise
-            OrganizationMembership.objects.create(
+            membership = OrganizationMembership.objects.create(
                 organization=organization, user=user, role=OrganizationMembership.Role.MODERATOR,
                 status=OrganizationMembership.Status.ACTIVE, invited_by=invitation.invited_by,
+            )
+            from organizations.models import OrganizationAuditEvent
+            from organizations.services import record_audit_event
+
+            record_audit_event(
+                organization, user, OrganizationAuditEvent.Action.INVITATION_ACCEPTED, target_type="OrganizationMembership", target_id=membership.pk,
+                new_value={"role": "moderator", "via": "administrator_invitation", "invitation": invitation.pk},
             )
             ready_organization = organization
         invitation.status = AccountInvitation.Status.ACCEPTED

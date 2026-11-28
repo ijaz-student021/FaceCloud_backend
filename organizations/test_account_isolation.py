@@ -284,7 +284,7 @@ class DefaultWorkspaceTests(Fixture, TestCase):
         self.assertEqual(OrganizationMembership.objects.filter(user=legacy, organization__is_personal=True).count(), 1)
 
     def test_an_administrator_created_account_gets_its_own_workspace_with_the_account(self):
-        created = self.admin_client.post(reverse("admin-user-list"), {"username": "madeby", "email": "madeby@example.com", "role": "moderator", "organization_id": self.organization.pk}, format="json")
+        created = self.admin_client.post(reverse("admin-user-list"), {"username": "madeby", "email": "madeby@example.com", "role": "moderator", "organization_id": self.organization.pk, "reason": "Pilot organization needs a moderator before its owner can invite one"}, format="json")
         self.assertEqual(created.status_code, status.HTTP_201_CREATED, created.content)
         user = User.objects.get(username="madeby")
         self.assertIsNotNone(personal_organization_of(user))

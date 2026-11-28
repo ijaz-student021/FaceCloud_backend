@@ -188,6 +188,7 @@ class OrganizationAuditEvent(models.Model):
         ORGANIZATION_LOGO_REMOVED = "organization_logo_removed", "Organization logo removed"
         OWNER_INVITED = "owner_invited", "Owner invited"
         ORGANIZATION_ACTIVATED = "organization_activated", "Organization activated by its owner"
+        ADMIN_MODERATOR_OVERRIDE = "admin_moderator_override", "Moderator added by the administrator"
 
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="audit_events",

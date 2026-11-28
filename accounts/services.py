@@ -375,7 +375,7 @@ def register_from_invitation(*, token, full_name, email, password, username=None
 
 
 @transaction.atomic
-def create_account_as_admin(*, administrator, username, email, password=None, role, organization=None, full_name="", request=None):
+def create_account_as_admin(*, administrator, username, email, password=None, role, organization=None, full_name="", reason="", request=None):
     """Create an already-verified account for someone, in one transaction.
 
     ``role`` is ``user`` or ``moderator`` (never ``admin``: the serializer allows only those two). A moderator also gets an active
@@ -402,10 +402,16 @@ def create_account_as_admin(*, administrator, username, email, password=None, ro
             organization=organization, user=user, role=OrganizationMembership.Role.MODERATOR,
             status=OrganizationMembership.Status.ACTIVE, invited_by=administrator,
         )
+        from .overrides import record_moderator_override
+
+        record_moderator_override(
+            actor=administrator, organization=organization, operation="create_account", target_type="User", target_id=user.pk, subject=user.get_username(),
+            reason=reason, request=request,
+        )
     record_auth_event(
         "admin_created_account", request, user, email,
         {"administrator_id": administrator.pk, "administrator": administrator.get_username(), "role": role,
-         "organization_id": organization.pk if organization is not None else None},
+         "organization_id": organization.pk if organization is not None else None, **({"reason": reason} if reason else {})},
     )
     from .moderator_emails import send_account_created_by_admin
 

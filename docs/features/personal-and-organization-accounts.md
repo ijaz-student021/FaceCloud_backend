@@ -1,6 +1,6 @@
 # Personal accounts and organizations stay apart
 
-The rules, what the code did before this change, what was fixed, and what still needs a decision. Tests: `organizations/test_account_isolation.py` (35).
+The rules, what the code did before this change, what was fixed, and what still needs a decision. Tests: `organizations/test_account_isolation.py` (35) and `organizations/test_admin_override.py` (14).
 
 ## The rules and how they are met
 
@@ -30,12 +30,22 @@ Existing tests that asserted the old behaviour were updated on purpose: the fall
 
 `get_default_organization(user)` -> the person's active personal workspace, else `None`. `resolve_upload_organization(user, organization_id)` -> that default when no `organization_id` is sent; otherwise the person must be an **active member of an active organization** (a suspended one is 403, one that waits for its owner or that they do not belong to is 400). The frontend already sends `organization_id` whenever the person picks an organization as the upload target.
 
-## Still needs a decision (not changed here)
+## Decisions (approved)
 
-* **"Personal images are distinguished by a null organization association."** They are not, today: every registered account owns a *personal workspace* (an organization row with `is_personal = true`, one member: them) and its photographs are filed under it; `null` appears only for accounts without one. The code treats the two the same everywhere (`is_personal` or `null` = no moderator, never shown to staff, never subject to approval), and the isolation above holds for both. Making personal photographs literally `null` would mean a data migration of every existing batch, removing the personal workspace of every account and changing the download-approval code that relies on `is_personal`. Recommendation: keep it. Please decide.
-* **"Personal registration must never create an OrganizationMembership."** Signup creates one membership: the person as owner of their *own private workspace*; never in a shared organization (tested). Same decision as above.
-* **Moderators created directly by the Platform Admin.** An administrator can create a moderator account inside an organization, send an account invitation for one, or promote an account (all audited, all existing features). They bypass "the owner invites moderators". Kept as an explicit platform-administrator power; say if you want them restricted to the owner's invitation.
-* **Registering through an invitation link accepts the invitation in the same step.** `POST /api/auth/register/` with `invitation_token` creates the verified account (the link proves the mailbox) and accepts the invitation; the token, the matching address and submitting the form are the explicit act. If you want a separate "Accept" confirmation after signup, it is a frontend step plus a small backend change.
+1. **Personal workspace structure.** Kept: a personal workspace is an organization row with `is_personal = true`, one member (its person). Nothing is migrated to `null` and no workspace record is removed. The authoritative distinction is **private personal workspace** versus **shared organization**.
+2. **Personal registration.** A public signup creates the account and its own private workspace membership, and **never** a membership in a shared organization. Shared membership needs an accepted invitation (token and the invited address) or a separately authorized administrative operation. An e-mail match alone grants nothing.
+3. **Administrator moderator management.** The administrator keeps three ways to put a moderator into an organization, as **exceptional operations**; the ordinary workflow is Platform Admin creates the organization -> owner invites moderators -> moderators invite members.
+   * **Each needs a `reason`** (at least 8 characters) in the request: `POST /api/user/admin/users/` and `POST /api/user/admin/invitations/` with `role: moderator`, and `PATCH /api/user/admin/users/{id}/` that changes the role to `moderator`. Without it the answer is `400` on `reason` and nothing is created or changed.
+   * **Each is audited in the organization's own trail** (`admin_moderator_override`: administrator, organization, operation `create_account` / `account_invitation` / `promotion`, who it is for, the reason); the owner can read it. The acceptance of an administrator's invitation is recorded too (`invitation_accepted`, `via: administrator_invitation`).
+   * **None bypasses** the plan's moderator seats (`403 plan_limit_reached`), an organization that still waits for its owner (`pending_owner`, not active: `400`), a suspended organization, or a personal workspace (`400`): those checks are made before anything is created.
+
+## A personal workspace is never a shared organization
+
+Besides the isolation above: nobody can be invited into a personal workspace, even by its owner (`403 personal_workspace_is_private` on the invitation routes, on accepting a token that points at one, and on changing its members); its capabilities (`invite_members`, `invite_moderators`, `manage_members`, `manage_moderators`, `grant_owner`, `edit_organization`) are all `false`; the administrator can neither suspend it nor give it a moderator, an owner invitation or the download-approval setting.
+
+## Not changed, for the record
+
+* Registering through an invitation link (`POST /api/auth/register/` with `invitation_token`) creates the verified account and accepts the invitation in the same step: the token, the matching address and submitting the form are the explicit act. A separate "Accept" confirmation after signup would be a frontend step plus a small backend change.
 
 ## API summary
 

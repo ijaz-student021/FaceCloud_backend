@@ -16,6 +16,7 @@ from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from . import lockout
+from .overrides import clean_override_reason
 from .services import (ModeratorWithoutOrganization, dashboard_for_user, derive_username, has_moderator_organization,
                        issue_login_tokens, record_auth_event,
                        resolve_moderator_organization, split_full_name)
@@ -391,8 +392,13 @@ class AdminUserUpdateSerializer(AdminUserSerializer):
                   "has no moderator membership yet). Ignored otherwise.",
     )
 
+    reason = serializers.CharField(
+        write_only=True, required=False, allow_blank=True, max_length=500,
+        help_text="Required (at least 8 characters) when the role changes to moderator: why an administrator does this instead of the organization's owner inviting them. Kept in the organization's audit log.",
+    )
+
     class Meta(AdminUserSerializer.Meta):
-        fields = AdminUserSerializer.Meta.fields + ["organization_id"]
+        fields = AdminUserSerializer.Meta.fields + ["organization_id", "reason"]
 
 
 class AdminUserDetailSerializer(AdminUserSerializer):
@@ -448,6 +454,8 @@ class AdminUserCreateSerializer(serializers.Serializer):
     organization_id = serializers.IntegerField(required=False, allow_null=True,
                                                help_text="Moderators only. Needed when there is more than one organization.")
     full_name = serializers.CharField(required=False, allow_blank=True, max_length=150)
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=500, help_text=(
+        "Required (at least 8 characters) when role is moderator: why an administrator adds this moderator instead of the organization's owner inviting them. Kept in the organization's audit log."))
 
     def validate_username(self, value):
         value = User.normalize_username(value).strip()
@@ -473,6 +481,7 @@ class AdminUserCreateSerializer(serializers.Serializer):
         attrs["username"] = username
         organization_id = attrs.get("organization_id")
         if attrs["role"] == "moderator":
+            attrs["reason"] = clean_override_reason(attrs.get("reason"))
             attrs["organization"] = resolve_moderator_organization(organization_id)
         elif organization_id is not None:
             raise serializers.ValidationError({"organization_id": ["Only a moderator is placed in an organization."]})

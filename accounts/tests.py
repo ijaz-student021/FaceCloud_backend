@@ -522,7 +522,7 @@ class AuthenticationTests(APITestCase):
         self.authenticate(regular)
         denied = self.client.patch(
             reverse("admin-user-update", kwargs={"pk": target.pk}),
-            {"role": "moderator"},
+            {"role": "moderator", "reason": "Pilot organization needs a moderator before its owner can invite one"},
             format="json",
         )
         self.assertEqual(denied.status_code, status.HTTP_403_FORBIDDEN)
@@ -533,7 +533,7 @@ class AuthenticationTests(APITestCase):
         organization = create_organization(name="Roles Co", owner=self.create_user("roles-owner", "roles-owner@example.com"))
         allowed = self.client.patch(
             reverse("admin-user-update", kwargs={"pk": target.pk}),
-            {"role": "moderator", "organization_id": organization.pk, "is_suspended": True, "suspension_reason": "Policy violation"},
+            {"role": "moderator", "reason": "Pilot organization needs a moderator before its owner can invite one", "organization_id": organization.pk, "is_suspended": True, "suspension_reason": "Policy violation"},
             format="json",
         )
         self.assertEqual(allowed.status_code, status.HTTP_200_OK)

@@ -37,6 +37,8 @@ class AccountInvitationTests(TestCase):
         body = {"email": email, "role": role, **extra}
         if role == "moderator" and "organization_id" not in body:
             body["organization_id"] = self.organization.pk                   # a moderator invitation names its organization
+        if role == "moderator":
+            body.setdefault("reason", "Pilot organization needs a moderator before its owner can invite one")
         with self.captureOnCommitCallbacks(execute=True):
             return self.client_for(actor).post("/api/user/admin/invitations/", body, format="json")
 
@@ -91,7 +93,7 @@ class AccountInvitationTests(TestCase):
         patch = self.client_for(self.admin).patch(f"/api/user/admin/users/{target.pk}/", {"role": "admin"}, format="json")
         self.assertEqual(patch.status_code, 403)
         self.assertEqual(self.client_for(self.admin).patch(f"/api/user/admin/users/{target.pk}/",
-                                                           {"role": "moderator", "organization_id": self.organization.pk},
+                                                           {"role": "moderator", "organization_id": self.organization.pk, "reason": "Pilot organization needs a moderator before its owner can invite one"},
                                                            format="json").status_code, 200)
 
     def test_non_administrators_cannot_invite(self):
