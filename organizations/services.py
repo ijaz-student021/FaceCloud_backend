@@ -81,6 +81,17 @@ def assert_organization_active(organization):
         raise OrganizationPendingOwner()
 
 
+class PlanDowngradeOverCapacity(ValidationError):
+    """400 when the administrator lowers a plan below what the organization already uses. Nobody is removed to make room: the people must leave (or the
+    invitations be cancelled) first, or the plan stays."""
+
+    def __init__(self, kind, limit, in_use):
+        noun = kind[:-1] if limit == 1 else kind
+        message = f"This organization already uses {in_use} {kind if in_use != 1 else noun}; the plan allows {limit}. Remove people or cancel invitations first."
+        super().__init__(detail={"detail": message, "code": "plan_downgrade_over_capacity", "plan": [message], "kind": kind})
+        self.detail["limit"], self.detail["in_use"] = limit, in_use              # DRF turns every value into text; the numbers stay numbers
+
+
 class PlanLimitReached(PermissionDenied):
     """403 when adding a person would take an organization past what its plan allows (``kind`` and ``limit`` let the frontend say which)."""
 
@@ -96,26 +107,30 @@ SEAT_KINDS = {OrganizationMembership.Role.MODERATOR: "moderators", OrganizationM
 
 
 def plan_limits(organization):
-    """``{"moderators": n, "members": n}`` for the organization's plan; ``None`` means unlimited (see ``settings.ORGANIZATION_PLAN_LIMITS``)."""
+    """``{"users": n, "moderators": n, "members": n}`` for the organization's plan (``users`` is the total of every role); ``None`` means unlimited (see ``settings.ORGANIZATION_PLAN_LIMITS``)."""
     limits = settings.ORGANIZATION_PLAN_LIMITS.get(organization.plan, {})
-    return {"moderators": limits.get("moderators"), "members": limits.get("members")}
+    return {"users": limits.get("users"), "moderators": limits.get("moderators"), "members": limits.get("members")}
 
 
 def seats_in_use(organization, kind, *, with_invitations=True, excluding_user=None):
-    """The seats of ``kind`` taken: active memberships of that role, plus (``with_invitations``) the invitations still waiting, which hold a seat so that an
-    invitation is never sent that could not be accepted. ``excluding_user`` leaves that person's own membership out."""
+    """The seats of ``kind`` taken (``users`` = every role together): active memberships, plus (``with_invitations``) the invitations still waiting, which hold a
+    seat so that an invitation is never sent that could not be accepted. A person is counted once: an accepted invitation is no longer waiting, it is the
+    membership. ``excluding_user`` leaves that person's own membership out."""
     from accounts.models import AccountInvitation
 
-    role = next(role for role, name in SEAT_KINDS.items() if name == kind)
-    active = OrganizationMembership.objects.filter(organization=organization, role=role, status=OrganizationMembership.Status.ACTIVE)
+    total = kind == "users"
+    role = None if total else next(role for role, name in SEAT_KINDS.items() if name == kind)
+    active = OrganizationMembership.objects.filter(organization=organization, status=OrganizationMembership.Status.ACTIVE)
+    if not total:
+        active = active.filter(role=role)
     if excluding_user is not None:
         active = active.exclude(user=excluding_user)
     count = active.count()
     if with_invitations:
         now = timezone.now()
-        count += OrganizationInvitation.objects.filter(
-            organization=organization, role=role, status=OrganizationInvitation.Status.PENDING, expires_at__gt=now).count()
-        if role == OrganizationMembership.Role.MODERATOR:       # an administrator's invitation to create a moderator account for this organization
+        waiting = OrganizationInvitation.objects.filter(organization=organization, status=OrganizationInvitation.Status.PENDING, expires_at__gt=now)
+        count += (waiting if total else waiting.filter(role=role)).count()
+        if total or role == OrganizationMembership.Role.MODERATOR:       # an administrator's invitation to create a moderator account for this organization
             count += AccountInvitation.objects.filter(
                 organization=organization, role="moderator", status=AccountInvitation.Status.PENDING, expires_at__gt=now).count()
     return count
@@ -125,13 +140,15 @@ def assert_seat_available(organization, role, *, with_invitations=True, excludin
     """Raise ``PlanLimitReached`` when one more person with ``role`` would pass the plan's limit. Locks the organization row (inside a transaction) so two
     simultaneous additions cannot both take the last seat."""
     kind = SEAT_KINDS.get(role)
-    if kind is None:
+    if kind is None:                       # the owner's own seat is never refused: an organization always has room for the person who owns it
         return
     if transaction.get_connection().in_atomic_block:
         organization = Organization.objects.select_for_update().get(pk=organization.pk)
-    limit = plan_limits(organization)[kind]
-    if limit is not None and seats_in_use(organization, kind, with_invitations=with_invitations, excluding_user=excluding_user) >= limit:
-        raise PlanLimitReached(kind, limit)
+    limits = plan_limits(organization)
+    for counted in ("users", kind):         # the total first: it is the plan's headline number
+        limit = limits[counted]
+        if limit is not None and seats_in_use(organization, counted, with_invitations=with_invitations, excluding_user=excluding_user) >= limit:
+            raise PlanLimitReached(counted, limit)
 
 
 def hash_token(token):
@@ -205,6 +222,9 @@ def organizations_with_head_counts():
     Role = OrganizationMembership.Role
     waiting = OrganizationInvitation.objects.filter(status=OrganizationInvitation.Status.PENDING, expires_at__gt=now)
     return Organization.objects.annotate(
+        user_seats=count_of(OrganizationMembership.objects.filter(status=OrganizationMembership.Status.ACTIVE))
+        + count_of(waiting)
+        + count_of(AccountInvitation.objects.filter(role="moderator", status=AccountInvitation.Status.PENDING, expires_at__gt=now)),
         member_count=Count("memberships", filter=active),
         moderator_count=Count("memberships", filter=active & Q(memberships__role=Role.MODERATOR)),
         owner_user_id=Subquery(owner.values("user_id")[:1]),
@@ -241,6 +261,13 @@ def update_organization(
         status = Organization.Status.PENDING_OWNER          # suspended before its owner ever accepted: it goes back to waiting for them, never to "active" without an owner
     if status == Organization.Status.SUSPENDED and locked.is_personal:
         raise ValidationError({"status": "A personal workspace cannot be suspended. Suspend the account instead."})
+    if plan is not None and plan != locked.plan:
+        new_limits = settings.ORGANIZATION_PLAN_LIMITS.get(plan, {})
+        for kind in ("users", "moderators", "members"):
+            limit = new_limits.get(kind)
+            in_use = seats_in_use(locked, kind)
+            if limit is not None and in_use > limit:
+                raise PlanDowngradeOverCapacity(kind, limit, in_use)
     Action = OrganizationAuditEvent.Action
     details = {}
     if name is not None and name != locked.name:

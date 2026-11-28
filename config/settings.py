@@ -1323,7 +1323,7 @@ if not 1 <= ORG_OWNER_INVITATION_TTL_HOURS <= 24 * 30:
 
 
 def _plan_limit(plan, kind, default):
-    """What ``plan`` allows of ``kind`` (``moderators`` or ``members``); ``None`` is unlimited. Override from the environment, for example
+    """What ``plan`` allows of ``kind`` (``moderators``, ``members`` or ``users``, the total); ``None`` is unlimited. Override from the environment, for example
     ``ORG_PLAN_FREE_MODERATORS=2`` or ``ORG_PLAN_TEAM_MEMBERS=unlimited``."""
     name = f"ORG_PLAN_{plan.upper()}_{kind.upper()}"
     raw = os.environ.get(name, "").strip().lower()
@@ -1336,12 +1336,14 @@ def _plan_limit(plan, kind, default):
     return int(raw)
 
 
-# How many moderators and plain members an organization may have, by plan (organizations/services.py enforces it wherever people are added; the owner is
-# not counted). No billing: the plan is a label the administrator sets. Organizations already above a limit keep everyone and simply cannot add more.
+# How many people an organization may have, by plan. ``users`` is the TOTAL (the owner, the moderators and the members, plus every invitation still waiting, which
+# holds its seat); ``moderators`` and ``members`` cap each role on its own, the owner is not counted in those two. organizations/services.py enforces all three
+# wherever people are added. No billing: the plan is a label the administrator sets. A plan cannot be lowered below what the organization already uses (nobody
+# is removed automatically). Product defaults: Free 5, Team 25, Enterprise 100 users; override with ORG_PLAN_<PLAN>_USERS (a number or "unlimited").
 ORGANIZATION_PLAN_LIMITS = {
-    "free": {"moderators": _plan_limit("free", "moderators", 1), "members": _plan_limit("free", "members", 10)},
-    "team": {"moderators": _plan_limit("team", "moderators", 5), "members": _plan_limit("team", "members", 100)},
-    "enterprise": {"moderators": _plan_limit("enterprise", "moderators", None), "members": _plan_limit("enterprise", "members", None)},
+    "free": {"users": _plan_limit("free", "users", 5), "moderators": _plan_limit("free", "moderators", 1), "members": _plan_limit("free", "members", 10)},
+    "team": {"users": _plan_limit("team", "users", 25), "moderators": _plan_limit("team", "moderators", 5), "members": _plan_limit("team", "members", 100)},
+    "enterprise": {"users": _plan_limit("enterprise", "users", 100), "moderators": _plan_limit("enterprise", "moderators", None), "members": _plan_limit("enterprise", "members", None)},
 }
 # Administrator invitations to create an account (accounts/invitations.py).
 ACCOUNT_INVITATION_TTL_HOURS = env.int("ACCOUNT_INVITATION_TTL_HOURS", default=72)

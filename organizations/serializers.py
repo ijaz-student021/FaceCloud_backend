@@ -64,11 +64,13 @@ class OwnerInvitationSerializer(serializers.Serializer):
 
 
 class PlanLimitsSerializer(serializers.Serializer):
+    users = serializers.IntegerField(allow_null=True, help_text="The total (owner, moderators and members, with invitations still waiting). null means unlimited.")
     moderators = serializers.IntegerField(allow_null=True, help_text="null means unlimited.")
     members = serializers.IntegerField(allow_null=True, help_text="null means unlimited.")
 
 
 class PlanUsageSerializer(serializers.Serializer):
+    users = serializers.IntegerField(help_text="Seats taken in total: active people plus invitations still waiting.")
     moderators = serializers.IntegerField()
     members = serializers.IntegerField()
 
@@ -88,7 +90,7 @@ class PlanFiguresMixin(serializers.Serializer):
 
     @extend_schema_field(PlanUsageSerializer)
     def get_usage(self, organization):
-        seats = {"moderators": getattr(organization, "moderator_seats", None), "members": getattr(organization, "member_seats", None)}
+        seats = {"users": getattr(organization, "user_seats", None), "moderators": getattr(organization, "moderator_seats", None), "members": getattr(organization, "member_seats", None)}
         return {kind: count if count is not None else seats_in_use(organization, kind) for kind, count in seats.items()}
 
 
