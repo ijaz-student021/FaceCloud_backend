@@ -929,9 +929,16 @@ membership, moderation, and data access. See the full design in
   longer moderate, their undecided reviews return to the queue unassigned, an
   in-review one becomes pending again, an escalated one stays escalated, decided
   reviews are untouched, and the audit event records `released_reviews`).
-  Retention of other content belonging to a removed member is unchanged: it stays
-  with its personal owner, because organization membership never granted access
-  to it
+  Content a member filed UNDER the organization (batches with `organization` set to
+  a shared organization, and everything that hangs off them) is no longer reachable
+  by that member once their membership is not active (suspended or removed): every
+  owner-scoped endpoint answers as if it did not exist, whatever token they hold,
+  while their account, personal workspace and other organizations are untouched,
+  the organization's moderators, owner and the administrator keep seeing the
+  records, nothing is deleted and reactivating the membership brings the content
+  back (`organizations/access.py`, `docs/features/suspended-member-access.md`).
+  Content that is not filed under an organization stays with its personal owner,
+  because organization membership never granted access to it
 - Prevention of cross-organization access and face matching by default — Partial
   (organization membership/invitation/audit APIs and moderator review APIs are
   isolated and tested — `OrganizationIsolationTests`,

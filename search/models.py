@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db import models
+from organizations.access import locked_manager
 
 
 class ImageEmbedding(models.Model):
@@ -18,6 +19,8 @@ class ImageEmbedding(models.Model):
     model_name = models.CharField(max_length=60)
     model_checksum = models.CharField(max_length=64)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = locked_manager("image__batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
 
     class Meta:
         indexes = [models.Index(fields=["owner", "model_checksum"], name="semantic_owner_model_idx")]

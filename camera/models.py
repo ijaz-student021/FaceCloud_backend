@@ -9,6 +9,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from organizations.access import locked_manager
 
 
 class CameraSession(models.Model):
@@ -28,6 +29,8 @@ class CameraSnapshot(models.Model):
     session = models.ForeignKey(CameraSession, on_delete=models.CASCADE, related_name="snapshots")
     image = models.OneToOneField("uploads.ImageUpload", on_delete=models.CASCADE, related_name="camera_snapshot")
     created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = locked_manager("image__batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
 
     class Meta:
         ordering = ["-created_at"]

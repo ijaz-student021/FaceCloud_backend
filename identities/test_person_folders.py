@@ -129,12 +129,12 @@ class GroupSummaryFieldTests(FolderFixtures, TestCase):
     def test_the_list_costs_the_same_number_of_queries_for_one_group_or_many(self):
         group = self.make_group(self.owner)
         self.add_photo(group)
-        with self.assertNumQueries(2):
+        with self.assertNumQueries(3):                 # the list, its photo counts and the one look-up of the organizations the person is locked out of (organizations/access.py)
             self.listed()
         for index in range(4):
             extra = self.make_group(self.owner, f"Person {index + 2}")
             self.add_photo(extra, f"x{index}.jpg")
-        with self.assertNumQueries(2):
+        with self.assertNumQueries(3):
             self.listed()
 
     def test_another_users_groups_are_not_listed_and_their_detail_is_404(self):
