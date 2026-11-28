@@ -37,6 +37,11 @@ def rows(response):
     return data
 
 
+def ids_rows(response):
+    data = response.json() if hasattr(response, 'json') else response.data
+    return data['results'] if isinstance(data, dict) and 'results' in data else data
+
+
 def ids_of(response, *keys):
     found = set()
 
@@ -99,6 +104,17 @@ class LockedMemberCannotReachOrganizationContentTests(LockFixture, TestCase):
         super().setUp()
         self.org_pks = {self.org_photo.pk, self.org_photo_2.pk, self.org_group_image.pk}
         self.kept_pks = {self.second_photo.pk, self.personal_photo.pk, self.my_group_image.pk}
+
+    def test_a_personal_folder_that_holds_an_organization_photo_counts_only_what_the_member_can_still_reach(self):
+        mixed, _ = self.add_photo(self.my_group, "mixed.jpg")
+        UploadBatch.objects.filter(pk=mixed.batch_id).update(organization=self.organization)
+        self.assertEqual(self.get("identities:group-detail", self.my_group.pk).data["member_count"], 2)
+        self.suspend()
+        detail = self.get("identities:group-detail", self.my_group.pk).data
+        listed = next(row for row in ids_rows(self.get("identities:group-list")) if row["id"] == self.my_group.pk)
+        self.assertEqual((detail["member_count"], detail["confirmed_count"], listed["member_count"]), (1, 1, 1))
+        self.reactivate()
+        self.assertEqual(self.get("identities:group-detail", self.my_group.pk).data["member_count"], 2)
 
     # ---- what the member could do before, so that "denied" means something
     def test_before_the_suspension_everything_is_reachable(self):

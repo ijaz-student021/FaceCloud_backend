@@ -19847,9 +19847,9 @@ components:
           $ref: '#/components/schemas/IdentityGroupStateEnum'
         member_count:
           type: integer
-          maximum: 9223372036854775807
-          minimum: 0
-          format: int64
+          readOnly: true
+          description: Faces placed in this folder. For a person locked out of an organization it counts only what they can
+            still reach.
         confirmed_count:
           type: integer
           readOnly: true
@@ -19896,6 +19896,7 @@ components:
       - display_name
       - id
       - matching_confidence
+      - member_count
       - preview_image
       - suggested_count
       - updated_at
