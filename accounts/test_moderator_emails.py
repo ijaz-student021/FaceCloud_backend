@@ -39,7 +39,7 @@ class ModeratorEmailTests(TestCase):
     # -- the invitation: link first, then "your account is ready" after it was accepted -----------------------------------------------------------------------
     def test_an_invited_moderator_gets_the_link_and_after_accepting_an_account_is_ready_mail_without_the_password(self):
         with self.captureOnCommitCallbacks(execute=True):
-            response = self.client_for(self.admin).post("/api/user/admin/invitations/", {"email": "newbie@example.org", "role": "moderator", "organization_id": self.organization.pk}, format="json")
+            response = self.client_for(self.admin).post("/api/user/admin/invitations/", {"email": "newbie@example.org", "role": "moderator", "reason": "Pilot organization needs a moderator before its owner can invite one", "organization_id": self.organization.pk}, format="json")
         self.assertEqual(response.status_code, 201, response.content)
         invitation_mail = self.sent_to("newbie@example.org")[-1]
         self.assertIn(f"{SITE}/accept-invitation?token=", invitation_mail.body)                        # step 1: the link
@@ -65,7 +65,7 @@ class ModeratorEmailTests(TestCase):
     def test_an_account_created_by_an_administrator_gets_sign_in_details_and_a_choose_password_link_but_never_the_password(self):
         with self.captureOnCommitCallbacks(execute=True):
             response = self.client_for(self.admin).post(
-                "/api/user/admin/users/", {"username": "sara", "email": "sara@example.org", "password": CHOSEN, "role": "moderator", "organization_id": self.organization.pk}, format="json")
+                "/api/user/admin/users/", {"username": "sara", "email": "sara@example.org", "password": CHOSEN, "role": "moderator", "reason": "Pilot organization needs a moderator before its owner can invite one", "organization_id": self.organization.pk}, format="json")
         self.assertEqual(response.status_code, 201, response.content)
         message = self.sent_to("sara@example.org")[0]
         self.assertIn("Email: sara@example.org", message.body)
@@ -78,7 +78,7 @@ class ModeratorEmailTests(TestCase):
     def test_promoting_an_account_to_moderator_sends_one_mail_with_the_panel_link(self):
         person = self.make("promoted")
         with self.captureOnCommitCallbacks(execute=True):
-            response = self.client_for(self.admin).patch(f"/api/user/admin/users/{person.pk}/", {"role": "moderator", "organization_id": self.organization.pk}, format="json")
+            response = self.client_for(self.admin).patch(f"/api/user/admin/users/{person.pk}/", {"role": "moderator", "reason": "Pilot organization needs a moderator before its owner can invite one", "organization_id": self.organization.pk}, format="json")
         self.assertEqual(response.status_code, 200, response.content)
         messages = self.sent_to("promoted@example.com")
         self.assertEqual(len(messages), 1)
@@ -107,7 +107,7 @@ class ModeratorEmailTests(TestCase):
         person = self.make("unlucky")
         with mock.patch("accounts.moderator_emails.send_mail", side_effect=OSError("smtp down")):
             with self.captureOnCommitCallbacks(execute=True):
-                response = self.client_for(self.admin).patch(f"/api/user/admin/users/{person.pk}/", {"role": "moderator", "organization_id": self.organization.pk}, format="json")
+                response = self.client_for(self.admin).patch(f"/api/user/admin/users/{person.pk}/", {"role": "moderator", "reason": "Pilot organization needs a moderator before its owner can invite one", "organization_id": self.organization.pk}, format="json")
         self.assertEqual(response.status_code, 200, response.content)
         person.refresh_from_db()
         self.assertEqual(person.role, "moderator")

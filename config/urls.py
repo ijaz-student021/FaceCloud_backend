@@ -55,4 +55,5 @@ urlpatterns = [
     path("api/organizations/", include("organizations.urls")),
     path("api/organizations/", include("moderation.urls")),
     path("api/organizations/", include("privacy.organization_urls")),
+    path("api/organizations/", include("downloads.organization_urls")),
 ]

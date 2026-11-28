@@ -36,9 +36,9 @@ def process_processing_report(report_id, task_id=""):
         )
 
     try:
-        report = ProcessingReport.objects.select_related("image", "batch").get(pk=report_id)
+        report = ProcessingReport.objects.select_related("image", "batch", "owner").get(pk=report_id)
         payload = build_report_payload(report)
-        content, content_type, extension = render_report(payload, report.format)
+        content, content_type, extension = render_report(payload, report.format, viewer=report.owner)
         checksum = hashlib.sha256(content).hexdigest()
         source_name = (
             report.image.original_name if report.image_id else

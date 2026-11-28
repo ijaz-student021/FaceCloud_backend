@@ -375,12 +375,12 @@ def register_from_invitation(*, token, full_name, email, password, username=None
 
 
 @transaction.atomic
-def create_account_as_admin(*, administrator, username, email, password, role, organization=None, full_name="", request=None):
+def create_account_as_admin(*, administrator, username, email, password=None, role, organization=None, full_name="", reason="", request=None):
     """Create an already-verified account for someone, in one transaction.
 
     ``role`` is ``user`` or ``moderator`` (never ``admin``: the serializer allows only those two). A moderator also gets an active
     moderator membership in ``organization`` so the moderator panel can find it; if that fails nothing is created. The password is
-    hashed by ``create_user`` and appears in no event, log line or response. One ``admin_created_account`` event names the
+    hashed by ``create_user`` and appears in no event, log line or response. Without one (``password=None``) the account has an unusable password and the e-mail it receives carries a link to choose its own. One ``admin_created_account`` event names the
     administrator and the new account.
     """
     from organizations.models import OrganizationMembership
@@ -394,15 +394,24 @@ def create_account_as_admin(*, administrator, username, email, password, role, o
         username=username, email=email, password=password, first_name=first_name, last_name=last_name,
         role=role, is_email_verified=True, is_active=True, is_suspended=False,
     )
+    from organizations.services import create_personal_organization
+
+    create_personal_organization(user)           # like every account: a private workspace of their own, so their own photographs are never filed under the organization they work for
     if role == "moderator":
         OrganizationMembership.objects.create(
             organization=organization, user=user, role=OrganizationMembership.Role.MODERATOR,
             status=OrganizationMembership.Status.ACTIVE, invited_by=administrator,
         )
+        from .overrides import record_moderator_override
+
+        record_moderator_override(
+            actor=administrator, organization=organization, operation="create_account", target_type="User", target_id=user.pk, subject=user.get_username(),
+            reason=reason, request=request,
+        )
     record_auth_event(
         "admin_created_account", request, user, email,
         {"administrator_id": administrator.pk, "administrator": administrator.get_username(), "role": role,
-         "organization_id": organization.pk if organization is not None else None},
+         "organization_id": organization.pk if organization is not None else None, **({"reason": reason} if reason else {})},
     )
     from .moderator_emails import send_account_created_by_admin
 

@@ -2005,6 +2005,490 @@ paths:
       summary: Rebuild a package
       description: '**Access:** any signed-in user, on their own data (another user''s data is a 404). **Rate limit:** `download_package`
         scope, 30/hour (429 when exceeded).'
+  /api/downloads/requests/:
+    get:
+      operationId: downloads_requests_list
+      description: 'Your own requests, newest first.
+
+
+        **Access:** any signed-in user, on their own data (another user''s data is a 404).'
+      parameters:
+      - in: query
+        name: organization
+        schema:
+          type: integer
+        description: Only requests to this organization.
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - in: query
+        name: status
+        schema:
+          type: string
+          enum:
+          - approved
+          - cancelled
+          - denied
+          - in_review
+          - partially_approved
+          - pending
+        description: Only requests with this status.
+      tags:
+      - downloads
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedDownloadRequestList'
+          description: ''
+        '401':
+          description: Missing, expired, revoked or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      summary: List my download requests
+    post:
+      operationId: downloads_requests_create
+      description: 'One request names every selected image of one organization that requires approval; it cannot be edited
+        afterwards. A moderator decides each image.
+
+
+        **Access:** any signed-in user, on their own data (another user''s data is a 404). **Rate limit:** `download_package`
+        scope, 30/hour (429 when exceeded).'
+      summary: Request permission to download several images
+      tags:
+      - downloads
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DownloadRequestCreate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/DownloadRequestCreate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/DownloadRequestCreate'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadRequestCreated'
+          description: ''
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadRequestCreated'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+  /api/downloads/requests/{id}/:
+    get:
+      operationId: downloads_requests_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - downloads
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadRequestDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      summary: Get a download request
+      description: 'The request with each image''s decision, reason and approval.
+
+
+        **Access:** any signed-in user, on their own data (another user''s data is a 404).'
+  /api/downloads/requests/{id}/cancel/:
+    post:
+      operationId: downloads_requests_cancel_create
+      summary: Cancel a download request
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - downloads
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadRequestDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      description: 'Only while no image has been decided.
+
+
+        **Access:** any signed-in user, on their own data (another user''s data is a 404).'
+  /api/downloads/requests/{id}/items/{item_id}/file/:
+    get:
+      operationId: downloads_requests_items_file_retrieve
+      description: 'Checks the approval on every call: expired, revoked or withdrawn approvals answer 403.
+
+
+        **Access:** any signed-in user, on their own data (another user''s data is a 404).'
+      summary: Download one approved image
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: item_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - downloads
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+  /api/downloads/requests/{id}/zip/:
+    get:
+      operationId: downloads_requests_zip_retrieve
+      description: 'Contains only the approved images that are still authorized.
+
+
+        **Access:** any signed-in user, on their own data (another user''s data is a 404). **Rate limit:** `download_package`
+        scope, 30/hour (429 when exceeded).'
+      summary: Download the approved images as a ZIP
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - downloads
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+  /api/downloads/requests/check/:
+    post:
+      operationId: downloads_requests_check_create
+      description: 'Says for each image whether it can go into a download request, why not, and its download-access state.
+
+
+        **Access:** any signed-in user, on their own data (another user''s data is a 404).'
+      summary: Check which images can be requested
+      tags:
+      - downloads
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EligibilityRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/EligibilityRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/EligibilityRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EligibilityResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
   /api/duplicates/images/{image_id}/:
     get:
       operationId: duplicates_images_retrieve
@@ -7799,6 +8283,305 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
       summary: Organization audit log
+  /api/organizations/{organization_id}/download-grants/{grant_id}/revoke/:
+    post:
+      operationId: organizations_download_grants_revoke_create
+      description: 'Stops further downloads of that image; a file already downloaded cannot be recalled.
+
+
+        **Access:** signed-in members of the organization; the role required is enforced per endpoint (403 otherwise). **Rate
+        limit:** `download_review` scope, 120/hour (429 when exceeded).'
+      parameters:
+      - in: path
+        name: grant_id
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: organization_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - organizations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GrantRevoke'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/GrantRevoke'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/GrantRevoke'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadGrant'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      summary: Revoke a download approval
+  /api/organizations/{organization_id}/download-requests/:
+    get:
+      operationId: organizations_download_requests_list
+      description: 'The requests of the members the caller may see, newest first.
+
+
+        **Access:** signed-in members of the organization; the role required is enforced per endpoint (403 otherwise).'
+      parameters:
+      - in: path
+        name: organization_id
+        schema:
+          type: integer
+        required: true
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - in: query
+        name: requester
+        schema:
+          type: integer
+        description: Only requests of this person (user id).
+      - in: query
+        name: status
+        schema:
+          type: string
+        description: 'One status or several separated by commas: pending, in_review, approved, partially_approved, denied,
+          cancelled.'
+      tags:
+      - organizations
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedDownloadRequestList'
+          description: ''
+        '401':
+          description: Missing, expired, revoked or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      summary: List an organization's download requests
+  /api/organizations/{organization_id}/download-requests/{request_id}/:
+    get:
+      operationId: organizations_download_requests_retrieve
+      description: 'The request with all its images; preview each with the image preview endpoint.
+
+
+        **Access:** signed-in members of the organization; the role required is enforced per endpoint (403 otherwise).'
+      parameters:
+      - in: path
+        name: organization_id
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: request_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - organizations
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadRequestDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      summary: Get an organization's download request
+  /api/organizations/{organization_id}/download-requests/{request_id}/decision/:
+    post:
+      operationId: organizations_download_requests_decision_create
+      description: 'Approve all, approve selected, deny selected or deny all, with a reason for every denial. Approving creates
+        one time-limited approval per image.
+
+
+        **Access:** signed-in members of the organization; the role required is enforced per endpoint (403 otherwise). **Rate
+        limit:** `download_review` scope, 120/hour (429 when exceeded).'
+      summary: Decide a download request
+      parameters:
+      - in: path
+        name: organization_id
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: request_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - organizations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DownloadDecision'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/DownloadDecision'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/DownloadDecision'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadRequestDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
   /api/organizations/{organization_id}/export/:
     get:
       operationId: organizations_export_list
@@ -10620,6 +11403,17 @@ paths:
 
         **Access:** FaceCloud administrators only (403 otherwise).'
       parameters:
+      - in: query
+        name: kind
+        schema:
+          type: string
+          enum:
+          - all
+          - organization
+          - personal
+        description: '`organization`: the shared organizations only; `personal`: every account''s private workspace; `all`
+          (the default): both. The Organizations screen should ask for `organization`: private workspaces belong to the Personal
+          Users screen.'
       - name: page
         required: false
         in: query
@@ -10683,7 +11477,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AdminOrganization'
+                $ref: '#/components/schemas/AdminOrganizationCreated'
+          description: ''
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminOrganizationCreated'
           description: ''
         '400':
           content:
@@ -10872,6 +11672,208 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
       summary: Rename, change the plan, suspend or reactivate an organization (administrators)
+  /api/organizations/admin/{organization_id}/owner-invitation/:
+    get:
+      operationId: organizations_admin_owner_invitation_retrieve
+      description: 'The invitation that makes somebody the owner of an organization waiting for one: its status (pending,
+        accepted, cancelled, expired), whether the e-mail was queued, sent or failed, and who accepted it. Never the link
+        or the token.
+
+
+        **Access:** FaceCloud administrators only (403 otherwise).'
+      summary: Get the owner invitation of an organization
+      parameters:
+      - in: path
+        name: organization_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - organizations
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnerInvitation'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+  /api/organizations/admin/{organization_id}/owner-invitation/cancel/:
+    post:
+      operationId: organizations_admin_owner_invitation_cancel_create
+      description: 'Withdraws the pending owner invitation (its link stops working). The organization keeps waiting for an
+        owner; a resend sends a new invitation.
+
+
+        **Access:** FaceCloud administrators only (403 otherwise).'
+      summary: Cancel the owner invitation
+      parameters:
+      - in: path
+        name: organization_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - organizations
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnerInvitation'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+  /api/organizations/admin/{organization_id}/owner-invitation/resend/:
+    post:
+      operationId: organizations_admin_owner_invitation_resend_create
+      description: 'Sends the future owner a new invitation e-mail with a new link; the earlier link stops working. Works
+        while the organization waits for its owner, also after the invitation expired or was cancelled.
+
+
+        **Access:** FaceCloud administrators only (403 otherwise). **Rate limit:** `org_invite` scope, 30/hour (429 when exceeded).'
+      summary: Resend the owner invitation
+      parameters:
+      - in: path
+        name: organization_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - organizations
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnerInvitation'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
   /api/organizations/invitations/{token}/:
     get:
       operationId: organizations_invitations_retrieve
@@ -11421,7 +12423,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
       summary: Download a report
-      description: '**Access:** any signed-in user, on their own data (another user''s data is a 404).'
+      description: 'Streams the stored report. For a PDF with pictures of photographs in an organization that requires download
+        approval, which you hold no active approval for, the answer is a watermarked copy made from the stored report (header
+        `X-Report-Restricted: approval-required`); the stored file is not changed.
+
+
+        **Access:** any signed-in user, on their own data (another user''s data is a 404).'
   /api/reports/{id}/regenerate/:
     post:
       operationId: reports_regenerate_create
@@ -13108,6 +14115,12 @@ paths:
       description: '**Access:** FaceCloud administrators only (403 otherwise).'
       summary: List users (administrators)
       parameters:
+      - in: query
+        name: account_type
+        schema:
+          type: string
+        description: 'personal: accounts that belong to no shared organization (only their own private workspace). organization:
+          accounts that are an active owner, moderator or member of at least one shared organization.'
       - name: page
         required: false
         in: query
@@ -13339,6 +14352,67 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
       summary: Change a user (administrators)
+  /api/user/admin/users/{id}/password-reset/:
+    post:
+      operationId: user_admin_users_password_reset_create
+      description: 'E-mails the account''s own address a link to choose a new password. The administrator never sees or sets
+        a password; the response has no token or link. An administrator account can only be reset by a superuser.
+
+
+        **Access:** FaceCloud administrators only (403 otherwise). **Rate limit:** `password_reset` scope, 10/hour (429 when
+        exceeded).'
+      summary: Send a password reset link to an account
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - user
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          description: Missing, expired, revoked or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '429':
+          description: Rate limit or per-user job limit reached; retry later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
   /api/user/avatar/:
     get:
       operationId: user_avatar_retrieve
@@ -13897,6 +14971,26 @@ paths:
         **Access:** any signed-in user, on their own data (another user''s data is a 404).'
 components:
   schemas:
+    AccessStateEnum:
+      enum:
+      - not_requested
+      - pending
+      - granted
+      - denied
+      - expired
+      - revoked
+      type: string
+      description: '* `not_requested` - not_requested
+
+        * `pending` - pending
+
+        * `granted` - granted
+
+        * `denied` - denied
+
+        * `expired` - expired
+
+        * `revoked` - revoked'
     AccountInvitation:
       type: object
       properties:
@@ -13914,6 +15008,12 @@ components:
           nullable: true
           description: 'Required for a moderator invitation: the organization the moderator will work for. Refused for any
             other role.'
+        reason:
+          type: string
+          writeOnly: true
+          description: 'Required (at least 8 characters) for a moderator invitation: why an administrator invites this moderator
+            instead of the organization''s owner. Kept in the organization''s audit log.'
+          maxLength: 500
         organization:
           type: object
           additionalProperties: {}
@@ -13961,6 +15061,11 @@ components:
         * `moderator` - moderator
 
         * `admin` - admin'
+    AccountTypeEnum:
+      enum:
+      - personal
+      - organization
+      type: string
     Acknowledge:
       type: object
       properties:
@@ -14682,6 +15787,13 @@ components:
           allOf:
           - $ref: '#/components/schemas/ModeratorDataScopeEnum'
           readOnly: true
+        download_approval_required:
+          type: boolean
+          readOnly: true
+        download_grant_hours:
+          type: integer
+          readOnly: true
+          nullable: true
         created_at:
           type: string
           format: date-time
@@ -14695,6 +15807,13 @@ components:
           - $ref: '#/components/schemas/OrganizationOwner'
           nullable: true
           readOnly: true
+        owner_invitation:
+          allOf:
+          - $ref: '#/components/schemas/OwnerInvitation'
+          nullable: true
+          readOnly: true
+          description: 'While the organization waits for its owner (`status: pending_owner`): the invitation sent to them;
+            otherwise null.'
         member_count:
           type: integer
           readOnly: true
@@ -14711,6 +15830,8 @@ components:
           readOnly: true
       required:
       - created_at
+      - download_approval_required
+      - download_grant_hours
       - id
       - is_personal
       - limits
@@ -14719,11 +15840,119 @@ components:
       - moderator_data_scope
       - name
       - owner
+      - owner_invitation
       - plan
       - slug
       - status
       - updated_at
       - usage
+    AdminOrganizationCreated:
+      type: object
+      description: The organization as the administrator list shows it, plus whether this request created it.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        name:
+          type: string
+          readOnly: true
+        slug:
+          type: string
+          readOnly: true
+          pattern: ^[-a-zA-Z0-9_]+$
+        status:
+          allOf:
+          - $ref: '#/components/schemas/OrganizationStatusEnum'
+          readOnly: true
+        plan:
+          allOf:
+          - $ref: '#/components/schemas/OrganizationPlanEnum'
+          readOnly: true
+        is_personal:
+          type: boolean
+          readOnly: true
+        moderator_data_scope:
+          allOf:
+          - $ref: '#/components/schemas/ModeratorDataScopeEnum'
+          readOnly: true
+        download_approval_required:
+          type: boolean
+          readOnly: true
+        download_grant_hours:
+          type: integer
+          readOnly: true
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+        owner:
+          allOf:
+          - $ref: '#/components/schemas/OrganizationOwner'
+          nullable: true
+          readOnly: true
+        owner_invitation:
+          allOf:
+          - $ref: '#/components/schemas/OwnerInvitation'
+          nullable: true
+          readOnly: true
+          description: 'While the organization waits for its owner (`status: pending_owner`): the invitation sent to them;
+            otherwise null.'
+        member_count:
+          type: integer
+          readOnly: true
+        moderator_count:
+          type: integer
+          readOnly: true
+        limits:
+          allOf:
+          - $ref: '#/components/schemas/PlanLimits'
+          readOnly: true
+        usage:
+          allOf:
+          - $ref: '#/components/schemas/PlanUsage'
+          readOnly: true
+        created:
+          type: boolean
+          description: 'False when the same request (same name and owner e-mail, still waiting for the owner) had already
+            been made: the existing organization is returned and no e-mail is sent.'
+        owner_account_exists:
+          type: boolean
+          nullable: true
+          description: 'For an owner_email request: whether an account with that address exists (it will be asked to sign
+            in) or not (it will register). null for an owner_id request.'
+      required:
+      - created
+      - created_at
+      - download_approval_required
+      - download_grant_hours
+      - id
+      - is_personal
+      - limits
+      - member_count
+      - moderator_count
+      - moderator_data_scope
+      - name
+      - owner
+      - owner_account_exists
+      - owner_invitation
+      - plan
+      - slug
+      - status
+      - updated_at
+      - usage
+    AdminOrganizationUpdateStatusEnum:
+      enum:
+      - active
+      - suspended
+      type: string
+      description: '* `active` - Active
+
+        * `suspended` - Suspended'
     AdminUser:
       type: object
       properties:
@@ -14767,13 +15996,25 @@ components:
           type: integer
           readOnly: true
           description: Photos this account has uploaded (the list computes it for every row at once).
+        account_type:
+          allOf:
+          - $ref: '#/components/schemas/AccountTypeEnum'
+          description: '`personal`: only their own private workspace. `organization`: an active member of at least one shared
+            organization (owner, moderator or member); they still have a private workspace too.'
+          readOnly: true
+        shared_organization_count:
+          type: integer
+          readOnly: true
+          description: In how many shared organizations (not their own private workspace) the account is an active member.
       required:
+      - account_type
       - date_joined
       - email
       - full_name
       - id
       - is_email_verified
       - last_login
+      - shared_organization_count
       - uploads_count
       - username
     AdminUserCreate:
@@ -14790,6 +16031,9 @@ components:
         password:
           type: string
           writeOnly: true
+          description: 'Optional, and better left out: without it the account has no password and the person is e-mailed a
+            link to choose their own, so nobody else ever knows it. If given, it is checked like a sign-up password and stored
+            hashed; it is never e-mailed or returned.'
         role:
           allOf:
           - $ref: '#/components/schemas/AdminUserCreateRoleEnum'
@@ -14807,9 +16051,13 @@ components:
         full_name:
           type: string
           maxLength: 150
+        reason:
+          type: string
+          description: 'Required (at least 8 characters) when role is moderator: why an administrator adds this moderator
+            instead of the organization''s owner inviting them. Kept in the organization''s audit log.'
+          maxLength: 500
       required:
       - email
-      - password
     AdminUserCreateRoleEnum:
       enum:
       - user
@@ -14867,6 +16115,16 @@ components:
           type: integer
           readOnly: true
           description: Photos this account has uploaded (the list computes it for every row at once).
+        account_type:
+          allOf:
+          - $ref: '#/components/schemas/AccountTypeEnum'
+          description: '`personal`: only their own private workspace. `organization`: an active member of at least one shared
+            organization (owner, moderator or member); they still have a private workspace too.'
+          readOnly: true
+        shared_organization_count:
+          type: integer
+          readOnly: true
+          description: In how many shared organizations (not their own private workspace) the account is an active member.
         display_name:
           type: string
           readOnly: true
@@ -14893,6 +16151,7 @@ components:
           additionalProperties: {}
           readOnly: true
       required:
+      - account_type
       - active_sessions
       - country
       - date_joined
@@ -14908,6 +16167,7 @@ components:
       - organization_name
       - organizations
       - role
+      - shared_organization_count
       - suspension_reason
       - uploads_count
       - usage
@@ -14957,19 +16217,37 @@ components:
           type: integer
           readOnly: true
           description: Photos this account has uploaded (the list computes it for every row at once).
+        account_type:
+          allOf:
+          - $ref: '#/components/schemas/AccountTypeEnum'
+          description: '`personal`: only their own private workspace. `organization`: an active member of at least one shared
+            organization (owner, moderator or member); they still have a private workspace too.'
+          readOnly: true
+        shared_organization_count:
+          type: integer
+          readOnly: true
+          description: In how many shared organizations (not their own private workspace) the account is an active member.
         organization_id:
           type: integer
           writeOnly: true
           nullable: true
           description: 'With role=moderator: the organization the moderator will work for (needed when there is more than
             one, and when the account has no moderator membership yet). Ignored otherwise.'
+        reason:
+          type: string
+          writeOnly: true
+          description: 'Required (at least 8 characters) when the role changes to moderator: why an administrator does this
+            instead of the organization''s owner inviting them. Kept in the organization''s audit log.'
+          maxLength: 500
       required:
+      - account_type
       - date_joined
       - email
       - full_name
       - id
       - is_email_verified
       - last_login
+      - shared_organization_count
       - uploads_count
       - username
     AdvisorConsentRequest:
@@ -15464,6 +16742,17 @@ components:
       required:
       - engine
       - stage
+    ArtifactTypeEnum:
+      enum:
+      - enhanced
+      - original
+      - edited
+      type: string
+      description: '* `enhanced` - Enhanced image
+
+        * `original` - Original image
+
+        * `edited` - Saved edit'
     AvatarUpload:
       type: object
       properties:
@@ -15539,6 +16828,19 @@ components:
           type: string
           format: date-time
           readOnly: true
+        organization_id:
+          type: integer
+          nullable: true
+          readOnly: true
+          description: 'The workspace the photograph was uploaded into: the id of its batch''s organization (your personal
+            workspace, or an organization you uploaded to). Never worked out from your memberships. `null` only for a photograph
+            from before workspaces existed.'
+        download_approval_required:
+          type: boolean
+          readOnly: true
+          description: 'True when that workspace is an organization that requires a moderator''s approval before its photographs
+            can be downloaded (see POST /api/downloads/requests/). Always false in a personal workspace and for `organization_id:
+            null`.'
         display_status:
           type: string
           readOnly: true
@@ -15552,9 +16854,11 @@ components:
       - batch
       - created_at
       - display_status
+      - download_approval_required
       - download_url
       - enhancement
       - id
+      - organization_id
       - original_name
       - preprocessing
       - status
@@ -15878,6 +17182,26 @@ components:
       required:
       - current_password
       - new_password
+    CodeEnum:
+      enum:
+      - privacy_or_consent
+      - client_restriction
+      - distribution_rights
+      - incorrect_selection
+      - policy_restriction
+      - other
+      type: string
+      description: '* `privacy_or_consent` - privacy_or_consent
+
+        * `client_restriction` - client_restriction
+
+        * `distribution_rights` - distribution_rights
+
+        * `incorrect_selection` - incorrect_selection
+
+        * `policy_restriction` - policy_restriction
+
+        * `other` - other'
     ComparisonEnhancedFile:
       type: object
       properties:
@@ -16261,6 +17585,82 @@ components:
       - trash_bytes
       - trash_images
       - upload_batches
+    DenialReason:
+      type: object
+      properties:
+        code:
+          $ref: '#/components/schemas/CodeEnum'
+        text:
+          type: string
+          default: ''
+          maxLength: 500
+      required:
+      - code
+    DenialReasonCodeEnum:
+      enum:
+      - privacy_or_consent
+      - client_restriction
+      - distribution_rights
+      - incorrect_selection
+      - policy_restriction
+      - no_longer_eligible
+      - other
+      type: string
+      description: '* `privacy_or_consent` - Privacy or consent restriction
+
+        * `client_restriction` - Client or event organizer restriction
+
+        * `distribution_rights` - Distribution rights unavailable
+
+        * `incorrect_selection` - Incorrect image selection
+
+        * `policy_restriction` - Policy restriction
+
+        * `no_longer_eligible` - The image is no longer eligible
+
+        * `other` - Other'
+    DownloadDecision:
+      type: object
+      description: '``approve_all``: every undecided image. ``approve_selected``: the images in ``item_ids``; the other undecided
+        ones are denied with ``reason``. ``deny_selected``: the
+
+        images in ``item_ids``; the rest stay undecided. ``deny_all``: every undecided image. A denial needs ``reason`` (or
+        ``item_reasons`` for each image); ``other`` needs text.'
+      properties:
+        action:
+          $ref: '#/components/schemas/DownloadDecisionActionEnum'
+        item_ids:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+        reason:
+          $ref: '#/components/schemas/DenialReason'
+        item_reasons:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/DenialReason'
+          description: Reason per item id, which overrides `reason` for that image.
+        expected_version:
+          type: integer
+          minimum: 0
+          description: The version you saw; a different one answers 409 request_changed.
+      required:
+      - action
+    DownloadDecisionActionEnum:
+      enum:
+      - approve_all
+      - approve_selected
+      - deny_selected
+      - deny_all
+      type: string
+      description: '* `approve_all` - approve_all
+
+        * `approve_selected` - approve_selected
+
+        * `deny_selected` - deny_selected
+
+        * `deny_all` - deny_all'
     DownloadEvent:
       type: object
       description: One history row. The last four fields are additive; the view supplies them for the whole page.
@@ -16329,6 +17729,60 @@ components:
       - kind
       - resource_id
       - resource_type
+    DownloadGrant:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        artifact_type:
+          allOf:
+          - $ref: '#/components/schemas/ArtifactTypeEnum'
+          readOnly: true
+        artifact_id:
+          type: integer
+          readOnly: true
+        expires_at:
+          type: string
+          format: date-time
+          readOnly: true
+        revoked_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        revoke_reason:
+          type: string
+          readOnly: true
+        max_uses:
+          type: integer
+          readOnly: true
+          nullable: true
+        use_count:
+          type: integer
+          readOnly: true
+        active:
+          type: boolean
+          readOnly: true
+        expired:
+          type: boolean
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - active
+      - artifact_id
+      - artifact_type
+      - created_at
+      - expired
+      - expires_at
+      - id
+      - max_uses
+      - revoke_reason
+      - revoked_at
+      - use_count
     DownloadPackage:
       type: object
       properties:
@@ -16409,6 +17863,274 @@ components:
           default: csv
       required:
       - package_type
+    DownloadRequest:
+      type: object
+      description: A request without its items (lists).
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        organization:
+          type: integer
+          readOnly: true
+        organization_name:
+          type: string
+          readOnly: true
+        requester:
+          type: object
+          properties:
+            id:
+              type: integer
+            username:
+              type: string
+            email:
+              type: string
+          readOnly: true
+        status:
+          allOf:
+          - $ref: '#/components/schemas/DownloadRequestStatusEnum'
+          readOnly: true
+        requester_message:
+          type: string
+          readOnly: true
+        version:
+          type: integer
+          readOnly: true
+        counts:
+          allOf:
+          - $ref: '#/components/schemas/DownloadRequestCounts'
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+        decided_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+      required:
+      - counts
+      - created_at
+      - decided_at
+      - id
+      - organization
+      - organization_name
+      - requester
+      - requester_message
+      - status
+      - updated_at
+      - version
+    DownloadRequestCounts:
+      type: object
+      properties:
+        total:
+          type: integer
+        pending:
+          type: integer
+        approved:
+          type: integer
+        denied:
+          type: integer
+      required:
+      - approved
+      - denied
+      - pending
+      - total
+    DownloadRequestCreate:
+      type: object
+      properties:
+        organization_id:
+          type: integer
+          minimum: 1
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RequestedImage'
+        message:
+          type: string
+          default: ''
+          maxLength: 500
+        client_token:
+          type: string
+          default: ''
+          description: 'Your own token for this submission: sending it again returns the request that already exists.'
+          maxLength: 64
+      required:
+      - items
+      - organization_id
+    DownloadRequestCreated:
+      type: object
+      properties:
+        created:
+          type: boolean
+          description: False when client_token named a request that already existed (a replay).
+        request:
+          $ref: '#/components/schemas/DownloadRequestDetail'
+      required:
+      - created
+      - request
+    DownloadRequestDetail:
+      type: object
+      description: A request without its items (lists).
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        organization:
+          type: integer
+          readOnly: true
+        organization_name:
+          type: string
+          readOnly: true
+        requester:
+          type: object
+          properties:
+            id:
+              type: integer
+            username:
+              type: string
+            email:
+              type: string
+          readOnly: true
+        status:
+          allOf:
+          - $ref: '#/components/schemas/DownloadRequestStatusEnum'
+          readOnly: true
+        requester_message:
+          type: string
+          readOnly: true
+        version:
+          type: integer
+          readOnly: true
+        counts:
+          allOf:
+          - $ref: '#/components/schemas/DownloadRequestCounts'
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+        decided_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DownloadRequestItem'
+          readOnly: true
+      required:
+      - counts
+      - created_at
+      - decided_at
+      - id
+      - items
+      - organization
+      - organization_name
+      - requester
+      - requester_message
+      - status
+      - updated_at
+      - version
+    DownloadRequestItem:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        image_id:
+          type: integer
+          readOnly: true
+        image_name:
+          type: string
+          readOnly: true
+        artifact_type:
+          allOf:
+          - $ref: '#/components/schemas/ArtifactTypeEnum'
+          readOnly: true
+        artifact_id:
+          type: integer
+          readOnly: true
+        status:
+          allOf:
+          - $ref: '#/components/schemas/DownloadRequestItemStatusEnum'
+          readOnly: true
+        denial_reason_code:
+          allOf:
+          - $ref: '#/components/schemas/DenialReasonCodeEnum'
+          readOnly: true
+        denial_reason_text:
+          type: string
+          readOnly: true
+        reviewed_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        grant:
+          allOf:
+          - $ref: '#/components/schemas/DownloadGrant'
+          nullable: true
+          readOnly: true
+        file_url:
+          type: string
+          nullable: true
+          description: Where the requester downloads this file, once approved (the endpoint still checks the grant on every
+            call).
+          readOnly: true
+      required:
+      - artifact_id
+      - artifact_type
+      - denial_reason_code
+      - denial_reason_text
+      - file_url
+      - grant
+      - id
+      - image_id
+      - image_name
+      - reviewed_at
+      - status
+    DownloadRequestItemStatusEnum:
+      enum:
+      - pending
+      - approved
+      - denied
+      type: string
+      description: '* `pending` - Pending
+
+        * `approved` - Approved
+
+        * `denied` - Denied'
+    DownloadRequestStatusEnum:
+      enum:
+      - pending
+      - in_review
+      - approved
+      - partially_approved
+      - denied
+      - cancelled
+      type: string
+      description: '* `pending` - Pending
+
+        * `in_review` - In review
+
+        * `approved` - Approved
+
+        * `partially_approved` - Partially approved
+
+        * `denied` - Denied
+
+        * `cancelled` - Cancelled'
     DuplicateAnalysis:
       type: object
       properties:
@@ -16821,6 +18543,59 @@ components:
       - recommended_maximum
       - recommended_minimum
       - step
+    EligibilityRequest:
+      type: object
+      properties:
+        organization_id:
+          type: integer
+          minimum: 1
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RequestedImage'
+      required:
+      - items
+      - organization_id
+    EligibilityResponse:
+      type: object
+      properties:
+        approval_required:
+          type: boolean
+        reviewer_available:
+          type: boolean
+          description: 'False when nobody in the organization could decide a request from you (a request is never approved
+            by its requester): submitting it answers 409 no_eligible_reviewer.'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EligibilityRow'
+      required:
+      - approval_required
+      - items
+      - reviewer_available
+    EligibilityRow:
+      type: object
+      properties:
+        image_id:
+          type: integer
+        artifact_type:
+          type: string
+        eligible:
+          type: boolean
+        reason:
+          type: string
+          description: Why it cannot be requested (a code), empty when it can.
+        detail:
+          type: string
+        access_state:
+          $ref: '#/components/schemas/AccessStateEnum'
+      required:
+      - access_state
+      - artifact_type
+      - detail
+      - eligible
+      - image_id
+      - reason
     EmailStatusEnum:
       enum:
       - queued
@@ -17115,6 +18890,9 @@ components:
       - batch_enhanced
       - contact_message_received
       - early_access_signup
+      - download_request_submitted
+      - download_request_received
+      - download_request_decided
       type: string
       description: '* `upload_received` - Upload received
 
@@ -17160,7 +18938,13 @@ components:
 
         * `contact_message_received` - New contact message
 
-        * `early_access_signup` - New early-access e-mail'
+        * `early_access_signup` - New early-access e-mail
+
+        * `download_request_submitted` - Download request submitted
+
+        * `download_request_received` - Download request to review
+
+        * `download_request_decided` - Download request decided'
     ExportReportFormatEnum:
       enum:
       - json
@@ -17441,6 +19225,13 @@ components:
           type: string
           description: 'Optional: the source_version this edit is meant for; a 409 stale_source if it is no longer current.'
           maxLength: 32
+    GrantRevoke:
+      type: object
+      properties:
+        reason:
+          type: string
+          default: ''
+          maxLength: 500
     IdentityAnalysis:
       type: object
       properties:
@@ -18663,11 +20454,26 @@ components:
           type: string
           format: date-time
           readOnly: true
+        organization_id:
+          type: integer
+          nullable: true
+          readOnly: true
+          description: 'The workspace the photograph was uploaded into: the id of its batch''s organization (your personal
+            workspace, or an organization you uploaded to). Never worked out from your memberships. `null` only for a photograph
+            from before workspaces existed.'
+        download_approval_required:
+          type: boolean
+          readOnly: true
+          description: 'True when that workspace is an organization that requires a moderator''s approval before its photographs
+            can be downloaded (see POST /api/downloads/requests/). Always false in a personal workspace and for `organization_id:
+            null`.'
       required:
       - batch
       - created_at
+      - download_approval_required
       - download_url
       - id
+      - organization_id
       - original_name
       - preprocessing
       - status
@@ -20401,6 +22207,19 @@ components:
           type: string
           format: date-time
           readOnly: true
+        organization_id:
+          type: integer
+          nullable: true
+          readOnly: true
+          description: 'The workspace the photograph was uploaded into: the id of its batch''s organization (your personal
+            workspace, or an organization you uploaded to). Never worked out from your memberships. `null` only for a photograph
+            from before workspaces existed.'
+        download_approval_required:
+          type: boolean
+          readOnly: true
+          description: 'True when that workspace is an organization that requires a moderator''s approval before its photographs
+            can be downloaded (see POST /api/downloads/requests/). Always false in a personal workspace and for `organization_id:
+            null`.'
         batch_display_name:
           type: string
           readOnly: true
@@ -20449,6 +22268,7 @@ components:
       - batch_display_name
       - created_at
       - display_status
+      - download_approval_required
       - download_url
       - duplicate_analysis
       - face_validation
@@ -20456,6 +22276,7 @@ components:
       - identity_analysis
       - identity_groups
       - latest_enhancement
+      - organization_id
       - original_name
       - preprocessing
       - quality_decision
@@ -20516,6 +22337,15 @@ components:
       - organization_reactivated
       - organization_logo_changed
       - organization_logo_removed
+      - download_requested
+      - download_decided
+      - download_request_cancelled
+      - download_grant_revoked
+      - download_completed
+      - download_blocked
+      - owner_invited
+      - organization_activated
+      - admin_moderator_override
       type: string
       description: '* `organization_created` - Organization created
 
@@ -20567,7 +22397,25 @@ components:
 
         * `organization_logo_changed` - Organization logo changed
 
-        * `organization_logo_removed` - Organization logo removed'
+        * `organization_logo_removed` - Organization logo removed
+
+        * `download_requested` - Download requested
+
+        * `download_decided` - Download request decided
+
+        * `download_request_cancelled` - Download request cancelled
+
+        * `download_grant_revoked` - Download grant revoked
+
+        * `download_completed` - Approved download completed
+
+        * `download_blocked` - Download blocked
+
+        * `owner_invited` - Owner invited
+
+        * `organization_activated` - Organization activated by its owner
+
+        * `admin_moderator_override` - Moderator added by the administrator'
     OrganizationAuditEvent:
       type: object
       properties:
@@ -20640,18 +22488,27 @@ components:
       - to_status
     OrganizationCreate:
       type: object
+      description: The administrator creates an organization with ``owner_email`` (the owner needs no account yet and accepts
+        an invitation) or, as before, with ``owner_id`` (an existing account becomes the owner at once). Send exactly one.
       properties:
         name:
           type: string
           maxLength: 150
         plan:
-          $ref: '#/components/schemas/OrganizationPlanEnum'
+          allOf:
+          - $ref: '#/components/schemas/OrganizationPlanEnum'
+          default: free
+        owner_email:
+          type: string
+          format: email
+          description: The future owner's address. They receive an invitation; nothing is granted until they accept it as
+            this address. They may have an account or not.
         owner_id:
           type: integer
           writeOnly: true
+          description: 'Existing behaviour: this account becomes the owner immediately, without an invitation.'
       required:
       - name
-      - owner_id
     OrganizationDetail:
       type: object
       description: 'One organization as its own people see it. The owner and the moderators also get who owns it and how many
@@ -20688,6 +22545,13 @@ components:
           allOf:
           - $ref: '#/components/schemas/ModeratorDataScopeEnum'
           readOnly: true
+        download_approval_required:
+          type: boolean
+          readOnly: true
+        download_grant_hours:
+          type: integer
+          readOnly: true
+          nullable: true
         created_at:
           type: string
           format: date-time
@@ -20741,6 +22605,8 @@ components:
       - brand_name
       - capabilities
       - created_at
+      - download_approval_required
+      - download_grant_hours
       - id
       - is_personal
       - limits
@@ -20874,10 +22740,18 @@ components:
           format: email
         role:
           allOf:
-          - $ref: '#/components/schemas/OrganizationInvitationRoleEnum'
+          - $ref: '#/components/schemas/OrganizationInvitationCreateRoleEnum'
           default: member
       required:
       - email
+    OrganizationInvitationCreateRoleEnum:
+      enum:
+      - moderator
+      - member
+      type: string
+      description: '* `moderator` - Moderator
+
+        * `member` - Member'
     OrganizationInvitationPreview:
       type: object
       description: What the person who received an invitation sees before accepting it.
@@ -20900,10 +22774,13 @@ components:
       - role
     OrganizationInvitationRoleEnum:
       enum:
+      - owner
       - moderator
       - member
       type: string
-      description: '* `moderator` - Moderator
+      description: '* `owner` - Owner (invited by the administrator)
+
+        * `moderator` - Moderator
 
         * `member` - Member'
     OrganizationInvitationStatusEnum:
@@ -21042,10 +22919,13 @@ components:
       enum:
       - active
       - suspended
+      - pending_owner
       type: string
       description: '* `active` - Active
 
-        * `suspended` - Suspended'
+        * `suspended` - Suspended
+
+        * `pending_owner` - Waiting for the owner'
     OrganizationWithMembership:
       type: object
       description: 'An organization plus the caller''s membership and capabilities in it.
@@ -21078,6 +22958,13 @@ components:
           allOf:
           - $ref: '#/components/schemas/ModeratorDataScopeEnum'
           readOnly: true
+        download_approval_required:
+          type: boolean
+          readOnly: true
+        download_grant_hours:
+          type: integer
+          readOnly: true
+          nullable: true
         created_at:
           type: string
           format: date-time
@@ -21112,6 +22999,8 @@ components:
       - brand_name
       - capabilities
       - created_at
+      - download_approval_required
+      - download_grant_hours
       - id
       - is_personal
       - logo_url
@@ -21336,6 +23225,73 @@ components:
       - per_day_by_type
       - recent
       - total
+    OwnerInvitation:
+      type: object
+      description: The administrator's view of the invitation that makes somebody the owner of an organization that waits
+        for one. Never contains the link or the token.
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+          format: email
+          description: The address the invitation was sent to. Only an account holding this verified address can accept it.
+        status:
+          allOf:
+          - $ref: '#/components/schemas/OwnerInvitationStatusEnum'
+          description: pending, accepted, cancelled, expired (a pending invitation whose time has run out) or rejected.
+          readOnly: true
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        accepted_at:
+          type: string
+          format: date-time
+          nullable: true
+        email_status:
+          type: string
+          description: 'queued (will be sent once the invitation is saved), sent (the mail server accepted it) or failed (see
+            email_failure_reason). Delivery to the inbox is not known: SMTP gives no such feedback. Empty only for invitations
+            from before this field existed.'
+        email_sent_at:
+          type: string
+          format: date-time
+          nullable: true
+        email_failure_reason:
+          type: string
+        can_resend:
+          type: boolean
+          readOnly: true
+          description: 'True while the organization still waits for its owner: a resend sends a new link and the old one stops
+            working.'
+        accepted_by:
+          allOf:
+          - $ref: '#/components/schemas/OrganizationOwner'
+          nullable: true
+          readOnly: true
+      required:
+      - accepted_at
+      - accepted_by
+      - can_resend
+      - created_at
+      - email
+      - email_failure_reason
+      - email_sent_at
+      - email_status
+      - expires_at
+      - id
+      - status
+    OwnerInvitationStatusEnum:
+      enum:
+      - pending
+      - accepted
+      - cancelled
+      - expired
+      - rejected
+      type: string
     PackageStatusEnum:
       enum:
       - queued
@@ -21592,6 +23548,35 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DownloadPackage'
+    PaginatedDownloadRequestList:
+      oneOf:
+      - type: object
+        required:
+        - count
+        - results
+        properties:
+          count:
+            type: integer
+            example: 123
+          next:
+            type: string
+            nullable: true
+            format: uri
+            example: http://api.example.org/accounts/?page=4
+          previous:
+            type: string
+            nullable: true
+            format: uri
+            example: http://api.example.org/accounts/?page=2
+          results:
+            type: array
+            items:
+              $ref: '#/components/schemas/DownloadRequest'
+        description: Returned when page or page_size is given.
+      - type: array
+        items:
+          $ref: '#/components/schemas/DownloadRequest'
+        description: Returned when neither page nor page_size is given (legacy, unbounded).
     PaginatedDuplicateAnalysisList:
       oneOf:
       - type: object
@@ -22428,9 +24413,24 @@ components:
         plan:
           $ref: '#/components/schemas/OrganizationPlanEnum'
         status:
-          $ref: '#/components/schemas/OrganizationStatusEnum'
+          allOf:
+          - $ref: '#/components/schemas/AdminOrganizationUpdateStatusEnum'
+          description: 'active or suspended. An organization waiting for its owner (`pending_owner`) becomes active only when
+            the owner accepts the invitation.
+
+
+            * `active` - Active
+
+            * `suspended` - Suspended'
         moderator_data_scope:
           $ref: '#/components/schemas/ModeratorDataScopeEnum'
+        download_approval_required:
+          type: boolean
+        download_grant_hours:
+          type: integer
+          maximum: 720
+          minimum: 1
+          nullable: true
         reason:
           type: string
           maxLength: 500
@@ -22479,12 +24479,28 @@ components:
           type: integer
           readOnly: true
           description: Photos this account has uploaded (the list computes it for every row at once).
+        account_type:
+          allOf:
+          - $ref: '#/components/schemas/AccountTypeEnum'
+          description: '`personal`: only their own private workspace. `organization`: an active member of at least one shared
+            organization (owner, moderator or member); they still have a private workspace too.'
+          readOnly: true
+        shared_organization_count:
+          type: integer
+          readOnly: true
+          description: In how many shared organizations (not their own private workspace) the account is an active member.
         organization_id:
           type: integer
           writeOnly: true
           nullable: true
           description: 'With role=moderator: the organization the moderator will work for (needed when there is more than
             one, and when the account has no moderator membership yet). Ignored otherwise.'
+        reason:
+          type: string
+          writeOnly: true
+          description: 'Required (at least 8 characters) when the role changes to moderator: why an administrator does this
+            instead of the organization''s owner inviting them. Kept in the organization''s audit log.'
+          maxLength: 500
     PatchedAlbumPatch:
       type: object
       properties:
@@ -22738,6 +24754,12 @@ components:
           items:
             $ref: '#/components/schemas/BatchImage'
           readOnly: true
+        organization_id:
+          type: integer
+          readOnly: true
+          nullable: true
+          description: The workspace (organization or personal workspace) this upload went into; `null` only for an upload
+            from before workspaces existed.
     PersonChip:
       type: object
       description: 'One person as a chip: a round face, a name and how many photographs.'
@@ -23242,6 +25264,24 @@ components:
         * `png` - PNG
 
         * `jpeg` - JPEG'
+    RequestedImage:
+      type: object
+      description: One image of a request or an eligibility check. ``artifact_type`` defaults to the enhanced result; ``edited``
+        needs ``artifact_id`` (the saved edit).
+      properties:
+        image_id:
+          type: integer
+          minimum: 1
+        artifact_type:
+          allOf:
+          - $ref: '#/components/schemas/ArtifactTypeEnum'
+          default: enhanced
+        artifact_id:
+          type: integer
+          minimum: 1
+          nullable: true
+      required:
+      - image_id
     ResendVerification:
       type: object
       properties:
@@ -23259,6 +25299,7 @@ components:
       - processing_report
       - batch_package
       - identity_group_package
+      - approved_request_zip
       type: string
       description: '* `original_image` - Original image
 
@@ -23272,7 +25313,9 @@ components:
 
         * `batch_package` - Batch package
 
-        * `identity_group_package` - Identity group package'
+        * `identity_group_package` - Identity group package
+
+        * `approved_request_zip` - Approved download request ZIP'
     RuleEnum:
       enum:
       - failed_login_account
@@ -24356,6 +26399,12 @@ components:
           items:
             $ref: '#/components/schemas/BatchImage'
           readOnly: true
+        organization_id:
+          type: integer
+          readOnly: true
+          nullable: true
+          description: The workspace (organization or personal workspace) this upload went into; `null` only for an upload
+            from before workspaces existed.
       required:
       - accepted_files
       - auto_enhance
@@ -24363,6 +26412,7 @@ components:
       - created_at
       - id
       - images
+      - organization_id
       - original_archive_name
       - processed_files
       - processing_error
@@ -24457,6 +26507,12 @@ components:
           items:
             $ref: '#/components/schemas/BatchImage'
           readOnly: true
+        organization_id:
+          type: integer
+          readOnly: true
+          nullable: true
+          description: The workspace (organization or personal workspace) this upload went into; `null` only for an upload
+            from before workspaces existed.
         processing_mode:
           type: string
           readOnly: true
@@ -24470,6 +26526,7 @@ components:
       - created_at
       - id
       - images
+      - organization_id
       - original_archive_name
       - processed_files
       - processing_error

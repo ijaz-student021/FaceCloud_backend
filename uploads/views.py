@@ -245,7 +245,7 @@ class ImageUploadListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        queryset = ImageUpload.objects.filter(owner=self.request.user).select_related("batch", "preprocessing_result")
+        queryset = ImageUpload.objects.filter(owner=self.request.user).select_related("batch__organization", "preprocessing_result")
         batch = self.request.query_params.get("batch")
         if batch:
             if not batch.isdigit():
@@ -573,6 +573,9 @@ class ImageDownloadView(APIView):
         )
         if not image.original_file:
             return Response({"detail": "The stored image is unavailable."}, status=status.HTTP_404_NOT_FOUND)
+        from downloads.approval import authorize_download
+
+        authorize_download(request.user, image, "original", image.pk, http_request=request)   # only where the organization requires approval: 403 without a grant
         from downloads.models import DownloadEvent
         from downloads.services import record_download
         record_download(
@@ -641,6 +644,9 @@ class ImagePreprocessingDownloadView(APIView):
         )
         if not result.processed_file:
             return Response({"detail": "The processed image is unavailable."}, status=status.HTTP_404_NOT_FOUND)
+        from downloads.approval import authorize_download
+
+        authorize_download(request.user, result.image, "original", result.image_id, http_request=request)   # the standardized copy is a version of the original: it needs that grant
         content_type = "image/png" if result.output_format == "png" else "image/jpeg"
         from downloads.models import DownloadEvent
         from downloads.services import record_download

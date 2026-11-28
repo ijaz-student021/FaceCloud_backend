@@ -113,7 +113,7 @@ CORS_ALLOWED_ORIGINS = [origin.strip() for origin in os.environ.get("CORS_ALLOWE
 # cross-origin JavaScript unless it is exposed here. The frontend needs
 # Content-Disposition (the real download filename) and Retry-After (how long a
 # 429 says to wait).
-CORS_EXPOSE_HEADERS = ["Content-Disposition", "Retry-After"]
+CORS_EXPOSE_HEADERS = ["Content-Disposition", "Retry-After", "X-Preview-Restricted", "X-Report-Restricted"]      # the browser may read them: a restricted preview / report copy says so
 
 ROOT_URLCONF = 'config.urls'
 
@@ -1316,6 +1316,10 @@ if not 30 <= THUMBNAIL_JPEG_QUALITY <= 95:
 # Feature 48: hours between two photos that starts a new event in the timeline.
 EVENT_GAP_HOURS = env.float("EVENT_GAP_HOURS", default=6.0)
 ORG_INVITATION_TTL_HOURS = env.int("ORG_INVITATION_TTL_HOURS", default=72)
+# The invitation the administrator sends to the future owner of a new organization lives longer: the person may need to create an account first.
+ORG_OWNER_INVITATION_TTL_HOURS = env.int("ORG_OWNER_INVITATION_TTL_HOURS", default=168)
+if not 1 <= ORG_OWNER_INVITATION_TTL_HOURS <= 24 * 30:
+    raise ImproperlyConfigured("ORG_OWNER_INVITATION_TTL_HOURS must be 1-720.")
 
 
 def _plan_limit(plan, kind, default):
@@ -1439,6 +1443,16 @@ DOWNLOAD_PACKAGE_MAX_UNCOMPRESSED_SIZE = env.int(
 DOWNLOAD_PACKAGE_COMPRESSION_LEVEL = env.int(
     "DOWNLOAD_PACKAGE_COMPRESSION_LEVEL", default=6,
 )
+# Download approval (organizations whose ``download_approval_required`` is on): how long an approved image stays downloadable (an organization may set its own
+# number of hours), how many images one request may name, and how many times one grant may be used (0 = no limit).
+DOWNLOAD_GRANT_DEFAULT_HOURS = env.int("DOWNLOAD_GRANT_DEFAULT_HOURS", default=24)
+DOWNLOAD_GRANT_MAX_HOURS = 24 * 30
+DOWNLOAD_REQUEST_MAX_ITEMS = env.int("DOWNLOAD_REQUEST_MAX_ITEMS", default=100)
+DOWNLOAD_GRANT_MAX_USES = env.int("DOWNLOAD_GRANT_MAX_USES", default=0)
+# The largest side, in pixels, of a preview of an image in an organization that requires approval, for the person who owns it and holds no approval (it is watermarked too).
+DOWNLOAD_APPROVAL_PREVIEW_MAX_EDGE = env.int("DOWNLOAD_APPROVAL_PREVIEW_MAX_EDGE", default=800)
+if not 1 <= DOWNLOAD_GRANT_DEFAULT_HOURS <= DOWNLOAD_GRANT_MAX_HOURS or DOWNLOAD_REQUEST_MAX_ITEMS < 1 or DOWNLOAD_GRANT_MAX_USES < 0 or not 64 <= DOWNLOAD_APPROVAL_PREVIEW_MAX_EDGE <= 800:
+    raise ImproperlyConfigured("DOWNLOAD_GRANT_DEFAULT_HOURS must be 1-720, DOWNLOAD_REQUEST_MAX_ITEMS at least 1, DOWNLOAD_GRANT_MAX_USES at least 0 and DOWNLOAD_APPROVAL_PREVIEW_MAX_EDGE 64-800.")
 NOTIFICATION_EMAILS_ENABLED = env.bool(
     "NOTIFICATION_EMAILS_ENABLED", default=True,
 )
@@ -1541,6 +1555,8 @@ REST_FRAMEWORK = {
         "search": "600/hour",
         "share_public": "120/hour",
         "org_invite": "30/hour",
+        # Download review: approving, denying and revoking download approvals, per moderator (its own limit, not the invitation one).
+        "download_review": "120/hour",
         "org_export": "10/hour",
         "org_branding": "30/hour",
         "org_batch_action": "60/hour",
@@ -1585,6 +1601,8 @@ SPECTACULAR_SETTINGS = {
         "EnhancementLightingEnum": "enhancement.models.EnhancementLighting",
         "LightingMethodEnum": "enhancement.models.LIGHTING_METHODS",
         "PackageStatusEnum": "downloads.models.DownloadPackage.Status",
+        "DownloadRequestStatusEnum": "downloads.models.DownloadRequest.Status",
+        "DownloadRequestItemStatusEnum": "downloads.models.DownloadRequestItem.Status",
         "ProcessingReportStatusEnum": "reports.models.ProcessingReport.Status",
         "IdentityAnalysisStatusEnum": "identities.models.IdentityAnalysis.Status",
         "ExportReportFormatEnum": "identities.models.IdentityGroupExport.ReportFormat",

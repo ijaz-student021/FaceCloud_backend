@@ -43,13 +43,14 @@ def membership_capabilities(membership):
     )
     # services._assert_can_manage: a moderator cannot manage PROTECTED_FROM_MODERATOR.
     manages_protected = staff and (owner or not PROTECTED_FROM_MODERATOR)
+    shared = active and not membership.organization.is_personal       # a personal workspace is private: nobody is invited into it or managed in it (services.assert_shared_organization)
     return {
         "view_members": staff,
-        "invite_members": staff,
-        "invite_moderators": owner,                    # services.invite_member
-        "manage_members": staff,
-        "manage_moderators": manages_protected,
-        "grant_owner": owner,                          # services.update_member
+        "invite_members": staff and shared,
+        "invite_moderators": owner and shared,         # services.invite_member
+        "manage_members": staff and shared,
+        "manage_moderators": manages_protected and shared,
+        "grant_owner": owner and shared,               # services.update_member
         "view_audit": staff,
         "moderate_reviews": staff,
         "manage_batches": staff,

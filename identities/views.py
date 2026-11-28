@@ -176,8 +176,13 @@ class IdentityGroupAvatarView(APIView):
             payload = render_avatar(face, size)
         except AvatarUnavailable as error:
             raise Http404(str(error)) from error
-        response = HttpResponse(payload, content_type="image/jpeg")
-        response["Cache-Control"] = "private, max-age=3600"
+        from downloads.previews import preview_is_restricted, stamp_jpeg
+
+        restricted = preview_is_restricted(request.user, face.image)         # a face of an image in an organization that requires download approval, and no approval held
+        response = HttpResponse(stamp_jpeg(payload, request.user, size) if restricted else payload, content_type="image/jpeg")
+        response["Cache-Control"] = "private, no-store" if restricted else "private, max-age=3600"
+        if restricted:
+            response["X-Preview-Restricted"] = "approval-required"
         return response
 
 
@@ -356,6 +361,16 @@ class IdentityChangeListView(generics.ListAPIView):
         return IdentityChange.objects.filter(owner=self.request.user)
 
 
+def _refuse_if_group_under_approval(request, group):
+    """A person-folder ZIP bundles photographs, so it is refused while any of them is in an organization that requires download approval (they are downloaded one by one, with a grant)."""
+    from downloads.approval import approval_organization_of, block_bulk_download
+    from uploads.models import ImageUpload
+
+    organization = approval_organization_of(ImageUpload.objects.filter(identity_faces__memberships__identity_group=group))
+    if organization is not None:
+        block_bulk_download(request.user, organization, "identity_export", request)
+
+
 class IdentityGroupExportListCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     throttle_scope = "download_package"
@@ -384,6 +399,7 @@ class IdentityGroupExportListCreateView(APIView):
     )
     def post(self, request, group_id):
         group = self._group(request, group_id)
+        _refuse_if_group_under_approval(request, group)
         payload = IdentityGroupExportRequestSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         try:
@@ -435,6 +451,7 @@ class IdentityGroupExportDownloadView(APIView):
             ),
             pk=pk,
         )
+        _refuse_if_group_under_approval(request, export.identity_group)
         if expire_identity_export_if_needed(export):
             raise IdentityExportExpired(
                 "This identity export has expired. Request regeneration to continue."
@@ -484,7 +501,8 @@ class IdentityGroupExportShareView(APIView):
         },
     )
     def post(self, request, pk):
-        export = get_object_or_404(IdentityGroupExport.objects.filter(owner=request.user), pk=pk)
+        export = get_object_or_404(IdentityGroupExport.objects.filter(owner=request.user).select_related("identity_group"), pk=pk)
+        _refuse_if_group_under_approval(request, export.identity_group)
         payload = IdentityExportShareRequestSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         if expire_identity_export_if_needed(export):
@@ -519,6 +537,7 @@ class IdentityGroupExportRegenerateView(APIView):
             ),
             pk=pk,
         )
+        _refuse_if_group_under_approval(request, export.identity_group)
         expire_identity_export_if_needed(export)
         export.refresh_from_db()
         if export.status not in {
