@@ -3,6 +3,7 @@ from django.db import models
 from django.db.models import F, Q
 
 from uploads.models import ImagePreprocessingResult, ImageUpload
+from organizations.access import locked_manager
 
 
 class DuplicateAnalysis(models.Model):
@@ -55,6 +56,8 @@ class DuplicateAnalysis(models.Model):
     finished_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = locked_manager("image__batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
 
     class Meta:
         ordering = ["-updated_at"]
@@ -115,6 +118,8 @@ class DuplicateMatch(models.Model):
     reviewed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = locked_manager("source_image__batch__organization_id", "matched_image__batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
 
     class Meta:
         ordering = ["-similarity_score", "pk"]

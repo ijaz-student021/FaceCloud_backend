@@ -154,5 +154,5 @@ class FolderScreenTests(ModerationFixtureMixin, TestCase):
     def test_a_list_of_folders_costs_a_fixed_number_of_queries(self):
         for index in range(5):
             self.folder(self.sara, f"F{index}", index * 20, photos=2)
-        with self.assertNumQueries(4):                           # user, membership, the folders, their members
+        with self.assertNumQueries(5):                           # user, membership, the organizations the person is locked out of (organizations/access.py), the folders, their members
             self.client.get(self.url("identity-group-list"))

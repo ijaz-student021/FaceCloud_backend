@@ -10,6 +10,7 @@ from django.dispatch import receiver
 
 from uploads.models import ImagePreprocessingResult, ImageUpload
 from validation.models import FaceValidationResult
+from organizations.access import locked_manager
 
 
 def identity_export_upload_path(instance, filename):
@@ -48,6 +49,8 @@ class IdentityAnalysis(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = locked_manager("image__batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
+
     class Meta:
         ordering = ["-updated_at"]
         indexes = [models.Index(fields=["owner", "status", "-updated_at"])]
@@ -67,6 +70,8 @@ class IdentityFace(models.Model):
     quality = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = locked_manager("image__batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
 
     class Meta:
         ordering = ["analysis_id", "face_index"]
@@ -105,6 +110,8 @@ class IdentityGroup(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = locked_manager("organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
+
     class Meta:
         ordering = ["display_name", "pk"]
         constraints = [models.UniqueConstraint(fields=["owner", "display_name"], name="identity_unique_owner_group_name")]
@@ -132,6 +139,8 @@ class IdentityMembership(models.Model):
     evidence = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = locked_manager("identity_group__organization_id", "identity_face__image__batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
 
     class Meta:
         ordering = ["-created_at"]
@@ -171,6 +180,8 @@ class IdentityChange(models.Model):
     after = models.JSONField(default=dict, blank=True)
     reason = models.CharField(max_length=240, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = locked_manager("group__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
 
     class Meta:
         ordering = ["-created_at", "-pk"]
@@ -230,6 +241,8 @@ class IdentityGroupExport(models.Model):
     expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = locked_manager("identity_group__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
 
     class Meta:
         ordering = ["-created_at"]

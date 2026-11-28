@@ -2,6 +2,7 @@ from django.conf import settings
 from django.db import models
 
 from uploads.models import ImageUpload
+from organizations.access import locked_manager
 
 
 class Album(models.Model):
@@ -30,6 +31,8 @@ class AlbumImage(models.Model):
     album = models.ForeignKey(Album, on_delete=models.CASCADE, related_name="items")
     image = models.ForeignKey(ImageUpload, on_delete=models.CASCADE, related_name="album_items")
     added_at = models.DateTimeField(auto_now_add=True)
+
+    objects = locked_manager("image__batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
 
     class Meta:
         ordering = ["-added_at", "-pk"]

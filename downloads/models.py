@@ -8,6 +8,7 @@ from django.db.models.signals import post_delete
 from django.dispatch import receiver
 
 from uploads.models import UploadBatch
+from organizations.access import locked_manager
 
 
 def download_package_upload_path(instance, filename):
@@ -65,6 +66,8 @@ class DownloadPackage(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = locked_manager("batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
+
     class Meta:
         ordering = ["-created_at"]
         indexes = [
@@ -82,6 +85,34 @@ class DownloadPackage(models.Model):
 
     def __str__(self):
         return f"{self.owner_id}:{self.batch_id}:{self.package_type}:{self.status}"
+
+
+class DownloadEventLockManager(models.Manager):
+    """A download event names its photograph, batch or folder by plain ids (no foreign keys), so the organization lock (organizations/access.py) is applied by looking those up:
+    the history of a person locked out of an organization no longer lists what they once downloaded from it."""
+
+    def get_queryset(self):
+        from organizations.access import locked_org_ids
+
+        queryset = super().get_queryset()
+        ids = locked_org_ids()
+        if not ids:
+            return queryset
+        from identities.models import IdentityGroup
+        from reports.models import ProcessingReport
+        from uploads.models import ImageUpload, UploadBatch
+
+        locked = (
+            models.Q(image_id__in=ImageUpload._base_manager.filter(batch__organization_id__in=ids).values("pk"))
+            | models.Q(batch_id__in=UploadBatch._base_manager.filter(organization_id__in=ids).values("pk"))
+            | models.Q(resource_type=DownloadEvent.ResourceType.IDENTITY_GROUP_PACKAGE, resource_id__in=IdentityGroup._base_manager.filter(organization_id__in=ids).values("pk"))
+            | models.Q(resource_type=DownloadEvent.ResourceType.APPROVED_REQUEST_ZIP, resource_id__in=DownloadRequest._base_manager.filter(organization_id__in=ids).values("pk"))
+            | models.Q(
+                resource_type=DownloadEvent.ResourceType.PROCESSING_REPORT,
+                resource_id__in=ProcessingReport._base_manager.filter(models.Q(image__batch__organization_id__in=ids) | models.Q(batch__organization_id__in=ids)).values("pk"),
+            )
+        )
+        return queryset.exclude(locked)
 
 
 class DownloadEvent(models.Model):
@@ -108,6 +139,8 @@ class DownloadEvent(models.Model):
     file_size = models.PositiveBigIntegerField(default=0)
     content_type = models.CharField(max_length=100, blank=True)
     downloaded_at = models.DateTimeField(auto_now_add=True)
+
+    objects = DownloadEventLockManager()
 
     class Meta:
         ordering = ["-downloaded_at"]
@@ -156,6 +189,8 @@ class DownloadRequest(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = locked_manager("organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
+
     class Meta:
         ordering = ["-created_at", "-pk"]
         indexes = [
@@ -202,6 +237,8 @@ class DownloadRequestItem(models.Model):
     denial_reason_code = models.CharField(max_length=24, choices=DenialReason.choices, blank=True)
     denial_reason_text = models.CharField(max_length=500, blank=True)
 
+    objects = locked_manager("request__organization_id", "image__batch__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
+
     class Meta:
         ordering = ["pk"]
         constraints = [
@@ -235,6 +272,8 @@ class DownloadGrant(models.Model):
     max_uses = models.PositiveIntegerField(null=True, blank=True)
     use_count = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = locked_manager("organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
 
     class Meta:
         ordering = ["-created_at", "-pk"]

@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
+from organizations.access import locked_manager
 
 
 class ShareLink(models.Model):
@@ -36,6 +37,8 @@ class ShareLink(models.Model):
     access_count = models.PositiveIntegerField(default=0)
     last_accessed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = locked_manager("enhancement_result__image__batch__organization_id", "edit_version__enhancement_result__image__batch__organization_id", "identity_export__identity_group__organization_id")      # hidden from a person locked out of the organization (organizations/access.py)
 
     class Meta:
         ordering = ["-created_at"]
