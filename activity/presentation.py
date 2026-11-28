@@ -60,6 +60,8 @@ EXACT = {
     "reactivated": ("admin", "success", "Your account was reactivated."),
     "account_deleted": ("admin", "info", "Your account was deleted."),
     "admin_created_account": ("admin", "info", "Your account was created by an administrator."),
+    "account_email_sent": ("email", "info", "An account e-mail was handed to the mail server."),
+    "account_email_failed": ("email", "warning", "An account e-mail could not be sent."),
     "account_invited": ("admin", "info", "An account invitation was sent."),
     "invitation_accepted": ("email", "success", "An account invitation was accepted."),
 }
