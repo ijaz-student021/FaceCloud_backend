@@ -31,17 +31,32 @@ def _who(user, organization, role=None):
     return "\n".join(lines)
 
 
-def _deliver(user, subject, body):
+def record_email_outcome(user, kind, sent, request=None):
+    """Remember that an account e-mail was accepted by the mail server (``sent``) or could not be sent, so the administrator's list can say so. Only the kind is stored,
+    never the message or its link. "Accepted by the mail server" is not "delivered to the inbox"."""
+    from .services import record_auth_event
+
+    try:
+        record_auth_event("account_email_sent" if sent else "account_email_failed", request, user, user.email, {"kind": kind})
+    except Exception:  # noqa: BLE001 - bookkeeping must never break the action
+        logger.exception("Could not record the e-mail outcome for user %s.", user.pk)
+
+
+def _deliver(user, subject, body, kind=""):
     try:
         send_mail(subject=subject, message=body, from_email=settings.DEFAULT_FROM_EMAIL, recipient_list=[user.email], fail_silently=False)
     except Exception:  # noqa: BLE001 - a mail problem must never undo the action that caused the mail
         logger.exception("Could not send the %r e-mail to user %s.", subject, user.pk)
+        if kind:
+            record_email_outcome(user, kind, False)
         return False
+    if kind:
+        record_email_outcome(user, kind, True)
     return True
 
 
-def _after_commit(user, subject, build_body):
-    transaction.on_commit(lambda: _deliver(user, subject, build_body()))
+def _after_commit(user, subject, build_body, kind=""):
+    transaction.on_commit(lambda: _deliver(user, subject, build_body(), kind))
 
 
 def send_account_ready(user, organization=None):
@@ -69,7 +84,7 @@ def send_account_created_by_admin(user, organization=None):
             "This e-mail never contains a password. If your administrator already gave you one, you can sign in with it and change it under Settings."
         )
 
-    _after_commit(user, "Your FaceCloud account was created", body)
+    _after_commit(user, "Your FaceCloud account was created", body, kind="account_created")
 
 
 def send_made_moderator(user, organization):

@@ -16439,6 +16439,37 @@ components:
           type: integer
           readOnly: true
           description: In how many shared organizations (not their own private workspace) the account is an active member.
+        password_setup_pending:
+          type: boolean
+          readOnly: true
+          description: 'True when the account has no usable password yet (created without one): the person must use the e-mailed
+            setup link, or the administrator can resend it.'
+        login_ready:
+          type: boolean
+          readOnly: true
+          description: True only when nothing stops this person signing in right now (see `login_blockers`). An 'Active' account
+            can still be not ready.
+        login_blockers:
+          type: array
+          items:
+            type: string
+          readOnly: true
+          description: 'Why the person cannot sign in yet: `inactive`, `suspended`, `email_unverified`, `password_setup_pending`,
+            `no_active_moderator_membership` (a moderator without an active moderator membership in an active organization).'
+        moderator_memberships:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+          readOnly: true
+          description: 'The person''s moderator memberships in shared organizations, whatever their state: `{organization_id,
+            organization_name, status, organization_status}`.'
+        setup_email:
+          type: object
+          additionalProperties: {}
+          readOnly: true
+          description: 'The last account/setup e-mail attempt: `{status: sent|failed|none, at, kind}`. `sent` means the mail
+            server accepted it, not that it reached an inbox. Never carries a link or token.'
       required:
       - account_type
       - date_joined
@@ -16447,6 +16478,11 @@ components:
       - id
       - is_email_verified
       - last_login
+      - login_blockers
+      - login_ready
+      - moderator_memberships
+      - password_setup_pending
+      - setup_email
       - shared_organization_count
       - uploads_count
       - username
@@ -16558,6 +16594,37 @@ components:
           type: integer
           readOnly: true
           description: In how many shared organizations (not their own private workspace) the account is an active member.
+        password_setup_pending:
+          type: boolean
+          readOnly: true
+          description: 'True when the account has no usable password yet (created without one): the person must use the e-mailed
+            setup link, or the administrator can resend it.'
+        login_ready:
+          type: boolean
+          readOnly: true
+          description: True only when nothing stops this person signing in right now (see `login_blockers`). An 'Active' account
+            can still be not ready.
+        login_blockers:
+          type: array
+          items:
+            type: string
+          readOnly: true
+          description: 'Why the person cannot sign in yet: `inactive`, `suspended`, `email_unverified`, `password_setup_pending`,
+            `no_active_moderator_membership` (a moderator without an active moderator membership in an active organization).'
+        moderator_memberships:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+          readOnly: true
+          description: 'The person''s moderator memberships in shared organizations, whatever their state: `{organization_id,
+            organization_name, status, organization_status}`.'
+        setup_email:
+          type: object
+          additionalProperties: {}
+          readOnly: true
+          description: 'The last account/setup e-mail attempt: `{status: sent|failed|none, at, kind}`. `sent` means the mail
+            server accepted it, not that it reached an inbox. Never carries a link or token.'
         display_name:
           type: string
           readOnly: true
@@ -16597,9 +16664,14 @@ components:
       - is_suspended
       - job_title
       - last_login
+      - login_blockers
+      - login_ready
+      - moderator_memberships
       - organization_name
       - organizations
+      - password_setup_pending
       - role
+      - setup_email
       - shared_organization_count
       - suspension_reason
       - uploads_count
@@ -16660,6 +16732,37 @@ components:
           type: integer
           readOnly: true
           description: In how many shared organizations (not their own private workspace) the account is an active member.
+        password_setup_pending:
+          type: boolean
+          readOnly: true
+          description: 'True when the account has no usable password yet (created without one): the person must use the e-mailed
+            setup link, or the administrator can resend it.'
+        login_ready:
+          type: boolean
+          readOnly: true
+          description: True only when nothing stops this person signing in right now (see `login_blockers`). An 'Active' account
+            can still be not ready.
+        login_blockers:
+          type: array
+          items:
+            type: string
+          readOnly: true
+          description: 'Why the person cannot sign in yet: `inactive`, `suspended`, `email_unverified`, `password_setup_pending`,
+            `no_active_moderator_membership` (a moderator without an active moderator membership in an active organization).'
+        moderator_memberships:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+          readOnly: true
+          description: 'The person''s moderator memberships in shared organizations, whatever their state: `{organization_id,
+            organization_name, status, organization_status}`.'
+        setup_email:
+          type: object
+          additionalProperties: {}
+          readOnly: true
+          description: 'The last account/setup e-mail attempt: `{status: sent|failed|none, at, kind}`. `sent` means the mail
+            server accepted it, not that it reached an inbox. Never carries a link or token.'
         organization_id:
           type: integer
           writeOnly: true
@@ -16680,6 +16783,11 @@ components:
       - id
       - is_email_verified
       - last_login
+      - login_blockers
+      - login_ready
+      - moderator_memberships
+      - password_setup_pending
+      - setup_email
       - shared_organization_count
       - uploads_count
       - username
@@ -25085,6 +25193,37 @@ components:
           type: integer
           readOnly: true
           description: In how many shared organizations (not their own private workspace) the account is an active member.
+        password_setup_pending:
+          type: boolean
+          readOnly: true
+          description: 'True when the account has no usable password yet (created without one): the person must use the e-mailed
+            setup link, or the administrator can resend it.'
+        login_ready:
+          type: boolean
+          readOnly: true
+          description: True only when nothing stops this person signing in right now (see `login_blockers`). An 'Active' account
+            can still be not ready.
+        login_blockers:
+          type: array
+          items:
+            type: string
+          readOnly: true
+          description: 'Why the person cannot sign in yet: `inactive`, `suspended`, `email_unverified`, `password_setup_pending`,
+            `no_active_moderator_membership` (a moderator without an active moderator membership in an active organization).'
+        moderator_memberships:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+          readOnly: true
+          description: 'The person''s moderator memberships in shared organizations, whatever their state: `{organization_id,
+            organization_name, status, organization_status}`.'
+        setup_email:
+          type: object
+          additionalProperties: {}
+          readOnly: true
+          description: 'The last account/setup e-mail attempt: `{status: sent|failed|none, at, kind}`. `sent` means the mail
+            server accepted it, not that it reached an inbox. Never carries a link or token.'
         organization_id:
           type: integer
           writeOnly: true

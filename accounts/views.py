@@ -915,7 +915,22 @@ class AdminUserListView(generics.ListCreateAPIView):
         return super().get(request, *args, **kwargs)
 
     def get_queryset(self):
-        queryset = User.objects.annotate(
+        from django.db.models import OuterRef, Prefetch, Subquery
+
+        from organizations.models import OrganizationMembership
+
+        from .models import AuthEvent
+
+        last_setup_email = AuthEvent.objects.filter(
+            user=OuterRef("pk"), event__in=("account_email_sent", "account_email_failed"), details__kind__in=("account_created", "password_reset"),
+        ).order_by("-id")
+        queryset = User.objects.prefetch_related(Prefetch(
+            "organization_memberships",
+            queryset=OrganizationMembership.objects.filter(role="moderator", organization__is_personal=False).select_related("organization"), to_attr="mod_memberships",
+        )).annotate(
+            setup_email_event=Subquery(last_setup_email.values("event")[:1]),
+            setup_email_at=Subquery(last_setup_email.values("created_at")[:1]),
+            setup_email_kind=Subquery(last_setup_email.values("details__kind")[:1]),
             uploads_count=Count("image_uploads", distinct=True),
             shared_organization_count=Count(
                 "organization_memberships", distinct=True,
@@ -1057,9 +1072,19 @@ class AdminUserPasswordResetView(APIView):
         assert_can_grant(request.user, target.role)             # an administrator account is reset by a superuser, like every change to its role
         if not target.is_active or target.is_suspended or not target.email:
             return Response({"detail": "Only an active, not suspended account with an e-mail address can be sent a reset link.", "code": "account_not_resettable"}, status=status.HTTP_409_CONFLICT)
-        send_password_reset_email(target)
+        from .moderator_emails import record_email_outcome
+
+        try:
+            send_password_reset_email(target)
+        except Exception:  # noqa: BLE001 - say so instead of answering 500 or pretending
+            import logging
+
+            logging.getLogger(__name__).exception("Could not send the password-setup e-mail to user %s.", target.pk)
+            record_email_outcome(target, "password_reset", False, request)
+            return Response({"detail": "The e-mail could not be sent (the mail server refused or could not be reached). Nothing was delivered; try again or check the e-mail settings.", "code": "email_failed"}, status=status.HTTP_502_BAD_GATEWAY)
+        record_email_outcome(target, "password_reset", True, request)
         record_auth_event("admin_password_reset_sent", request, target, target.email, {"administrator_id": request.user.pk})
-        return Response({"detail": "A password reset link was sent to the account's e-mail address.", "email": target.email})
+        return Response({"detail": "A password reset link was sent to the account's e-mail address. The mail server accepted it; that is not proof it reached the inbox.", "email": target.email, "email_status": "sent"})
 
 
 class AvatarUploadSerializer(serializers.Serializer):

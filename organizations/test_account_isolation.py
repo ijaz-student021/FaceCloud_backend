@@ -424,7 +424,8 @@ class AdministratorSeparationTests(Fixture, TestCase):
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn("/reset-password/", mail.outbox[0].body)                                  # a link to choose their own
         self.assertNotIn("password:", mail.outbox[0].body.lower())
-        self.assertNotIn("password", " ".join(response.data.keys()))
+        self.assertEqual([key for key in response.data if "password" in key], ["password_setup_pending"])        # a yes/no flag; never a password, hash or token
+        self.assertIs(response.data["password_setup_pending"], True)
         self.assertTrue(user.is_email_verified)
 
     def test_an_administrator_can_send_a_reset_link_and_never_sees_a_password_or_a_token(self):

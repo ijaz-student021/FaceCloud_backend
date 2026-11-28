@@ -355,13 +355,73 @@ class AdminUserSerializer(serializers.ModelSerializer):
     shared_organization_count = serializers.SerializerMethodField(help_text="In how many shared organizations (not their own private workspace) the account is an active member.")
     account_type = serializers.SerializerMethodField(help_text="`personal`: only their own private workspace. `organization`: an active member of at least one shared organization (owner, moderator or member); they still have a private workspace too.")
 
+    password_setup_pending = serializers.SerializerMethodField(help_text="True when the account has no usable password yet (created without one): the person must use the e-mailed setup link, or the administrator can resend it.")
+    login_ready = serializers.SerializerMethodField(help_text="True only when nothing stops this person signing in right now (see `login_blockers`). An 'Active' account can still be not ready.")
+    login_blockers = serializers.SerializerMethodField(help_text="Why the person cannot sign in yet: `inactive`, `suspended`, `email_unverified`, `password_setup_pending`, `no_active_moderator_membership` (a moderator without an active moderator membership in an active organization).")
+    moderator_memberships = serializers.SerializerMethodField(help_text="The person's moderator memberships in shared organizations, whatever their state: `{organization_id, organization_name, status, organization_status}`.")
+    setup_email = serializers.SerializerMethodField(help_text="The last account/setup e-mail attempt: `{status: sent|failed|none, at, kind}`. `sent` means the mail server accepted it, not that it reached an inbox. Never carries a link or token.")
+
     class Meta:
         model = User
         fields = [
             "id", "username", "email", "full_name", "role", "is_email_verified", "is_suspended",
             "suspension_reason", "is_active", "date_joined", "last_login", "uploads_count", "account_type", "shared_organization_count",
+            "password_setup_pending", "login_ready", "login_blockers", "moderator_memberships", "setup_email",
         ]
         read_only_fields = ["id", "username", "email", "full_name", "is_email_verified", "date_joined", "last_login", "uploads_count", "account_type", "shared_organization_count"]
+
+    def _moderator_memberships(self, user):
+        cached = getattr(user, "mod_memberships", None)
+        if cached is not None:
+            return cached
+        from organizations.models import OrganizationMembership
+
+        return list(OrganizationMembership.objects.select_related("organization").filter(user=user, role="moderator", organization__is_personal=False))
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_password_setup_pending(self, user):
+        return not user.has_usable_password()
+
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
+    def get_login_blockers(self, user):
+        blockers = []
+        if not user.is_active:
+            blockers.append("inactive")
+        if user.is_suspended:
+            blockers.append("suspended")
+        if not user.is_email_verified:
+            blockers.append("email_unverified")
+        if not user.has_usable_password():
+            blockers.append("password_setup_pending")
+        if user.role == "moderator" and not any(m.status == "active" and m.organization.status == "active" for m in self._moderator_memberships(user)):
+            blockers.append("no_active_moderator_membership")
+        return blockers
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_login_ready(self, user):
+        return not self.get_login_blockers(user)
+
+    @extend_schema_field(serializers.ListField(child=serializers.DictField()))
+    def get_moderator_memberships(self, user):
+        return [
+            {"organization_id": m.organization_id, "organization_name": m.organization.name, "status": m.status, "organization_status": m.organization.status}
+            for m in self._moderator_memberships(user)
+        ]
+
+    @extend_schema_field(serializers.DictField())
+    def get_setup_email(self, user):
+        from .models import AuthEvent
+
+        event = getattr(user, "setup_email_event", None)
+        if event is None and not hasattr(user, "setup_email_event"):
+            latest = (AuthEvent.objects.filter(user=user, event__in=("account_email_sent", "account_email_failed"), details__kind__in=("account_created", "password_reset"))
+                      .order_by("-id").values("event", "created_at", "details").first())
+            event, at, kind = (latest["event"], latest["created_at"], latest["details"].get("kind")) if latest else (None, None, None)
+        else:
+            at, kind = getattr(user, "setup_email_at", None), getattr(user, "setup_email_kind", None)
+        if not event:
+            return {"status": "none", "at": None, "kind": None}
+        return {"status": "sent" if event == "account_email_sent" else "failed", "at": at.isoformat() if at else None, "kind": kind}
 
     def get_uploads_count(self, user) -> int:
         annotated = getattr(user, "uploads_count", None)
