@@ -26,11 +26,12 @@ class DefaultOrganizationTests(TestCase):
         self.assertNotEqual(team_org.pk, personal_org.pk)
         self.assertEqual(get_default_organization(user), personal_org)
 
-    def test_falls_back_to_an_active_membership_when_there_is_no_personal_organization(self):
+    def test_never_falls_back_to_an_organization_the_person_merely_belongs_to(self):
+        """An organization is never inferred from memberships (it used to be: the oldest active one). Without a personal workspace the default is no organization at all."""
         user = self.make_user("no-personal-org")
-        team_org = create_organization(name="Only Org", owner=user)
+        create_organization(name="Only Org", owner=user)
 
-        self.assertEqual(get_default_organization(user), team_org)
+        self.assertIsNone(get_default_organization(user))
 
     def test_a_suspended_membership_is_not_used_as_the_default(self):
         user = self.make_user("suspended-member")

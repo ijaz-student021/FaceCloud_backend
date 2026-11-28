@@ -15,6 +15,7 @@ from .models import Organization, OrganizationInvitation, OrganizationMembership
 from .permissions import OrganizationScopedMixin
 from .scope import visible_audit_events
 from .serializers import (
+    AdminOrganizationCreatedSerializer,
     AdminOrganizationSerializer,
     AdminOrganizationUpdateSerializer,
     OrganizationDetailSerializer,
@@ -28,12 +29,17 @@ from .serializers import (
     OrganizationInvitationSerializer,
     OrganizationMembershipSerializer,
     OrganizationMembershipUpdateSerializer,
+    OwnerInvitationSerializer,
     OwnerOrganizationUpdateSerializer,
 )
 from .services import (
     accept_invitation,
     cancel_invitation,
+    cancel_owner_invitation,
     create_organization,
+    create_pending_organization,
+    owner_invitation_of,
+    resend_owner_invitation,
     get_active_membership,
     invite_member,
     preview_invitation,
@@ -79,6 +85,12 @@ class AdminOrganizationListCreateView(generics.ListCreateAPIView):
 
     permission_classes = [IsAdminRole]
 
+    @extend_schema(parameters=[OpenApiParameter("kind", str, enum=["organization", "personal", "all"], description=(
+        "`organization`: the shared organizations only; `personal`: every account's private workspace; `all` (the default): both. The Organizations screen should ask for `organization`: "
+        "private workspaces belong to the Personal Users screen."))])
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
     @property
     def throttle_scope(self):
         # The 30 an hour limit is for creating organizations. Reading the list is what the Organizations, Moderators, Invitations and "add account" screens do each
@@ -86,21 +98,42 @@ class AdminOrganizationListCreateView(generics.ListCreateAPIView):
         return "org_invite" if self.request.method == "POST" else None
 
     def get_queryset(self):
-        return organizations_with_head_counts()
+        queryset = organizations_with_head_counts()
+        kind = self.request.query_params.get("kind") if self.request.method == "GET" else None
+        if kind:
+            if kind not in ("organization", "personal", "all"):
+                raise ValidationError({"kind": ["Choose organization, personal or all."]})
+            if kind != "all":
+                queryset = queryset.filter(is_personal=(kind == "personal"))
+        return queryset
 
     def get_serializer_class(self):
         return OrganizationCreateSerializer if self.request.method == "POST" else AdminOrganizationSerializer
 
-    @extend_schema(request=OrganizationCreateSerializer, responses={201: AdminOrganizationSerializer, **ERROR_RESPONSES})
+    @extend_schema(
+        request=OrganizationCreateSerializer, responses={201: AdminOrganizationCreatedSerializer, 200: AdminOrganizationCreatedSerializer, **ERROR_RESPONSES},
+        description=(
+            "**With `owner_email`:** the organization is created waiting for its owner (`status: pending_owner`) and an invitation is e-mailed to that address; the owner needs no account yet. "
+            "Nothing is granted until they accept it as that address: the organization becomes active and they become its owner in that one step. Sending the same request again returns the "
+            "organization already made (**200**, `created: false`) and sends no second e-mail. **With `owner_id`** (the earlier way): that existing account becomes the owner at once."
+        ),
+    )
     def post(self, request, *args, **kwargs):
         serializer = OrganizationCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        organization = create_organization(
-            name=serializer.validated_data["name"], owner=serializer.validated_data["owner"],
-            plan=serializer.validated_data.get("plan", Organization.Plan.FREE),
-            actor=request.user, request=request,
-        )
-        return Response(AdminOrganizationSerializer(organizations_with_head_counts().get(pk=organization.pk)).data, status=status.HTTP_201_CREATED)
+        data = serializer.validated_data
+        plan = data.get("plan", Organization.Plan.FREE)
+        invitation, created, account_exists = None, True, None
+        if data.get("owner_email"):
+            from django.contrib.auth import get_user_model
+
+            organization, invitation, created = create_pending_organization(name=data["name"], owner_email=data["owner_email"], plan=plan, actor=request.user, request=request)
+            account_exists = get_user_model().objects.filter(email__iexact=data["owner_email"].strip()).exists()
+        else:
+            organization = create_organization(name=data["name"], owner=data["owner"], plan=plan, actor=request.user, request=request)
+        instance = organizations_with_head_counts().get(pk=organization.pk)
+        instance.created, instance.owner_account_exists = created, account_exists
+        return Response(AdminOrganizationCreatedSerializer(instance).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
 
 class AdminOrganizationDetailView(APIView):
@@ -124,6 +157,46 @@ class AdminOrganizationDetailView(APIView):
             moderator_data_scope=data.get("moderator_data_scope"), reason=data.get("reason", ""), request=request,
         )
         return Response(AdminOrganizationSerializer(organizations_with_head_counts().get(pk=organization.pk)).data)
+
+
+class AdminOwnerInvitationView(APIView):
+    """FaceCloud-administrator-only: the invitation that makes somebody the owner of an organization that waits for one, with whether it was e-mailed and whether the owner accepted."""
+
+    permission_classes = [IsAdminRole]
+
+    @extend_schema(responses={200: OwnerInvitationSerializer, **ERROR_RESPONSES}, summary="Get the owner invitation of an organization")
+    def get(self, request, organization_id):
+        organization = get_object_or_404(Organization, pk=organization_id)
+        invitation = owner_invitation_of(organization)
+        if invitation is None:
+            return Response({"detail": "This organization has no owner invitation."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(OwnerInvitationSerializer(invitation).data)
+
+
+class AdminOwnerInvitationResendView(APIView):
+    """FaceCloud-administrator-only: send the owner a new invitation e-mail. The earlier link stops working. Works while the organization waits for its owner (also after the invitation expired or was cancelled)."""
+
+    permission_classes = [IsAdminRole]
+    throttle_scope = "org_invite"
+
+    @extend_schema(request=None, responses={200: OwnerInvitationSerializer, **ERROR_RESPONSES}, summary="Resend the owner invitation")
+    def post(self, request, organization_id):
+        organization = get_object_or_404(Organization, pk=organization_id)
+        invitation = resend_owner_invitation(organization=organization, actor=request.user, request=request)
+        invitation.refresh_from_db()                         # the e-mail went out when the transaction committed: show what became of it
+        return Response(OwnerInvitationSerializer(invitation).data)
+
+
+class AdminOwnerInvitationCancelView(APIView):
+    """FaceCloud-administrator-only: withdraw the pending owner invitation (its link stops working). The organization keeps waiting for an owner."""
+
+    permission_classes = [IsAdminRole]
+
+    @extend_schema(request=None, responses={200: OwnerInvitationSerializer, **ERROR_RESPONSES}, summary="Cancel the owner invitation")
+    def post(self, request, organization_id):
+        organization = get_object_or_404(Organization, pk=organization_id)
+        invitation = cancel_owner_invitation(organization=organization, actor=request.user, request=request)
+        return Response(OwnerInvitationSerializer(invitation).data)
 
 
 def organization_detail_data(request, organization_id):

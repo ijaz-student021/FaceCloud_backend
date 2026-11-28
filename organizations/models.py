@@ -14,6 +14,9 @@ class Organization(models.Model):
     class Status(models.TextChoices):
         ACTIVE = "active", "Active"
         SUSPENDED = "suspended", "Suspended"
+        # Created by the administrator for an owner who has not accepted yet (``organizations.services.create_pending_organization``). Nobody belongs to it and nothing can be done in it:
+        # it becomes ``active`` in the same transaction in which the invited person accepts and becomes its owner.
+        PENDING_OWNER = "pending_owner", "Waiting for the owner"
 
     class Plan(models.TextChoices):
         FREE = "free", "Free"
@@ -97,6 +100,8 @@ class OrganizationMembership(models.Model):
 
 class OrganizationInvitation(models.Model):
     class Role(models.TextChoices):
+        # OWNER is only ever created by the administrator for a pending organization (the member and moderator invitation routes refuse it).
+        OWNER = "owner", "Owner (invited by the administrator)"      # a label of its own: the choice set must differ from OrganizationMembership.Role for the API schema
         MODERATOR = "moderator", "Moderator"
         MEMBER = "member", "Member"
 
@@ -106,6 +111,14 @@ class OrganizationInvitation(models.Model):
         EXPIRED = "expired", "Expired"
         CANCELLED = "cancelled", "Cancelled"
         REJECTED = "rejected", "Rejected"
+
+    class EmailStatus(models.TextChoices):
+        """What this system knows about the e-mail: ``queued`` (to be sent once the invitation is committed), ``sent`` (the mail server accepted it) or ``failed``.
+        Whether it reached the inbox is not known: SMTP gives no such feedback. Empty for invitations from before this field existed."""
+
+        QUEUED = "queued", "Queued"
+        SENT = "sent", "Sent"
+        FAILED = "failed", "Failed"
 
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="invitations",
@@ -120,6 +133,9 @@ class OrganizationInvitation(models.Model):
     )
     expires_at = models.DateTimeField()
     accepted_at = models.DateTimeField(null=True, blank=True)
+    email_status = models.CharField(max_length=10, choices=EmailStatus.choices, blank=True, default="")
+    email_sent_at = models.DateTimeField(null=True, blank=True)
+    email_failure_reason = models.CharField(max_length=200, blank=True)          # a short reason (never the link or the token)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -170,6 +186,9 @@ class OrganizationAuditEvent(models.Model):
         ORGANIZATION_REACTIVATED = "organization_reactivated", "Organization reactivated"
         ORGANIZATION_LOGO_CHANGED = "organization_logo_changed", "Organization logo changed"
         ORGANIZATION_LOGO_REMOVED = "organization_logo_removed", "Organization logo removed"
+        OWNER_INVITED = "owner_invited", "Owner invited"
+        ORGANIZATION_ACTIVATED = "organization_activated", "Organization activated by its owner"
+        ADMIN_MODERATOR_OVERRIDE = "admin_moderator_override", "Moderator added by the administrator"
 
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="audit_events",
